@@ -1,26 +1,32 @@
 # Telegram Menu
 
-This document describes how Telegram should expose Personal Project Operator commands in a future phase.
+This document describes how Telegram should expose Personal Project Operator commands.
 
-Phase 0 does not register commands with Telegram and does not call Telegram APIs.
+Phase 1.5 uses the `/ppo` namespace because OpenClaw owns built-in commands such as `/status`, `/menu`, and `/help`.
+
+This repo does not register commands with Telegram and does not call Telegram APIs.
 
 ## Native Telegram command menu examples
 
 ```text
-status - Show all active projects
-next - Recommend next project priority
-repo - Summarize a project repository
-pr - Summarize latest project PR
-codex - Generate compact Codex prompt
-codex_usage - Check Codex usage status
-codex_budget - Estimate Codex task size
-menu - Show command menu
-help - Explain commands
-safe_mode - Show safety boundaries
-vps_health - Check server health
+ppo - Personal Project Operator command namespace
 ```
 
-Telegram command names may need underscores instead of hyphens for platform compatibility, while the operator can still document canonical slash commands such as `/codex-usage`.
+Expected message forms:
+
+```text
+/ppo status - Show all active projects
+/ppo next - Recommend next project priority
+/ppo repo <project> - Summarize a project repository
+/ppo pr <project> - Summarize latest project PR
+/ppo codex <project> <task> - Generate compact Codex prompt
+/ppo codex-usage - Check Codex usage status
+/ppo codex-budget <project> <task> - Estimate Codex task size
+/ppo menu - Show command menu
+/ppo help - Explain commands
+/ppo safe-mode - Show safety boundaries
+/ppo vps-health - Check server health
+```
 
 ## Future inline-button menu
 
@@ -34,37 +40,44 @@ Telegram command names may need underscores instead of hyphens for platform comp
 
 ## Project Control
 
-- `/status`
-- `/next`
-- `/repo <project>`
-- `/pr <project>`
-- `/handoff <project>`
+- `/ppo status`
+- `/ppo next`
+- `/ppo repo <project>`
+- `/ppo pr <project>`
+- `/ppo handoff <project>`
 
 ## Codex Workflow
 
-- `/codex <project> <phase-or-task>`
-- `/codex-budget <project> <task>`
-- `/prompt-size <draft>`
-- `/split-task <task>`
+- `/ppo codex <project> <phase-or-task>`
+- `/ppo codex-budget <project> <task>`
+- `/ppo prompt-size <draft>`
+- `/ppo split-task <task>`
 
 ## Usage & Limits
 
-- `/codex-usage`
-- `/update-usage <provider> <status>`
+- `/ppo codex-usage`
+- `/ppo update-usage <provider> <status>`
 
 ## VPS / Safety
 
-- `/vps-health`
-- `/safe-mode`
-- `/help`
+- `/ppo vps-health`
+- `/ppo safe-mode`
+- `/ppo help`
 
 ## Backlog
 
-- `/content <project>`
-- `/feature-request <idea>`
-- `/backlog`
+- `/ppo content <project>`
+- `/ppo feature-request <idea>`
+- `/ppo backlog`
 
 ## Safety
 
-Inline buttons should only prefill or request confirmation for commands. They must not execute write actions in Phase 0.
+Inline buttons should only prefill or request confirmation for commands. They must not execute write actions in Phase 1.5.
 
+Do not override OpenClaw built-ins:
+
+```text
+/status
+/menu
+/help
+```

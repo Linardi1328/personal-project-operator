@@ -23,7 +23,9 @@ The operator must inspect, summarize, plan, and generate prompts before it is al
 
 Phase 1 may run the local Node.js simulator for `/status`, `/menu`, and `/help`.
 
-The simulator must use local fixture files only and must not:
+Phase 1.5 may run the local `/ppo` wrapper for OpenClaw Telegram routing preparation.
+
+The simulator and wrapper must use local fixture files only and must not:
 
 - call GitHub APIs
 - call Telegram APIs
@@ -31,6 +33,8 @@ The simulator must use local fixture files only and must not:
 - deploy to VPS
 - store secrets
 - write to external systems
+- edit `~/.openclaw`
+- override OpenClaw built-in commands
 
 ## Approval rules for future phases
 

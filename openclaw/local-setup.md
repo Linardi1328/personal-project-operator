@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Phase 1 local setup should prove that OpenClaw can route phone/chat commands to Personal Project Operator behavior without connecting risky write actions.
+Phase 1 local setup should prove that command outputs are phone-friendly without connecting risky write actions.
+
+Phase 1.5 prepares OpenClaw Telegram routing through a custom `/ppo` namespace.
 
 The repo now includes a local-only command simulator so command output can be tested before OpenClaw is connected.
 
@@ -14,14 +16,14 @@ The repo now includes a local-only command simulator so command output can be te
 - OpenClaw is installed separately by the user when needed.
 - No OpenClaw package is installed inside this repo.
 - No secrets are required for the local simulator.
+- The repo must not modify `~/.openclaw` automatically.
 
 ## What should be tested locally
 
-- `/status`
-- `/menu`
-- `/help`
-- command parsing
-- menu category handling
+- terminal simulator output for `/status`, `/menu`, and `/help`
+- PPO wrapper output for `/ppo status`, `/ppo menu`, and `/ppo help`
+- PPO command parsing
+- PPO menu category handling
 - phone-friendly response length
 - safe-mode messaging
 
@@ -42,6 +44,39 @@ The simulator reads only:
 
 - `local-operator/project-state.json`
 - `local-operator/commands.json`
+
+## PPO wrapper commands
+
+Use these for OpenClaw Telegram routing preparation:
+
+```bash
+node local-operator/ppo-command.mjs status
+node local-operator/ppo-command.mjs menu
+node local-operator/ppo-command.mjs menu project
+node local-operator/ppo-command.mjs menu codex
+node local-operator/ppo-command.mjs menu system
+node local-operator/ppo-command.mjs help
+node local-operator/ppo-command.mjs unknown
+```
+
+Telegram/OpenClaw message shape:
+
+```text
+/ppo status
+/ppo menu
+/ppo menu project
+/ppo menu codex
+/ppo menu system
+/ppo help
+```
+
+Do not override OpenClaw built-ins:
+
+```text
+/status
+/menu
+/help
+```
 
 ## What should not be connected yet
 
@@ -69,25 +104,40 @@ The simulator reads only:
 - Confirm no Codex usage scraping is attempted.
 - Confirm no secrets are required or printed.
 
+## Phase 1.5 local routing checklist
+
+- Confirm the PPO wrapper runs with Node.js.
+- Confirm `/ppo status` maps to local status output.
+- Confirm `/ppo menu` maps to local menu output.
+- Confirm `/ppo menu project`, `/ppo menu codex`, and `/ppo menu system` return filtered groups.
+- Confirm `/ppo help` explains the local PPO workflow.
+- Confirm unknown PPO commands fail safely.
+- Confirm output command hints use `/ppo`.
+- Confirm OpenClaw built-ins are not overridden.
+- Confirm no files under `~/.openclaw` are modified by repo code.
+
 ## Telegram local test preparation notes
 
-Telegram testing should start as a routing exercise only.
+Telegram testing should stay a routing exercise only.
 
-Before connecting Telegram:
+Before routing PPO commands through Telegram:
 
-- Confirm the local simulator output is acceptable on a phone.
-- Decide whether Telegram command names use hyphens or underscores.
-- Map Telegram command text to the local commands:
-  - `/status`
-  - `/menu`
-  - `/help`
-- Keep Telegram API registration disabled until the local outputs are approved.
+- Confirm OpenClaw and Telegram are already connected locally.
+- Confirm the PPO wrapper output is acceptable on a phone.
+- Map Telegram command text to the local wrapper:
+  - `/ppo status`
+  - `/ppo menu`
+  - `/ppo menu project`
+  - `/ppo menu codex`
+  - `/ppo menu system`
+  - `/ppo help`
+- Keep Telegram API registration and token handling outside this repo.
 - Do not add a real bot token to the repo.
 
 Future local Telegram routing should behave like:
 
 ```text
-Telegram message -> OpenClaw local route -> local operator command -> text response
+Telegram message -> OpenClaw local /ppo route -> local operator wrapper -> text response
 ```
 
-The first Telegram test should use only `/status`, `/menu`, and `/help`.
+The first Telegram test should use only `/ppo status`, `/ppo menu`, and `/ppo help`.

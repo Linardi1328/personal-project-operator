@@ -31,6 +31,7 @@ Not allowed:
 Allowed:
 
 - local command simulation for `/status`, `/menu`, and `/help`
+- local `/ppo` wrapper for OpenClaw Telegram routing preparation
 - local JSON fixtures
 - phone-style mock output examples
 - OpenClaw routing preparation docs
@@ -43,6 +44,8 @@ Not allowed:
 - VPS deployment
 - credential storage
 - write actions
+- automatic edits to `~/.openclaw`
+- overriding OpenClaw built-in `/status`, `/menu`, or `/help`
 
 ## Future read-only integrations
 

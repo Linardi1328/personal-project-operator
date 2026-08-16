@@ -61,19 +61,30 @@ Future write actions must be enabled one by one, documented clearly, and require
 
 ## Phone-First Workflow
 
-The command interface is designed for short chat commands such as:
+The OpenClaw/Telegram command interface is designed for short `/ppo` chat commands such as:
 
 ```text
-/status
-/next
-/repo khlim-assist
-/pr ledgerpilot-ai
-/codex spy-market-agent hardening
-/codex-usage
-/menu
+/ppo status
+/ppo next
+/ppo repo khlim-assist
+/ppo pr ledgerpilot-ai
+/ppo codex spy-market-agent hardening
+/ppo codex-usage
+/ppo menu
 ```
 
 Outputs should be compact enough to read on a phone but complete enough to support a decision.
+
+When routed through OpenClaw and Telegram, Personal Project Operator uses the custom `/ppo` namespace so it does not override OpenClaw built-in commands:
+
+```text
+/ppo status
+/ppo menu
+/ppo menu project
+/ppo menu codex
+/ppo menu system
+/ppo help
+```
 
 ## Phase 1 Local Simulator
 
@@ -96,6 +107,23 @@ The simulator uses local fixture files only:
 - [local-operator/commands.json](local-operator/commands.json)
 
 No npm install is required, and OpenClaw is not installed as a repo dependency. OpenClaw should be installed separately on the local MacBook when chat routing is tested.
+
+## Phase 1.5 OpenClaw Telegram Routing Preparation
+
+Phase 1.5 adds a safe wrapper for OpenClaw Telegram routing:
+
+```bash
+node local-operator/ppo-command.mjs status
+node local-operator/ppo-command.mjs menu
+node local-operator/ppo-command.mjs menu project
+node local-operator/ppo-command.mjs menu codex
+node local-operator/ppo-command.mjs menu system
+node local-operator/ppo-command.mjs help
+```
+
+The wrapper maps `/ppo ...` messages to local simulator output and rewrites command hints to the `/ppo` namespace.
+
+OpenClaw owns `/status`, `/menu`, and `/help`. Personal Project Operator should not override them.
 
 ## Supported Projects
 
@@ -145,17 +173,17 @@ Codex usage tracking is manual-first in Phase 0. The operator must not assume th
 The user can manually update status with examples like:
 
 ```text
-/update-usage codex available
-/update-usage codex near-limit
-/update-usage codex limit-reached
-/update-usage credits 12.50
+/ppo update-usage codex available
+/ppo update-usage codex near-limit
+/ppo update-usage codex limit-reached
+/ppo update-usage credits 12.50
 ```
 
 The operator should use that status to recommend whether a task should be small, medium, delayed, or split.
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation.
 
 The project still does not implement:
 
@@ -168,3 +196,4 @@ The project still does not implement:
 - production deployment
 - trading execution
 - credential storage
+- automatic OpenClaw config edits

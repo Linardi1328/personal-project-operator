@@ -26,6 +26,17 @@ Phase 1 does not install OpenClaw in this repo. OpenClaw should be installed sep
 
 Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS services, or any write-enabled integration.
 
+## Phase 1.5 - OpenClaw Telegram Routing Preparation
+
+- Keep OpenClaw installed outside this repo.
+- Keep Telegram connected through the user's local OpenClaw setup.
+- Add a `/ppo` command namespace so Personal Project Operator does not override OpenClaw built-ins.
+- Add a local wrapper for `/ppo status`, `/ppo menu`, and `/ppo help`.
+- Add OpenClaw skill scaffold docs under `openclaw/skills/ppo/`.
+- Add Telegram examples for `/ppo status`, `/ppo menu`, and `/ppo help`.
+- Do not modify `~/.openclaw` automatically.
+- Do not add dependencies, secrets, API calls, VPS deployment, or write actions.
+
 ## Phase 2 - GitHub Read-Only Integration
 
 - Fetch repo metadata.

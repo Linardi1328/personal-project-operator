@@ -20,36 +20,36 @@ Phase 0 defines the behavior only. It does not implement a live OpenClaw skill.
 
 Project Control:
 
-- `/status`
-- `/next`
-- `/repo <project>`
-- `/pr <project>`
-- `/handoff <project>`
+- `/ppo status`
+- `/ppo next`
+- `/ppo repo <project>`
+- `/ppo pr <project>`
+- `/ppo handoff <project>`
 
 Codex Workflow:
 
-- `/codex <project> <phase-or-task>`
-- `/codex-budget <project> <task>`
-- `/prompt-size <draft>`
-- `/split-task <task>`
+- `/ppo codex <project> <phase-or-task>`
+- `/ppo codex-budget <project> <task>`
+- `/ppo prompt-size <draft>`
+- `/ppo split-task <task>`
 
 Usage & Limits:
 
-- `/codex-usage`
-- `/update-usage <provider> <status>`
+- `/ppo codex-usage`
+- `/ppo update-usage <provider> <status>`
 
 System & Safety:
 
-- `/vps-health`
-- `/safe-mode`
-- `/menu`
-- `/help`
+- `/ppo vps-health`
+- `/ppo safe-mode`
+- `/ppo menu`
+- `/ppo help`
 
 Expansion:
 
-- `/content <project>`
-- `/feature-request <idea>`
-- `/backlog`
+- `/ppo content <project>`
+- `/ppo feature-request <idea>`
+- `/ppo backlog`
 
 ## Project registry
 
@@ -86,6 +86,8 @@ Blocked by default:
 
 The skill may summarize local documentation in Phase 0. Future phases may add read-only GitHub and system checks.
 
+For OpenClaw routing, Personal Project Operator uses the `/ppo` namespace. Do not override OpenClaw built-in `/status`, `/menu`, or `/help`.
+
 Write actions must remain disabled unless:
 
 - the action is listed in the command registry
@@ -106,15 +108,14 @@ Write actions must remain disabled unless:
 ## Phone-first usage examples
 
 ```text
-/menu
-/status
-/next
-/repo khlim-assist
-/pr ledgerpilot-ai
-/codex spy-market-agent hardening
-/codex-usage
-/safe-mode
+/ppo menu
+/ppo status
+/ppo next
+/ppo repo khlim-assist
+/ppo pr ledgerpilot-ai
+/ppo codex spy-market-agent hardening
+/ppo codex-usage
+/ppo safe-mode
 ```
 
 Outputs should be concise, scannable, and decision-oriented.
-
