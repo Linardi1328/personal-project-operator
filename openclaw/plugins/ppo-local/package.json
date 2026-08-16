@@ -1,0 +1,19 @@
+{
+  "name": "openclaw-plugin-ppo-local",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Local OpenClaw bridge for Personal Project Operator Phase 1.5.",
+  "scripts": {
+    "test": "node ./test-bridge.mjs",
+    "plugin:validate": "openclaw plugins validate --root . --entry ./index.mjs"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.mjs"
+    ]
+  }
+}
