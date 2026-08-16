@@ -125,7 +125,7 @@ The wrapper maps `/ppo ...` messages to local simulator output and rewrites comm
 
 OpenClaw owns `/status`, `/menu`, and `/help`. Personal Project Operator should not override them.
 
-For the manual OpenClaw owner test, load the local skill in place from [openclaw/skills/ppo](openclaw/skills/ppo) so its `{baseDir}` path resolves back to the existing wrapper. See [openclaw/skills/ppo/install-local.md](openclaw/skills/ppo/install-local.md).
+For the manual OpenClaw owner test, load the local skill from [openclaw/skills/ppo](openclaw/skills/ppo), link the local plugin from [openclaw/plugins/ppo-local](openclaw/plugins/ppo-local), and allow only `ppo_local` in the effective OpenClaw tool policy if the active profile excludes it. The skill uses direct tool dispatch to `ppo_local`, which invokes the existing wrapper without a model turn. See [openclaw/skills/ppo/install-local.md](openclaw/skills/ppo/install-local.md).
 
 ## Supported Projects
 

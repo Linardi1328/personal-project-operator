@@ -2,7 +2,12 @@
 
 These notes describe the manual Phase 1.5 OpenClaw setup for Personal Project Operator. This repository never modifies `~/.openclaw` automatically.
 
-OpenClaw documentation for the current CLI says local skill installs copy the skill directory, while `skills.load.extraDirs` scans a directory in place. Because the PPO wrapper lives outside `openclaw/skills/ppo/`, Phase 1.5 should load this repo's skill tree in place.
+Phase 1.5 needs both local components:
+
+- Skill: `<ppo-repo>/openclaw/skills/ppo`
+- Plugin/tool: `<ppo-repo>/openclaw/plugins/ppo-local`
+
+The skill owns the `/ppo` command namespace and uses direct tool dispatch. The plugin registers the deterministic `ppo_local` tool that invokes the existing local wrapper.
 
 ## Preconditions
 
@@ -24,29 +29,19 @@ For the current local checkout:
 /Users/richie/personal-project-operator
 ```
 
-The OpenClaw skill root to load is:
+Repo-relative components:
 
 ```text
 <ppo-repo>/openclaw/skills
-```
-
-The installed skill then resolves the wrapper with OpenClaw's `{baseDir}` placeholder:
-
-```bash
-node "{baseDir}/../../../local-operator/ppo-command.mjs" <args>
-```
-
-When `{baseDir}` is `<ppo-repo>/openclaw/skills/ppo`, that points to:
-
-```text
+<ppo-repo>/openclaw/plugins/ppo-local
 <ppo-repo>/local-operator/ppo-command.mjs
 ```
 
 ## Load the local skill manually
 
-Preferred Phase 1.5 approach: manually add the repo skill root to OpenClaw `skills.load.extraDirs`.
+Manually add the repo skill root to OpenClaw `skills.load.extraDirs`.
 
-Use OpenClaw to find the active config file:
+Find the active config file:
 
 ```bash
 openclaw config file
@@ -68,30 +63,180 @@ Then manually add the absolute skill root to that config:
 
 If the config already has `skills.load.extraDirs`, append the PPO path instead of replacing unrelated entries.
 
-Do not use `openclaw skills install ./openclaw/skills/ppo` for the Phase 1.5 Telegram owner test. The current OpenClaw CLI copies local skill installs into a workspace `skills/` directory, which breaks the intended `{baseDir}/../../../local-operator/ppo-command.mjs` relationship unless a separate reviewed absolute path adapter is added.
+## Link and enable the local plugin manually
 
-## Refresh OpenClaw skill visibility
-
-OpenClaw normally watches skill roots. If the skill is not visible after editing config, start a new chat session or restart the Gateway manually.
-
-Read-only verification commands:
+Link the plugin in place so its fixed repo-relative wrapper path remains valid:
 
 ```bash
-openclaw skills list --eligible
+openclaw plugins install -l /Users/richie/personal-project-operator/openclaw/plugins/ppo-local
+openclaw plugins enable ppo-local
+```
+
+If the owner's config uses `plugins.allow`, add `ppo-local` to that allowlist manually.
+
+Do not use a copied plugin install for the Phase 1.5 Telegram owner test. The plugin intentionally resolves the wrapper from the linked repo path:
+
+```text
+openclaw/plugins/ppo-local -> ../../../local-operator/ppo-command.mjs
+```
+
+## Tool Policy Preflight
+
+Before Telegram testing, inspect the effective tool policy:
+
+```bash
+openclaw config get tools --json
+```
+
+If the output uses the tested restrictive profile and does not already define `tools.allow`:
+
+```json
+{
+  "profile": "coding"
+}
+```
+
+then `ppo_local` can be registered by the plugin but still excluded from the effective tool set. In Telegram this appears as:
+
+```text
+Tool not available: ppo_local
+```
+
+Grant only the PPO bridge tool through `tools.alsoAllow`. First dry-run the narrow permission:
+
+```bash
+openclaw config set tools.alsoAllow '["ppo_local"]' --strict-json --dry-run
+```
+
+Then apply it:
+
+```bash
+openclaw config set tools.alsoAllow '["ppo_local"]' --strict-json
+```
+
+If `tools.alsoAllow` already exists, preserve every existing entry and add only `ppo_local`, for example:
+
+```bash
+openclaw config set tools.alsoAllow '["existing_tool","ppo_local"]' --strict-json --dry-run
+openclaw config set tools.alsoAllow '["existing_tool","ppo_local"]' --strict-json
+```
+
+If `tools.allow` already exists, do not create `tools.alsoAllow`. OpenClaw rejects configs where `allow` and `alsoAllow` coexist at the same policy scope. Preserve every existing `tools.allow` entry and add only `ppo_local` to that array, for example:
+
+```bash
+openclaw config set tools.allow '["existing_allowed_tool","ppo_local"]' --strict-json --dry-run
+openclaw config set tools.allow '["existing_allowed_tool","ppo_local"]' --strict-json
+```
+
+Do not broaden the profile, use wildcard permissions such as `*`, use `group:plugins`, or expose all plugin tools for this setup. PPO needs only `ppo_local`. Do not overwrite unrelated operator policy.
+
+Validate and restart after changing tool policy:
+
+```bash
+openclaw config validate
+openclaw gateway restart
+```
+
+## Skill Direct Dispatch
+
+The `ppo` skill frontmatter must include:
+
+```yaml
+command-dispatch: tool
+command-tool: ppo_local
+command-arg-mode: raw
+```
+
+OpenClaw forwards the raw `/ppo` argument string to `ppo_local` as:
+
+```json
+{
+  "command": "status",
+  "commandName": "ppo",
+  "skillName": "ppo"
+}
+```
+
+The tool validates that raw command against the approved Phase 1.5 surface before invoking the wrapper.
+
+## Refresh OpenClaw
+
+Installing or changing linked plugin code may require a Gateway restart:
+
+```bash
+openclaw gateway restart
+```
+
+If the skill is not visible after editing config, start a new chat session or restart the Gateway manually.
+
+## Validate OpenClaw Setup
+
+Run these after the manual config/plugin/tool-policy steps:
+
+```bash
+openclaw config validate
+openclaw plugins doctor
+openclaw plugins inspect ppo-local --runtime --json
 openclaw skills info ppo
 openclaw skills check
 ```
 
 Expected visibility:
 
-- `ppo` is listed as an available skill.
-- `ppo` is user-invocable.
+- `ppo-local` is enabled.
+- runtime inspection shows tool `ppo_local`.
+- either `tools.alsoAllow` or `tools.allow` includes `ppo_local` when the selected profile does not expose it by default.
+- `ppo` is listed as an available skill/command.
+- `ppo` uses `command-dispatch: tool`.
 - `/ppo` is the Personal Project Operator entrypoint.
 - OpenClaw built-ins `/status`, `/menu`, and `/help` are still OpenClaw-owned.
 
-If those commands require changing the owner's OpenClaw installation or config first, stop and perform only the local terminal verification below.
+Verification order:
 
-## Verify wrapper before Telegram
+1. Confirm runtime registration:
+
+   ```bash
+   openclaw plugins inspect ppo-local --runtime --json
+   ```
+
+   The runtime output must show `ppo_local`.
+
+2. Confirm configured top-level tool policy:
+
+   ```bash
+   openclaw config get tools --json
+   ```
+
+   If `tools.profile` is `coding`, confirm `ppo_local` is allowed through exactly one policy array: either `tools.alsoAllow` or `tools.allow`. `tools.allow` and `tools.alsoAllow` must not coexist at the same scope.
+
+3. Confirm the live Telegram session sees the tool:
+
+   ```text
+   /tools compact
+   ```
+
+   The compact tool list must include `ppo_local`. This proves the tool is available to that live Telegram session, not just registered by the plugin.
+
+4. Prove deterministic dispatch and fixture output by sending:
+
+   ```text
+   /ppo status
+   ```
+
+   A successful result begins with:
+
+   ```text
+   Project Status
+   ```
+
+If these commands require changing the owner's OpenClaw installation or config first, stop and perform only the local terminal verification below.
+
+Troubleshooting distinction:
+
+- If `openclaw plugins inspect ppo-local --runtime --json` does not show `ppo_local`, the plugin is not loaded or the tool is not registered.
+- If runtime inspection shows `ppo_local` but Telegram `/tools compact` does not show it or `/ppo status` returns `Tool not available: ppo_local`, the bridge is registered and the remaining problem is effective policy. Inspect additional effective-policy layers such as agent, provider, sandbox, or sender policy. Do not widen permissions blindly.
+
+## Verify Local Routing Before Telegram
 
 From the repo root, these commands should succeed:
 
@@ -104,6 +249,7 @@ node local-operator/ppo-command.mjs menu system
 node local-operator/ppo-command.mjs help
 node local-operator/ppo-command.mjs "/ppo status"
 node local-operator/ppo-command.mjs "/ppo menu project"
+node openclaw/plugins/ppo-local/test-bridge.mjs
 ```
 
 These commands should fail safely with a non-zero terminal exit:
@@ -115,26 +261,22 @@ node local-operator/ppo-command.mjs /menu
 node local-operator/ppo-command.mjs /help
 ```
 
-## Routing intent
+## Routing Intent
 
 Manual Telegram/OpenClaw mapping:
 
 ```text
-/ppo status       -> node "{baseDir}/../../../local-operator/ppo-command.mjs" status
-/ppo menu         -> node "{baseDir}/../../../local-operator/ppo-command.mjs" menu
-/ppo menu project -> node "{baseDir}/../../../local-operator/ppo-command.mjs" menu project
-/ppo menu codex   -> node "{baseDir}/../../../local-operator/ppo-command.mjs" menu codex
-/ppo menu system  -> node "{baseDir}/../../../local-operator/ppo-command.mjs" menu system
-/ppo help         -> node "{baseDir}/../../../local-operator/ppo-command.mjs" help
+/ppo status       -> ppo_local raw "status"       -> local-operator/ppo-command.mjs status
+/ppo menu         -> ppo_local raw "menu"         -> local-operator/ppo-command.mjs menu
+/ppo help         -> ppo_local raw "help"         -> local-operator/ppo-command.mjs help
+/ppo menu project -> ppo_local raw "menu project" -> local-operator/ppo-command.mjs menu project
+/ppo menu codex   -> ppo_local raw "menu codex"   -> local-operator/ppo-command.mjs menu codex
+/ppo menu system  -> ppo_local raw "menu system"  -> local-operator/ppo-command.mjs menu system
 ```
 
-If OpenClaw passes the full message text instead of split arguments, the wrapper also accepts quoted text such as:
+There must be no model-generated interpretation between `/ppo` and the wrapper output.
 
-```bash
-node "{baseDir}/../../../local-operator/ppo-command.mjs" "/ppo status"
-```
-
-## Do not route built-ins
+## Do Not Route Built-Ins
 
 Do not override:
 
@@ -146,11 +288,69 @@ Do not override:
 
 OpenClaw owns those commands. Personal Project Operator uses `/ppo`.
 
-The wrapper intentionally rejects bare slash commands such as `/status`, `/menu`, and `/help`.
+The wrapper and plugin intentionally reject bare slash commands such as `/status`, `/menu`, and `/help`.
 
-## Telegram owner test messages
+## Undo Local Setup
 
-Send these from Telegram only after OpenClaw shows the `ppo` skill as visible:
+Manual removal:
+
+```bash
+openclaw plugins disable ppo-local
+openclaw plugins uninstall ppo-local --keep-files
+```
+
+Then manually remove this entry from `skills.load.extraDirs`:
+
+```text
+/Users/richie/personal-project-operator/openclaw/skills
+```
+
+Remove only the PPO-specific tool permission from whichever policy array actually contains it. First inspect current tool policy:
+
+```bash
+openclaw config get tools --json
+```
+
+If `tools.alsoAllow` contains only `ppo_local`, remove that key:
+
+```bash
+openclaw config unset tools.alsoAllow
+```
+
+If `tools.alsoAllow` contains other entries, preserve them and remove only `ppo_local`, for example:
+
+```bash
+openclaw config set tools.alsoAllow '["existing_tool"]' --strict-json --dry-run
+openclaw config set tools.alsoAllow '["existing_tool"]' --strict-json
+```
+
+If `tools.allow` contains `ppo_local`, do not add or remove `tools.alsoAllow`. Preserve unrelated `tools.allow` entries and remove only `ppo_local`, for example:
+
+```bash
+openclaw config set tools.allow '["existing_allowed_tool"]' --strict-json --dry-run
+openclaw config set tools.allow '["existing_allowed_tool"]' --strict-json
+```
+
+If `tools.allow` contains only `ppo_local` and the owner wants to remove that explicit allow policy, remove that key only after confirming no unrelated tool policy depends on it:
+
+```bash
+openclaw config unset tools.allow
+```
+
+Unset a policy array/key only when `ppo_local` was its sole entry and removing that empty key is appropriate for the owner's broader OpenClaw policy.
+
+Restart the Gateway if needed:
+
+```bash
+openclaw config validate
+openclaw gateway restart
+```
+
+The uninstall command removes OpenClaw's linked plugin registration. It must not delete this repository.
+
+## Telegram Owner Test Messages
+
+Send these from Telegram only after OpenClaw shows `ppo-local` and `ppo` as visible, runtime inspection shows `ppo_local`, `/tools compact` lists `ppo_local`, and effective tool policy allows `ppo_local`:
 
 ```text
 /ppo status
@@ -166,7 +366,7 @@ If those pass, test:
 /ppo menu system
 ```
 
-## Safety boundary
+## Safety Boundary
 
 This setup is local-only.
 

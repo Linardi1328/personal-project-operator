@@ -1,0 +1,19 @@
+{
+  "id": "ppo-local",
+  "name": "PPO Local",
+  "description": "Registers the deterministic Personal Project Operator local wrapper tool.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "ppo_local"
+    ]
+  }
+}

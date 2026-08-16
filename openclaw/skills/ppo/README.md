@@ -28,17 +28,23 @@ node local-operator/ppo-command.mjs menu system
 node local-operator/ppo-command.mjs help
 ```
 
-From inside the installed OpenClaw skill instructions, use the skill-relative wrapper path:
+OpenClaw direct command dispatch uses the local plugin tool:
 
-```bash
-node "{baseDir}/../../../local-operator/ppo-command.mjs" status
-node "{baseDir}/../../../local-operator/ppo-command.mjs" menu
-node "{baseDir}/../../../local-operator/ppo-command.mjs" help
+```text
+command-dispatch: tool
+command-tool: ppo_local
+command-arg-mode: raw
 ```
 
-`{baseDir}` must resolve to this `openclaw/skills/ppo` directory in the PPO repository. For Phase 1.5, load the local skill in place by adding the absolute repo path `<ppo-repo>/openclaw/skills` to OpenClaw `skills.load.extraDirs` manually. Do not depend on OpenClaw's current working directory.
+The `ppo_local` tool is registered by the repo-local plugin at:
 
-Do not use a copied local skill install for the owner Telegram test unless the copied skill has another explicit, reviewed absolute path back to this repo. The existing wrapper lives outside the skill directory and should remain the single local routing entrypoint.
+```text
+openclaw/plugins/ppo-local
+```
+
+For Phase 1.5, manually load the local skill in place by adding the absolute repo path `<ppo-repo>/openclaw/skills` to OpenClaw `skills.load.extraDirs`, manually link the local plugin with `openclaw plugins install -l <ppo-repo>/openclaw/plugins/ppo-local`, and make sure the effective OpenClaw tool policy allows only `ppo_local` for PPO. Under restrictive profiles such as `tools.profile: "coding"`, the plugin can register `ppo_local` while the active tool policy still blocks it.
+
+Do not depend on OpenClaw's current working directory. Do not use a copied plugin install for the owner Telegram test, because the plugin resolves the existing wrapper through its linked repo path.
 
 ## Relationship to the simulator
 
@@ -60,5 +66,6 @@ This scaffold does not:
 - require API keys, bot tokens, passwords, or other PPO secrets
 - deploy to VPS
 - add write actions
+- route `/ppo` through model interpretation
 
 Use it as the local routing contract for OpenClaw.

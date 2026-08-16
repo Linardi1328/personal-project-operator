@@ -2,6 +2,9 @@
 name: ppo
 description: Route Personal Project Operator commands to the local read-only simulator.
 user-invocable: true
+command-dispatch: tool
+command-tool: ppo_local
+command-arg-mode: raw
 ---
 
 # Personal Project Operator OpenClaw Skill
@@ -29,52 +32,51 @@ Personal Project Operator must use:
 
 ## Local wrapper
 
-Route the custom PPO command to the repo wrapper by using OpenClaw's skill-relative `{baseDir}` reference:
-
-```bash
-node "{baseDir}/../../../local-operator/ppo-command.mjs" <args>
-```
-
-The wrapper accepts either the remaining PPO arguments or the full `/ppo ...` text payload.
-
-This path is deterministic only when OpenClaw loads this skill from the repository's `openclaw/skills` directory, because the wrapper intentionally stays outside the skill directory:
+OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 
 ```text
-{baseDir}/../../../local-operator/ppo-command.mjs
+/ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-For Phase 1.5, load the local skill in place through `skills.load.extraDirs` with the absolute path to:
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the Phase 1.5 command surface, and invokes the existing wrapper with a fixed argv array.
+
+The plugin tool resolves the wrapper from the linked local plugin path:
 
 ```text
-<ppo-repo>/openclaw/skills
+openclaw/plugins/ppo-local -> ../../../local-operator/ppo-command.mjs
 ```
 
-Do not rely on OpenClaw starting in the PPO repository root. Do not duplicate simulator logic inside the skill.
+For Phase 1.5, manually load:
+
+- the local skill from `<ppo-repo>/openclaw/skills`
+- the local plugin from `<ppo-repo>/openclaw/plugins/ppo-local`
+
+Do not rely on OpenClaw starting in the PPO repository root. Do not duplicate simulator logic inside the skill or plugin.
 
 Examples:
 
 ```bash
-node "{baseDir}/../../../local-operator/ppo-command.mjs" status
-node "{baseDir}/../../../local-operator/ppo-command.mjs" "/ppo status"
-node "{baseDir}/../../../local-operator/ppo-command.mjs" menu
-node "{baseDir}/../../../local-operator/ppo-command.mjs" menu project
-node "{baseDir}/../../../local-operator/ppo-command.mjs" help
+node local-operator/ppo-command.mjs status
+node local-operator/ppo-command.mjs "/ppo status"
+node local-operator/ppo-command.mjs menu
+node local-operator/ppo-command.mjs menu project
+node local-operator/ppo-command.mjs help
 ```
 
 ## Command mapping
 
 | Telegram/OpenClaw message | Local wrapper command | Underlying simulator command |
 |---|---|---|
-| `/ppo status` | `node "{baseDir}/../../../local-operator/ppo-command.mjs" status` | `/status` |
-| `/ppo menu` | `node "{baseDir}/../../../local-operator/ppo-command.mjs" menu` | `/menu` |
-| `/ppo menu project` | `node "{baseDir}/../../../local-operator/ppo-command.mjs" menu project` | `/menu project` |
-| `/ppo menu codex` | `node "{baseDir}/../../../local-operator/ppo-command.mjs" menu codex` | `/menu codex` |
-| `/ppo menu system` | `node "{baseDir}/../../../local-operator/ppo-command.mjs" menu system` | `/menu system` |
-| `/ppo help` | `node "{baseDir}/../../../local-operator/ppo-command.mjs" help` | `/help` |
+| `/ppo status` | `ppo_local` raw `status` | `/status` |
+| `/ppo menu` | `ppo_local` raw `menu` | `/menu` |
+| `/ppo menu project` | `ppo_local` raw `menu project` | `/menu project` |
+| `/ppo menu codex` | `ppo_local` raw `menu codex` | `/menu codex` |
+| `/ppo menu system` | `ppo_local` raw `menu system` | `/menu system` |
+| `/ppo help` | `ppo_local` raw `help` | `/help` |
 
 ## Safety boundaries
 
-The wrapper and simulator are local-only and read-only.
+The plugin, wrapper, and simulator are local-only and read-only.
 
 They must not:
 
@@ -84,17 +86,18 @@ They must not:
 - scrape Codex usage
 - deploy to VPS
 - store secrets
-- mutate files
+- mutate project files
 - perform external write actions
+- execute arbitrary shell commands
 
 ## Expected OpenClaw behavior
 
-OpenClaw should parse Telegram text that starts with `/ppo`, then pass either the remaining arguments or the full text payload to the local wrapper.
+OpenClaw should parse Telegram text that starts with `/ppo`, then pass the raw arguments to `ppo_local` without a model turn.
 
 Expected flow:
 
 ```text
-Telegram message -> OpenClaw /ppo skill -> {baseDir}/../../../local-operator/ppo-command.mjs -> local simulator output
+Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local simulator output
 ```
 
 ## Unsupported commands
@@ -104,11 +107,11 @@ Unsupported PPO commands should return a safe help response and exit non-zero in
 Example:
 
 ```bash
-node "{baseDir}/../../../local-operator/ppo-command.mjs" unknown
+node local-operator/ppo-command.mjs unknown
 ```
 
 Bare built-in commands should not be routed through this wrapper:
 
 ```bash
-node "{baseDir}/../../../local-operator/ppo-command.mjs" /status
+node local-operator/ppo-command.mjs /status
 ```
