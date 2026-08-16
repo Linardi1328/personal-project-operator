@@ -78,6 +78,8 @@ Do not override OpenClaw built-ins:
 /help
 ```
 
+The OpenClaw skill uses `{baseDir}/../../../local-operator/ppo-command.mjs` so it does not depend on OpenClaw's current working directory. For the manual owner test, load the repo skill tree in place from `<ppo-repo>/openclaw/skills`; see [openclaw/skills/ppo/install-local.md](skills/ppo/install-local.md).
+
 ## What should not be connected yet
 
 - live GitHub API access

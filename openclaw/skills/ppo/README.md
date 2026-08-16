@@ -28,6 +28,18 @@ node local-operator/ppo-command.mjs menu system
 node local-operator/ppo-command.mjs help
 ```
 
+From inside the installed OpenClaw skill instructions, use the skill-relative wrapper path:
+
+```bash
+node "{baseDir}/../../../local-operator/ppo-command.mjs" status
+node "{baseDir}/../../../local-operator/ppo-command.mjs" menu
+node "{baseDir}/../../../local-operator/ppo-command.mjs" help
+```
+
+`{baseDir}` must resolve to this `openclaw/skills/ppo` directory in the PPO repository. For Phase 1.5, load the local skill in place by adding the absolute repo path `<ppo-repo>/openclaw/skills` to OpenClaw `skills.load.extraDirs` manually. Do not depend on OpenClaw's current working directory.
+
+Do not use a copied local skill install for the owner Telegram test unless the copied skill has another explicit, reviewed absolute path back to this repo. The existing wrapper lives outside the skill directory and should remain the single local routing entrypoint.
+
 ## Relationship to the simulator
 
 `local-operator/ppo-command.mjs` is a namespace wrapper over `local-operator/simulate-command.mjs`.
@@ -41,11 +53,12 @@ This scaffold does not:
 - install OpenClaw
 - install dependencies
 - modify `~/.openclaw`
+- modify OpenClaw config
 - call Telegram APIs
 - call GitHub APIs
 - handle bot tokens
+- require API keys, bot tokens, passwords, or other PPO secrets
 - deploy to VPS
 - add write actions
 
 Use it as the local routing contract for OpenClaw.
-
