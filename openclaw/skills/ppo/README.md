@@ -42,7 +42,7 @@ The `ppo_local` tool is registered by the repo-local plugin at:
 openclaw/plugins/ppo-local
 ```
 
-For Phase 1.5, manually load the local skill in place by adding the absolute repo path `<ppo-repo>/openclaw/skills` to OpenClaw `skills.load.extraDirs`, and manually link the local plugin with `openclaw plugins install -l <ppo-repo>/openclaw/plugins/ppo-local --force`.
+For Phase 1.5, manually load the local skill in place by adding the absolute repo path `<ppo-repo>/openclaw/skills` to OpenClaw `skills.load.extraDirs`, and manually link the local plugin with `openclaw plugins install -l <ppo-repo>/openclaw/plugins/ppo-local`.
 
 Do not depend on OpenClaw's current working directory. Do not use a copied plugin install for the owner Telegram test, because the plugin resolves the existing wrapper through its linked repo path.
 

@@ -68,7 +68,7 @@ If the config already has `skills.load.extraDirs`, append the PPO path instead o
 Link the plugin in place so its fixed repo-relative wrapper path remains valid:
 
 ```bash
-openclaw plugins install -l /Users/richie/personal-project-operator/openclaw/plugins/ppo-local --force
+openclaw plugins install -l /Users/richie/personal-project-operator/openclaw/plugins/ppo-local
 openclaw plugins enable ppo-local
 ```
 
