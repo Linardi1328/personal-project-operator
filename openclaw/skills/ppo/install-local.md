@@ -80,6 +80,56 @@ Do not use a copied plugin install for the Phase 1.5 Telegram owner test. The pl
 openclaw/plugins/ppo-local -> ../../../local-operator/ppo-command.mjs
 ```
 
+## Tool Policy Preflight
+
+Before Telegram testing, inspect the effective tool policy:
+
+```bash
+openclaw config get tools --json
+```
+
+If the output uses the tested restrictive profile:
+
+```json
+{
+  "profile": "coding"
+}
+```
+
+then `ppo_local` can be registered by the plugin but still excluded from the effective tool set. In Telegram this appears as:
+
+```text
+Tool not available: ppo_local
+```
+
+Grant only the PPO bridge tool. First dry-run the narrow permission:
+
+```bash
+openclaw config set tools.alsoAllow '["ppo_local"]' --strict-json --dry-run
+```
+
+Then apply it:
+
+```bash
+openclaw config set tools.alsoAllow '["ppo_local"]' --strict-json
+```
+
+Do not broaden the profile, use wildcard permissions, or expose all plugin tools for this setup. PPO needs only `ppo_local`.
+
+If `openclaw config get tools --json` already shows custom tool-policy settings, preserve them. Do not overwrite unrelated `tools.alsoAllow` entries. Instead, add `ppo_local` to the existing array and keep the other entries, for example:
+
+```bash
+openclaw config set tools.alsoAllow '["existing_tool","ppo_local"]' --strict-json --dry-run
+openclaw config set tools.alsoAllow '["existing_tool","ppo_local"]' --strict-json
+```
+
+Validate and restart after changing tool policy:
+
+```bash
+openclaw config validate
+openclaw gateway restart
+```
+
 ## Skill Direct Dispatch
 
 The `ppo` skill frontmatter must include:
@@ -114,7 +164,7 @@ If the skill is not visible after editing config, start a new chat session or re
 
 ## Validate OpenClaw Setup
 
-Run these after the manual config/plugin steps:
+Run these after the manual config/plugin/tool-policy steps:
 
 ```bash
 openclaw config validate
@@ -128,12 +178,48 @@ Expected visibility:
 
 - `ppo-local` is enabled.
 - runtime inspection shows tool `ppo_local`.
+- `tools.alsoAllow` includes `ppo_local` when the selected profile does not expose it by default.
 - `ppo` is listed as an available skill/command.
 - `ppo` uses `command-dispatch: tool`.
 - `/ppo` is the Personal Project Operator entrypoint.
 - OpenClaw built-ins `/status`, `/menu`, and `/help` are still OpenClaw-owned.
 
+Verification order:
+
+1. Confirm runtime registration:
+
+   ```bash
+   openclaw plugins inspect ppo-local --runtime --json
+   ```
+
+   The runtime output must show `ppo_local`.
+
+2. Confirm effective tool policy:
+
+   ```bash
+   openclaw config get tools --json
+   ```
+
+   If `tools.profile` is `coding`, confirm `tools.alsoAllow` includes `ppo_local`.
+
+3. Inspect Telegram/OpenClaw tool behavior by sending:
+
+   ```text
+   /ppo status
+   ```
+
+   A successful result begins with:
+
+   ```text
+   Project Status
+   ```
+
 If these commands require changing the owner's OpenClaw installation or config first, stop and perform only the local terminal verification below.
+
+Troubleshooting distinction:
+
+- If `openclaw plugins inspect ppo-local --runtime --json` does not show `ppo_local`, the plugin is not loaded or the tool is not registered.
+- If runtime inspection shows `ppo_local` but Telegram returns `Tool not available: ppo_local`, the bridge is registered and the remaining problem is effective tool-policy configuration. Add the narrow `tools.alsoAllow` entry above.
 
 ## Verify Local Routing Before Telegram
 
@@ -204,9 +290,29 @@ Then manually remove this entry from `skills.load.extraDirs`:
 /Users/richie/personal-project-operator/openclaw/skills
 ```
 
+Remove only the PPO-specific tool permission. First inspect current tool policy:
+
+```bash
+openclaw config get tools --json
+```
+
+If `tools.alsoAllow` contains only `ppo_local`, remove that key:
+
+```bash
+openclaw config unset tools.alsoAllow
+```
+
+If `tools.alsoAllow` contains other entries, preserve them and remove only `ppo_local`, for example:
+
+```bash
+openclaw config set tools.alsoAllow '["existing_tool"]' --strict-json --dry-run
+openclaw config set tools.alsoAllow '["existing_tool"]' --strict-json
+```
+
 Restart the Gateway if needed:
 
 ```bash
+openclaw config validate
 openclaw gateway restart
 ```
 
@@ -214,7 +320,7 @@ The uninstall command removes OpenClaw's linked plugin registration. It must not
 
 ## Telegram Owner Test Messages
 
-Send these from Telegram only after OpenClaw shows `ppo-local` and `ppo` as visible:
+Send these from Telegram only after OpenClaw shows `ppo-local` and `ppo` as visible, runtime inspection shows `ppo_local`, and effective tool policy allows `ppo_local`:
 
 ```text
 /ppo status

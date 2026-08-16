@@ -78,7 +78,7 @@ Do not override OpenClaw built-ins:
 /help
 ```
 
-The OpenClaw skill uses `command-dispatch: tool` and `command-tool: ppo_local` so `/ppo` bypasses model interpretation. For the manual owner test, load the repo skill tree from `<ppo-repo>/openclaw/skills` and link the local plugin from `<ppo-repo>/openclaw/plugins/ppo-local`; see [openclaw/skills/ppo/install-local.md](skills/ppo/install-local.md).
+The OpenClaw skill uses `command-dispatch: tool` and `command-tool: ppo_local` so `/ppo` bypasses model interpretation. For the manual owner test, load the repo skill tree from `<ppo-repo>/openclaw/skills`, link the local plugin from `<ppo-repo>/openclaw/plugins/ppo-local`, and allow only `ppo_local` if the active OpenClaw tool profile excludes it; see [openclaw/skills/ppo/install-local.md](skills/ppo/install-local.md).
 
 ## What should not be connected yet
 
