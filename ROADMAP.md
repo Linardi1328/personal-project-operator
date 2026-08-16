@@ -12,13 +12,19 @@
 
 Phase 0 is documentation-only. It must not perform live API calls, bot registration, deployment, usage scraping, or write actions.
 
-## Phase 1 - Local OpenClaw Test
+## Phase 1 - Local OpenClaw Test Foundation
 
-- Install OpenClaw locally.
-- Connect one chat platform.
-- Test `/status`, `/menu`, and `/help`.
-- Keep GitHub access read-only or disconnected.
+- Add a local command simulator.
+- Add local project state fixtures.
+- Add local command catalog fixtures.
+- Test `/status`, `/menu`, and `/help` output from the command line.
+- Prepare Telegram local test notes without registering Telegram commands.
+- Keep GitHub disconnected.
 - Confirm phone-friendly output formatting.
+
+Phase 1 does not install OpenClaw in this repo. OpenClaw should be installed separately on the user's MacBook when local chat routing is tested.
+
+Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS services, or any write-enabled integration.
 
 ## Phase 2 - GitHub Read-Only Integration
 
@@ -55,4 +61,3 @@ Only after explicit approval:
 - Never auto-merge or deploy.
 
 Phase 5 write actions must be individually reviewed, permissioned, and auditable.
-

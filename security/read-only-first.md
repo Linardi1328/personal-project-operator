@@ -26,6 +26,24 @@ Not allowed:
 - production deployment
 - trading execution
 
+## Phase 1
+
+Allowed:
+
+- local command simulation for `/status`, `/menu`, and `/help`
+- local JSON fixtures
+- phone-style mock output examples
+- OpenClaw routing preparation docs
+
+Not allowed:
+
+- live GitHub calls
+- Telegram API calls or command registration
+- Codex usage scraping
+- VPS deployment
+- credential storage
+- write actions
+
 ## Future read-only integrations
 
 Future safe integrations may read:
@@ -57,4 +75,3 @@ When a command asks for something blocked, the operator should explain:
 - why it is blocked
 - what safe alternative is available
 - what approval or future phase would be required
-

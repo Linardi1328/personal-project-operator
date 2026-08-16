@@ -19,6 +19,19 @@ The operator must inspect, summarize, plan, and generate prompts before it is al
 - Register live Telegram commands.
 - Scrape Codex usage.
 
+## Phase 1 local simulator boundary
+
+Phase 1 may run the local Node.js simulator for `/status`, `/menu`, and `/help`.
+
+The simulator must use local fixture files only and must not:
+
+- call GitHub APIs
+- call Telegram APIs
+- scrape Codex usage
+- deploy to VPS
+- store secrets
+- write to external systems
+
 ## Approval rules for future phases
 
 Future write actions require:
@@ -41,4 +54,3 @@ The operator may draft messages in future phases. It must not send customer, sta
 ## Paid API boundary
 
 Any paid API call must require explicit approval unless a future budget and allowlist are documented.
-

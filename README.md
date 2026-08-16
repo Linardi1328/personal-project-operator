@@ -75,6 +75,28 @@ The command interface is designed for short chat commands such as:
 
 Outputs should be compact enough to read on a phone but complete enough to support a decision.
 
+## Phase 1 Local Simulator
+
+Phase 1 adds a local-only command simulator for testing phone-style outputs before OpenClaw is connected.
+
+Run from the repo root:
+
+```bash
+node local-operator/simulate-command.mjs /status
+node local-operator/simulate-command.mjs /menu
+node local-operator/simulate-command.mjs /menu project
+node local-operator/simulate-command.mjs /menu codex
+node local-operator/simulate-command.mjs /menu system
+node local-operator/simulate-command.mjs /help
+```
+
+The simulator uses local fixture files only:
+
+- [local-operator/project-state.json](local-operator/project-state.json)
+- [local-operator/commands.json](local-operator/commands.json)
+
+No npm install is required, and OpenClaw is not installed as a repo dependency. OpenClaw should be installed separately on the local MacBook when chat routing is tested.
+
 ## Supported Projects
 
 Current connected candidates:
@@ -131,11 +153,11 @@ The user can manually update status with examples like:
 
 The operator should use that status to recommend whether a task should be small, medium, delayed, or split.
 
-## Phase 0 Limitation
+## Current Implementation Boundary
 
-Phase 0 is documentation only.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`.
 
-It does not implement:
+The project still does not implement:
 
 - live GitHub API calls
 - live OpenClaw bot actions
@@ -146,4 +168,3 @@ It does not implement:
 - production deployment
 - trading execution
 - credential storage
-

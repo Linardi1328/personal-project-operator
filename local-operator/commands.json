@@ -1,0 +1,168 @@
+{
+  "schema": "personal-project-operator.local-commands.v1",
+  "phase": "Phase 1 - Local OpenClaw Test foundation",
+  "categories": [
+    {
+      "id": "project",
+      "label": "Project Control",
+      "aliases": ["project", "projects", "control"],
+      "commands": [
+        {
+          "command": "/status",
+          "arguments": "",
+          "description": "Show all active projects and next actions.",
+          "phase1Simulator": true,
+          "safety": "Local mock read-only output."
+        },
+        {
+          "command": "/next",
+          "arguments": "",
+          "description": "Recommend next project priority.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1."
+        },
+        {
+          "command": "/repo",
+          "arguments": "<project>",
+          "description": "Summarize a project repository.",
+          "phase1Simulator": false,
+          "safety": "Future read-only GitHub data; no live calls in Phase 1."
+        },
+        {
+          "command": "/pr",
+          "arguments": "<project>",
+          "description": "Summarize latest project PR state.",
+          "phase1Simulator": false,
+          "safety": "Future read-only GitHub data; no live calls in Phase 1."
+        },
+        {
+          "command": "/handoff",
+          "arguments": "<project>",
+          "description": "Create compact handoff for ChatGPT or Codex.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1."
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "label": "Codex Workflow",
+      "aliases": ["codex", "prompt", "prompts"],
+      "commands": [
+        {
+          "command": "/codex",
+          "arguments": "<project> <phase-or-task>",
+          "description": "Generate compact Codex prompt.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1; does not run Codex."
+        },
+        {
+          "command": "/codex-budget",
+          "arguments": "<project> <task>",
+          "description": "Estimate Codex task size.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1."
+        },
+        {
+          "command": "/prompt-size",
+          "arguments": "<draft>",
+          "description": "Review and compress long Codex prompts.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1."
+        },
+        {
+          "command": "/split-task",
+          "arguments": "<task>",
+          "description": "Split large tasks into smaller phases.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1."
+        }
+      ]
+    },
+    {
+      "id": "usage",
+      "label": "Usage & Limits",
+      "aliases": ["usage", "limits", "budget"],
+      "commands": [
+        {
+          "command": "/codex-usage",
+          "arguments": "",
+          "description": "Show manually tracked Codex usage status.",
+          "phase1Simulator": false,
+          "safety": "Manual-first; no scraping in Phase 1."
+        },
+        {
+          "command": "/update-usage",
+          "arguments": "<provider> <status>",
+          "description": "Manually update usage status.",
+          "phase1Simulator": false,
+          "safety": "Write behavior disabled in Phase 1."
+        }
+      ]
+    },
+    {
+      "id": "system",
+      "label": "System & Safety",
+      "aliases": ["system", "safety", "safe"],
+      "commands": [
+        {
+          "command": "/vps-health",
+          "arguments": "",
+          "description": "Check future VPS health.",
+          "phase1Simulator": false,
+          "safety": "No live VPS checks in Phase 1."
+        },
+        {
+          "command": "/safe-mode",
+          "arguments": "",
+          "description": "Show safety boundaries.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1."
+        },
+        {
+          "command": "/menu",
+          "arguments": "[category]",
+          "description": "Show command menu.",
+          "phase1Simulator": true,
+          "safety": "Local mock read-only output."
+        },
+        {
+          "command": "/help",
+          "arguments": "",
+          "description": "Explain phone usage.",
+          "phase1Simulator": true,
+          "safety": "Local mock read-only output."
+        }
+      ]
+    },
+    {
+      "id": "expansion",
+      "label": "Expansion",
+      "aliases": ["expansion", "content", "backlog"],
+      "commands": [
+        {
+          "command": "/content",
+          "arguments": "<project>",
+          "description": "Turn project progress into content ideas.",
+          "phase1Simulator": false,
+          "safety": "Draft only; no auto-posting."
+        },
+        {
+          "command": "/feature-request",
+          "arguments": "<idea>",
+          "description": "Format a future feature idea.",
+          "phase1Simulator": false,
+          "safety": "No issue creation in Phase 1."
+        },
+        {
+          "command": "/backlog",
+          "arguments": "",
+          "description": "List planned future features.",
+          "phase1Simulator": false,
+          "safety": "Documented only in Phase 1."
+        }
+      ]
+    }
+  ]
+}
+
