@@ -88,7 +88,7 @@ Before Telegram testing, inspect the effective tool policy:
 openclaw config get tools --json
 ```
 
-If the output uses the tested restrictive profile:
+If the output uses the tested restrictive profile and does not already define `tools.allow`:
 
 ```json
 {
@@ -102,7 +102,7 @@ then `ppo_local` can be registered by the plugin but still excluded from the eff
 Tool not available: ppo_local
 ```
 
-Grant only the PPO bridge tool. First dry-run the narrow permission:
+Grant only the PPO bridge tool through `tools.alsoAllow`. First dry-run the narrow permission:
 
 ```bash
 openclaw config set tools.alsoAllow '["ppo_local"]' --strict-json --dry-run
@@ -114,14 +114,21 @@ Then apply it:
 openclaw config set tools.alsoAllow '["ppo_local"]' --strict-json
 ```
 
-Do not broaden the profile, use wildcard permissions, or expose all plugin tools for this setup. PPO needs only `ppo_local`.
-
-If `openclaw config get tools --json` already shows custom tool-policy settings, preserve them. Do not overwrite unrelated `tools.alsoAllow` entries. Instead, add `ppo_local` to the existing array and keep the other entries, for example:
+If `tools.alsoAllow` already exists, preserve every existing entry and add only `ppo_local`, for example:
 
 ```bash
 openclaw config set tools.alsoAllow '["existing_tool","ppo_local"]' --strict-json --dry-run
 openclaw config set tools.alsoAllow '["existing_tool","ppo_local"]' --strict-json
 ```
+
+If `tools.allow` already exists, do not create `tools.alsoAllow`. OpenClaw rejects configs where `allow` and `alsoAllow` coexist at the same policy scope. Preserve every existing `tools.allow` entry and add only `ppo_local` to that array, for example:
+
+```bash
+openclaw config set tools.allow '["existing_allowed_tool","ppo_local"]' --strict-json --dry-run
+openclaw config set tools.allow '["existing_allowed_tool","ppo_local"]' --strict-json
+```
+
+Do not broaden the profile, use wildcard permissions such as `*`, use `group:plugins`, or expose all plugin tools for this setup. PPO needs only `ppo_local`. Do not overwrite unrelated operator policy.
 
 Validate and restart after changing tool policy:
 
@@ -178,7 +185,7 @@ Expected visibility:
 
 - `ppo-local` is enabled.
 - runtime inspection shows tool `ppo_local`.
-- `tools.alsoAllow` includes `ppo_local` when the selected profile does not expose it by default.
+- either `tools.alsoAllow` or `tools.allow` includes `ppo_local` when the selected profile does not expose it by default.
 - `ppo` is listed as an available skill/command.
 - `ppo` uses `command-dispatch: tool`.
 - `/ppo` is the Personal Project Operator entrypoint.
@@ -194,15 +201,23 @@ Verification order:
 
    The runtime output must show `ppo_local`.
 
-2. Confirm effective tool policy:
+2. Confirm configured top-level tool policy:
 
    ```bash
    openclaw config get tools --json
    ```
 
-   If `tools.profile` is `coding`, confirm `tools.alsoAllow` includes `ppo_local`.
+   If `tools.profile` is `coding`, confirm `ppo_local` is allowed through exactly one policy array: either `tools.alsoAllow` or `tools.allow`. `tools.allow` and `tools.alsoAllow` must not coexist at the same scope.
 
-3. Inspect Telegram/OpenClaw tool behavior by sending:
+3. Confirm the live Telegram session sees the tool:
+
+   ```text
+   /tools compact
+   ```
+
+   The compact tool list must include `ppo_local`. This proves the tool is available to that live Telegram session, not just registered by the plugin.
+
+4. Prove deterministic dispatch and fixture output by sending:
 
    ```text
    /ppo status
@@ -219,7 +234,7 @@ If these commands require changing the owner's OpenClaw installation or config f
 Troubleshooting distinction:
 
 - If `openclaw plugins inspect ppo-local --runtime --json` does not show `ppo_local`, the plugin is not loaded or the tool is not registered.
-- If runtime inspection shows `ppo_local` but Telegram returns `Tool not available: ppo_local`, the bridge is registered and the remaining problem is effective tool-policy configuration. Add the narrow `tools.alsoAllow` entry above.
+- If runtime inspection shows `ppo_local` but Telegram `/tools compact` does not show it or `/ppo status` returns `Tool not available: ppo_local`, the bridge is registered and the remaining problem is effective policy. Inspect additional effective-policy layers such as agent, provider, sandbox, or sender policy. Do not widen permissions blindly.
 
 ## Verify Local Routing Before Telegram
 
@@ -290,7 +305,7 @@ Then manually remove this entry from `skills.load.extraDirs`:
 /Users/richie/personal-project-operator/openclaw/skills
 ```
 
-Remove only the PPO-specific tool permission. First inspect current tool policy:
+Remove only the PPO-specific tool permission from whichever policy array actually contains it. First inspect current tool policy:
 
 ```bash
 openclaw config get tools --json
@@ -309,6 +324,21 @@ openclaw config set tools.alsoAllow '["existing_tool"]' --strict-json --dry-run
 openclaw config set tools.alsoAllow '["existing_tool"]' --strict-json
 ```
 
+If `tools.allow` contains `ppo_local`, do not add or remove `tools.alsoAllow`. Preserve unrelated `tools.allow` entries and remove only `ppo_local`, for example:
+
+```bash
+openclaw config set tools.allow '["existing_allowed_tool"]' --strict-json --dry-run
+openclaw config set tools.allow '["existing_allowed_tool"]' --strict-json
+```
+
+If `tools.allow` contains only `ppo_local` and the owner wants to remove that explicit allow policy, remove that key only after confirming no unrelated tool policy depends on it:
+
+```bash
+openclaw config unset tools.allow
+```
+
+Unset a policy array/key only when `ppo_local` was its sole entry and removing that empty key is appropriate for the owner's broader OpenClaw policy.
+
 Restart the Gateway if needed:
 
 ```bash
@@ -320,7 +350,7 @@ The uninstall command removes OpenClaw's linked plugin registration. It must not
 
 ## Telegram Owner Test Messages
 
-Send these from Telegram only after OpenClaw shows `ppo-local` and `ppo` as visible, runtime inspection shows `ppo_local`, and effective tool policy allows `ppo_local`:
+Send these from Telegram only after OpenClaw shows `ppo-local` and `ppo` as visible, runtime inspection shows `ppo_local`, `/tools compact` lists `ppo_local`, and effective tool policy allows `ppo_local`:
 
 ```text
 /ppo status
