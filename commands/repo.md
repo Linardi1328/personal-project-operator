@@ -2,7 +2,7 @@
 
 ## Command name
 
-`/repo <project>`
+`/ppo repo <project>`
 
 ## Purpose
 
@@ -11,44 +11,49 @@ Summarize a project repository.
 ## Input format
 
 ```text
-/repo <project>
+/ppo repo <project>
 ```
 
 ## Example input
 
 ```text
-/repo khlim-assist
+/ppo repo khlim-assist
 ```
 
 ## Expected output
 
-Phase 0 documents the format only. Future read-only output should include:
+Phase 2B implements a compact GitHub read-only subset:
 
+- source marker
+- repository full name
 - default branch
-- latest commit
-- active branch if known
-- README summary
+- visibility
+- description when available
 - last updated time
-- important files
+- pushed time
+- recent commits, bounded by the Phase 2A read-only client
 
 Example:
 
 ```text
 Repo Summary: KHLIM Assist
-- Repo: Linardi1328/khlim-assist
-- Default branch: future read-only GitHub data
-- Latest commit: future read-only GitHub data
-- README summary: future generated summary
-- Important files: future detected list
+Source: GitHub read-only
+Repo: Linardi1328/khlim-assist
+Default branch: main
+Visibility: private
+Description: Admin workflow assistant
+Updated: 2026-08-16T10:00:00Z
+Pushed: 2026-08-16T11:00:00Z
+Recent commits:
+- abc1234 Add reporting view (Richie, 2026-08-16T12:00:00Z)
 ```
 
 ## Safety boundary
 
-Read-only only. This command must never push, pull with mutation, create branches, edit files, or trigger CI.
+Read-only only. This command must never push, pull with mutation, create branches, edit files, or trigger CI. Phase 2B uses only the approved Phase 2A repo metadata and commits endpoint families.
 
 ## Future upgrade path
 
-- Add GitHub API read-only metadata.
 - Summarize README and repo structure.
 - Detect important project files such as config, tests, migrations, and app entrypoints.
-
+- Add branches, languages, releases, or workflow details only after separate approval.
