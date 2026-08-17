@@ -127,6 +127,45 @@ OpenClaw owns `/status`, `/menu`, and `/help`. Personal Project Operator should 
 
 For the manual OpenClaw owner test, load the local skill from [openclaw/skills/ppo](openclaw/skills/ppo), link the local plugin from [openclaw/plugins/ppo-local](openclaw/plugins/ppo-local), and allow only `ppo_local` in the effective OpenClaw tool policy if the active profile excludes it. The skill uses direct tool dispatch to `ppo_local`, which invokes the existing wrapper without a model turn. See [openclaw/skills/ppo/install-local.md](openclaw/skills/ppo/install-local.md).
 
+## Phase 2A GitHub Read-Only Local Foundation
+
+Phase 2A adds a local GitHub read-only data layer under [local-operator](local-operator). It uses the locally installed GitHub CLI as the transport and executes `gh api` with `--method GET` only.
+
+Phase 2A terminal validation:
+
+```bash
+node local-operator/github-readonly-cli.mjs repo khlim-assist
+node local-operator/github-readonly-cli.mjs commits khlim-assist
+node local-operator/github-readonly-cli.mjs prs khlim-assist
+node local-operator/github-readonly-cli.mjs issues khlim-assist
+node local-operator/github-readonly-cli.mjs snapshot khlim-assist
+```
+
+Local prerequisites:
+
+```bash
+gh --version
+gh auth status
+```
+
+Authenticate with `gh auth login` outside the repository if needed. Do not paste GitHub tokens into this repository, Markdown, tests, fixtures, logs, or chat.
+
+Allowed Phase 2A projects are fixed in the local read-only registry:
+
+- `khlim-assist` -> `Linardi1328/khlim-assist`
+- `ledgerpilot-ai` -> `Linardi1328/ledgerpilot-ai`
+- `spy-market-agent` -> `Linardi1328/spy-market-agent`
+- `portfolio` -> `Linardi1328/richie-linardi-portfolio-website`
+
+Allowed GitHub endpoint families:
+
+- `GET /repos/{owner}/{repo}`
+- `GET /repos/{owner}/{repo}/commits`
+- `GET /repos/{owner}/{repo}/pulls`
+- `GET /repos/{owner}/{repo}/issues`
+
+The CLI returns normalized, compact terminal output only. Phase 2A does not add `/ppo repo`, `/ppo pr`, or any other GitHub command to Telegram/OpenClaw routing. GitHub write actions remain disabled.
+
 ## Supported Projects
 
 Current connected candidates:
@@ -185,11 +224,11 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization.
 
 The project still does not implement:
 
-- live GitHub API calls
+- Telegram-routed GitHub commands
 - live OpenClaw bot actions
 - Telegram API registration
 - VPS deployment
