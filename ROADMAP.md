@@ -49,6 +49,15 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Keep Phase 2A terminal-only; do not expose `/ppo repo` or `/ppo pr` through Telegram yet.
 - Keep all GitHub write actions disabled.
 
+### Phase 2B - Telegram GitHub read-only routing
+
+- Route `/ppo repo <project>` through `ppo_local` to the Phase 2A read-only client.
+- Route `/ppo pr <project>` through `ppo_local` to the Phase 2A read-only client.
+- Keep `/ppo status` fixture-backed.
+- Keep OpenClaw dispatch deterministic and tool-based, without a model turn.
+- Do not add new GitHub endpoint families, GraphQL, or write actions.
+- Do not add README/tree/CI/changed-file/review enrichment yet.
+
 ### Later Phase 2 work
 
 - Fetch repo metadata.
@@ -56,6 +65,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Fetch open PRs.
 - Fetch issues.
 - Summarize project state.
+- Add richer read-only repo/PR detail only after separate approval.
 - Keep all GitHub write actions disabled.
 
 ## Phase 3 - Codex Prompt Generator

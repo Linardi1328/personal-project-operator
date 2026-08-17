@@ -40,7 +40,16 @@ node local-operator/github-readonly-cli.mjs issues khlim-assist
 node local-operator/github-readonly-cli.mjs snapshot khlim-assist
 ```
 
-Phase 2A is terminal-only. Do not add these commands to the OpenClaw/Telegram `/ppo` allowlist until Phase 2B is approved.
+Phase 2A is terminal-only.
+
+Phase 2B OpenClaw Telegram routing adds:
+
+```bash
+node local-operator/ppo-command.mjs repo khlim-assist
+node local-operator/ppo-command.mjs pr khlim-assist
+```
+
+OpenClaw/Telegram can route `/ppo repo <project>` and `/ppo pr <project>` through the existing `ppo_local` direct tool path after owner review of the Phase 2B branch. `/ppo status` remains local fixture-backed.
 
 ## Files
 
@@ -51,7 +60,9 @@ Phase 2A is terminal-only. Do not add these commands to the OpenClaw/Telegram `/
 - `github-project-registry.mjs`: narrow Phase 2A GitHub repo allowlist.
 - `github-readonly.mjs`: dependency-free GitHub read-only client using local `gh api --method GET`.
 - `github-readonly-cli.mjs`: terminal-only Phase 2A validation CLI.
+- `github-ppo-commands.mjs`: Phase 2B phone-friendly `/ppo repo` and `/ppo pr` formatter.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
+- `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 
 ## Requirements
 
@@ -106,6 +117,23 @@ Phase 2A failure modes:
 - `GITHUB_REPO_UNAVAILABLE`: the project is allowlisted, but the repo is unavailable or permission is denied.
 - `GITHUB_API_FAILED`: the GitHub API call failed after the local `gh` and project checks passed.
 - `MALFORMED_GITHUB_RESPONSE`: `gh` returned non-JSON or an unexpected response shape.
+
+Phase 2B uses the same read-only client for `/ppo repo <project>` and `/ppo pr <project>`. It does not add README, contents/tree, language, workflow, branch, collaborator, release, changed-file, CI/check, review, comment, diff, recommendation, GraphQL, or write endpoints.
+
+Owner test plan after branch review:
+
+```bash
+node local-operator/ppo-command.mjs repo khlim-assist
+node local-operator/ppo-command.mjs pr khlim-assist
+```
+
+Then through OpenClaw/Telegram after review:
+
+```text
+/ppo repo khlim-assist
+/ppo pr khlim-assist
+/ppo status
+```
 
 ## OpenClaw handoff shape
 

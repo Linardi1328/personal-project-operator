@@ -1,6 +1,6 @@
 ---
 name: ppo
-description: Route Personal Project Operator commands to the local read-only simulator.
+description: Route Personal Project Operator commands to the local read-only wrapper.
 user-invocable: true
 command-dispatch: tool
 command-tool: ppo_local
@@ -11,9 +11,9 @@ command-arg-mode: raw
 
 ## Purpose
 
-Route OpenClaw Telegram messages in the custom `/ppo` namespace to the local Personal Project Operator simulator.
+Route OpenClaw Telegram messages in the custom `/ppo` namespace to the local Personal Project Operator wrapper.
 
-This skill scaffold is for Phase 1.5 local routing preparation only. It documents the intended command behavior and local wrapper entrypoint. It does not install dependencies, register Telegram commands, edit OpenClaw configuration, or call external APIs.
+This skill scaffold documents deterministic direct tool routing. It does not install dependencies, register Telegram commands, edit OpenClaw configuration, or add OpenClaw tool permissions.
 
 ## Namespace
 
@@ -23,6 +23,8 @@ Personal Project Operator must use:
 
 ```text
 /ppo status
+/ppo repo <project>
+/ppo pr <project>
 /ppo menu
 /ppo help
 /ppo menu project
@@ -38,7 +40,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the Phase 1.5 command surface, and invokes the existing wrapper with a fixed argv array.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 2B, `ppo_local` accepts exactly `/ppo repo <project>` and `/ppo pr <project>` for the four approved GitHub read-only project ids.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -46,7 +48,7 @@ The plugin tool resolves the wrapper from the linked local plugin path:
 openclaw/plugins/ppo-local -> ../../../local-operator/ppo-command.mjs
 ```
 
-For Phase 1.5, manually load:
+For local owner testing, manually load:
 
 - the local skill from `<ppo-repo>/openclaw/skills`
 - the local plugin from `<ppo-repo>/openclaw/plugins/ppo-local`
@@ -61,13 +63,17 @@ node local-operator/ppo-command.mjs "/ppo status"
 node local-operator/ppo-command.mjs menu
 node local-operator/ppo-command.mjs menu project
 node local-operator/ppo-command.mjs help
+node local-operator/ppo-command.mjs repo khlim-assist
+node local-operator/ppo-command.mjs pr khlim-assist
 ```
 
 ## Command mapping
 
-| Telegram/OpenClaw message | Local wrapper command | Underlying simulator command |
+| Telegram/OpenClaw message | Local wrapper command | Underlying behavior |
 |---|---|---|
 | `/ppo status` | `ppo_local` raw `status` | `/status` |
+| `/ppo repo <project>` | `ppo_local` raw `repo <project>` | GitHub read-only repo summary |
+| `/ppo pr <project>` | `ppo_local` raw `pr <project>` | GitHub read-only PR summary |
 | `/ppo menu` | `ppo_local` raw `menu` | `/menu` |
 | `/ppo menu project` | `ppo_local` raw `menu project` | `/menu project` |
 | `/ppo menu codex` | `ppo_local` raw `menu codex` | `/menu codex` |
@@ -76,11 +82,11 @@ node local-operator/ppo-command.mjs help
 
 ## Safety boundaries
 
-The plugin, wrapper, and simulator are local-only and read-only.
+The plugin, wrapper, and simulator are read-only.
 
 They must not:
 
-- call GitHub APIs
+- call GitHub APIs except the approved Phase 2A read-only endpoint families for `/ppo repo` and `/ppo pr`
 - call Telegram APIs
 - handle bot tokens
 - scrape Codex usage
@@ -97,7 +103,7 @@ OpenClaw should parse Telegram text that starts with `/ppo`, then pass the raw a
 Expected flow:
 
 ```text
-Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local simulator output
+Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture or GitHub read-only output
 ```
 
 ## Unsupported commands

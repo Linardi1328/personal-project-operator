@@ -11,14 +11,14 @@ Danger levels:
 - `dangerous`: would mutate external systems and requires strict approval.
 - `disabled`: not available in the current phase.
 
-In Phase 1.5, all write actions remain disabled.
+In Phase 2B, all write actions remain disabled. `/ppo status`, `/ppo menu`, and `/ppo help` remain local fixture-backed; `/ppo repo <project>` and `/ppo pr <project>` use GitHub read-only direct tool routing.
 
 | command | category | description | arguments | enabled_in_phase_0 | requires_auth | write_action | danger_level | notes |
 |---|---|---|---|---|---|---|---|---|
 | `/ppo status` | Project Control | Show all active projects and next actions. | None | Yes, local output | No | No | safe | Uses local fixture state in Phase 1.5. |
 | `/ppo next` | Project Control | Rank which project should receive attention first. | None | Yes, docs only | No | No | safe | Future ranking may use read-only GitHub and usage state. |
-| `/ppo repo` | Project Control | Summarize a project repository. | `<project>` | Yes, expected output only | Future GitHub auth | No | safe | Phase 1.5 does not fetch live repo data. |
-| `/ppo pr` | Project Control | Summarize latest project PR state. | `<project>` | Yes, expected output only | Future GitHub auth | No | safe | Phase 1.5 does not fetch live PR data. |
+| `/ppo repo` | Project Control | Summarize a project repository. | `<project>` | Phase 2B GitHub read-only | Local `gh` auth | No | safe | Uses only repo metadata and bounded recent commits. |
+| `/ppo pr` | Project Control | Summarize latest project PR state. | `<project>` | Phase 2B GitHub read-only | Local `gh` auth | No | safe | Uses only bounded open pull request data. |
 | `/ppo handoff` | Project Control | Create compact handoff for ChatGPT or Codex. | `<project>` | Yes, docs only | No | No | safe | Text output only. |
 | `/ppo codex` | Codex Workflow | Generate compact Codex prompt. | `<project> <phase-or-task>` | Yes, docs only | No | No | safe | Does not run Codex automatically. |
 | `/ppo codex-budget` | Codex Workflow | Estimate expected Codex task size. | `<project> <task>` | Yes, docs only | No | No | safe | Uses heuristic categories. |
@@ -36,7 +36,7 @@ In Phase 1.5, all write actions remain disabled.
 
 ## Disabled write actions
 
-These actions are not available in Phase 1.5:
+These actions are not available in Phase 2B:
 
 - creating GitHub issues
 - commenting on PRs
