@@ -89,10 +89,12 @@ The Phase 2A GitHub read-only client is also read-only:
 
 - it queries only the fixed allowlist of connected-candidate repos
 - it rejects arbitrary owner/repo strings before any GitHub request
+- its `gh` transport rejects endpoints outside Phase 2A repo metadata, commits, pulls, and issues before execution
 - it invokes `gh` through Node `execFile` without a shell
 - it sends only `gh api --method GET` requests
 - it uses small bounded page sizes
 - it normalizes responses into compact objects
+- it sanitizes GitHub-sourced text before values can reach terminal output
 - it filters pull requests out of the GitHub issues endpoint
 - it does not store or log credentials
 - it does not create branches, comments, labels, reviews, approvals, closes, merges, workflow dispatches, commits, or pushes

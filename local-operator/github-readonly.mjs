@@ -9,6 +9,10 @@ export const GITHUB_READONLY_SOURCE = "GitHub read-only"
 export const DEFAULT_ITEM_LIMIT = 5
 export const MAX_ITEM_LIMIT = 10
 
+const ansiTerminalSequences = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_])/gu
+const lineAndTabControls = /[\u0009-\u000D]+/gu
+const unsafeTerminalControls = /[\u0000-\u0008\u000E-\u001F\u007F-\u009F]/gu
+
 export class GitHubReadOnlyError extends Error {
   constructor(code, safeMessage) {
     super(safeMessage)
@@ -89,6 +93,127 @@ function repoEndpoint(project) {
   return `/repos/${project.owner}/${project.repo}`
 }
 
+function rejectGitHubRequest(code, safeMessage) {
+  throw new GitHubReadOnlyError(code, safeMessage)
+}
+
+export function sanitizeGitHubText(value) {
+  if (typeof value !== "string") {
+    return value
+  }
+
+  return value
+    .replace(ansiTerminalSequences, "")
+    .replace(lineAndTabControls, " ")
+    .replace(unsafeTerminalControls, "")
+}
+
+function endpointSuffix(endpoint, project) {
+  const baseEndpoint = repoEndpoint(project)
+
+  if (endpoint === baseEndpoint) {
+    return ""
+  }
+
+  if (!endpoint.startsWith(`${baseEndpoint}/`)) {
+    return null
+  }
+
+  return endpoint.slice(baseEndpoint.length)
+}
+
+function normalizeQueryParams(queryParams = {}) {
+  if (queryParams === null || queryParams === undefined) {
+    return {}
+  }
+
+  if (typeof queryParams !== "object" || Array.isArray(queryParams)) {
+    rejectGitHubRequest(
+      "UNSUPPORTED_ENDPOINT",
+      "GitHub read-only transport accepts only structured query parameters for approved endpoints."
+    )
+  }
+
+  return queryParams
+}
+
+function validatePerPage(value) {
+  const parsedValue = Number(value)
+
+  return Number.isInteger(parsedValue) && parsedValue >= 1 && parsedValue <= MAX_ITEM_LIMIT
+}
+
+function validateEndpointQuery(endpoint, queryParams) {
+  const query = normalizeQueryParams(queryParams)
+  const keys = Object.keys(query)
+
+  if (typeof endpoint !== "string" || !endpoint.startsWith("/")) {
+    rejectGitHubRequest(
+      "UNSUPPORTED_ENDPOINT",
+      "GitHub read-only transport requires an approved GitHub API endpoint path."
+    )
+  }
+
+  if (endpoint.includes("?") || endpoint.includes("#")) {
+    rejectGitHubRequest(
+      "UNSUPPORTED_ENDPOINT",
+      "GitHub read-only transport accepts endpoint paths only; query parameters must be passed separately."
+    )
+  }
+
+  for (const project of listPhase2GitHubProjects()) {
+    const suffix = endpointSuffix(endpoint, project)
+
+    if (suffix === null) {
+      continue
+    }
+
+    if (suffix === "") {
+      if (keys.length === 0) {
+        return
+      }
+
+      rejectGitHubRequest(
+        "UNSUPPORTED_ENDPOINT",
+        `GitHub read-only transport does not allow query parameters for GET ${endpoint}.`
+      )
+    }
+
+    if (suffix === "/commits") {
+      if (keys.every((key) => key === "per_page") && (query.per_page === undefined || validatePerPage(query.per_page))) {
+        return
+      }
+
+      rejectGitHubRequest(
+        "UNSUPPORTED_ENDPOINT",
+        `GitHub read-only transport allows only bounded per_page on GET ${endpoint}.`
+      )
+    }
+
+    if (suffix === "/pulls" || suffix === "/issues") {
+      const allowedKeys = keys.every((key) => key === "state" || key === "per_page")
+      const stateAllowed = query.state === undefined || query.state === "open"
+      const pageAllowed = query.per_page === undefined || validatePerPage(query.per_page)
+
+      if (allowedKeys && stateAllowed && pageAllowed) {
+        return
+      }
+
+      rejectGitHubRequest(
+        "UNSUPPORTED_ENDPOINT",
+        `GitHub read-only transport allows only open state and bounded per_page on GET ${endpoint}.`
+      )
+    }
+
+    break
+  }
+
+  rejectGitHubRequest(
+    "UNSUPPORTED_ENDPOINT",
+    `GitHub read-only transport is limited to Phase 2A repo metadata, commits, pulls, and issues endpoints. Rejected GET ${endpoint}.`
+  )
+}
+
 function appendQueryParams(endpoint, queryParams = {}) {
   const params = new URLSearchParams()
 
@@ -103,6 +228,8 @@ function appendQueryParams(endpoint, queryParams = {}) {
 }
 
 export function buildGhApiGetArgs(endpoint, queryParams = {}) {
+  validateEndpointQuery(endpoint, queryParams)
+
   return ["api", "--method", "GET", appendQueryParams(endpoint, queryParams)]
 }
 
@@ -215,8 +342,38 @@ function ensureArray(payload, endpoint) {
   return payload
 }
 
-function stringOrNull(value) {
-  return typeof value === "string" && value.length > 0 ? value : null
+function ensureObject(payload, endpoint) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new GitHubReadOnlyError(
+      "MALFORMED_GITHUB_RESPONSE",
+      `GitHub CLI returned an unexpected JSON shape for GET ${endpoint}.`
+    )
+  }
+
+  return payload
+}
+
+function ensureRepoIdentity(payload, project, endpoint) {
+  if (payload.full_name === undefined || payload.full_name === null) {
+    return
+  }
+
+  if (typeof payload.full_name !== "string" || payload.full_name !== project.fullName) {
+    throw new GitHubReadOnlyError(
+      "MALFORMED_GITHUB_RESPONSE",
+      `GitHub CLI returned repository identity that does not match ${project.fullName} for GET ${endpoint}.`
+    )
+  }
+}
+
+function sanitizedStringOrNull(value) {
+  if (typeof value !== "string") {
+    return null
+  }
+
+  const sanitizedValue = sanitizeGitHubText(value)
+
+  return sanitizedValue.length > 0 ? sanitizedValue : null
 }
 
 function firstLine(value) {
@@ -224,64 +381,64 @@ function firstLine(value) {
     return ""
   }
 
-  return value.split(/\r?\n/, 1)[0].trim()
+  return sanitizeGitHubText(value.split(/[\r\n]/, 1)[0].trim())
 }
 
 export function normalizeRepoMetadata(payload, project) {
   const privateState = typeof payload?.private === "boolean" ? payload.private : null
 
   return {
-    fullName: stringOrNull(payload?.full_name) || project.fullName,
-    defaultBranch: stringOrNull(payload?.default_branch),
-    visibility: stringOrNull(payload?.visibility) || (privateState === null ? null : privateState ? "private" : "public"),
+    fullName: sanitizedStringOrNull(payload?.full_name) || project.fullName,
+    defaultBranch: sanitizedStringOrNull(payload?.default_branch),
+    visibility: sanitizedStringOrNull(payload?.visibility) || (privateState === null ? null : privateState ? "private" : "public"),
     private: privateState,
-    description: stringOrNull(payload?.description),
-    updatedAt: stringOrNull(payload?.updated_at),
-    pushedAt: stringOrNull(payload?.pushed_at),
-    url: stringOrNull(payload?.html_url)
+    description: sanitizedStringOrNull(payload?.description),
+    updatedAt: sanitizedStringOrNull(payload?.updated_at),
+    pushedAt: sanitizedStringOrNull(payload?.pushed_at),
+    url: sanitizedStringOrNull(payload?.html_url)
   }
 }
 
 export function normalizeCommit(payload) {
-  const sha = stringOrNull(payload?.sha)
-  const authorName = stringOrNull(payload?.commit?.author?.name) || stringOrNull(payload?.author?.login)
+  const sha = sanitizedStringOrNull(payload?.sha)
+  const authorName = sanitizedStringOrNull(payload?.commit?.author?.name) || sanitizedStringOrNull(payload?.author?.login)
 
   return {
     sha,
     shortSha: sha ? sha.slice(0, 7) : null,
     message: firstLine(payload?.commit?.message),
     author: authorName,
-    timestamp: stringOrNull(payload?.commit?.author?.date) || stringOrNull(payload?.commit?.committer?.date),
-    url: stringOrNull(payload?.html_url)
+    timestamp: sanitizedStringOrNull(payload?.commit?.author?.date) || sanitizedStringOrNull(payload?.commit?.committer?.date),
+    url: sanitizedStringOrNull(payload?.html_url)
   }
 }
 
 export function normalizePullRequest(payload) {
   return {
     number: typeof payload?.number === "number" ? payload.number : null,
-    title: stringOrNull(payload?.title),
-    headRef: stringOrNull(payload?.head?.ref),
-    baseRef: stringOrNull(payload?.base?.ref),
+    title: sanitizedStringOrNull(payload?.title),
+    headRef: sanitizedStringOrNull(payload?.head?.ref),
+    baseRef: sanitizedStringOrNull(payload?.base?.ref),
     draft: Boolean(payload?.draft),
-    updatedAt: stringOrNull(payload?.updated_at),
-    url: stringOrNull(payload?.html_url)
+    updatedAt: sanitizedStringOrNull(payload?.updated_at),
+    url: sanitizedStringOrNull(payload?.html_url)
   }
 }
 
 export function normalizeIssue(payload) {
   const labels = Array.isArray(payload?.labels)
     ? payload.labels
-      .map((label) => (typeof label === "string" ? label : stringOrNull(label?.name)))
+      .map((label) => (typeof label === "string" ? sanitizedStringOrNull(label) : sanitizedStringOrNull(label?.name)))
       .filter(Boolean)
     : []
 
   return {
     number: typeof payload?.number === "number" ? payload.number : null,
-    title: stringOrNull(payload?.title),
-    state: stringOrNull(payload?.state),
+    title: sanitizedStringOrNull(payload?.title),
+    state: sanitizedStringOrNull(payload?.state),
     labels,
-    updatedAt: stringOrNull(payload?.updated_at),
-    url: stringOrNull(payload?.html_url)
+    updatedAt: sanitizedStringOrNull(payload?.updated_at),
+    url: sanitizedStringOrNull(payload?.html_url)
   }
 }
 
@@ -295,7 +452,8 @@ export function createGitHubReadOnlyClient({
     async getRepoMetadata(projectId) {
       const project = resolveProject(projectId)
       const endpoint = repoEndpoint(project)
-      const payload = await requestJson(runner, endpoint)
+      const payload = ensureObject(await requestJson(runner, endpoint), endpoint)
+      ensureRepoIdentity(payload, project, endpoint)
 
       return normalizeRepoMetadata(payload, project)
     },

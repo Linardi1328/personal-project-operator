@@ -7,10 +7,12 @@ import {
   createGhApiGetRunner,
   createGitHubReadOnlyClient,
   listAllowedProjects,
-  resolveProject
+  resolveProject,
+  sanitizeGitHubText
 } from "./github-readonly.mjs"
 
 const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio"]
+const unsafeTerminalControlPattern = /[\u0000-\u001F\u007F-\u009F]/u
 
 const repoPayload = {
   full_name: "Linardi1328/khlim-assist",
@@ -114,6 +116,24 @@ async function expectReadOnlyError(fn, expectedCode) {
       return true
     }
   )
+}
+
+function assertNoUnsafeTerminalControls(value, label = "value") {
+  if (typeof value === "string") {
+    assert.equal(unsafeTerminalControlPattern.test(value), false, `${label} has no terminal control characters`)
+    return
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoUnsafeTerminalControls(item, `${label}[${index}]`))
+    return
+  }
+
+  if (value && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      assertNoUnsafeTerminalControls(item, `${label}.${key}`)
+    }
+  }
 }
 
 assert.deepEqual(listAllowedProjects().map((project) => project.id), allowedProjectIds)
@@ -255,6 +275,96 @@ function blockedProjectIds(projectId) {
 }
 
 {
+  const dangerousText = "\u001B[31mDanger\u001B[0m\nSecond\rThird\tTabbed\u0000\u009B31m café 東京"
+  const sanitizedText = sanitizeGitHubText(dangerousText)
+
+  assert.equal(sanitizedText, "Danger Second Third Tabbed café 東京")
+  assertNoUnsafeTerminalControls(sanitizedText, "sanitizedText")
+
+  const client = createGitHubReadOnlyClient({
+    runner: async (request) => {
+      assert.equal(request.method, "GET")
+
+      if (request.endpoint.endsWith("/commits")) {
+        return {
+          stdout: JSON.stringify([
+            {
+              sha: "abcdef1\u001B[31m234567890\u001B[0m",
+              commit: {
+                message: "Commit café 東京\u001B[31m red\u001B[0m\nInjected line",
+                author: {
+                  name: dangerousText,
+                  date: "2026-08-16T12:00:00Z\u0007"
+                }
+              },
+              html_url: "https://github.com/Linardi1328/khlim-assist/commit/abcdef1\u001B[0m"
+            }
+          ])
+        }
+      }
+
+      if (request.endpoint.endsWith("/pulls")) {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 8,
+              title: dangerousText,
+              head: {
+                ref: "feature/read\u001B[31m-state\u001B[0m"
+              },
+              base: {
+                ref: "main\rshadow"
+              },
+              draft: false,
+              updated_at: "2026-08-16T13:00:00Z\u0000",
+              html_url: "https://github.com/Linardi1328/khlim-assist/pull/8\u001B[0m"
+            }
+          ])
+        }
+      }
+
+      if (request.endpoint.endsWith("/issues")) {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 4,
+              title: dangerousText,
+              state: "open\u001B[31m",
+              labels: [{ name: "docs\nnext" }, "phase\t2", "\u001B[31mred\u001B[0m" ],
+              updated_at: "2026-08-16T14:00:00Z\u009B31m",
+              html_url: "https://github.com/Linardi1328/khlim-assist/issues/4\u001B[0m"
+            }
+          ])
+        }
+      }
+
+      return {
+        stdout: JSON.stringify({
+          ...repoPayload,
+          default_branch: "main\rshadow",
+          visibility: "private\u001B[0m",
+          description: dangerousText,
+          updated_at: "2026-08-16T10:00:00Z\u0000",
+          pushed_at: "2026-08-16T11:00:00Z\u0007",
+          html_url: "https://github.com/Linardi1328/khlim-assist\u001B[0m"
+        })
+      }
+    },
+    now: () => new Date("2026-08-17T00:00:00.000Z")
+  })
+  const snapshot = await client.getProjectSnapshot("khlim-assist")
+
+  assertNoUnsafeTerminalControls(snapshot, "snapshot")
+  assert.equal(snapshot.repository.description, "Danger Second Third Tabbed café 東京")
+  assert.equal(snapshot.repository.defaultBranch, "main shadow")
+  assert.equal(snapshot.recentCommits[0].message, "Commit café 東京 red")
+  assert.equal(snapshot.recentCommits[0].author, "Danger Second Third Tabbed café 東京")
+  assert.equal(snapshot.openPullRequests[0].title, "Danger Second Third Tabbed café 東京")
+  assert.equal(snapshot.openPullRequests[0].baseRef, "main shadow")
+  assert.deepEqual(snapshot.openIssues[0].labels, ["docs next", "phase 2", "red"])
+}
+
+{
   const calls = []
   const client = createGitHubReadOnlyClient({ runner: makeFixtureRunner(calls) })
 
@@ -268,6 +378,26 @@ function blockedProjectIds(projectId) {
 {
   const client = createGitHubReadOnlyClient({
     runner: async () => ({ stdout: "{not-json" })
+  })
+
+  await expectReadOnlyError(() => client.getRepoMetadata("khlim-assist"), "MALFORMED_GITHUB_RESPONSE")
+}
+
+for (const malformedRepoPayload of [
+  [],
+  null,
+  "not an object"
+]) {
+  const client = createGitHubReadOnlyClient({
+    runner: async () => ({ stdout: JSON.stringify(malformedRepoPayload) })
+  })
+
+  await expectReadOnlyError(() => client.getRepoMetadata("khlim-assist"), "MALFORMED_GITHUB_RESPONSE")
+}
+
+{
+  const client = createGitHubReadOnlyClient({
+    runner: async () => ({ stdout: JSON.stringify({ ...repoPayload, full_name: "octocat/Hello-World" }) })
   })
 
   await expectReadOnlyError(() => client.getRepoMetadata("khlim-assist"), "MALFORMED_GITHUB_RESPONSE")
@@ -324,6 +454,57 @@ function blockedProjectIds(projectId) {
   })
 
   await expectReadOnlyError(() => client.getRepoMetadata("khlim-assist"), "GITHUB_API_FAILED")
+}
+
+for (const endpoint of [
+  "/user",
+  "/repos/octocat/Hello-World",
+  "/repos/Linardi1328/khlim-assist/hooks",
+  "/repos/Linardi1328/khlim-assist/actions/secrets",
+  "/orgs/Linardi1328"
+]) {
+  const calls = []
+  const runner = createGhApiGetRunner({
+    execFileImpl: (file, args, options, callback) => {
+      calls.push({ file, args, options })
+      callback(null, JSON.stringify({ ok: true }), "")
+    }
+  })
+
+  await expectReadOnlyError(
+    () => runner({ method: "GET", endpoint, queryParams: {} }),
+    "UNSUPPORTED_ENDPOINT"
+  )
+  assert.equal(calls.length, 0, `${endpoint} performs zero gh calls`)
+}
+
+for (const request of [
+  {
+    endpoint: "/repos/Linardi1328/khlim-assist?per_page=1",
+    queryParams: {}
+  },
+  {
+    endpoint: "/repos/Linardi1328/khlim-assist/commits",
+    queryParams: { per_page: 999 }
+  },
+  {
+    endpoint: "/repos/Linardi1328/khlim-assist/pulls",
+    queryParams: { state: "closed", per_page: 5 }
+  }
+]) {
+  const calls = []
+  const runner = createGhApiGetRunner({
+    execFileImpl: (file, args, options, callback) => {
+      calls.push({ file, args, options })
+      callback(null, JSON.stringify({ ok: true }), "")
+    }
+  })
+
+  await expectReadOnlyError(
+    () => runner({ method: "GET", ...request }),
+    "UNSUPPORTED_ENDPOINT"
+  )
+  assert.equal(calls.length, 0, `${request.endpoint} with rejected query performs zero gh calls`)
 }
 
 {
