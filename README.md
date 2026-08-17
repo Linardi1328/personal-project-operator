@@ -194,7 +194,28 @@ Supported projects remain fixed:
 
 Phase 2B does not add README, contents/tree, languages, workflow, branch, collaborator, release, changed-file, CI/check, review, comment, diff, recommendation, GraphQL, or write endpoints.
 
-`/ppo status` remains fixture-backed in Phase 2B and is not a live GitHub status command.
+## Phase 2C Live GitHub Project Status
+
+Phase 2C upgrades `/ppo status` to a live GitHub read-only summary through the same deterministic direct-tool route:
+
+```text
+/ppo status -> ppo_local -> local-operator/ppo-command.mjs -> GitHub status formatter -> Phase 2A client
+```
+
+The command covers exactly the four connected project ids in registry order and reports observable GitHub facts only:
+
+- repository full name
+- default branch
+- latest returned commit
+- bounded open PR count
+- conservative bounded open issue count
+- repository updated timestamp
+
+`/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` are GitHub read-only in Phase 2C. `/ppo menu` and `/ppo help` remain fixture-backed wrapper output with Phase 2C wording adaptation.
+
+Issue counts use `+` or `unknown (page limit hit)` when GitHub's bounded issues page is saturated after pull requests are filtered out, so `/ppo status` does not report a falsely exact issue total.
+
+Phase 2C does not recommend priorities, infer urgency, decide whether Codex is required, generate prompts, or add stale-project detection. It does not add new GitHub endpoint families or GitHub writes.
 
 ## Supported Projects
 
@@ -254,11 +275,12 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary.
 
 The project still does not implement:
 
-- GitHub commands beyond `/ppo repo <project>` and `/ppo pr <project>`
+- GitHub commands beyond `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>`
+- `/ppo next` or status-based recommendations
 - live OpenClaw bot actions
 - Telegram API registration
 - VPS deployment

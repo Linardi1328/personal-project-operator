@@ -11,11 +11,11 @@ Danger levels:
 - `dangerous`: would mutate external systems and requires strict approval.
 - `disabled`: not available in the current phase.
 
-In Phase 2B, all write actions remain disabled. `/ppo status`, `/ppo menu`, and `/ppo help` remain local fixture-backed; `/ppo repo <project>` and `/ppo pr <project>` use GitHub read-only direct tool routing.
+In Phase 2C, all write actions remain disabled. `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output.
 
 | command | category | description | arguments | enabled_in_phase_0 | requires_auth | write_action | danger_level | notes |
 |---|---|---|---|---|---|---|---|---|
-| `/ppo status` | Project Control | Show all active projects and next actions. | None | Yes, local output | No | No | safe | Uses local fixture state in Phase 1.5. |
+| `/ppo status` | Project Control | Show live GitHub read-only project status. | None | Phase 2C GitHub read-only | Local `gh` auth | No | safe | Reports observable GitHub facts only; no recommendations. |
 | `/ppo next` | Project Control | Rank which project should receive attention first. | None | Yes, docs only | No | No | safe | Future ranking may use read-only GitHub and usage state. |
 | `/ppo repo` | Project Control | Summarize a project repository. | `<project>` | Phase 2B GitHub read-only | Local `gh` auth | No | safe | Uses only repo metadata and bounded recent commits. |
 | `/ppo pr` | Project Control | Summarize latest project PR state. | `<project>` | Phase 2B GitHub read-only | Local `gh` auth | No | safe | Uses only bounded open pull request data. |
@@ -36,7 +36,7 @@ In Phase 2B, all write actions remain disabled. `/ppo status`, `/ppo menu`, and 
 
 ## Disabled write actions
 
-These actions are not available in Phase 2B:
+These actions are not available in Phase 2C:
 
 - creating GitHub issues
 - commenting on PRs

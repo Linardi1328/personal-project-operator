@@ -53,10 +53,17 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 - Route `/ppo repo <project>` through `ppo_local` to the Phase 2A read-only client.
 - Route `/ppo pr <project>` through `ppo_local` to the Phase 2A read-only client.
-- Keep `/ppo status` fixture-backed.
 - Keep OpenClaw dispatch deterministic and tool-based, without a model turn.
 - Do not add new GitHub endpoint families, GraphQL, or write actions.
 - Do not add README/tree/CI/changed-file/review enrichment yet.
+
+### Phase 2C - Live GitHub project status
+
+- Route `/ppo status` through `ppo_local` to the Phase 2A read-only client.
+- Summarize the four connected projects in registry order.
+- Show only observable GitHub facts: repo, default branch, latest returned commit, bounded PR counts, conservative bounded issue counts, and updated timestamp.
+- Keep menu/help fixture-backed with Phase 2C wording.
+- Do not add `/ppo next`, recommendations, Codex prompt generation, new endpoint families, GraphQL, or write actions.
 
 ### Later Phase 2 work
 
@@ -65,6 +72,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Fetch open PRs.
 - Fetch issues.
 - Summarize project state.
+- Add stale-project detection or next-action ranking only after separate approval.
 - Add richer read-only repo/PR detail only after separate approval.
 - Keep all GitHub write actions disabled.
 

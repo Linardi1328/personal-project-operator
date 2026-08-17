@@ -2,7 +2,7 @@
 
 ## Command name
 
-`/status`
+`/ppo status`
 
 ## Purpose
 
@@ -11,47 +11,53 @@ Show all active projects and their current next action in a phone-friendly summa
 ## Input format
 
 ```text
-/status
+/ppo status
 ```
 
 ## Example input
 
 ```text
-/status
+/ppo status
 ```
 
 ## Expected output
 
-For each active project:
+Phase 2C implements a compact GitHub read-only project status summary for the four connected projects.
+
+For each project:
 
 - project name
-- repo
-- current phase
-- last known status
-- next action
-- whether Codex is needed
+- repository full name
+- default branch
+- latest returned recent commit
+- bounded open PR count
+- conservative bounded open issue count
+- repository updated timestamp
 
 Example:
 
 ```text
 Project Status
+Source: GitHub read-only
 
 KHLIM Assist
 - Repo: Linardi1328/khlim-assist
-- Current phase: Phase 0 documentation
-- Last known status: connected candidate
-- Next action: prepare read-only GitHub summary
-- Codex needed: not yet
+- Default: main
+- Latest: 1dd9e08 Merge pull request #5
+- Open PRs: none
+- Open issues: none
+- Updated: 2026-08-16T19:09:45Z
 ```
 
 ## Safety boundary
 
-Phase 0 uses documented project state only. Future versions may read GitHub metadata but must not write to GitHub or modify repos.
+Phase 2C uses only approved GitHub read-only endpoint families through the local Phase 2A client. It must not write to GitHub, modify repos, trigger workflows, or add new endpoint families.
+
+Issue counts are exact only when the bounded GitHub issues page is not saturated. If the raw page limit is hit, `/ppo status` uses a conservative `+` label or `unknown (page limit hit)` after pull requests are filtered out.
 
 ## Future upgrade path
 
-- Read project state from local docs.
-- Add GitHub read-only repo and PR summaries.
 - Add stale-project detection.
 - Add Codex usage-aware next action recommendations.
-
+- Add priority or urgency ranking.
+- Add richer read-only repo or PR details only after separate approval.

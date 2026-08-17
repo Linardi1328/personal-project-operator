@@ -49,7 +49,15 @@ node local-operator/ppo-command.mjs repo khlim-assist
 node local-operator/ppo-command.mjs pr khlim-assist
 ```
 
-OpenClaw/Telegram can route `/ppo repo <project>` and `/ppo pr <project>` through the existing `ppo_local` direct tool path after owner review of the Phase 2B branch. `/ppo status` remains local fixture-backed.
+OpenClaw/Telegram can route `/ppo repo <project>` and `/ppo pr <project>` through the existing `ppo_local` direct tool path.
+
+Phase 2C upgrades `/ppo status` to GitHub read-only:
+
+```bash
+node local-operator/ppo-command.mjs status
+```
+
+`/ppo menu` and `/ppo help` remain fixture-backed wrapper output with Phase 2C wording adaptation.
 
 ## Files
 
@@ -61,8 +69,10 @@ OpenClaw/Telegram can route `/ppo repo <project>` and `/ppo pr <project>` throug
 - `github-readonly.mjs`: dependency-free GitHub read-only client using local `gh api --method GET`.
 - `github-readonly-cli.mjs`: terminal-only Phase 2A validation CLI.
 - `github-ppo-commands.mjs`: Phase 2B phone-friendly `/ppo repo` and `/ppo pr` formatter.
+- `github-ppo-status.mjs`: Phase 2C live GitHub read-only `/ppo status` formatter.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
+- `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 
 ## Requirements
 
@@ -120,9 +130,12 @@ Phase 2A failure modes:
 
 Phase 2B uses the same read-only client for `/ppo repo <project>` and `/ppo pr <project>`. It does not add README, contents/tree, language, workflow, branch, collaborator, release, changed-file, CI/check, review, comment, diff, recommendation, GraphQL, or write endpoints.
 
+Phase 2C uses the same read-only client for `/ppo status`. Issue counts are conservative when the raw bounded issues page hits the page limit after pull requests are filtered out. It does not add recommendations, stale-project detection, `/ppo next`, Codex prompt generation, new endpoint families, GraphQL, or write actions.
+
 Owner test plan after branch review:
 
 ```bash
+node local-operator/ppo-command.mjs status
 node local-operator/ppo-command.mjs repo khlim-assist
 node local-operator/ppo-command.mjs pr khlim-assist
 ```
@@ -130,9 +143,9 @@ node local-operator/ppo-command.mjs pr khlim-assist
 Then through OpenClaw/Telegram after review:
 
 ```text
+/ppo status
 /ppo repo khlim-assist
 /ppo pr khlim-assist
-/ppo status
 ```
 
 ## OpenClaw handoff shape

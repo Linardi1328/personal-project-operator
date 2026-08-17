@@ -40,7 +40,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 2B, `ppo_local` accepts exactly `/ppo repo <project>` and `/ppo pr <project>` for the four approved GitHub read-only project ids.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 2C, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the four approved project ids.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -71,7 +71,7 @@ node local-operator/ppo-command.mjs pr khlim-assist
 
 | Telegram/OpenClaw message | Local wrapper command | Underlying behavior |
 |---|---|---|
-| `/ppo status` | `ppo_local` raw `status` | `/status` |
+| `/ppo status` | `ppo_local` raw `status` | GitHub read-only project status |
 | `/ppo repo <project>` | `ppo_local` raw `repo <project>` | GitHub read-only repo summary |
 | `/ppo pr <project>` | `ppo_local` raw `pr <project>` | GitHub read-only PR summary |
 | `/ppo menu` | `ppo_local` raw `menu` | `/menu` |
