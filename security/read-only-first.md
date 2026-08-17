@@ -47,6 +47,30 @@ Not allowed:
 - automatic edits to `~/.openclaw`
 - overriding OpenClaw built-in `/status`, `/menu`, or `/help`
 
+## Phase 2A
+
+Allowed:
+
+- local terminal-only GitHub read-only validation
+- repo metadata reads
+- recent commit reads
+- open PR reads
+- open issue reads
+- compact project snapshots
+- fixed project allowlist lookup
+
+Not allowed:
+
+- Telegram-routed GitHub commands
+- arbitrary owner/repo input from external commands
+- GitHub write actions
+- GitHub API methods other than explicit GET, including POST, PUT, PATCH, or DELETE
+- shell execution for `gh`
+- credential storage or logging
+- branch creation in target project repos
+- workflow dispatch
+- comments, labels, reviews, approvals, closes, merges, commits, or pushes
+
 ## Future read-only integrations
 
 Future safe integrations may read:

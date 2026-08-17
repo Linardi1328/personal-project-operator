@@ -36,6 +36,21 @@ The simulator and wrapper must use local fixture files only and must not:
 - edit `~/.openclaw`
 - override OpenClaw built-in commands
 
+## Phase 2A GitHub read-only boundary
+
+Phase 2A may run terminal-only GitHub read-only validation for the four connected-candidate repos.
+
+The GitHub client must:
+
+- resolve project ids through a fixed allowlist before any API call
+- reject future, paused, unknown, arbitrary repo, or injection-style input before any API call
+- use local `gh api --method GET` only
+- use Node `execFile` without a shell
+- normalize compact repo, commit, PR, issue, and snapshot objects
+- keep `/ppo repo`, `/ppo pr`, and other GitHub Telegram commands disabled until Phase 2B approval
+
+The GitHub client must not store or log credentials, create branches, create comments, change labels, review, approve, close, merge, dispatch workflows, commit code, or push code in target project repos.
+
 ## Approval rules for future phases
 
 Future write actions require:

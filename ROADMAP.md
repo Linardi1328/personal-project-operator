@@ -39,6 +39,18 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 ## Phase 2 - GitHub Read-Only Integration
 
+### Phase 2A - Local read-only foundation
+
+- Add a deterministic GitHub read-only client using local `gh`.
+- Allow only the four connected-candidate project ids.
+- Fetch and normalize repo metadata, recent commits, open PRs, and open issues.
+- Build compact project snapshots for terminal validation.
+- Keep all GitHub requests explicit `GET`.
+- Keep Phase 2A terminal-only; do not expose `/ppo repo` or `/ppo pr` through Telegram yet.
+- Keep all GitHub write actions disabled.
+
+### Later Phase 2 work
+
 - Fetch repo metadata.
 - Fetch recent commits.
 - Fetch open PRs.

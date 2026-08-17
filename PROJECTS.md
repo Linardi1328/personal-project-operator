@@ -1,6 +1,6 @@
 # Projects
 
-This table is the Phase 0 project registry for Personal Project Operator. It documents the intended project coverage only; no live GitHub connection exists yet.
+This table is the Phase 0 project registry for Personal Project Operator. Phase 2A adds a separate narrow GitHub read-only allowlist for the four connected candidates only; future and paused projects remain disconnected.
 
 | Project | Repo | Status | Current Role | OpenClaw Priority | Notes |
 |---|---|---:|---|---:|---|
@@ -18,4 +18,3 @@ This table is the Phase 0 project registry for Personal Project Operator. It doc
 - `Documentation only`: The project exists in planning docs but should not be treated as actively connected.
 - `Future project`: Placeholder for a future system or business workflow.
 - `Paused`: Known concept, but not a current coding priority.
-
