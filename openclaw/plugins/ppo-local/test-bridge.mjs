@@ -28,7 +28,6 @@ for (const [input, expected] of expectedMappings) {
 }
 
 const localFixtureMappings = new Map([
-  ["status", ["status"]],
   ["menu", ["menu"]],
   ["help", ["help"]],
   ["menu project", ["menu", "project"]],
@@ -67,6 +66,7 @@ assert.deepEqual(fullPayload.wrapperArgs, ["menu", "project"]);
 assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo payload returns exact wrapper output");
 
 for (const [input, expected] of [
+  ["/ppo status", ["status"]],
   ["/ppo repo khlim-assist", ["repo", "khlim-assist"]],
   ["/ppo pr portfolio", ["pr", "portfolio"]]
 ]) {
@@ -149,6 +149,8 @@ for (const [input, expected] of [
 const rejectedInputs = [
   "/status",
   "unknown",
+  "status extra",
+  "status khlim-assist",
   "status && whoami",
   "status; touch /tmp/ppo-test",
   "repo",
@@ -189,4 +191,4 @@ for (const input of rejectedInputs) {
   assert.equal(wrapperCalls, 0, `${input} executes zero fake wrapper calls`);
 }
 
-console.log("ppo_local bridge tests passed: existing commands, repo/pr routing, full payloads, and rejection safety.");
+console.log("ppo_local bridge tests passed: existing commands, status/repo/pr routing, full payloads, and rejection safety.");

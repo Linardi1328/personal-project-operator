@@ -16,11 +16,11 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts only the approved PPO command surface for Phase 2B
+- accepts only the approved PPO command surface for Phase 2C
 - invokes only `local-operator/ppo-command.mjs`
 - passes arguments as an argv array through `execFile`
 - does not use a shell
-- routes `/ppo repo <project>` and `/ppo pr <project>` to the Phase 2A GitHub read-only client
+- routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to the Phase 2A GitHub read-only client
 - does not call Telegram APIs
 - does not use secrets
 - does not mutate files

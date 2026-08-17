@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { handleGitHubPpoCommand } from "./github-ppo-commands.mjs";
+import { handleGitHubPpoStatus } from "./github-ppo-status.mjs";
 
 const execFileAsync = promisify(execFile);
 const simulatorPath = fileURLToPath(new URL("simulate-command.mjs", import.meta.url));
@@ -48,7 +49,7 @@ function usage() {
     "  /ppo repo <project>",
     "  /ppo pr <project>",
     "",
-    "Phase 2B boundary: /ppo status/menu/help use local fixture output; /ppo repo and /ppo pr use GitHub read-only."
+    "Phase 2C boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; menu/help remain local fixture-backed."
   ].join("\n");
 }
 
@@ -57,7 +58,7 @@ function unsupported(command) {
   return [
     `Unsupported PPO command: ${commandLabel}`,
     "",
-    "Phase 2B supports only:",
+    "Phase 2C supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",
@@ -72,10 +73,6 @@ function unsupported(command) {
 }
 
 function toSimulatorArgs(command, args) {
-  if (command === "status") {
-    return ["/status"];
-  }
-
   if (command === "menu") {
     return ["/menu", ...args.slice(0, 1)];
   }
@@ -96,6 +93,10 @@ function applyPpoNamespace(output) {
     .replaceAll(
       "node local-operator/simulate-command.mjs /help",
       "node local-operator/ppo-command.mjs help"
+    )
+    .replace(
+      "Use this local simulator to test phone-style command output before OpenClaw routes real chat messages.",
+      "Use this PPO wrapper to test phone-style command output before OpenClaw routes real chat messages."
     )
     .replace(
       /node local-operator\/simulate-command\.mjs \/menu( [a-z]+)?/g,
@@ -127,6 +128,14 @@ function applyPpoNamespace(output) {
       "Phase 2B runnable PPO commands are marked [local] or [github read-only]. Future commands are documented but not active."
     )
     .replace(
+      "Phase 2B runnable PPO commands are marked [local] or [github read-only]. Future commands are documented but not active.",
+      "Phase 2C runnable PPO commands are marked [local] or [github read-only]. Future commands are documented but not active."
+    )
+    .replace(
+      "- /ppo status - Show all active projects and next actions. [local]",
+      "- /ppo status - Show live GitHub project status. [github read-only]"
+    )
+    .replace(
       "- /ppo repo <project> - Summarize a project repository. [future]",
       "- /ppo repo <project> - Summarize a project repository. [github read-only]"
     )
@@ -139,6 +148,10 @@ function applyPpoNamespace(output) {
       "Phase 2B boundary: /ppo status/menu/help remain local fixture-backed; /ppo repo and /ppo pr use GitHub read-only; no writes."
     )
     .replace(
+      "Phase 2B boundary: /ppo status/menu/help remain local fixture-backed; /ppo repo and /ppo pr use GitHub read-only; no writes.",
+      "Phase 2C boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; menu/help remain local fixture-backed; no writes."
+    )
+    .replace(
       [
         "Supported locally through /ppo in Phase 1.5:",
         "- /ppo status",
@@ -149,8 +162,8 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 2B:",
-        "- /ppo status [local]",
+        "Supported through /ppo in Phase 2C:",
+        "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
         "- /ppo menu codex [local]",
@@ -172,8 +185,8 @@ function applyPpoNamespace(output) {
       ].join("\n"),
       [
         "Safety:",
-        "- /ppo status/menu/help use local fixture data",
-        "- /ppo repo and /ppo pr use GitHub read-only",
+        "- /ppo status, /ppo repo, and /ppo pr use GitHub read-only",
+        "- /ppo menu and /ppo help use local fixture data",
         "- No Telegram API calls",
         "- No Codex usage scraping",
         "- No VPS deployment",
@@ -211,6 +224,19 @@ async function main() {
 
   const command = rawCommand.toLowerCase();
   const simulatorArgs = toSimulatorArgs(command, args);
+
+  if (command === "status") {
+    if (args.length !== 0) {
+      console.log(unsupported(rawCommand));
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = await handleGitHubPpoStatus();
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
 
   if (simulatorArgs) {
     await runSimulator(simulatorArgs);
