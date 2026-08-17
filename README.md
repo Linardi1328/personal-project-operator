@@ -208,10 +208,12 @@ The command covers exactly the four connected project ids in registry order and 
 - default branch
 - latest returned commit
 - bounded open PR count
-- bounded open issue count
+- conservative bounded open issue count
 - repository updated timestamp
 
 `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` are GitHub read-only in Phase 2C. `/ppo menu` and `/ppo help` remain fixture-backed wrapper output with Phase 2C wording adaptation.
+
+Issue counts use `+` or `unknown (page limit hit)` when GitHub's bounded issues page is saturated after pull requests are filtered out, so `/ppo status` does not report a falsely exact issue total.
 
 Phase 2C does not recommend priorities, infer urgency, decide whether Codex is required, generate prompts, or add stale-project detection. It does not add new GitHub endpoint families or GitHub writes.
 

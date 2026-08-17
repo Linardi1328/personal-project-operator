@@ -31,7 +31,7 @@ For each project:
 - default branch
 - latest returned recent commit
 - bounded open PR count
-- bounded open issue count
+- conservative bounded open issue count
 - repository updated timestamp
 
 Example:
@@ -52,6 +52,8 @@ KHLIM Assist
 ## Safety boundary
 
 Phase 2C uses only approved GitHub read-only endpoint families through the local Phase 2A client. It must not write to GitHub, modify repos, trigger workflows, or add new endpoint families.
+
+Issue counts are exact only when the bounded GitHub issues page is not saturated. If the raw page limit is hit, `/ppo status` uses a conservative `+` label or `unknown (page limit hit)` after pull requests are filtered out.
 
 ## Future upgrade path
 

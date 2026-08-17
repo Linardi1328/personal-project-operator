@@ -24,6 +24,23 @@ function countLabel(items) {
   return String(items.length)
 }
 
+function issueCountLabel(openIssuesPage) {
+  const issues = Array.isArray(openIssuesPage)
+    ? openIssuesPage
+    : openIssuesPage?.issues || []
+  const limitHit = !Array.isArray(openIssuesPage) && Boolean(openIssuesPage?.limitHit)
+
+  if (limitHit) {
+    if (issues.length === 0) {
+      return "unknown (page limit hit)"
+    }
+
+    return `${issues.length}+`
+  }
+
+  return countLabel(issues)
+}
+
 function latestCommitLabel(recentCommits) {
   const latestCommit = recentCommits[0]
 
@@ -45,14 +62,14 @@ function safeStatusMessage(error) {
   return unexpectedStatusFailure
 }
 
-export function formatProjectStatus(project, repository, recentCommits, openPullRequests, openIssues) {
+export function formatProjectStatus(project, repository, recentCommits, openPullRequests, openIssuesPage) {
   return [
     project.displayName,
     `- Repo: ${repository.fullName || project.fullName}`,
     `- Default: ${valueOrFallback(repository.defaultBranch)}`,
     `- Latest: ${latestCommitLabel(recentCommits)}`,
     `- Open PRs: ${countLabel(openPullRequests)}`,
-    `- Open issues: ${countLabel(openIssues)}`,
+    `- Open issues: ${issueCountLabel(openIssuesPage)}`,
     `- Updated: ${valueOrFallback(repository.updatedAt)}`
   ].join("\n")
 }
@@ -68,9 +85,9 @@ async function readProjectStatus(client, project) {
   const repository = await client.getRepoMetadata(project.id)
   const recentCommits = await client.getRecentCommits(project.id, STATUS_READ_LIMIT)
   const openPullRequests = await client.getOpenPullRequests(project.id, STATUS_READ_LIMIT)
-  const openIssues = await client.getOpenIssues(project.id, STATUS_READ_LIMIT)
+  const openIssuesPage = await client.getOpenIssuesPage(project.id, STATUS_READ_LIMIT)
 
-  return formatProjectStatus(project, repository, recentCommits, openPullRequests, openIssues)
+  return formatProjectStatus(project, repository, recentCommits, openPullRequests, openIssuesPage)
 }
 
 export async function handleGitHubPpoStatus(options = {}) {

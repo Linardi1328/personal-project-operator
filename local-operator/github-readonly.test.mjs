@@ -80,6 +80,31 @@ const issuePayload = [
   }
 ]
 
+function makeIssuePayload(number) {
+  return {
+    number,
+    title: `Issue ${number}`,
+    state: "open",
+    labels: [{ name: "bug" }],
+    updated_at: "2026-08-16T14:00:00Z",
+    html_url: `https://github.com/Linardi1328/khlim-assist/issues/${number}`
+  }
+}
+
+function makeIssuePullRequestPayload(number) {
+  return {
+    number,
+    title: `Pull request ${number}`,
+    pull_request: {
+      url: `https://api.github.com/repos/Linardi1328/khlim-assist/pulls/${number}`
+    },
+    state: "open",
+    labels: [],
+    updated_at: "2026-08-16T13:00:00Z",
+    html_url: `https://github.com/Linardi1328/khlim-assist/pull/${number}`
+  }
+}
+
 function makeFixtureRunner(calls = []) {
   return async (request) => {
     calls.push({
@@ -253,6 +278,88 @@ function blockedProjectIds(projectId) {
   assert.equal(calls[0].method, "GET")
   assert.equal(calls[0].endpoint, "/repos/Linardi1328/khlim-assist/issues")
   assert.deepEqual(calls[0].queryParams, { state: "open", per_page: 5 })
+}
+
+{
+  const calls = []
+  const client = createGitHubReadOnlyClient({
+    runner: async (request) => {
+      calls.push(request)
+      return {
+        stdout: JSON.stringify([
+          makeIssuePayload(1),
+          makeIssuePayload(2),
+          makeIssuePullRequestPayload(3),
+          makeIssuePayload(4),
+          makeIssuePullRequestPayload(5)
+        ])
+      }
+    }
+  })
+  const page = await client.getOpenIssuesPage("khlim-assist", 5)
+
+  assert.equal(page.issues.length, 3)
+  assert.deepEqual(page.issues.map((issue) => issue.number), [1, 2, 4])
+  assert.equal(page.pageLimit, 5)
+  assert.equal(page.rawReturnedCount, 5)
+  assert.equal(page.limitHit, true)
+  assert.equal(calls[0].method, "GET")
+  assert.equal(calls[0].endpoint, "/repos/Linardi1328/khlim-assist/issues")
+  assert.deepEqual(calls[0].queryParams, { state: "open", per_page: 5 })
+}
+
+{
+  const client = createGitHubReadOnlyClient({
+    runner: async () => ({
+      stdout: JSON.stringify([
+        makeIssuePayload(1),
+        makeIssuePayload(2),
+        makeIssuePullRequestPayload(3),
+        makeIssuePayload(4)
+      ])
+    })
+  })
+  const page = await client.getOpenIssuesPage("khlim-assist", 5)
+
+  assert.equal(page.issues.length, 3)
+  assert.deepEqual(page.issues.map((issue) => issue.number), [1, 2, 4])
+  assert.equal(page.rawReturnedCount, 4)
+  assert.equal(page.limitHit, false)
+}
+
+{
+  const client = createGitHubReadOnlyClient({
+    runner: async () => ({
+      stdout: JSON.stringify([
+        makeIssuePullRequestPayload(1),
+        makeIssuePullRequestPayload(2),
+        makeIssuePullRequestPayload(3),
+        makeIssuePullRequestPayload(4),
+        makeIssuePullRequestPayload(5)
+      ])
+    })
+  })
+  const page = await client.getOpenIssuesPage("khlim-assist", 5)
+
+  assert.equal(page.issues.length, 0)
+  assert.equal(page.rawReturnedCount, 5)
+  assert.equal(page.limitHit, true)
+}
+
+{
+  const client = createGitHubReadOnlyClient({
+    runner: async () => ({
+      stdout: JSON.stringify([
+        makeIssuePayload(1),
+        makeIssuePullRequestPayload(2)
+      ])
+    })
+  })
+  const issues = await client.getOpenIssues("khlim-assist", 5)
+
+  assert.equal(Array.isArray(issues), true)
+  assert.deepEqual(issues.map((issue) => issue.number), [1])
+  assert.equal(Object.hasOwn(issues, "issues"), false)
 }
 
 {

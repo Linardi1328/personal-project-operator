@@ -13,6 +13,17 @@ function makeItems(count, prefix) {
   }))
 }
 
+function makeIssuePage(count, options = {}) {
+  const limitHit = Boolean(options.limitHit)
+
+  return {
+    issues: makeItems(count, "issue"),
+    pageLimit: STATUS_READ_LIMIT,
+    rawReturnedCount: options.rawReturnedCount ?? (limitHit ? STATUS_READ_LIMIT : count),
+    limitHit
+  }
+}
+
 function baseRepository(projectId) {
   const project = allowedProjects.find((candidate) => candidate.id === projectId)
 
@@ -65,14 +76,25 @@ function makeClient(config = {}) {
       return config.pullRequests?.[projectId] || []
     },
 
-    async getOpenIssues(projectId, limit) {
-      calls.push(["getOpenIssues", projectId, limit])
+    async getOpenIssuesPage(projectId, limit) {
+      calls.push(["getOpenIssuesPage", projectId, limit])
 
-      if (config.failures?.[projectId]?.getOpenIssues) {
-        throw config.failures[projectId].getOpenIssues
+      if (config.failures?.[projectId]?.getOpenIssuesPage) {
+        throw config.failures[projectId].getOpenIssuesPage
       }
 
-      return config.issues?.[projectId] || []
+      if (config.issuePages?.[projectId]) {
+        return config.issuePages[projectId]
+      }
+
+      const issues = config.issues?.[projectId] || []
+
+      return {
+        issues,
+        pageLimit: STATUS_READ_LIMIT,
+        rawReturnedCount: issues.length,
+        limitHit: issues.length >= STATUS_READ_LIMIT
+      }
     }
   }
 }
@@ -128,11 +150,11 @@ function makeClient(config = {}) {
       "spy-market-agent": makeItems(4, "pr"),
       portfolio: makeItems(5, "pr")
     },
-    issues: {
-      "khlim-assist": [],
-      "ledgerpilot-ai": makeItems(1, "issue"),
-      "spy-market-agent": makeItems(4, "issue"),
-      portfolio: makeItems(5, "issue")
+    issuePages: {
+      "khlim-assist": makeIssuePage(0),
+      "ledgerpilot-ai": makeIssuePage(1),
+      "spy-market-agent": makeIssuePage(4),
+      portfolio: makeIssuePage(5, { limitHit: true })
     }
   })
 
@@ -172,10 +194,49 @@ function makeClient(config = {}) {
     ["getRepoMetadata", projectId],
     ["getRecentCommits", projectId, STATUS_READ_LIMIT],
     ["getOpenPullRequests", projectId, STATUS_READ_LIMIT],
-    ["getOpenIssues", projectId, STATUS_READ_LIMIT]
+    ["getOpenIssuesPage", projectId, STATUS_READ_LIMIT]
   ])
 
   assert.deepEqual(client.calls, expectedSequentialCalls, "projects and reads are sequential and bounded")
+}
+
+{
+  const project = allowedProjects[0]
+  const repository = baseRepository(project.id)
+  const recentCommits = []
+  const pullRequests = []
+
+  const saturatedThree = githubPpoStatus.formatProjectStatus(
+    project,
+    repository,
+    recentCommits,
+    pullRequests,
+    {
+      issues: makeItems(3, "issue"),
+      pageLimit: STATUS_READ_LIMIT,
+      rawReturnedCount: STATUS_READ_LIMIT,
+      limitHit: true
+    }
+  )
+
+  assert.match(saturatedThree, /- Open issues: 3\+/)
+  assert.doesNotMatch(saturatedThree, /^- Open issues: 3$/m)
+
+  const saturatedZero = githubPpoStatus.formatProjectStatus(
+    project,
+    repository,
+    recentCommits,
+    pullRequests,
+    {
+      issues: [],
+      pageLimit: STATUS_READ_LIMIT,
+      rawReturnedCount: STATUS_READ_LIMIT,
+      limitHit: true
+    }
+  )
+
+  assert.match(saturatedZero, /- Open issues: unknown \(page limit hit\)/)
+  assert.doesNotMatch(saturatedZero, /^- Open issues: none$/m)
 }
 
 {

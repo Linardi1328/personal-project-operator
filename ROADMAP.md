@@ -61,7 +61,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 - Route `/ppo status` through `ppo_local` to the Phase 2A read-only client.
 - Summarize the four connected projects in registry order.
-- Show only observable GitHub facts: repo, default branch, latest returned commit, bounded PR/issue counts, and updated timestamp.
+- Show only observable GitHub facts: repo, default branch, latest returned commit, bounded PR counts, conservative bounded issue counts, and updated timestamp.
 - Keep menu/help fixture-backed with Phase 2C wording.
 - Do not add `/ppo next`, recommendations, Codex prompt generation, new endpoint families, GraphQL, or write actions.
 

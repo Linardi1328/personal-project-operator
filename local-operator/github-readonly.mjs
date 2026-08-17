@@ -477,14 +477,26 @@ export function createGitHubReadOnlyClient({
     },
 
     async getOpenIssues(projectId, limit = DEFAULT_ITEM_LIMIT) {
+      const page = await this.getOpenIssuesPage(projectId, limit)
+
+      return page.issues
+    },
+
+    async getOpenIssuesPage(projectId, limit = DEFAULT_ITEM_LIMIT) {
       const project = resolveProject(projectId)
       const perPage = normalizeLimit(limit)
       const endpoint = `${repoEndpoint(project)}/issues`
       const payload = ensureArray(await requestJson(runner, endpoint, { state: "open", per_page: perPage }), endpoint)
-
-      return payload
+      const issues = payload
         .filter((issue) => !issue?.pull_request)
         .map(normalizeIssue)
+
+      return {
+        issues,
+        pageLimit: perPage,
+        rawReturnedCount: payload.length,
+        limitHit: payload.length >= perPage
+      }
     },
 
     async getProjectSnapshot(projectId) {
@@ -528,6 +540,10 @@ export async function getOpenPullRequests(projectId, limit = DEFAULT_ITEM_LIMIT,
 
 export async function getOpenIssues(projectId, limit = DEFAULT_ITEM_LIMIT, options = {}) {
   return createGitHubReadOnlyClient(options).getOpenIssues(projectId, limit)
+}
+
+export async function getOpenIssuesPage(projectId, limit = DEFAULT_ITEM_LIMIT, options = {}) {
+  return createGitHubReadOnlyClient(options).getOpenIssuesPage(projectId, limit)
 }
 
 export async function getProjectSnapshot(projectId, options = {}) {
