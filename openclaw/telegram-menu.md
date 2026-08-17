@@ -2,7 +2,7 @@
 
 This document describes how Telegram should expose Personal Project Operator commands.
 
-Phase 2C uses the `/ppo` namespace because OpenClaw owns built-in commands such as `/status`, `/menu`, and `/help`.
+Phase 3A still uses the Phase 2C `/ppo` Telegram surface because OpenClaw owns built-in commands such as `/status`, `/menu`, and `/help`.
 
 This repo does not register commands with Telegram and does not call Telegram APIs.
 
@@ -19,7 +19,7 @@ Expected message forms:
 /ppo next - Recommend next project priority
 /ppo repo <project> - Summarize a project repository [github read-only]
 /ppo pr <project> - Summarize latest project PR [github read-only]
-/ppo codex <project> <task> - Generate compact Codex prompt
+/ppo codex <project> <task> - Future Telegram routing; Phase 3A is terminal-only
 /ppo codex-usage - Check Codex usage status
 /ppo codex-budget <project> <task> - Estimate Codex task size
 /ppo menu - Show command menu
@@ -48,7 +48,7 @@ Expected message forms:
 
 ## Codex Workflow
 
-- `/ppo codex <project> <phase-or-task>`
+- `/ppo codex <project> <phase-or-task>` (future; not routed in Phase 3A)
 - `/ppo codex-budget <project> <task>`
 - `/ppo prompt-size <draft>`
 - `/ppo split-task <task>`
@@ -72,7 +72,9 @@ Expected message forms:
 
 ## Safety
 
-Inline buttons should only prefill or request confirmation for commands. They must not execute write actions in Phase 2C.
+Inline buttons should only prefill or request confirmation for commands. They must not execute write actions in Phase 3A.
+
+Do not expose `/ppo codex` through Telegram/OpenClaw in Phase 3A.
 
 Do not override OpenClaw built-ins:
 

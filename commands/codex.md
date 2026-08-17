@@ -1,68 +1,78 @@
-# /codex
+# codex
 
 ## Command name
 
-`/codex <project> <phase-or-task>`
+`codex <project> <phase-or-task>`
 
 ## Purpose
 
-Generate a compact Codex prompt for implementation, review, bugfix, docs, or hardening work.
+Generate a compact local Codex prompt for implementation, review, bugfix, docs, or hardening work.
 
-## Input format
+Phase 3A is terminal-only:
 
-```text
-/codex <project> <phase-or-task>
+```bash
+node local-operator/ppo-command.mjs codex <project> <phase-or-task>
 ```
+
+Do not expose `/ppo codex` through Telegram/OpenClaw in Phase 3A.
 
 ## Example input
 
-```text
-/codex khlim-assist phase-1-readonly-github-summary
+```bash
+node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
 ```
 
 ## Expected output
 
-The prompt must include:
+The generated text prompt includes:
 
+- project
+- repository
+- task
+- simple deterministic task-size estimate
 - goal
+- curated project-document context
+- live GitHub read-only facts
 - exact scope
-- files/components to inspect
 - requirements
 - tests/checks
 - safety boundaries
 - exit criteria
-
-The prompt must avoid repeated project background and include only the current task context.
 
 Example:
 
 ```text
 Codex Prompt
 
+Project:
+KHLIM Assist
+
+Repository:
+Linardi1328/khlim-assist
+
+Task:
+add provider validation tests
+
+Task Size Estimate:
+Small
+
 Goal:
-Implement a read-only repository summary command for KHLIM Assist.
+Implement the requested task for KHLIM Assist.
 
 Scope:
-- Inspect the existing command registry and project docs.
-- Add only the minimal code/docs required for the command.
-
-Safety:
-- Do not write to GitHub.
-- Do not add credentials.
-- Do not add deployment behavior.
-
-Exit criteria:
-- Command output matches documented format.
-- Tests or manual checks are listed.
+- Exact work requested: add provider validation tests
+- Inspect the target repository before naming or editing files.
+- Keep changes focused on the requested task.
 ```
 
 ## Safety boundary
 
-The command generates text only. It must not run Codex automatically, change files, or trigger external writes.
+The command generates text only. It must not run Codex automatically, call OpenAI APIs, invoke another model, change files in target project repositories, expose Telegram routing, or trigger external writes.
+
+The task string is data only. It must not be interpreted as a shell command, file path, filename, or executable code.
 
 ## Future upgrade path
 
-- Add project-aware prompt templates.
 - Add budget-aware prompt compression.
 - Add automatic phase splitting for oversized tasks.
-
+- Review Telegram/OpenClaw routing only after Phase 3A approval.
