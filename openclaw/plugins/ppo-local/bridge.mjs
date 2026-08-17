@@ -15,6 +15,7 @@ const allowedCommands = new Map([
 ]);
 
 const allowedGitHubProjectIds = new Set(listPhase2GitHubProjects().map((project) => project.id));
+const unexpectedWrapperFailure = "PPO local wrapper failed: unexpected local failure.";
 
 export const defaultWrapperPath = fileURLToPath(
   new URL("../../../local-operator/ppo-command.mjs", import.meta.url)
@@ -25,7 +26,7 @@ export function unsupportedPpoToolInput(rawCommand) {
   return [
     `Unsupported PPO tool input: ${commandLabel}`,
     "",
-    "Phase 1.5 supports only:",
+    "Phase 2B supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",
@@ -93,6 +94,34 @@ async function runWrapper(wrapperPath, wrapperArgs, options) {
   });
 }
 
+function normalizeWrapperFailure(error) {
+  const exitCode = Number.isInteger(error?.code)
+    ? error.code
+    : Number.isInteger(error?.exitCode)
+      ? error.exitCode
+      : null;
+
+  if (exitCode !== null) {
+    const stdout = typeof error.stdout === "string" && error.stdout.length > 0
+      ? error.stdout
+      : `${unexpectedWrapperFailure}\n`;
+
+    return {
+      ok: false,
+      exitCode,
+      stdout,
+      stderr: ""
+    };
+  }
+
+  return {
+    ok: false,
+    exitCode: 1,
+    stdout: `${unexpectedWrapperFailure}\n`,
+    stderr: ""
+  };
+}
+
 export async function runPpoLocalTool(params = {}, options = {}) {
   const rawCommand = typeof params.command === "string" ? params.command : "";
   const wrapperArgs = toPpoWrapperArgs(rawCommand);
@@ -108,13 +137,22 @@ export async function runPpoLocalTool(params = {}, options = {}) {
   }
 
   const wrapperPath = options.wrapperPath || defaultWrapperPath;
-  const { stdout, stderr } = await runWrapper(wrapperPath, wrapperArgs, options);
+  let result;
+
+  try {
+    result = await runWrapper(wrapperPath, wrapperArgs, options);
+  } catch (error) {
+    return {
+      ...normalizeWrapperFailure(error),
+      wrapperArgs
+    };
+  }
 
   return {
     ok: true,
     exitCode: 0,
-    stdout,
-    stderr,
+    stdout: result.stdout || "",
+    stderr: "",
     wrapperArgs
   };
 }

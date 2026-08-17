@@ -85,6 +85,67 @@ for (const [input, expected] of [
   assert.equal(result.stdout, `fake wrapper: ${expected.join(" ")}\n`);
 }
 
+{
+  const safeStdout = "PPO GitHub read-only error [GITHUB_CLI_UNAUTHENTICATED]: Safe auth message.\n";
+  const result = await runPpoLocalTool(
+    { command: "repo khlim-assist" },
+    {
+      runWrapper: async () => {
+        const error = new Error("wrapper exited 1");
+        error.code = 1;
+        error.stdout = safeStdout;
+        error.stderr = "SENSITIVE_TEST_SENTINEL raw gh stderr";
+        throw error;
+      }
+    }
+  );
+
+  assert.equal(result.ok, false, "non-zero wrapper exit is returned, not thrown");
+  assert.equal(result.exitCode, 1, "non-zero wrapper exit code is preserved");
+  assert.equal(result.stdout, safeStdout, "safe wrapper stdout is returned");
+  assert.equal(result.stderr, "", "raw wrapper stderr is not surfaced");
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw gh stderr/);
+}
+
+{
+  const result = await runPpoLocalTool(
+    { command: "repo khlim-assist" },
+    {
+      runWrapper: async () => {
+        const error = new Error("SENSITIVE_TEST_SENTINEL spawn failure");
+        error.code = "ENOENT";
+        error.stderr = "SENSITIVE_TEST_SENTINEL raw spawn stderr";
+        throw error;
+      }
+    }
+  );
+
+  assert.equal(result.ok, false, "unexpected execution failure is returned safely");
+  assert.equal(result.exitCode, 1, "unexpected execution failure uses generic exit code");
+  assert.equal(result.stdout, "PPO local wrapper failed: unexpected local failure.\n");
+  assert.equal(result.stderr, "", "unexpected stderr is not surfaced");
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|spawn failure|raw spawn stderr/);
+}
+
+{
+  const result = await runPpoLocalTool(
+    { command: "repo khlim-assist" },
+    {
+      runWrapper: async () => {
+        throw {
+          message: "SENSITIVE_TEST_SENTINEL malformed failure",
+          stderr: "SENSITIVE_TEST_SENTINEL"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, false, "malformed execution failure is returned safely");
+  assert.equal(result.stdout, "PPO local wrapper failed: unexpected local failure.\n");
+  assert.equal(result.stderr, "");
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|malformed failure/);
+}
+
 const rejectedInputs = [
   "/status",
   "unknown",
