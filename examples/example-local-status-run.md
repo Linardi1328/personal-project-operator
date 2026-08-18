@@ -44,7 +44,14 @@ Portfolio Website
 - Next action: Use future progress summaries for portfolio case-study ideas.
 - Codex needed: Optional small task
 
-Future/placeholders not shown: 3
+RBL Content Engine
+- Repo: Linardi1328/rbl-content-engine
+- Current phase: Phase 1 local command output test
+- Last known status: Roster connected; fixture remains local mock state with no live GitHub calls.
+- Next action: Use read-only repo summaries before planning content workflow changes.
+- Codex needed: Later
+
+Future/placeholders not shown: 0
 Try: /menu project
 ```
 
@@ -54,4 +61,3 @@ Safety check:
 - No GitHub API calls.
 - No Telegram API calls.
 - No write actions.
-
