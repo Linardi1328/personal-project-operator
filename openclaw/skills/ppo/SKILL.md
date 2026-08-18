@@ -40,7 +40,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 2C, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the four approved project ids.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 3A, `ppo_local` keeps the Phase 2C command surface: `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` route to GitHub read-only behavior for the four approved project ids. The local Codex prompt generator is terminal-only and is not accepted by this bridge yet.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -86,7 +86,7 @@ The plugin, wrapper, and simulator are read-only.
 
 They must not:
 
-- call GitHub APIs except the approved Phase 2A read-only endpoint families for `/ppo repo` and `/ppo pr`
+- call GitHub APIs except the approved Phase 2A read-only endpoint families for `/ppo status`, `/ppo repo`, and `/ppo pr`
 - call Telegram APIs
 - handle bot tokens
 - scrape Codex usage

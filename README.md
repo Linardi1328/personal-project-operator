@@ -68,7 +68,7 @@ The OpenClaw/Telegram command interface is designed for short `/ppo` chat comman
 /ppo next
 /ppo repo khlim-assist
 /ppo pr ledgerpilot-ai
-/ppo codex spy-market-agent hardening
+/ppo codex spy-market-agent hardening (future Telegram routing)
 /ppo codex-usage
 /ppo menu
 ```
@@ -217,6 +217,25 @@ Issue counts use `+` or `unknown (page limit hit)` when GitHub's bounded issues 
 
 Phase 2C does not recommend priorities, infer urgency, decide whether Codex is required, generate prompts, or add stale-project detection. It does not add new GitHub endpoint families or GitHub writes.
 
+## Phase 3A Local Codex Prompt Generator Foundation
+
+Phase 3A adds a terminal-only Codex prompt generator:
+
+```bash
+node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
+```
+
+The generator produces text only. It does not invoke Codex, ChatGPT, OpenAI APIs, another model, shell commands, deployment, GitHub writes, or target project repository changes.
+
+Phase 3A prompt context is split into:
+
+- curated project documentation from the fixed `projects/` mapping
+- live GitHub read-only facts from the approved Phase 2A endpoint families
+
+The command accepts exactly the four connected project ids, bounds task text to 1000 characters, includes a simple deterministic task-size estimate, and adds hardening emphasis for explicit hardening or error-boundary tasks.
+
+Telegram/OpenClaw exposure is deferred. `/ppo codex ...` is not accepted by the `ppo_local` bridge in Phase 3A.
+
 ## Supported Projects
 
 Current connected candidates:
@@ -275,11 +294,12 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation.
 
 The project still does not implement:
 
 - GitHub commands beyond `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>`
+- Telegram/OpenClaw routing for `/ppo codex`
 - `/ppo next` or status-based recommendations
 - live OpenClaw bot actions
 - Telegram API registration

@@ -153,6 +153,8 @@ const rejectedInputs = [
   "status khlim-assist",
   "status && whoami",
   "status; touch /tmp/ppo-test",
+  "codex khlim-assist add-validation",
+  "/ppo codex khlim-assist add-validation",
   "repo",
   "pr",
   "repo unknown",

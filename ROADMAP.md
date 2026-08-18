@@ -78,11 +78,20 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 ## Phase 3 - Codex Prompt Generator
 
-- Generate compact Codex prompts.
-- Estimate task size.
-- Split large tasks.
-- Prepare hardening prompts.
-- Use project docs and read-only repo state as prompt context.
+### Phase 3A - Local Codex prompt generator foundation
+
+- Add terminal-only `node local-operator/ppo-command.mjs codex <project> <task>`.
+- Generate compact text prompts only; do not invoke Codex or any model.
+- Use fixed project doc mappings plus approved GitHub read-only facts.
+- Include deterministic task-size estimates and hardening emphasis where applicable.
+- Keep `/ppo codex` out of OpenClaw/Telegram routing.
+- Do not add new GitHub endpoint families, writes, deployments, or target repo changes.
+
+### Later Phase 3 work
+
+- Add `/codex-budget`, `/prompt-size`, and `/split-task` behavior only after separate approval.
+- Review arbitrary text routing for Telegram/OpenClaw separately in Phase 3C.
+- Add prompt compression and splitting workflows after the local foundation is approved.
 
 ## Phase 4 - VPS Deployment
 

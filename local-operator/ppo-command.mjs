@@ -2,6 +2,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { handleCodexPromptCommand } from "./codex-prompt-generator.mjs";
 import { handleGitHubPpoCommand } from "./github-ppo-commands.mjs";
 import { handleGitHubPpoStatus } from "./github-ppo-status.mjs";
 
@@ -20,11 +21,19 @@ function normalizeArgs(rawArgs) {
   return args;
 }
 
+function isPpoPrefixed(rawArgs) {
+  const args = rawArgs
+    .flatMap((arg) => arg.trim().split(/\s+/))
+    .filter(Boolean);
+
+  return args[0]?.toLowerCase() === "/ppo" || args[0]?.toLowerCase() === "ppo";
+}
+
 function usage() {
   return [
     "Personal Project Operator PPO Wrapper",
     "",
-    "Use this wrapper when OpenClaw routes Telegram messages through the custom /ppo namespace.",
+    "Use this wrapper for approved /ppo routing and local terminal-only commands.",
     "",
     "Terminal usage:",
     "  node local-operator/ppo-command.mjs status",
@@ -35,6 +44,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs help",
     "  node local-operator/ppo-command.mjs repo khlim-assist",
     "  node local-operator/ppo-command.mjs pr khlim-assist",
+    "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
     "",
     "Telegram/OpenClaw message shape:",
     "  node local-operator/ppo-command.mjs \"/ppo status\"",
@@ -49,7 +59,7 @@ function usage() {
     "  /ppo repo <project>",
     "  /ppo pr <project>",
     "",
-    "Phase 2C boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; menu/help remain local fixture-backed."
+    "Phase 3A boundary: terminal codex prompt generation is text-only and not exposed through Telegram/OpenClaw."
   ].join("\n");
 }
 
@@ -58,7 +68,7 @@ function unsupported(command) {
   return [
     `Unsupported PPO command: ${commandLabel}`,
     "",
-    "Phase 2C supports only:",
+    "Phase 3A supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",
@@ -67,6 +77,7 @@ function unsupported(command) {
     "- /ppo help",
     "- /ppo repo <project>",
     "- /ppo pr <project>",
+    "- terminal only: codex <project> <task>",
     "",
     "Try: node local-operator/ppo-command.mjs menu"
   ].join("\n");
@@ -132,6 +143,10 @@ function applyPpoNamespace(output) {
       "Phase 2C runnable PPO commands are marked [local] or [github read-only]. Future commands are documented but not active."
     )
     .replace(
+      "Phase 2C runnable PPO commands are marked [local] or [github read-only]. Future commands are documented but not active.",
+      "Phase 3A PPO-routed commands are marked [local] or [github read-only]. Terminal codex generation is local-only."
+    )
+    .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
       "- /ppo status - Show live GitHub project status. [github read-only]"
     )
@@ -152,6 +167,10 @@ function applyPpoNamespace(output) {
       "Phase 2C boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; menu/help remain local fixture-backed; no writes."
     )
     .replace(
+      "Phase 2C boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; menu/help remain local fixture-backed; no writes.",
+      "Phase 3A boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal codex generation is local-only; no writes."
+    )
+    .replace(
       [
         "Supported locally through /ppo in Phase 1.5:",
         "- /ppo status",
@@ -162,7 +181,7 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 2C:",
+        "Supported through /ppo in Phase 3A:",
         "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
@@ -208,7 +227,9 @@ async function runSimulator(args) {
 }
 
 async function main() {
-  const [rawCommand, ...args] = normalizeArgs(process.argv.slice(2));
+  const rawProcessArgs = process.argv.slice(2);
+  const ppoPrefixed = isPpoPrefixed(rawProcessArgs);
+  const [rawCommand, ...args] = normalizeArgs(rawProcessArgs);
 
   if (!rawCommand) {
     console.log(usage());
@@ -251,6 +272,26 @@ async function main() {
     }
 
     const result = await handleGitHubPpoCommand(command, args[0]);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (command === "codex") {
+    if (ppoPrefixed) {
+      console.log(unsupported("/ppo codex"));
+      process.exitCode = 1;
+      return;
+    }
+
+    if (args.length < 2) {
+      console.log(unsupported(rawCommand));
+      process.exitCode = 1;
+      return;
+    }
+
+    const [projectId, ...taskArgs] = args;
+    const result = await handleCodexPromptCommand(projectId, taskArgs);
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;

@@ -1,40 +1,56 @@
 # Example Codex Prompt Output
 
-```text
-/codex khlim-assist phase-1-readonly-repo-summary
+Phase 3A is terminal-only:
+
+```bash
+node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
 ```
+
+Example shape:
 
 ```text
 Codex Prompt
 
+Project:
+KHLIM Assist
+
+Repository:
+Linardi1328/khlim-assist
+
+Task:
+add provider validation tests
+
+Task Size Estimate:
+Small
+Reason: Narrow docs, validation, test, bugfix, or hardening wording.
+
 Goal:
-Add a read-only repository summary command for KHLIM Assist.
+Implement the requested task for KHLIM Assist.
+
+Context:
+Curated project documentation (may be stale):
+- Current role: AI integration for KHLIM admin workflows.
+- Current phase: Phase 0 documentation foundation.
+Live GitHub read-only facts (GitHub read-only):
+- Repo: Linardi1328/khlim-assist
+- Default branch: main
+- Latest commit: abc1234 Latest safe commit
+- Open PRs: none
+- Open issues: none
+- Updated: 2026-08-17T00:00:00Z
 
 Scope:
-- Project: KHLIM Assist
-- Repo: Linardi1328/khlim-assist
-- Inspect the existing command registry, project docs, and command docs.
-- Implement only the local behavior needed to format a repo summary from read-only data.
+- Exact work requested: add provider validation tests
+- Inspect the target repository before naming or editing files.
+- Keep changes focused on the requested task.
 
-Requirements:
-- Output repo name, default branch, latest commit, README summary, last updated time, and important files when data is available.
-- If live GitHub access is not configured, return a clear unavailable message.
-- Keep output concise for phone use.
-
-Do not change:
-- Do not add GitHub write permissions.
-- Do not add secrets or fake API keys.
-- Do not deploy anything.
-- Do not refactor unrelated command behavior.
-
-Tests/checks:
-- Add focused tests for successful summary and unavailable-data response.
-- Run relevant test command if available.
-- Document any checks that cannot run.
-
-Exit criteria:
-- `/repo khlim-assist` returns the documented format.
-- Missing GitHub config fails safely.
-- Summary includes changed files and verification results.
+Safety Boundaries:
+- Work on a dedicated branch.
+- Do not develop directly on main.
+- Do not merge.
+- Do not expose credentials.
+- Do not weaken existing security boundaries.
+- No unrelated scope expansion.
 ```
 
+Do not route `/ppo codex` through Telegram/OpenClaw in Phase 3A.

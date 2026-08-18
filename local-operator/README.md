@@ -59,6 +59,14 @@ node local-operator/ppo-command.mjs status
 
 `/ppo menu` and `/ppo help` remain fixture-backed wrapper output with Phase 2C wording adaptation.
 
+Phase 3A adds terminal-only Codex prompt generation:
+
+```bash
+node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
+```
+
+Do not route `/ppo codex` through OpenClaw/Telegram in Phase 3A. The bridge intentionally rejects `codex ...` input.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -70,9 +78,11 @@ node local-operator/ppo-command.mjs status
 - `github-readonly-cli.mjs`: terminal-only Phase 2A validation CLI.
 - `github-ppo-commands.mjs`: Phase 2B phone-friendly `/ppo repo` and `/ppo pr` formatter.
 - `github-ppo-status.mjs`: Phase 2C live GitHub read-only `/ppo status` formatter.
+- `codex-prompt-generator.mjs`: Phase 3A terminal-only local Codex prompt text generator.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
+- `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
 
 ## Requirements
 
@@ -132,12 +142,17 @@ Phase 2B uses the same read-only client for `/ppo repo <project>` and `/ppo pr <
 
 Phase 2C uses the same read-only client for `/ppo status`. Issue counts are conservative when the raw bounded issues page hits the page limit after pull requests are filtered out. It does not add recommendations, stale-project detection, `/ppo next`, Codex prompt generation, new endpoint families, GraphQL, or write actions.
 
+Phase 3A generates local prompt text only. It reads only fixed mapped project docs plus approved GitHub read-only context. It does not invoke Codex, call OpenAI APIs, create commits, open PRs, change target repos, or expose Telegram `/ppo codex` routing.
+
 Owner test plan after branch review:
 
 ```bash
 node local-operator/ppo-command.mjs status
 node local-operator/ppo-command.mjs repo khlim-assist
 node local-operator/ppo-command.mjs pr khlim-assist
+node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
+node local-operator/ppo-command.mjs codex portfolio "harden contact form error handling"
+node local-operator/ppo-command.mjs codex khlim-assist "add GitHub integration, Telegram routing, VPS deployment, and write actions"
 ```
 
 Then through OpenClaw/Telegram after review:

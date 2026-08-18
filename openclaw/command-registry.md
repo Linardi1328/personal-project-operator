@@ -11,7 +11,7 @@ Danger levels:
 - `dangerous`: would mutate external systems and requires strict approval.
 - `disabled`: not available in the current phase.
 
-In Phase 2C, all write actions remain disabled. `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output.
+In Phase 3A, all write actions remain disabled. `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output. Codex prompt generation exists only as a local terminal command and is not accepted by the OpenClaw bridge yet.
 
 | command | category | description | arguments | enabled_in_phase_0 | requires_auth | write_action | danger_level | notes |
 |---|---|---|---|---|---|---|---|---|
@@ -20,7 +20,7 @@ In Phase 2C, all write actions remain disabled. `/ppo status`, `/ppo repo <proje
 | `/ppo repo` | Project Control | Summarize a project repository. | `<project>` | Phase 2B GitHub read-only | Local `gh` auth | No | safe | Uses only repo metadata and bounded recent commits. |
 | `/ppo pr` | Project Control | Summarize latest project PR state. | `<project>` | Phase 2B GitHub read-only | Local `gh` auth | No | safe | Uses only bounded open pull request data. |
 | `/ppo handoff` | Project Control | Create compact handoff for ChatGPT or Codex. | `<project>` | Yes, docs only | No | No | safe | Text output only. |
-| `/ppo codex` | Codex Workflow | Generate compact Codex prompt. | `<project> <phase-or-task>` | Yes, docs only | No | No | safe | Does not run Codex automatically. |
+| `/ppo codex` | Codex Workflow | Generate compact Codex prompt. | `<project> <phase-or-task>` | Phase 3A terminal-only | Local `gh` auth for read-only context | No | safe | Not routed through Telegram/OpenClaw yet; does not run Codex automatically. |
 | `/ppo codex-budget` | Codex Workflow | Estimate expected Codex task size. | `<project> <task>` | Yes, docs only | No | No | safe | Uses heuristic categories. |
 | `/ppo prompt-size` | Codex Workflow | Review and compress long prompts. | `<draft>` | Yes, docs only | No | No | safe | Text review only. |
 | `/ppo split-task` | Codex Workflow | Split large tasks into smaller phases. | `<task>` | Yes, docs only | No | No | safe | Planning only. |
@@ -36,7 +36,7 @@ In Phase 2C, all write actions remain disabled. `/ppo status`, `/ppo repo <proje
 
 ## Disabled write actions
 
-These actions are not available in Phase 2C:
+These actions are not available in Phase 3A:
 
 - creating GitHub issues
 - commenting on PRs
