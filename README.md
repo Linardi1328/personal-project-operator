@@ -68,7 +68,10 @@ The OpenClaw/Telegram command interface is designed for short `/ppo` chat comman
 /ppo next
 /ppo repo khlim-assist
 /ppo pr ledgerpilot-ai
-/ppo codex spy-market-agent hardening (future Telegram routing)
+/ppo codex spy-market-agent hardening
+/ppo codex-budget ledgerpilot-ai add invoice import workflow
+/ppo prompt-size Goal: build one focused feature
+/ppo split-task add GitHub integration and Telegram routing
 /ppo codex-usage
 /ppo menu
 ```
@@ -236,7 +239,7 @@ Phase 3A prompt context is split into:
 
 The command accepts exactly the five connected project ids, bounds task text to 1000 characters, includes a simple deterministic task-size estimate, and adds hardening emphasis for explicit hardening or error-boundary tasks.
 
-Telegram/OpenClaw exposure is deferred. `/ppo codex ...` is not accepted by the `ppo_local` bridge in Phase 3A.
+Phase 3A originally kept Telegram/OpenClaw exposure deferred. Phase 3C now routes `/ppo codex ...` through `ppo_local` using direct tool dispatch.
 
 ## Phase 3B Local Codex Planning Tools
 
@@ -252,7 +255,22 @@ These commands produce deterministic text only. They do not invoke Codex, ChatGP
 
 `codex-budget` reuses the Phase 3A deterministic task-size estimator and does not inspect arbitrary repository files, Codex account usage, or exact token cost. `prompt-size` uses character, word, line, repetition, and breadth checks with safe mechanical compaction only. `split-task` uses fixed domain signals and keeps write-action work permission-gated.
 
-Telegram/OpenClaw exposure remains deferred. `/ppo codex ...`, `/ppo codex-budget ...`, `/ppo prompt-size ...`, and `/ppo split-task ...` are not accepted by the `ppo_local` bridge in Phase 3B.
+Phase 3B originally kept Telegram/OpenClaw exposure deferred. Phase 3C now routes these text commands through `ppo_local`.
+
+## Phase 3C OpenClaw Text Routing
+
+Phase 3C enables deterministic direct-tool routing for:
+
+```text
+/ppo codex <project> <task>
+/ppo codex-budget <project> <task>
+/ppo prompt-size <draft>
+/ppo split-task <task>
+```
+
+OpenClaw still dispatches `/ppo` directly to `ppo_local`; there is no model interpretation turn. The bridge parses only the command envelope and passes task or draft text as inert data. `prompt-size` preserves multiline drafts as one wrapper argv value.
+
+These commands remain text-only. Phase 3C does not invoke Codex, ChatGPT, OpenAI APIs, another model, Telegram APIs, GitHub writes, deployment behavior, new GitHub endpoint families, or new OpenClaw tools or permissions.
 
 ## Supported Projects
 
@@ -307,12 +325,12 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`.
 
 The project still does not implement:
 
 - GitHub commands beyond `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>`
-- Telegram/OpenClaw routing for `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, or `/ppo split-task`
+- richer Telegram/OpenClaw arbitrary text workflows beyond the four Phase 3C command envelopes
 - `/ppo next` or status-based recommendations
 - live OpenClaw bot actions
 - Telegram API registration

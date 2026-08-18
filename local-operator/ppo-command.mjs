@@ -26,14 +26,6 @@ function normalizeArgs(rawArgs) {
   return args;
 }
 
-function isPpoPrefixed(rawArgs) {
-  const args = rawArgs
-    .flatMap((arg) => arg.trim().split(/\s+/))
-    .filter(Boolean);
-
-  return args[0]?.toLowerCase() === "/ppo" || args[0]?.toLowerCase() === "ppo";
-}
-
 function terminalArgsAfterCommand(rawArgs, command) {
   const firstArg = String(rawArgs[0] ?? "");
   const trimmedFirstArg = firstArg.trim();
@@ -50,11 +42,87 @@ function terminalArgsAfterCommand(rawArgs, command) {
   return rawArgs.slice(1);
 }
 
+function splitFirstToken(value) {
+  const match = String(value || "").match(/^(\S+)(?:[\t\n\r ]+([\s\S]*))?$/u);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    token: match[1],
+    rest: match[2] ?? ""
+  };
+}
+
+function commandTextFromRawArgs(rawArgs) {
+  return rawArgs.map((arg) => String(arg)).join(" ");
+}
+
+function unwrapPpoEnvelope(rawArgs) {
+  const trimmed = commandTextFromRawArgs(rawArgs).trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const first = splitFirstToken(trimmed);
+
+  if (!first) {
+    return null;
+  }
+
+  const firstToken = first.token.toLowerCase();
+
+  if (firstToken === "/ppo" || firstToken === "ppo") {
+    const rest = first.rest.trimStart();
+    return rest ? rest : null;
+  }
+
+  return trimmed;
+}
+
+function payloadAfterCommand(rawArgs, command) {
+  const unwrapped = unwrapPpoEnvelope(rawArgs);
+  const commandEnvelope = splitFirstToken(unwrapped);
+
+  if (!commandEnvelope || commandEnvelope.token.toLowerCase() !== command) {
+    return null;
+  }
+
+  return commandEnvelope.rest;
+}
+
+function projectPayloadArgs(rawArgs, command) {
+  const rest = payloadAfterCommand(rawArgs, command);
+  const projectEnvelope = splitFirstToken(String(rest ?? "").trimStart());
+
+  if (!projectEnvelope) {
+    return null;
+  }
+
+  const payload = projectEnvelope.rest.trim();
+
+  return payload ? [projectEnvelope.token, payload] : null;
+}
+
+function textPayloadArgs(rawArgs, command) {
+  const rest = payloadAfterCommand(rawArgs, command);
+
+  if (rest === null) {
+    return null;
+  }
+
+  const payload = rest.trim();
+
+  return payload ? [payload] : null;
+}
+
 function usage() {
   return [
     "Personal Project Operator PPO Wrapper",
     "",
-    "Use this wrapper for approved /ppo routing and local terminal-only commands.",
+    "Use this wrapper for approved /ppo routing and local deterministic text commands.",
     "",
     "Terminal usage:",
     "  node local-operator/ppo-command.mjs status",
@@ -72,6 +140,10 @@ function usage() {
     "",
     "Telegram/OpenClaw message shape:",
     "  node local-operator/ppo-command.mjs \"/ppo status\"",
+    "  node local-operator/ppo-command.mjs \"/ppo codex khlim-assist add provider validation tests\"",
+    "  node local-operator/ppo-command.mjs \"/ppo codex-budget ledgerpilot-ai add invoice import workflow\"",
+    "  node local-operator/ppo-command.mjs \"/ppo prompt-size Goal: build one focused feature\"",
+    "  node local-operator/ppo-command.mjs \"/ppo split-task add GitHub integration and Telegram routing\"",
     "",
     "Supported Telegram messages:",
     "  /ppo status",
@@ -82,8 +154,12 @@ function usage() {
     "  /ppo help",
     "  /ppo repo <project>",
     "  /ppo pr <project>",
+    "  /ppo codex <project> <task>",
+    "  /ppo codex-budget <project> <task>",
+    "  /ppo prompt-size <draft>",
+    "  /ppo split-task <task>",
     "",
-    "Phase 3B boundary: terminal Codex prompt/planning commands are text-only and not exposed through Telegram/OpenClaw."
+    "Phase 3C boundary: Codex prompt/planning commands are deterministic text-only direct tool routes; no model, Codex execution, or writes."
   ].join("\n");
 }
 
@@ -92,7 +168,7 @@ function unsupported(command) {
   return [
     `Unsupported PPO command: ${commandLabel}`,
     "",
-    "Phase 3B supports only:",
+    "Phase 3C supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",
@@ -101,10 +177,10 @@ function unsupported(command) {
     "- /ppo help",
     "- /ppo repo <project>",
     "- /ppo pr <project>",
-    "- terminal only: codex <project> <task>",
-    "- terminal only: codex-budget <project> <task>",
-    "- terminal only: prompt-size <draft>",
-    "- terminal only: split-task <task>",
+    "- /ppo codex <project> <task>",
+    "- /ppo codex-budget <project> <task>",
+    "- /ppo prompt-size <draft>",
+    "- /ppo split-task <task>",
     "",
     "Try: node local-operator/ppo-command.mjs menu"
   ].join("\n");
@@ -178,6 +254,10 @@ function applyPpoNamespace(output) {
       "Phase 3B PPO-routed commands are marked [local] or [github read-only]. Terminal Codex prompt/planning commands are local-only."
     )
     .replace(
+      "Phase 3B PPO-routed commands are marked [local] or [github read-only]. Terminal Codex prompt/planning commands are local-only.",
+      "Phase 3C PPO-routed commands include local menus, GitHub read-only summaries, and deterministic Codex text planning."
+    )
+    .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
       "- /ppo status - Show live GitHub project status. [github read-only]"
     )
@@ -206,6 +286,10 @@ function applyPpoNamespace(output) {
       "Phase 3B boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal Codex prompt/planning commands are local-only; no writes."
     )
     .replace(
+      "Phase 3B boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal Codex prompt/planning commands are local-only; no writes.",
+      "Phase 3C boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; /ppo codex and planning commands generate deterministic text only; no writes."
+    )
+    .replace(
       [
         "Supported locally through /ppo in Phase 1.5:",
         "- /ppo status",
@@ -224,8 +308,32 @@ function applyPpoNamespace(output) {
         "- /ppo menu system [local]",
         "- /ppo help [local]",
         "- /ppo repo <project> [github read-only]",
-        "- /ppo pr <project> [github read-only]"
+        "- /ppo pr <project> [github read-only]",
+        "- /ppo codex <project> <task> [local text]",
+        "- /ppo codex-budget <project> <task> [local text]",
+        "- /ppo prompt-size <draft> [local text]",
+        "- /ppo split-task <task> [local text]"
       ].join("\n")
+    )
+    .replace(
+      "Supported through /ppo in Phase 3B:",
+      "Supported through /ppo in Phase 3C:"
+    )
+    .replace(
+      "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt. [future]",
+      "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt text. [local text]"
+    )
+    .replace(
+      "- /ppo codex-budget <project> <task> - Estimate Codex task size. [future]",
+      "- /ppo codex-budget <project> <task> - Estimate Codex task size. [local text]"
+    )
+    .replace(
+      "- /ppo prompt-size <draft> - Review and compress long Codex prompts. [future]",
+      "- /ppo prompt-size <draft> - Review and mechanically compact prompt drafts. [local text]"
+    )
+    .replace(
+      "- /ppo split-task <task> - Split large tasks into smaller phases. [future]",
+      "- /ppo split-task <task> - Split large tasks into smaller planning phases. [local text]"
     )
     .replace(
       [
@@ -240,6 +348,7 @@ function applyPpoNamespace(output) {
       [
         "Safety:",
         "- /ppo status, /ppo repo, and /ppo pr use GitHub read-only",
+        "- /ppo codex and planning commands generate deterministic local text",
         "- /ppo menu and /ppo help use local fixture data",
         "- No Telegram API calls",
         "- No Codex usage scraping",
@@ -263,7 +372,6 @@ async function runSimulator(args) {
 
 async function main() {
   const rawProcessArgs = process.argv.slice(2);
-  const ppoPrefixed = isPpoPrefixed(rawProcessArgs);
   const [rawCommand, ...args] = normalizeArgs(rawProcessArgs);
 
   if (!rawCommand) {
@@ -313,19 +421,15 @@ async function main() {
   }
 
   if (command === "codex") {
-    if (ppoPrefixed) {
-      console.log(unsupported("/ppo codex"));
-      process.exitCode = 1;
-      return;
-    }
+    const commandArgs = projectPayloadArgs(rawProcessArgs, command) || args;
 
-    if (args.length < 2) {
+    if (commandArgs.length < 2) {
       console.log(unsupported(rawCommand));
       process.exitCode = 1;
       return;
     }
 
-    const [projectId, ...taskArgs] = args;
+    const [projectId, ...taskArgs] = commandArgs;
     const result = await handleCodexPromptCommand(projectId, taskArgs);
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
@@ -333,19 +437,15 @@ async function main() {
   }
 
   if (command === "codex-budget") {
-    if (ppoPrefixed) {
-      console.log(unsupported("/ppo codex-budget"));
-      process.exitCode = 1;
-      return;
-    }
+    const commandArgs = projectPayloadArgs(rawProcessArgs, command) || args;
 
-    if (args.length < 2) {
+    if (commandArgs.length < 2) {
       console.log(unsupported(rawCommand));
       process.exitCode = 1;
       return;
     }
 
-    const [projectId, ...taskArgs] = args;
+    const [projectId, ...taskArgs] = commandArgs;
     const result = handleCodexBudgetCommand(projectId, taskArgs);
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
@@ -353,13 +453,7 @@ async function main() {
   }
 
   if (command === "prompt-size") {
-    if (ppoPrefixed) {
-      console.log(unsupported("/ppo prompt-size"));
-      process.exitCode = 1;
-      return;
-    }
-
-    const draftArgs = terminalArgsAfterCommand(rawProcessArgs, command);
+    const draftArgs = textPayloadArgs(rawProcessArgs, command) || terminalArgsAfterCommand(rawProcessArgs, command);
 
     if (draftArgs.length < 1) {
       console.log(unsupported(rawCommand));
@@ -374,19 +468,15 @@ async function main() {
   }
 
   if (command === "split-task") {
-    if (ppoPrefixed) {
-      console.log(unsupported("/ppo split-task"));
-      process.exitCode = 1;
-      return;
-    }
+    const taskArgs = textPayloadArgs(rawProcessArgs, command) || args;
 
-    if (args.length < 1) {
+    if (taskArgs.length < 1) {
       console.log(unsupported(rawCommand));
       process.exitCode = 1;
       return;
     }
 
-    const result = handleSplitTaskCommand(args);
+    const result = handleSplitTaskCommand(taskArgs);
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;

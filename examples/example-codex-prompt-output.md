@@ -1,9 +1,10 @@
 # Example Codex Prompt Output
 
-Phase 3A is terminal-only:
+Phase 3A introduced the local prompt generator, and Phase 3C routes it through `/ppo`:
 
 ```bash
 node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
+node local-operator/ppo-command.mjs "/ppo codex khlim-assist add provider validation tests"
 ```
 
 Example shape:
@@ -53,4 +54,4 @@ Safety Boundaries:
 - No unrelated scope expansion.
 ```
 
-Do not route `/ppo codex` through Telegram/OpenClaw in Phase 3B.
+Phase 3C routes `/ppo codex` through `ppo_local` as deterministic text generation only. It does not invoke Codex or any model.

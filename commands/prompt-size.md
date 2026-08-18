@@ -8,13 +8,19 @@
 
 Review a Codex prompt draft with deterministic local measurements and safe mechanical compaction.
 
-Phase 3B is terminal-only:
+Phase 3B introduced the terminal command:
 
 ```bash
 node local-operator/ppo-command.mjs prompt-size <draft>
 ```
 
-Do not expose `/ppo prompt-size` through Telegram/OpenClaw in Phase 3B.
+Phase 3C routes the same deterministic text command through:
+
+```text
+/ppo prompt-size <draft>
+```
+
+Multiline drafts are preserved as one wrapper argv value when routed through `ppo_local`.
 
 ## Example input
 
@@ -44,7 +50,7 @@ Allowed deterministic cleanup:
 - leading/trailing whitespace trimming
 - repeated blank-line normalization
 - exact repeated adjacent line removal
-- exact duplicate bullet removal
+- preservation of indentation, nested bullets, and repeated text under separate headings
 
 It does not paraphrase meaning, invent requirements, fabricate file paths, or silently remove unique safety boundaries or exit criteria.
 
@@ -55,4 +61,4 @@ This command reviews text only. It must not invoke Codex, call OpenAI APIs, call
 ## Future upgrade path
 
 - Add richer prompt-size heuristics only after separate approval.
-- Review Telegram/OpenClaw arbitrary-text routing in Phase 3C.
+- Keep richer arbitrary text workflows behind later review.

@@ -30,6 +30,10 @@ Personal Project Operator must use:
 /ppo menu project
 /ppo menu codex
 /ppo menu system
+/ppo codex <project> <task>
+/ppo codex-budget <project> <task>
+/ppo prompt-size <draft>
+/ppo split-task <task>
 ```
 
 ## Local wrapper
@@ -40,7 +44,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 3B, `ppo_local` keeps the Phase 2C command surface: `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` route to GitHub read-only behavior for the approved project ids. The local Codex prompt generator and planning tools are terminal-only and are not accepted by this bridge yet.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 3C, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids, and routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers. The bridge parses only the command envelope; task and draft text is inert data.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -74,6 +78,10 @@ node local-operator/ppo-command.mjs pr khlim-assist
 | `/ppo status` | `ppo_local` raw `status` | GitHub read-only project status |
 | `/ppo repo <project>` | `ppo_local` raw `repo <project>` | GitHub read-only repo summary |
 | `/ppo pr <project>` | `ppo_local` raw `pr <project>` | GitHub read-only PR summary |
+| `/ppo codex <project> <task>` | `ppo_local` raw `codex <project> <task>` | Local Codex prompt text generation |
+| `/ppo codex-budget <project> <task>` | `ppo_local` raw `codex-budget <project> <task>` | Local deterministic budget estimate |
+| `/ppo prompt-size <draft>` | `ppo_local` raw `prompt-size <draft>` | Local prompt-size review |
+| `/ppo split-task <task>` | `ppo_local` raw `split-task <task>` | Local deterministic task split |
 | `/ppo menu` | `ppo_local` raw `menu` | `/menu` |
 | `/ppo menu project` | `ppo_local` raw `menu project` | `/menu project` |
 | `/ppo menu codex` | `ppo_local` raw `menu codex` | `/menu codex` |
@@ -90,6 +98,7 @@ They must not:
 - call Telegram APIs
 - handle bot tokens
 - scrape Codex usage
+- invoke Codex, ChatGPT, OpenAI APIs, or another model
 - deploy to VPS
 - store secrets
 - mutate project files

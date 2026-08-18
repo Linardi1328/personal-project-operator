@@ -8,13 +8,17 @@
 
 Produce a deterministic local split for broad development work.
 
-Phase 3B is terminal-only:
+Phase 3B introduced the terminal command:
 
 ```bash
 node local-operator/ppo-command.mjs split-task <task>
 ```
 
-Do not expose `/ppo split-task` through Telegram/OpenClaw in Phase 3B.
+Phase 3C routes the same deterministic text command through:
+
+```text
+/ppo split-task <task>
+```
 
 ## Example input
 
@@ -61,4 +65,4 @@ The task string is data only. Shell-looking punctuation, `$()`, backticks, and p
 ## Future upgrade path
 
 - Generate per-phase Codex prompts only after separate approval.
-- Review Telegram/OpenClaw arbitrary-text routing in Phase 3C.
+- Keep richer arbitrary text workflows behind later review.
