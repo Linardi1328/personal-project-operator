@@ -47,6 +47,18 @@ pr ledgerpilot-ai
 pr spy-market-agent
 pr portfolio
 pr rbl-content-engine
+codex khlim-assist add provider validation tests
+codex ledgerpilot-ai add invoice import workflow
+codex spy-market-agent harden research error handling
+codex portfolio harden contact form error handling
+codex rbl-content-engine organize source asset workflow
+codex-budget khlim-assist add provider validation tests
+codex-budget ledgerpilot-ai add invoice import workflow
+codex-budget spy-market-agent harden research error handling
+codex-budget portfolio harden contact form error handling
+codex-budget rbl-content-engine organize source asset workflow
+prompt-size Goal: build one focused feature
+split-task add GitHub integration and Telegram routing
 ```
 
 The bridge also accepts full `/ppo ...` payloads for local validation, but OpenClaw `command-arg-mode: raw` normally forwards only the text after `/ppo`.

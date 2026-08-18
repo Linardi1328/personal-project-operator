@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { runPpoLocalTool, toPpoWrapperArgs } from "./bridge.mjs";
+import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
+import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
 import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
 
 const runWrapper = (args) => execFileSync(process.execPath, ["local-operator/ppo-command.mjs", ...args], {
@@ -119,6 +121,57 @@ for (const [input, expected] of [
   [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]]
 ]) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} raw ppo envelope maps correctly`);
+}
+
+{
+  const exactTask = "x".repeat(MAX_TASK_CHARS);
+  const exactDraft = "y".repeat(MAX_PROMPT_DRAFT_CHARS);
+
+  for (const [input, expected] of [
+    [`codex khlim-assist ${exactTask}`, ["codex", "khlim-assist", exactTask]],
+    [`/ppo codex-budget rbl-content-engine ${exactTask}`, ["codex-budget", "rbl-content-engine", exactTask]],
+    [`split-task ${exactTask}`, ["split-task", exactTask]],
+    [`/ppo prompt-size ${exactDraft}`, ["prompt-size", exactDraft]]
+  ]) {
+    assert.deepEqual(toPpoWrapperArgs(input), expected, `${expected[0]} accepts exact Phase 3C text bound`);
+
+    const result = await runPpoLocalTool(
+      { command: input },
+      {
+        runWrapper: async (wrapperArgs) => ({
+          stdout: `bounded fake wrapper: ${wrapperArgs[0]}\n`,
+          stderr: ""
+        })
+      }
+    );
+
+    assert.equal(result.ok, true, `${expected[0]} exact-bound input executes fake wrapper`);
+    assert.deepEqual(result.wrapperArgs, expected, `${expected[0]} exact-bound argv is preserved`);
+  }
+}
+
+for (const input of [
+  `codex khlim-assist ${"x".repeat(MAX_TASK_CHARS + 1)}`,
+  `/ppo codex-budget rbl-content-engine ${"x".repeat(MAX_TASK_CHARS + 1)}`,
+  `split-task ${"x".repeat(MAX_TASK_CHARS + 1)}`,
+  `/ppo prompt-size ${"y".repeat(MAX_PROMPT_DRAFT_CHARS + 1)}`
+]) {
+  assert.equal(toPpoWrapperArgs(input), null, `${input.slice(0, 24)}... rejects over-limit text before execution`);
+  let wrapperCalls = 0;
+  const result = await runPpoLocalTool(
+    { command: input },
+    {
+      runWrapper: async () => {
+        wrapperCalls += 1;
+        return { stdout: "", stderr: "" };
+      }
+    }
+  );
+
+  assert.equal(result.ok, false, "over-limit input fails safely");
+  assert.equal(result.exitCode, 1, "over-limit input uses safe failure exit code");
+  assert.deepEqual(result.wrapperArgs, [], "over-limit input has no wrapper argv");
+  assert.equal(wrapperCalls, 0, "over-limit input executes zero wrapper calls");
 }
 
 {

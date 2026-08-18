@@ -1,6 +1,6 @@
 ---
 name: ppo
-description: Route Personal Project Operator commands to the local read-only wrapper.
+description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries and Phase 3C text tools.
 user-invocable: true
 command-dispatch: tool
 command-tool: ppo_local
@@ -112,7 +112,7 @@ OpenClaw should parse Telegram text that starts with `/ppo`, then pass the raw a
 Expected flow:
 
 ```text
-Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture or GitHub read-only output
+Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture, GitHub read-only, or deterministic text output
 ```
 
 ## Unsupported commands

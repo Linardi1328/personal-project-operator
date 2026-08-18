@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
+import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
 import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -101,11 +103,19 @@ function parseProjectTextCommand(commandName, rest) {
     return null;
   }
 
+  if (payload.length > MAX_TASK_CHARS) {
+    return null;
+  }
+
   return [commandName, projectEnvelope.token, payload];
 }
 
-function parseTextOnlyCommand(commandName, rest) {
+function parseTextOnlyCommand(commandName, rest, limit) {
   const payload = rest.trim();
+
+  if (payload.length > limit) {
+    return null;
+  }
 
   return payload ? [commandName, payload] : null;
 }
@@ -149,8 +159,12 @@ export function toPpoWrapperArgs(rawCommand) {
     return parseProjectTextCommand(commandName, commandEnvelope.rest);
   }
 
-  if (commandName === "prompt-size" || commandName === "split-task") {
-    return parseTextOnlyCommand(commandName, commandEnvelope.rest);
+  if (commandName === "prompt-size") {
+    return parseTextOnlyCommand(commandName, commandEnvelope.rest, MAX_PROMPT_DRAFT_CHARS);
+  }
+
+  if (commandName === "split-task") {
+    return parseTextOnlyCommand(commandName, commandEnvelope.rest, MAX_TASK_CHARS);
   }
 
   return null;
