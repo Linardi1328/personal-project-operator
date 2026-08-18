@@ -1,58 +1,53 @@
-# prompt-size
+# /prompt-size
 
 ## Command name
 
-`prompt-size <draft>`
+`/prompt-size <draft>`
 
 ## Purpose
 
-Review a Codex prompt draft with deterministic local measurements and safe mechanical compaction.
+Review and compress a long Codex prompt.
 
-Phase 3B is terminal-only:
+## Input format
 
-```bash
-node local-operator/ppo-command.mjs prompt-size <draft>
+```text
+/prompt-size <draft>
 ```
-
-Do not expose `/ppo prompt-size` through Telegram/OpenClaw in Phase 3B.
 
 ## Example input
 
-```bash
-node local-operator/ppo-command.mjs prompt-size "Goal: build the whole operator. Add GitHub integration. Add Telegram routing. Add VPS deployment. Add write actions."
+```text
+/prompt-size Please build the whole operator with GitHub, Telegram, VPS, and Codex integration...
 ```
 
 ## Expected output
 
-The output includes:
+The command should encourage:
 
-- character count
-- approximate word count
-- line count
-- deterministic size label: `Compact`, `Acceptable`, `Long`, or `Too broad`
-- prompt sections to keep
-- exact repetition or breadth to reduce
-- safe deterministic compaction rules
+- removing repeated background
+- keeping the current goal only
+- listing exact scope
+- including tests
+- including exit criteria
+- including do-not-change rules
 
-The command does not claim exact token cost or provider billing usage.
+Example:
 
-## Safe compaction
-
-Allowed deterministic cleanup:
-
-- terminal-control sanitization
-- leading/trailing whitespace trimming
-- repeated blank-line normalization
-- exact repeated adjacent line removal
-- exact duplicate bullet removal
-
-It does not paraphrase meaning, invent requirements, fabricate file paths, or silently remove unique safety boundaries or exit criteria.
+```text
+Prompt Size Review
+- Estimate: too broad
+- Remove: repeated project background and future phases.
+- Keep: current goal, files to inspect, requirements, tests, safety boundaries.
+- Suggested split: docs first, then read-only GitHub, then prompt generator.
+```
 
 ## Safety boundary
 
-This command reviews text only. It must not invoke Codex, call OpenAI APIs, call another model, execute the draft, edit project files, deploy services, or modify OpenClaw configuration.
+Text review only. Do not execute the prompt or edit project files.
 
 ## Future upgrade path
 
-- Add richer prompt-size heuristics only after separate approval.
-- Review Telegram/OpenClaw arbitrary-text routing in Phase 3C.
+- Add token estimate heuristics.
+- Add compact rewrite output.
+- Link to task-size rules and Codex templates.
+

@@ -1,48 +1,59 @@
-# codex-budget
+# /codex-budget
 
 ## Command name
 
-`codex-budget <project> <task>`
+`/codex-budget <project> <task>`
 
 ## Purpose
 
-Produce a deterministic local estimate for a Codex-sized development task.
+Estimate the expected Codex task size before generating or running a prompt.
 
-Phase 3B is terminal-only:
+## Input format
 
-```bash
-node local-operator/ppo-command.mjs codex-budget <project> <task>
+```text
+/codex-budget <project> <task>
 ```
-
-Do not expose `/ppo codex-budget` through Telegram/OpenClaw in Phase 3B.
 
 ## Example input
 
-```bash
-node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai "add invoice import workflow"
+```text
+/codex-budget ledgerpilot-ai add invoice import workflow
 ```
 
 ## Expected output
 
-The output includes:
+Use these categories:
 
-- project display name
-- repository identity from the fixed registry
-- inert task text
-- deterministic estimate: `Small`, `Medium`, `Large`, or `Too large - split required`
-- deterministic reason
-- evidence boundary
-- suggested action
+- `Small`
+- `Medium`
+- `Large`
+- `Too large - split required`
 
-It does not claim exact token cost, inspect Codex usage, inspect arbitrary repository files, or call live GitHub.
+Factors:
+
+- repo size
+- number of files likely affected
+- whether tests are needed
+- whether UI/backend/database changes are involved
+- whether the task requires research or architecture changes
+
+Example:
+
+```text
+Codex Budget Estimate
+- Project: LedgerPilot AI
+- Task: add invoice import workflow
+- Estimate: Large
+- Reason: likely touches backend, frontend, data validation, and tests.
+- Suggested action: split into parser, UI, persistence, hardening, and review phases.
+```
 
 ## Safety boundary
 
-This command generates text only. It must not invoke Codex, call OpenAI APIs, call another model, execute generated plans, mutate repositories, create branches, commit, push, create issues, open or merge PRs, deploy services, or edit OpenClaw configuration.
-
-The task string is data only. Shell-looking punctuation, `$()`, backticks, and paths are not executed or interpreted.
+This is an estimate only. It must not start implementation or spend Codex usage.
 
 ## Future upgrade path
 
-- Add richer budget signals only after separate approval.
-- Review Telegram/OpenClaw arbitrary-text routing in Phase 3C.
+- Combine repo metadata, task history, and current usage status.
+- Suggest prompt split automatically when estimate is large.
+
