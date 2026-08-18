@@ -67,6 +67,16 @@ node local-operator/ppo-command.mjs codex khlim-assist "add provider validation 
 
 Do not route `/ppo codex` through OpenClaw/Telegram in Phase 3A. The bridge intentionally rejects `codex ...` input.
 
+Phase 3B adds terminal-only Codex planning tools:
+
+```bash
+node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai "add invoice import workflow"
+node local-operator/ppo-command.mjs prompt-size "Goal: build one focused feature"
+node local-operator/ppo-command.mjs split-task "add GitHub integration and Telegram routing"
+```
+
+Do not route `/ppo codex-budget`, `/ppo prompt-size`, or `/ppo split-task` through OpenClaw/Telegram in Phase 3B. The bridge intentionally rejects these planning commands before wrapper execution.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -79,10 +89,12 @@ Do not route `/ppo codex` through OpenClaw/Telegram in Phase 3A. The bridge inte
 - `github-ppo-commands.mjs`: Phase 2B phone-friendly `/ppo repo` and `/ppo pr` formatter.
 - `github-ppo-status.mjs`: Phase 2C live GitHub read-only `/ppo status` formatter.
 - `codex-prompt-generator.mjs`: Phase 3A terminal-only local Codex prompt text generator.
+- `codex-planning-tools.mjs`: Phase 3B terminal-only deterministic Codex planning helpers.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
+- `codex-planning-tools.test.mjs`: network-free tests for budget estimates, prompt-size review, task splitting, and terminal-only boundaries.
 
 ## Requirements
 
@@ -144,6 +156,8 @@ Phase 2C uses the same read-only client for `/ppo status`. Issue counts are cons
 
 Phase 3A generates local prompt text only. It reads only fixed mapped project docs plus approved GitHub read-only context. It does not invoke Codex, call OpenAI APIs, create commits, open PRs, change target repos, or expose Telegram `/ppo codex` routing.
 
+Phase 3B generates local planning text only. `codex-budget`, `prompt-size`, and `split-task` do not invoke Codex, call OpenAI APIs, call another model, execute plans, inspect Codex usage, add GitHub endpoints, mutate repositories, deploy services, or expose Telegram routing. Planning task and draft text is inert data; shell-looking punctuation and paths are not executed or interpreted.
+
 Owner test plan after branch review:
 
 ```bash
@@ -153,7 +167,13 @@ node local-operator/ppo-command.mjs pr khlim-assist
 node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
 node local-operator/ppo-command.mjs codex portfolio "harden contact form error handling"
 node local-operator/ppo-command.mjs codex khlim-assist "add GitHub integration, Telegram routing, VPS deployment, and write actions"
+node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai "add invoice import workflow"
+node local-operator/ppo-command.mjs prompt-size "Goal: build the whole operator. Add GitHub integration. Add Telegram routing. Add VPS deployment. Add write actions. Repeat all background and future phases."
+node local-operator/ppo-command.mjs split-task "add GitHub integration, Telegram bot, Codex prompt generator, VPS deployment, and write actions"
+node local-operator/ppo-command.mjs "/ppo split-task add GitHub integration and Telegram routing"
 ```
+
+The final command is expected to be rejected because Phase 3B planning commands are terminal-only.
 
 Then through OpenClaw/Telegram after review:
 
