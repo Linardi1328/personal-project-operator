@@ -16,7 +16,7 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts only the approved PPO command surface for Phase 2C while Phase 3A/3B Codex commands remain terminal-only
+- accepts the approved PPO command surface through Phase 3C, including deterministic Codex text commands
 - invokes only `local-operator/ppo-command.mjs`
 - passes arguments as an argv array through `execFile`
 - does not use a shell
@@ -25,7 +25,8 @@ The plugin:
 - does not use secrets
 - does not mutate files
 - does not add GitHub writes or generic GitHub tools
-- does not accept `codex ...`, `codex-budget ...`, `prompt-size ...`, or `split-task ...` through OpenClaw/Telegram in Phase 3B
+- accepts `codex ...`, `codex-budget ...`, `prompt-size ...`, and `split-task ...` through OpenClaw/Telegram in Phase 3C as text-only direct routes
+- parses only the command envelope; task and draft text is inert data
 
 ## Supported Raw Inputs
 
@@ -46,6 +47,18 @@ pr ledgerpilot-ai
 pr spy-market-agent
 pr portfolio
 pr rbl-content-engine
+codex khlim-assist add provider validation tests
+codex ledgerpilot-ai add invoice import workflow
+codex spy-market-agent harden research error handling
+codex portfolio harden contact form error handling
+codex rbl-content-engine organize source asset workflow
+codex-budget khlim-assist add provider validation tests
+codex-budget ledgerpilot-ai add invoice import workflow
+codex-budget spy-market-agent harden research error handling
+codex-budget portfolio harden contact form error handling
+codex-budget rbl-content-engine organize source asset workflow
+prompt-size Goal: build one focused feature
+split-task add GitHub integration and Telegram routing
 ```
 
 The bridge also accepts full `/ppo ...` payloads for local validation, but OpenClaw `command-arg-mode: raw` normally forwards only the text after `/ppo`.

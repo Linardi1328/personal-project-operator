@@ -59,15 +59,15 @@ node local-operator/ppo-command.mjs status
 
 `/ppo menu` and `/ppo help` remain fixture-backed wrapper output with Phase 2C wording adaptation.
 
-Phase 3A adds terminal-only Codex prompt generation:
+Phase 3A adds terminal Codex prompt generation:
 
 ```bash
 node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
 ```
 
-Do not route `/ppo codex` through OpenClaw/Telegram in Phase 3A. The bridge intentionally rejects `codex ...` input.
+Phase 3C routes `/ppo codex <project> <task>` through OpenClaw/Telegram using the same deterministic text generator.
 
-Phase 3B adds terminal-only Codex planning tools:
+Phase 3B adds terminal Codex planning tools:
 
 ```bash
 node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai "add invoice import workflow"
@@ -75,7 +75,7 @@ node local-operator/ppo-command.mjs prompt-size "Goal: build one focused feature
 node local-operator/ppo-command.mjs split-task "add GitHub integration and Telegram routing"
 ```
 
-Do not route `/ppo codex-budget`, `/ppo prompt-size`, or `/ppo split-task` through OpenClaw/Telegram in Phase 3B. The bridge intentionally rejects these planning commands before wrapper execution.
+Phase 3C routes `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` through OpenClaw/Telegram. The bridge parses only the command envelope and treats task/draft text as inert data.
 
 ## Files
 
@@ -88,13 +88,13 @@ Do not route `/ppo codex-budget`, `/ppo prompt-size`, or `/ppo split-task` throu
 - `github-readonly-cli.mjs`: terminal-only Phase 2A validation CLI.
 - `github-ppo-commands.mjs`: Phase 2B phone-friendly `/ppo repo` and `/ppo pr` formatter.
 - `github-ppo-status.mjs`: Phase 2C live GitHub read-only `/ppo status` formatter.
-- `codex-prompt-generator.mjs`: Phase 3A terminal-only local Codex prompt text generator.
-- `codex-planning-tools.mjs`: Phase 3B terminal-only deterministic Codex planning helpers.
+- `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
+- `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
-- `codex-planning-tools.test.mjs`: network-free tests for budget estimates, prompt-size review, task splitting, and terminal-only boundaries.
+- `codex-planning-tools.test.mjs`: network-free tests for budget estimates, prompt-size review, task splitting, and terminal/Phase 3C routing boundaries.
 
 ## Requirements
 
@@ -154,9 +154,11 @@ Phase 2B uses the same read-only client for `/ppo repo <project>` and `/ppo pr <
 
 Phase 2C uses the same read-only client for `/ppo status`. Issue counts are conservative when the raw bounded issues page hits the page limit after pull requests are filtered out. It does not add recommendations, stale-project detection, `/ppo next`, Codex prompt generation, new endpoint families, GraphQL, or write actions.
 
-Phase 3A generates local prompt text only. It reads only fixed mapped project docs plus approved GitHub read-only context. It does not invoke Codex, call OpenAI APIs, create commits, open PRs, change target repos, or expose Telegram `/ppo codex` routing.
+Phase 3A generates local prompt text only. It reads only fixed mapped project docs plus approved GitHub read-only context. It does not invoke Codex, call OpenAI APIs, create commits, open PRs, or change target repos.
 
-Phase 3B generates local planning text only. `codex-budget`, `prompt-size`, and `split-task` do not invoke Codex, call OpenAI APIs, call another model, execute plans, inspect Codex usage, add GitHub endpoints, mutate repositories, deploy services, or expose Telegram routing. Planning task and draft text is inert data; shell-looking punctuation and paths are not executed or interpreted.
+Phase 3B generates local planning text only. `codex-budget`, `prompt-size`, and `split-task` do not invoke Codex, call OpenAI APIs, call another model, execute plans, inspect Codex usage, add GitHub endpoints, mutate repositories, or deploy services. Planning task and draft text is inert data; shell-looking punctuation and paths are not executed or interpreted.
+
+Phase 3C routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` through `ppo_local`. It preserves direct OpenClaw tool dispatch with no model turn, no new OpenClaw tools, no new permissions, no writes, and no new GitHub endpoints.
 
 Owner test plan after branch review:
 
@@ -174,9 +176,10 @@ node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai "add invoice imp
 node local-operator/ppo-command.mjs prompt-size "Goal: build the whole operator. Add GitHub integration. Add Telegram routing. Add VPS deployment. Add write actions. Repeat all background and future phases."
 node local-operator/ppo-command.mjs split-task "add GitHub integration, Telegram bot, Codex prompt generator, VPS deployment, and write actions"
 node local-operator/ppo-command.mjs "/ppo split-task add GitHub integration and Telegram routing"
+node local-operator/ppo-command.mjs "/ppo prompt-size Goal: keep line structure
+Requirements:
+- preserve multiline input"
 ```
-
-The final command is expected to be rejected because Phase 3B planning commands are terminal-only.
 
 Then through OpenClaw/Telegram after review:
 
@@ -186,6 +189,12 @@ Then through OpenClaw/Telegram after review:
 /ppo repo rbl-content-engine
 /ppo pr khlim-assist
 /ppo pr rbl-content-engine
+/ppo codex rbl-content-engine organize source asset workflow
+/ppo codex-budget ledgerpilot-ai add invoice import workflow
+/ppo prompt-size Goal: keep line structure
+Requirements:
+- preserve multiline input
+/ppo split-task add GitHub integration and Telegram routing
 ```
 
 ## OpenClaw handoff shape

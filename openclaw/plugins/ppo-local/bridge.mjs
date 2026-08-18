@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
+import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
 import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -26,7 +28,7 @@ export function unsupportedPpoToolInput(rawCommand) {
   return [
     `Unsupported PPO tool input: ${commandLabel}`,
     "",
-    "Phase 2C supports only:",
+    "Phase 3C supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",
@@ -34,8 +36,88 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo menu system",
     "- /ppo help",
     "- /ppo repo <project>",
-    "- /ppo pr <project>"
+    "- /ppo pr <project>",
+    "- /ppo codex <project> <task>",
+    "- /ppo codex-budget <project> <task>",
+    "- /ppo prompt-size <draft>",
+    "- /ppo split-task <task>"
   ].join("\n");
+}
+
+function splitFirstToken(value) {
+  const match = String(value || "").match(/^(\S+)(?:[\t\n\r ]+([\s\S]*))?$/u);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    token: match[1],
+    rest: match[2] ?? ""
+  };
+}
+
+function unwrapPpoEnvelope(rawCommand) {
+  const trimmed = rawCommand.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const first = splitFirstToken(trimmed);
+
+  if (!first) {
+    return null;
+  }
+
+  const firstToken = first.token.toLowerCase();
+
+  if (firstToken === "/ppo" || firstToken === "ppo") {
+    const rest = first.rest.trimStart();
+    return rest ? rest : null;
+  }
+
+  if (first.token.startsWith("/")) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function normalizedStaticCommand(commandName, rest) {
+  return [commandName, rest.trim().replace(/\s+/g, " ")]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function parseProjectTextCommand(commandName, rest) {
+  const projectEnvelope = splitFirstToken(rest.trimStart());
+
+  if (!projectEnvelope || !allowedGitHubProjectIds.has(projectEnvelope.token)) {
+    return null;
+  }
+
+  const payload = projectEnvelope.rest.trim();
+
+  if (!payload) {
+    return null;
+  }
+
+  if (payload.length > MAX_TASK_CHARS) {
+    return null;
+  }
+
+  return [commandName, projectEnvelope.token, payload];
+}
+
+function parseTextOnlyCommand(commandName, rest, limit) {
+  const payload = rest.trim();
+
+  if (payload.length > limit) {
+    return null;
+  }
+
+  return payload ? [commandName, payload] : null;
 }
 
 export function toPpoWrapperArgs(rawCommand) {
@@ -43,35 +125,27 @@ export function toPpoWrapperArgs(rawCommand) {
     return null;
   }
 
-  let normalized = rawCommand.trim().replace(/\s+/g, " ");
+  const commandText = unwrapPpoEnvelope(rawCommand);
 
-  if (!normalized) {
+  if (!commandText) {
     return null;
   }
 
-  const lower = normalized.toLowerCase();
+  const commandEnvelope = splitFirstToken(commandText);
 
-  if (lower === "/ppo" || lower === "ppo") {
+  if (!commandEnvelope) {
     return null;
   }
 
-  if (lower.startsWith("/ppo ")) {
-    normalized = normalized.slice(5).trim().replace(/\s+/g, " ");
-  } else if (lower.startsWith("ppo ")) {
-    normalized = normalized.slice(4).trim().replace(/\s+/g, " ");
-  } else if (normalized.startsWith("/")) {
-    return null;
-  }
-
-  const normalizedLower = normalized.toLowerCase();
-  const staticCommand = allowedCommands.get(normalizedLower);
+  const commandName = commandEnvelope.token.toLowerCase();
+  const normalizedCommand = normalizedStaticCommand(commandName, commandEnvelope.rest);
+  const staticCommand = allowedCommands.get(normalizedCommand.toLowerCase());
 
   if (staticCommand) {
     return staticCommand;
   }
 
-  const parts = normalized.split(" ");
-  const commandName = parts[0]?.toLowerCase();
+  const parts = normalizedCommand.split(" ");
 
   if (
     parts.length === 2 &&
@@ -79,6 +153,18 @@ export function toPpoWrapperArgs(rawCommand) {
     allowedGitHubProjectIds.has(parts[1])
   ) {
     return [commandName, parts[1]];
+  }
+
+  if (commandName === "codex" || commandName === "codex-budget") {
+    return parseProjectTextCommand(commandName, commandEnvelope.rest);
+  }
+
+  if (commandName === "prompt-size") {
+    return parseTextOnlyCommand(commandName, commandEnvelope.rest, MAX_PROMPT_DRAFT_CHARS);
+  }
+
+  if (commandName === "split-task") {
+    return parseTextOnlyCommand(commandName, commandEnvelope.rest, MAX_TASK_CHARS);
   }
 
   return null;
@@ -90,7 +176,8 @@ async function runWrapper(wrapperPath, wrapperArgs, options) {
   }
 
   return execFileAsync(process.execPath, [wrapperPath, ...wrapperArgs], {
-    maxBuffer: 1024 * 1024
+    maxBuffer: 1024 * 1024,
+    shell: false
   });
 }
 

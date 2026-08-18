@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { runPpoLocalTool, toPpoWrapperArgs } from "./bridge.mjs";
+import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
+import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
+import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
 
 const runWrapper = (args) => execFileSync(process.execPath, ["local-operator/ppo-command.mjs", ...args], {
   encoding: "utf8"
@@ -24,6 +27,24 @@ const expectedMappings = new Map([
   ["pr portfolio", ["pr", "portfolio"]],
   ["pr rbl-content-engine", ["pr", "rbl-content-engine"]]
 ]);
+
+const currentProjectIds = listPhase2GitHubProjects().map((project) => project.id);
+const phase3cTask = "; rm -rf / $(whoami) `whoami` ../../etc/passwd café 東京";
+const multilineDraft = "Goal: keep line structure\nRequirements:\n- preserve newline one\n- preserve newline two\nExit Criteria: reviewed";
+
+for (const projectId of currentProjectIds) {
+  expectedMappings.set(
+    `codex ${projectId} ${phase3cTask}`,
+    ["codex", projectId, phase3cTask]
+  );
+  expectedMappings.set(
+    `codex-budget ${projectId} ${phase3cTask}`,
+    ["codex-budget", projectId, phase3cTask]
+  );
+}
+
+expectedMappings.set(`prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]);
+expectedMappings.set(`split-task ${phase3cTask}`, ["split-task", phase3cTask]);
 
 for (const [input, expected] of expectedMappings) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} maps to approved wrapper argv`);
@@ -72,7 +93,11 @@ for (const [input, expected] of [
   ["/ppo repo khlim-assist", ["repo", "khlim-assist"]],
   ["/ppo repo rbl-content-engine", ["repo", "rbl-content-engine"]],
   ["/ppo pr portfolio", ["pr", "portfolio"]],
-  ["/ppo pr rbl-content-engine", ["pr", "rbl-content-engine"]]
+  ["/ppo pr rbl-content-engine", ["pr", "rbl-content-engine"]],
+  [`/ppo codex rbl-content-engine ${phase3cTask}`, ["codex", "rbl-content-engine", phase3cTask]],
+  [`/ppo codex-budget khlim-assist ${phase3cTask}`, ["codex-budget", "khlim-assist", phase3cTask]],
+  [`/ppo prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]],
+  [`/ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]]
 ]) {
   const result = await runPpoLocalTool(
     { command: input },
@@ -87,6 +112,66 @@ for (const [input, expected] of [
   assert.equal(result.ok, true, `${input} full payload succeeds`);
   assert.deepEqual(result.wrapperArgs, expected, `${input} full payload maps correctly`);
   assert.equal(result.stdout, `fake wrapper: ${expected.join(" ")}\n`);
+}
+
+for (const [input, expected] of [
+  [`ppo codex portfolio ${phase3cTask}`, ["codex", "portfolio", phase3cTask]],
+  [`ppo codex-budget rbl-content-engine ${phase3cTask}`, ["codex-budget", "rbl-content-engine", phase3cTask]],
+  [`ppo prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]],
+  [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]]
+]) {
+  assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} raw ppo envelope maps correctly`);
+}
+
+{
+  const exactTask = "x".repeat(MAX_TASK_CHARS);
+  const exactDraft = "y".repeat(MAX_PROMPT_DRAFT_CHARS);
+
+  for (const [input, expected] of [
+    [`codex khlim-assist ${exactTask}`, ["codex", "khlim-assist", exactTask]],
+    [`/ppo codex-budget rbl-content-engine ${exactTask}`, ["codex-budget", "rbl-content-engine", exactTask]],
+    [`split-task ${exactTask}`, ["split-task", exactTask]],
+    [`/ppo prompt-size ${exactDraft}`, ["prompt-size", exactDraft]]
+  ]) {
+    assert.deepEqual(toPpoWrapperArgs(input), expected, `${expected[0]} accepts exact Phase 3C text bound`);
+
+    const result = await runPpoLocalTool(
+      { command: input },
+      {
+        runWrapper: async (wrapperArgs) => ({
+          stdout: `bounded fake wrapper: ${wrapperArgs[0]}\n`,
+          stderr: ""
+        })
+      }
+    );
+
+    assert.equal(result.ok, true, `${expected[0]} exact-bound input executes fake wrapper`);
+    assert.deepEqual(result.wrapperArgs, expected, `${expected[0]} exact-bound argv is preserved`);
+  }
+}
+
+for (const input of [
+  `codex khlim-assist ${"x".repeat(MAX_TASK_CHARS + 1)}`,
+  `/ppo codex-budget rbl-content-engine ${"x".repeat(MAX_TASK_CHARS + 1)}`,
+  `split-task ${"x".repeat(MAX_TASK_CHARS + 1)}`,
+  `/ppo prompt-size ${"y".repeat(MAX_PROMPT_DRAFT_CHARS + 1)}`
+]) {
+  assert.equal(toPpoWrapperArgs(input), null, `${input.slice(0, 24)}... rejects over-limit text before execution`);
+  let wrapperCalls = 0;
+  const result = await runPpoLocalTool(
+    { command: input },
+    {
+      runWrapper: async () => {
+        wrapperCalls += 1;
+        return { stdout: "", stderr: "" };
+      }
+    }
+  );
+
+  assert.equal(result.ok, false, "over-limit input fails safely");
+  assert.equal(result.exitCode, 1, "over-limit input uses safe failure exit code");
+  assert.deepEqual(result.wrapperArgs, [], "over-limit input has no wrapper argv");
+  assert.equal(wrapperCalls, 0, "over-limit input executes zero wrapper calls");
 }
 
 {
@@ -109,6 +194,28 @@ for (const [input, expected] of [
   assert.equal(result.stdout, safeStdout, "safe wrapper stdout is returned");
   assert.equal(result.stderr, "", "raw wrapper stderr is not surfaced");
   assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw gh stderr/);
+}
+
+{
+  const safeStdout = "Codex planning failed [INVALID_DRAFT]: Prompt draft text is required. Use: prompt-size <draft>.\n";
+  const result = await runPpoLocalTool(
+    { command: "prompt-size safe draft" },
+    {
+      runWrapper: async () => {
+        const error = new Error("wrapper exited 1");
+        error.code = 1;
+        error.stdout = safeStdout;
+        error.stderr = "SENSITIVE_TEST_SENTINEL raw planning stderr";
+        throw error;
+      }
+    }
+  );
+
+  assert.equal(result.ok, false, "non-zero planning wrapper exit is returned, not thrown");
+  assert.equal(result.exitCode, 1, "non-zero planning wrapper exit code is preserved");
+  assert.equal(result.stdout, safeStdout, "safe planning wrapper stdout is returned");
+  assert.equal(result.stderr, "", "raw planning wrapper stderr is not surfaced");
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw planning stderr/);
 }
 
 {
@@ -157,14 +264,32 @@ const rejectedInputs = [
   "status khlim-assist",
   "status && whoami",
   "status; touch /tmp/ppo-test",
-  "codex khlim-assist add-validation",
-  "/ppo codex khlim-assist add-validation",
-  "codex-budget khlim-assist add-tests",
-  "/ppo codex-budget khlim-assist add-tests",
-  "prompt-size build everything",
-  "/ppo prompt-size build everything",
-  "split-task build everything",
-  "/ppo split-task build everything",
+  "codex",
+  "/ppo codex",
+  "codex khlim-assist",
+  "/ppo codex khlim-assist",
+  "codex unknown add-validation",
+  "/ppo codex unknown add-validation",
+  "codex prooflab add-validation",
+  "codex jom-jelajah add-validation",
+  "codex KHLIM-assist add-validation",
+  "codex Linardi1328/khlim-assist add-validation",
+  "codex ../../khlim-assist add-validation",
+  "codex-budget",
+  "/ppo codex-budget",
+  "codex-budget khlim-assist",
+  "/ppo codex-budget khlim-assist",
+  "codex-budget unknown add-tests",
+  "/ppo codex-budget unknown add-tests",
+  "codex-budget prooflab add-tests",
+  "codex-budget jom-jelajah add-tests",
+  "codex-budget KHLIM-assist add-tests",
+  "codex-budget Linardi1328/khlim-assist add-tests",
+  "codex-budget ../../khlim-assist add-tests",
+  "prompt-size",
+  "/ppo prompt-size",
+  "split-task",
+  "/ppo split-task",
   "repo",
   "pr",
   "repo unknown",

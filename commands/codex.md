@@ -8,13 +8,17 @@
 
 Generate a compact local Codex prompt for implementation, review, bugfix, docs, or hardening work.
 
-Phase 3A is terminal-only:
+Phase 3A introduced the terminal command:
 
 ```bash
 node local-operator/ppo-command.mjs codex <project> <phase-or-task>
 ```
 
-Do not expose `/ppo codex` through Telegram/OpenClaw in Phase 3B.
+Phase 3C routes the same deterministic text generator through:
+
+```text
+/ppo codex <project> <phase-or-task>
+```
 
 ## Example input
 
@@ -67,7 +71,7 @@ Scope:
 
 ## Safety boundary
 
-The command generates text only. It must not run Codex automatically, call OpenAI APIs, invoke another model, change files in target project repositories, expose Telegram routing, or trigger external writes.
+The command generates text only. It must not run Codex automatically, call OpenAI APIs, invoke another model, change files in target project repositories, or trigger external writes.
 
 The task string is data only. It must not be interpreted as a shell command, file path, filename, or executable code.
 
@@ -75,4 +79,4 @@ The task string is data only. It must not be interpreted as a shell command, fil
 
 - Keep richer budget-aware prompt compression behind later review.
 - Keep automatic per-phase prompt generation behind later review.
-- Review Telegram/OpenClaw arbitrary-text routing in Phase 3C.
+- Keep richer arbitrary text workflows behind later review.

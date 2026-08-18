@@ -39,7 +39,7 @@ const taskDomains = [
     label: "Telegram/OpenClaw routing",
     patterns: [/\btelegram\b|\bopenclaw\b|\bbot\b|\brouting\b|\bslash command\b|\bbridge\b/u],
     goal: "Plan deterministic command routing and validation.",
-    boundary: "Keep arbitrary text routing behind separate review."
+    boundary: "Phase 3C routing is limited to the four approved text command envelopes; richer arbitrary-text workflows require separate review."
   },
   {
     key: "codex",

@@ -524,16 +524,42 @@ for (const [task, expectedKey] of [
   assert.match(result.stdout, /^Task Split/)
 }
 
-for (const input of [
-  "/ppo codex khlim-assist add-tests",
-  "/ppo codex-budget khlim-assist add-tests",
-  "/ppo prompt-size build everything",
-  "/ppo split-task build everything"
-]) {
-  const result = wrapper([input])
+{
+  const result = wrapper(["/ppo codex unknown-project add-tests"])
 
-  assert.equal(result.status, 1, `${input} is rejected by the wrapper`)
-  assert.match(result.stdout, /^Unsupported PPO command:/)
+  assert.equal(result.status, 1)
+  assert.match(result.stdout, /Codex prompt generation failed \[UNKNOWN_PROJECT\]/)
+  assert.doesNotMatch(result.stdout, /^Unsupported PPO command:/)
+}
+
+{
+  const result = wrapper(["/ppo codex-budget khlim-assist add validation tests"])
+
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /^Codex Budget Estimate/)
+  assert.match(result.stdout, /Project:\nKHLIM Assist/)
+}
+
+{
+  const result = wrapper([
+    "/ppo prompt-size Goal: keep line structure\nRequirements:\n- preserve newline one\n- preserve newline two\nExit Criteria: reviewed"
+  ])
+
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /^Prompt Size Review/)
+  assert.match(result.stdout, /Lines:\n5/)
+}
+
+{
+  const result = wrapper(["/ppo split-task add GitHub integration and Telegram routing"])
+
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /^Task Split/)
+  assert.doesNotMatch(result.stdout, /Keep arbitrary text routing behind separate review\./)
+  assert.match(
+    result.stdout,
+    /Phase 3C routing is limited to the four approved text command envelopes; richer arbitrary-text workflows require separate review\./
+  )
 }
 
 {
@@ -547,4 +573,4 @@ for (const input of [
   assert.match(output, /^Codex Budget Estimate/)
 }
 
-console.log("Codex planning tools tests passed: budget, prompt-size, split-task, terminal routing, and Telegram rejection boundaries.")
+console.log("Codex planning tools tests passed: budget, prompt-size, split-task, terminal and Phase 3C PPO routing boundaries.")
