@@ -190,22 +190,55 @@ for (const [draft, label] of [
     "",
     "",
     "- keep safety",
-    "- keep tests",
     "- keep safety",
+    "- keep tests",
     "Safety: do not expose credentials",
     "Exit Criteria: NOT merged"
   ].join("\n"))
 
   assert.match(output, /Remove \/ Reduce:/)
   assert.match(output, /- repeated adjacent lines/)
-  assert.match(output, /- exact duplicate bullets/)
   assert.match(output, /- repeated blank lines/)
   assert.doesNotMatch(output, /Goal: x\nGoal: x/)
-  assert.doesNotMatch(output, /- keep safety\n- keep tests\n- keep safety/)
+  assert.doesNotMatch(output, /- keep safety\n- keep safety/)
+  assert.match(output, /- keep safety\n- keep tests/)
   assert.doesNotMatch(output, /\n\n\n\n/)
   assert.match(output, /Safety: do not expose credentials/)
   assert.match(output, /Exit Criteria: NOT merged/)
   assert.match(output, /Did not paraphrase or invent requirements\./)
+}
+
+{
+  const output = reviewPromptSize([
+    "Scope:",
+    "- keep safety",
+    "  - preserve nested requirement",
+    "Requirements:",
+    "- keep safety",
+    "  - preserve nested requirement",
+    "Duplicate exact line",
+    "Duplicate exact line"
+  ].join("\n"))
+
+  assert.match(output, /Preserved indentation, nested bullets, and repeated text under separate headings\./)
+  assert.equal((output.match(/^- keep safety$/gm) || []).length, 2, "identical bullet text under different sections is preserved")
+  assert.equal((output.match(/^  - preserve nested requirement$/gm) || []).length, 2, "nested indentation is preserved by compaction")
+  assert.doesNotMatch(output, /Duplicate exact line\nDuplicate exact line/)
+}
+
+{
+  const output = reviewPromptSize([
+    "Scope:",
+    "- parent",
+    "  - nested item",
+    "  - nested item",
+    "- parent",
+    "Requirements:",
+    "- parent"
+  ].join("\n"))
+
+  assert.equal((output.match(/^  - nested item$/gm) || []).length, 1, "adjacent exact nested duplicate is removed")
+  assert.equal((output.match(/^- parent$/gm) || []).length, 3, "non-adjacent or separate-heading duplicate bullets are preserved")
 }
 
 {
@@ -284,7 +317,9 @@ for (const [draft, label] of [
   assert.match(output, /Permission-gated write-action design only\./)
   assert.match(output, /Current writes disabled in PPO\./)
   assert.match(output, /Separate explicit approval is required before any write/)
-  assert.doesNotMatch(output, /approval to mutate|push now|merge now/)
+  assert.match(output, /Permission-gated write-action design/)
+  assert.doesNotMatch(output, /^1\. Implementation$/m)
+  assert.doesNotMatch(output, /approval to mutate|push now|merge now|write implementation/i)
   assertBounded(output)
 }
 
@@ -303,7 +338,31 @@ for (const [draft, label] of [
   assert.match(output, /Permission-gated write-action design only\./)
   assert.match(output, /Current writes disabled in PPO\./)
   assert.match(output, /Separate explicit approval is required before any write/)
-  assert.doesNotMatch(output, /approval to mutate|create issue now|push now|merge now/)
+  assert.match(output, /Permission-gated write-action design/)
+  assert.doesNotMatch(output, /^1\. Focused implementation$/m)
+  assert.doesNotMatch(output, /approval to mutate|create issue now|push now|merge now|write implementation/i)
+  assertBounded(output)
+}
+
+for (const task of [
+  "fix typo and open PR",
+  "fix typo and create pull request",
+  "fix typo and close issue",
+  "fix typo and update PR",
+  "fix typo and comment on pull request",
+  "fix typo and label issue",
+  "fix typo and delete branch",
+  "fix typo and delete repo",
+  "fix typo and commit"
+]) {
+  const output = splitTask(task)
+
+  assertEstimate(output, "Small")
+  assert.match(output, /Permission-gated write-action design only\./, `${task} is gated`)
+  assert.match(output, /Current writes disabled in PPO\./, `${task} states current writes are disabled`)
+  assert.match(output, /Separate explicit approval is required before any write/, `${task} requires separate approval`)
+  assert.doesNotMatch(output, /^1\. Implementation$/m, `${task} does not use implementation workflow`)
+  assert.doesNotMatch(output, /approval to mutate|write implementation|merge now|push now|commit now|delete now/i)
   assertBounded(output)
 }
 

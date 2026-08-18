@@ -79,7 +79,13 @@ const taskDomains = [
   {
     key: "write-actions",
     label: "Permission-gated write-action design",
-    patterns: [/\bwrite actions?\b|\bmutations?\b|\bmerge\b|\bpush\b|\bcreate issue\b|\bexternal write\b|\bcreate pr\b|\bcommit\b/u],
+    patterns: [
+      /\bwrite actions?\b|\bmutations?\b|\bexternal writes?\b/u,
+      /\b(?:merge|push|commit)\b/u,
+      /\b(?:create|open)\s+(?:an?\s+)?(?:prs?|pull requests?)\b/u,
+      /\b(?:create|open|close|update|comment(?:\s+on)?|label)\s+(?:an?\s+)?(?:issues?|prs?|pull requests?)\b/u,
+      /\bdelete\s+(?:an?\s+)?(?:repos?|repositories|branch(?:es)?)\b/u
+    ],
     goal: "Define the write-action boundary and approval requirement.",
     boundary: "Current PPO writes are disabled; this permission-gated work requires separate explicit approval and remains outside current PPO write permissions."
   },
@@ -365,14 +371,13 @@ function promptSectionFindings(draft) {
 function compactPromptDraft(draft) {
   const lines = draft.split("\n")
   const compacted = []
-  const seenBullets = new Set()
   let adjacentDuplicates = 0
-  let duplicateBullets = 0
   let blankLinesReduced = 0
   let previousWasBlank = false
 
   for (const line of lines) {
     const trimmedLine = line.trim()
+    const normalizedLine = line.trimEnd()
 
     if (!trimmedLine) {
       if (previousWasBlank) {
@@ -387,23 +392,12 @@ function compactPromptDraft(draft) {
 
     previousWasBlank = false
 
-    if (compacted.at(-1)?.trim() === trimmedLine) {
+    if (compacted.at(-1) === normalizedLine) {
       adjacentDuplicates += 1
       continue
     }
 
-    if (/^[-*]\s+/u.test(trimmedLine)) {
-      const bulletKey = trimmedLine.replace(/^[-*]\s+/u, "- ")
-
-      if (seenBullets.has(bulletKey)) {
-        duplicateBullets += 1
-        continue
-      }
-
-      seenBullets.add(bulletKey)
-    }
-
-    compacted.push(line.trimEnd())
+    compacted.push(normalizedLine)
   }
 
   const compactedDraft = compacted.join("\n").trim()
@@ -412,7 +406,6 @@ function compactPromptDraft(draft) {
     compactedDraft,
     changed: compactedDraft !== draft,
     adjacentDuplicates,
-    duplicateBullets,
     blankLinesReduced
   }
 }
@@ -422,10 +415,6 @@ function removeReduceLines(compaction, draft) {
 
   if (compaction.adjacentDuplicates > 0) {
     lines.push("- repeated adjacent lines")
-  }
-
-  if (compaction.duplicateBullets > 0) {
-    lines.push("- exact duplicate bullets")
   }
 
   if (compaction.blankLinesReduced > 0) {
@@ -487,7 +476,8 @@ export function reviewPromptSize(draftInput) {
     "- Sanitized terminal controls.",
     "- Trimmed leading and trailing whitespace.",
     "- Normalized repeated blank lines.",
-    "- Removed exact repeated adjacent lines and exact duplicate bullets only.",
+    "- Removed exact adjacent duplicate lines only.",
+    "- Preserved indentation, nested bullets, and repeated text under separate headings.",
     "- Did not paraphrase or invent requirements.",
     "",
     "Compacted Draft:",
@@ -554,6 +544,22 @@ function formatSplitPhases(phases) {
   ])
 }
 
+function smallMediumWorkflowLines(domains, implementationLabel) {
+  if (!hasWriteActionSignal(domains)) {
+    return [
+      `1. ${implementationLabel}`,
+      "2. Tests/Hardening",
+      "3. Review"
+    ]
+  }
+
+  return [
+    "1. Permission-gated write-action design",
+    "2. Boundary tests/hardening",
+    "3. Owner review for a separate approval decision"
+  ]
+}
+
 export function splitTask(taskInput) {
   const task = normalizePlanningTaskText(taskInput)
   const estimate = estimateTaskSize(task)
@@ -574,9 +580,7 @@ export function splitTask(taskInput) {
       ...writeBoundaryLines(domains),
       "",
       "Suggested Workflow:",
-      "1. Implementation",
-      "2. Tests/Hardening",
-      "3. Review"
+      ...smallMediumWorkflowLines(domains, "Implementation")
     ].join("\n"))
   }
 
@@ -595,9 +599,7 @@ export function splitTask(taskInput) {
       ...writeBoundaryLines(domains),
       "",
       "Suggested Workflow:",
-      "1. Focused implementation",
-      "2. Tests/Hardening",
-      "3. Review"
+      ...smallMediumWorkflowLines(domains, "Focused implementation")
     ].join("\n"))
   }
 
