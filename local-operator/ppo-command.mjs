@@ -8,6 +8,7 @@ import {
   handlePromptSizeCommand,
   handleSplitTaskCommand
 } from "./codex-planning-tools.mjs";
+import { handleGitHubIssueCreateCommand } from "./github-issue-create.mjs";
 import { handleGitHubPpoCommand } from "./github-ppo-commands.mjs";
 import { handleGitHubPpoStatus } from "./github-ppo-status.mjs";
 
@@ -82,6 +83,19 @@ function unwrapPpoEnvelope(rawArgs) {
   return trimmed;
 }
 
+function isPpoEnvelope(rawArgs) {
+  const trimmed = commandTextFromRawArgs(rawArgs).trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  const first = splitFirstToken(trimmed);
+  const firstToken = first?.token.toLowerCase();
+
+  return firstToken === "/ppo" || firstToken === "ppo";
+}
+
 function payloadAfterCommand(rawArgs, command) {
   const unwrapped = unwrapPpoEnvelope(rawArgs);
   const commandEnvelope = splitFirstToken(unwrapped);
@@ -118,6 +132,39 @@ function textPayloadArgs(rawArgs, command) {
   return payload ? [payload] : null;
 }
 
+function issueCreateTerminalArgs(rawArgs) {
+  const firstArg = String(rawArgs[0] ?? "");
+  const trimmedFirstArg = firstArg.trim();
+
+  if (trimmedFirstArg.toLowerCase() === "issue-create") {
+    return rawArgs.slice(1).map((arg) => String(arg));
+  }
+
+  if (trimmedFirstArg.toLowerCase().startsWith("issue-create ")) {
+    const rest = trimmedFirstArg.slice("issue-create".length).trimStart();
+    const projectEnvelope = splitFirstToken(rest);
+
+    if (!projectEnvelope) {
+      return [];
+    }
+
+    const titleEnvelope = splitFirstToken(projectEnvelope.rest.trimStart());
+
+    if (!titleEnvelope) {
+      return [projectEnvelope.token];
+    }
+
+    const body = titleEnvelope.rest.trim();
+    const parsed = body
+      ? [projectEnvelope.token, titleEnvelope.token, body]
+      : [projectEnvelope.token, titleEnvelope.token];
+
+    return [...parsed, ...rawArgs.slice(1).map((arg) => String(arg))];
+  }
+
+  return rawArgs.slice(1).map((arg) => String(arg));
+}
+
 function usage() {
   return [
     "Personal Project Operator PPO Wrapper",
@@ -133,6 +180,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs help",
     "  node local-operator/ppo-command.mjs repo khlim-assist",
     "  node local-operator/ppo-command.mjs pr khlim-assist",
+    "  node local-operator/ppo-command.mjs issue-create khlim-assist \"issue title\" \"optional body\"",
     "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
     "  node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai \"add invoice import workflow\"",
     "  node local-operator/ppo-command.mjs prompt-size \"Goal: build one focused feature\"",
@@ -159,7 +207,7 @@ function usage() {
     "  /ppo prompt-size <draft>",
     "  /ppo split-task <task>",
     "",
-    "Phase 3C boundary: Codex prompt/planning commands are deterministic text-only direct tool routes; no model, Codex execution, or writes."
+    "Phase 5A boundary: issue-create is terminal-only and requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>; it is not routed through /ppo or OpenClaw."
   ].join("\n");
 }
 
@@ -181,6 +229,9 @@ function unsupported(command) {
     "- /ppo codex-budget <project> <task>",
     "- /ppo prompt-size <draft>",
     "- /ppo split-task <task>",
+    "",
+    "Phase 5A terminal-only addition:",
+    "- issue-create <project> <title> [body...]",
     "",
     "Try: node local-operator/ppo-command.mjs menu"
   ].join("\n");
@@ -415,6 +466,24 @@ async function main() {
     }
 
     const result = await handleGitHubPpoCommand(command, args[0]);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (command === "issue-create") {
+    const commandArgs = issueCreateTerminalArgs(rawProcessArgs);
+
+    if (isPpoEnvelope(rawProcessArgs) || commandArgs.length < 2) {
+      console.log(unsupported(rawCommand));
+      process.exitCode = 1;
+      return;
+    }
+
+    const [projectId, title, ...bodyArgs] = commandArgs;
+    const result = await handleGitHubIssueCreateCommand(projectId, title, bodyArgs, {
+      confirmationValue: process.env.PPO_GITHUB_WRITE_CONFIRM
+    });
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;

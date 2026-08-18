@@ -62,6 +62,26 @@ Future write actions require:
 - documented danger level
 - audit trail
 
+## Phase 5A controlled issue-create boundary
+
+Phase 5A allows exactly one terminal-only write action:
+
+```text
+node local-operator/ppo-command.mjs issue-create <project> <title> [body...]
+```
+
+The command must:
+
+- resolve project ids only through the existing five-project registry
+- permit only `POST /repos/<approved repo>/issues`
+- send only `title` and `body` fields
+- require exact `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` before any network write
+- show a deterministic preview and refuse the write when confirmation is missing or mismatched
+- create a credential-free durable audit trail for refused, attempted, succeeded, and failed write actions
+- fail closed before confirmed writes if audit logging cannot be established
+
+Phase 5A must not route `issue-create` through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not create or update PRs, comments, labels, branches, commits, merges, workflow dispatches, project-state files, VPS deployment, or any other GitHub write.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.

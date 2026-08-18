@@ -36,13 +36,19 @@ Allowed in future read-only phases:
 - issue read
 - check status read
 
+Allowed in Phase 5A only from a trusted terminal with exact confirmation and audit:
+
+- create one GitHub issue in an approved project repo through `issue-create <project> <title> [body...]`
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
 - create branches
 - delete branches
-- create issues
+- create issues outside the Phase 5A terminal-only path
 - comment on PRs
+- comment on issues
+- change labels
 - approve PRs
 - merge PRs
 - change repo settings
@@ -72,4 +78,3 @@ Blocked unless explicitly approved:
 - rotate credentials
 - change firewall rules
 - run destructive file operations
-

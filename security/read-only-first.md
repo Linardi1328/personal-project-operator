@@ -82,13 +82,21 @@ Future safe integrations may read:
 - CI/check status
 - VPS health status
 
+## Phase 5A controlled write exception
+
+Phase 5A allows one write action only after exact terminal confirmation:
+
+- `issue-create <project> <title> [body...]`
+
+This exception is limited to `POST /repos/<approved repo>/issues` for registry projects, with `title` and `body` fields only. It must write a credential-free audit record and must not be routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
 
 Examples requiring explicit approval:
 
-- creating GitHub issues
+- creating GitHub issues outside the Phase 5A terminal-only path
 - updating project state files
 - restarting services
 - publishing content

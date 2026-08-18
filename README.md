@@ -302,6 +302,24 @@ See [deployment/README.md](deployment/README.md) and [openclaw/vps-setup.md](ope
 
 Phase 4A does not perform live SSH, deploy to a VPS from tests, add Telegram API behavior, add GitHub writes, add model/Codex invocation, add new OpenClaw tools, or route `/ppo vps-health` yet.
 
+## Phase 5A Controlled Issue Creation
+
+Phase 5A adds one terminal-only GitHub write path:
+
+```bash
+node local-operator/ppo-command.mjs issue-create khlim-assist "issue title" "optional body"
+```
+
+Without exact confirmation, the command prints a deterministic preview and refuses the write. A confirmed write requires:
+
+```bash
+PPO_GITHUB_WRITE_CONFIRM=create-issue:khlim-assist
+```
+
+The only permitted network write is `POST /repos/<approved repo>/issues` for the existing five-project registry, with `title` and `body` fields only. `issue-create` is not a `/ppo` command, is not routed through `ppo_local`, and is not available through OpenClaw/Telegram.
+
+Phase 5A keeps PR writes, comments, labels, branch creation, commits, merges, workflow dispatches, project-state file updates, VPS deployment, and other GitHub writes disabled. Local audit records are stored under `local-operator/audit/` as credential-free JSONL and are ignored by git.
+
 ## Command Menu System
 
 Commands are grouped into phone-friendly categories:
@@ -331,16 +349,18 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging.
 
 The project still does not implement:
 
-- GitHub commands beyond `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>`
+- GitHub `/ppo` commands beyond `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>`
 - richer Telegram/OpenClaw arbitrary text workflows beyond the four Phase 3C command envelopes
 - `/ppo next` or status-based recommendations
 - Telegram API registration
 - live VPS deployment from this repository
 - `/ppo vps-health` routing
+- GitHub writes beyond terminal-only `issue-create`
+- issue comments, labels, PR writes, branch writes, commits, merges, or workflow dispatches
 - real Codex usage scraping
 - customer messaging
 - production deployment

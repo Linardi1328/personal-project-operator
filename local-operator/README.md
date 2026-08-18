@@ -77,6 +77,14 @@ node local-operator/ppo-command.mjs split-task "add GitHub integration and Teleg
 
 Phase 3C routes `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` through OpenClaw/Telegram. The bridge parses only the command envelope and treats task/draft text as inert data.
 
+Phase 5A adds terminal-only controlled GitHub issue creation:
+
+```bash
+node local-operator/ppo-command.mjs issue-create khlim-assist "issue title" "optional body"
+```
+
+This command is not routed through OpenClaw/Telegram. It refuses to write unless `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` exactly matches the target project.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -88,9 +96,12 @@ Phase 3C routes `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` t
 - `github-readonly-cli.mjs`: terminal-only Phase 2A validation CLI.
 - `github-ppo-commands.mjs`: Phase 2B phone-friendly `/ppo repo` and `/ppo pr` formatter.
 - `github-ppo-status.mjs`: Phase 2C live GitHub read-only `/ppo status` formatter.
+- `github-issue-create.mjs`: Phase 5A terminal-only, confirmation-gated GitHub issue creation.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
+- `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
+- `github-issue-create.test.mjs`: fake-writer and fake-runner tests for Phase 5A write gating and audit behavior.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -160,6 +171,18 @@ Phase 3B generates local planning text only. `codex-budget`, `prompt-size`, and 
 
 Phase 3C routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` through `ppo_local`. It preserves direct OpenClaw tool dispatch with no model turn, no new OpenClaw tools, no new permissions, no writes, and no new GitHub endpoints.
 
+Phase 5A allows exactly one write action from the terminal wrapper: `issue-create <project> <title> [body...]`. The command:
+
+- resolves projects through the existing five-project registry only
+- permits only `POST /repos/<approved repo>/issues`
+- sends only `title` and `body` fields
+- invokes `gh` through `execFile` with `shell: false`, fixed argv shape, bounded timeout, and bounded output buffer
+- rejects arbitrary repos, endpoints, methods, unsafe input, oversized input, comments, labels, branches, commits, PR writes, merges, workflow dispatches, project-state updates, and deployment behavior
+- requires exact `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` before any network write
+- records a credential-free local audit trail without title/body contents, tokens, or environment values
+- fails closed before confirmed writes if auditing cannot be established
+- remains unavailable through `/ppo`, `ppo_local`, OpenClaw, and Telegram
+
 Owner test plan after branch review:
 
 ```bash
@@ -179,6 +202,7 @@ node local-operator/ppo-command.mjs "/ppo split-task add GitHub integration and 
 node local-operator/ppo-command.mjs "/ppo prompt-size Goal: keep line structure
 Requirements:
 - preserve multiline input"
+node local-operator/ppo-command.mjs issue-create khlim-assist "owner review test issue"
 ```
 
 Then through OpenClaw/Telegram after review:

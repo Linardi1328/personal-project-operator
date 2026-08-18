@@ -138,9 +138,21 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 ## Phase 5 - Controlled Write Actions
 
-Only after explicit approval:
+### Phase 5A - Terminal-only controlled GitHub issue creation
 
-- Create GitHub issues.
+- Add terminal-only `node local-operator/ppo-command.mjs issue-create <project> <title> [body...]`.
+- Resolve `<project>` only through the existing five-project GitHub registry.
+- Permit only `POST /repos/<approved repo>/issues` with `title` and `body` fields.
+- Require exact `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` before any network write.
+- Show a deterministic preview and refuse the write when confirmation is missing or mismatched.
+- Write a credential-free audit trail for refused, attempted, succeeded, and failed write actions.
+- Keep OpenClaw/Telegram unchanged; do not route `issue-create` through `ppo_local`.
+- Do not add PR writes, comments, labels, branches, commits, merges, workflow dispatches, project-state mutations, or deployment behavior.
+
+### Later Phase 5 work
+
+Only after separate explicit approval:
+
 - Create project notes.
 - Update project state files.
 - Never auto-merge or deploy.
