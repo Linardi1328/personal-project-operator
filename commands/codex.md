@@ -14,7 +14,7 @@ Phase 3A is terminal-only:
 node local-operator/ppo-command.mjs codex <project> <phase-or-task>
 ```
 
-Do not expose `/ppo codex` through Telegram/OpenClaw in Phase 3B.
+Do not expose `/ppo codex` through Telegram/OpenClaw in Phase 3A.
 
 ## Example input
 
@@ -73,6 +73,6 @@ The task string is data only. It must not be interpreted as a shell command, fil
 
 ## Future upgrade path
 
-- Keep richer budget-aware prompt compression behind later review.
-- Keep automatic per-phase prompt generation behind later review.
-- Review Telegram/OpenClaw arbitrary-text routing in Phase 3C.
+- Add budget-aware prompt compression.
+- Add automatic phase splitting for oversized tasks.
+- Review Telegram/OpenClaw routing only after Phase 3A approval.
