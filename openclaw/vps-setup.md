@@ -66,9 +66,25 @@ The preflight verifies the owner-installed local-prefix Node/OpenClaw runtime an
 Do not use Ubuntu 24.04 apt `nodejs` for OpenClaw; that package provides unsupported Node 18. The owner-run layout is:
 
 ```text
-/home/ppo/.local/openclaw/bin/node
+/home/ppo/.local/openclaw/tools/node/bin/node
 /home/ppo/.local/openclaw/bin/openclaw
 ```
+
+Install it with the official local-prefix CLI installer:
+
+```bash
+sudo -u ppo env HOME=/home/ppo bash -lc 'curl -fsSL --proto "=https" --tlsv1.2 https://openclaw.ai/install-cli.sh | bash -s -- --prefix /home/ppo/.local/openclaw --no-onboard'
+```
+
+Do not run onboarding before service configuration. Configure the service environment, PPO skill root, `ppo-local` plugin, and `ppo_local` permission first.
+
+The service PATH starts with:
+
+```text
+/home/ppo/.local/openclaw/tools/node/bin:/home/ppo/.local/openclaw/bin
+```
+
+The preflight accepts only Node 22.22.3+, 24.15+, 25.9+, and 26+.
 
 The PPO checkout at `/opt/personal-project-operator` is root-owned and read-only to `ppo`. Runtime writes are limited to:
 

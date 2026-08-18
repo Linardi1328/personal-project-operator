@@ -12,7 +12,7 @@ WorkingDirectory=/opt/personal-project-operator
 Environment=NODE_ENV=production
 Environment=PPO_REPO_ROOT=/opt/personal-project-operator
 Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external
-Environment=PATH=/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=PATH=/home/ppo/.local/openclaw/tools/node/bin:/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 EnvironmentFile=-/etc/personal-project-operator/openclaw.env
 ExecStartPre=/opt/personal-project-operator/deployment/scripts/preflight-openclaw-runtime.sh
 ExecStart=/home/ppo/.local/openclaw/bin/openclaw gateway run

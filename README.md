@@ -290,7 +290,7 @@ Phase 4A adds deployment foundation files for a future Ubuntu 24.04 LTS VPS runn
 
 - target 2 vCPU / 4 GB RAM class VPS
 - non-root `ppo` service user
-- owner-installed OpenClaw local-prefix Node/runtime under `/home/ppo/.local/openclaw`
+- official OpenClaw `install-cli.sh` local-prefix runtime under `/home/ppo/.local/openclaw`, with bundled Node at `/home/ppo/.local/openclaw/tools/node/bin/node`
 - `systemd` service template that supervises the foreground gateway with restart-on-failure behavior
 - fail-closed OpenClaw runtime preflight before service start
 - root-owned `/opt/personal-project-operator` checkout that is read-only to `ppo`

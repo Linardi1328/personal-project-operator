@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import {
   VPS_HEALTH_SERVICE,
@@ -12,12 +13,23 @@ import {
 
 const sensitiveSentinel = "SENSITIVE_TEST_SENTINEL";
 
+function preflightSupportsNodeVersion(version) {
+  const result = spawnSync("bash", [
+    "-c",
+    `source deployment/scripts/preflight-openclaw-runtime.sh; is_supported_node_version "${version}"`
+  ], {
+    encoding: "utf8"
+  });
+
+  return result.status === 0;
+}
+
 function fakeRunner(command, args, options) {
   assert.deepEqual(options.shell, false, "health commands use shell:false");
 
   const key = `${command} ${args.join(" ")}`;
   const responses = new Map([
-    [`${VPS_NODE_PATH} --version`, { stdout: "v24.4.0\n", stderr: sensitiveSentinel }],
+    [`${VPS_NODE_PATH} --version`, { stdout: "v26.0.0\n", stderr: sensitiveSentinel }],
     ["git --version", { stdout: "git version 2.43.0\n", stderr: sensitiveSentinel }],
     ["gh --version", { stdout: "gh version 2.97.0\nhttps://example.invalid\n", stderr: sensitiveSentinel }],
     [`${VPS_OPENCLAW_PATH} --version`, { stdout: "openclaw 2026.5.17\n", stderr: sensitiveSentinel }],
@@ -47,7 +59,7 @@ function fakeRunner(command, args, options) {
   assert.match(output, /Source: local read-only host checks/);
   assert.match(output, /Target: Ubuntu 24\.04 LTS, 2 vCPU \/ 4 GB RAM class VPS/);
   assert.match(output, /Service: ppo-openclaw\.service/);
-  assert.match(output, /- OpenClaw local-prefix Node\.js: available \(v24\.4\.0\)/);
+  assert.match(output, /- OpenClaw bundled Node\.js: available \(v26\.0\.0\)/);
   assert.match(output, /- OpenClaw local-prefix executable: available \(openclaw 2026\.5\.17\)/);
   assert.match(output, /- systemd active: active \(active\)/);
   assert.match(output, /- systemd boot recovery: enabled \(enabled\)/);
@@ -68,7 +80,7 @@ function fakeRunner(command, args, options) {
   });
   const output = formatVpsHealth(report);
 
-  assert.match(output, /- OpenClaw local-prefix Node\.js: unavailable/);
+  assert.match(output, /- OpenClaw bundled Node\.js: unavailable/);
   assert.match(output, /- systemd active: inactive or unavailable/);
   assert.match(output, /- repo checkout: missing/);
   assert.doesNotMatch(output, new RegExp(sensitiveSentinel));
@@ -107,7 +119,7 @@ function fakeRunner(command, args, options) {
   assert.match(unit, /User=ppo/);
   assert.match(unit, /Group=ppo/);
   assert.match(unit, /Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external/);
-  assert.match(unit, /Environment=PATH=\/home\/ppo\/\.local\/openclaw\/bin:/);
+  assert.match(unit, /Environment=PATH=\/home\/ppo\/\.local\/openclaw\/tools\/node\/bin:\/home\/ppo\/\.local\/openclaw\/bin:/);
   assert.match(unit, /ExecStartPre=\/opt\/personal-project-operator\/deployment\/scripts\/preflight-openclaw-runtime\.sh/);
   assert.match(unit, /ExecStart=\/home\/ppo\/\.local\/openclaw\/bin\/openclaw gateway run/);
   assert.doesNotMatch(unit, /gateway start/);
@@ -132,10 +144,37 @@ function fakeRunner(command, args, options) {
   const preflight = await readFile(new URL("./scripts/preflight-openclaw-runtime.sh", import.meta.url), "utf8");
 
   assert.match(preflight, /OPENCLAW_PREFIX="\/home\/ppo\/\.local\/openclaw"/);
-  assert.match(preflight, /MIN_NODE_MAJOR=20/);
+  assert.match(preflight, /NODE_BIN="\$\{OPENCLAW_PREFIX\}\/tools\/node\/bin\/node"/);
   assert.match(preflight, /EX_SOFTWARE=78/);
   assert.match(preflight, /exit "\$EX_SOFTWARE"/);
   assert.match(preflight, /\$OPENCLAW_BIN" --version/);
+}
+
+for (const version of [
+  "v22.22.3",
+  "22.22.4",
+  "22.23.0",
+  "v24.15.0",
+  "24.16.0",
+  "v25.9.0",
+  "25.10.0",
+  "v26.0.0",
+  "27.1.2"
+]) {
+  assert.equal(preflightSupportsNodeVersion(version), true, `preflight accepts supported Node ${version}`);
+}
+
+for (const version of [
+  "v20.99.0",
+  "21.0.0",
+  "22.22.2",
+  "22.21.99",
+  "23.0.0",
+  "24.14.9",
+  "25.8.99",
+  "not-a-version"
+]) {
+  assert.equal(preflightSupportsNodeVersion(version), false, `preflight rejects unsupported Node ${version}`);
 }
 
 {
@@ -165,6 +204,23 @@ function fakeRunner(command, args, options) {
   assert.match(firewall, /ufw allow "\$\{port\}\/tcp"/);
   assert.match(firewall, /no listening sshd port detected; refusing to enable UFW/);
   assert.doesNotMatch(firewall, /ufw allow OpenSSH|authorized_keys/);
+}
+
+{
+  const phase4Sources = await Promise.all([
+    readFile(new URL("./systemd/ppo-openclaw.service", import.meta.url), "utf8"),
+    readFile(new URL("./scripts/preflight-openclaw-runtime.sh", import.meta.url), "utf8"),
+    readFile(new URL("./scripts/vps-health.mjs", import.meta.url), "utf8"),
+    readFile(new URL("./README.md", import.meta.url), "utf8"),
+    readFile(new URL("../openclaw/vps-setup.md", import.meta.url), "utf8"),
+    readFile(new URL("../commands/vps-health.md", import.meta.url), "utf8")
+  ]);
+  const joinedSources = phase4Sources.join("\n");
+
+  assert.match(joinedSources, /\/home\/ppo\/\.local\/openclaw\/tools\/node\/bin\/node/);
+  assert.match(joinedSources, /\/home\/ppo\/\.local\/openclaw\/bin\/openclaw/);
+  assert.doesNotMatch(joinedSources, /\/home\/ppo\/\.local\/openclaw\/bin\/node/);
+  assert.match(joinedSources, /install-cli\.sh \| bash -s -- --prefix \/home\/ppo\/\.local\/openclaw --no-onboard/);
 }
 
 console.log("Phase 4A VPS health and deployment static tests passed.");

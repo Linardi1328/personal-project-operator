@@ -53,17 +53,25 @@ OpenClaw itself remains installed/configured by the owner according to OpenClaw'
 
 ## OpenClaw Local-Prefix Runtime Layout
 
-Phase 4A uses one deterministic owner-run runtime layout:
+Phase 4A uses the current official `install-cli.sh` local-prefix layout:
 
 ```text
-/home/ppo/.local/openclaw/bin/node
+/home/ppo/.local/openclaw/tools/node/bin/node
 /home/ppo/.local/openclaw/bin/openclaw
 ```
 
-Install a currently supported Node runtime and OpenClaw for the `ppo` user into that prefix before starting the systemd service. The service sets:
+Install OpenClaw for the `ppo` user into that prefix before starting the systemd service:
+
+```bash
+sudo -u ppo env HOME=/home/ppo bash -lc 'curl -fsSL --proto "=https" --tlsv1.2 https://openclaw.ai/install-cli.sh | bash -s -- --prefix /home/ppo/.local/openclaw --no-onboard'
+```
+
+Do not run onboarding before service configuration. Configure the service environment, skill root, plugin, and `ppo_local` tool policy first.
+
+The service sets:
 
 ```text
-PATH=/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+PATH=/home/ppo/.local/openclaw/tools/node/bin:/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ```
 
 The systemd unit runs this preflight before service start:
@@ -73,6 +81,15 @@ ExecStartPre=/opt/personal-project-operator/deployment/scripts/preflight-opencla
 ```
 
 The preflight exits with status `78` when the local-prefix Node/OpenClaw runtime is missing or unsupported. The unit includes `RestartPreventExitStatus=78`, so systemd does not repeatedly restart a misprovisioned service. Repair remains owner-operated through `OPENCLAW_SERVICE_REPAIR_POLICY=external`.
+
+Supported Node ranges are enforced exactly:
+
+- Node 22.22.3+
+- Node 24.15+
+- Node 25.9+
+- Node 26+
+
+Node 20, 21, 23, and too-old 22/24/25 releases are rejected.
 
 ## Service User
 
@@ -127,9 +144,10 @@ sudo PPO_REPO_UPDATE_CONFIRM=install-or-update-main deployment/scripts/install-o
 
 Then manually install/configure the OpenClaw local-prefix runtime for the service user:
 
-- install current supported Node at `/home/ppo/.local/openclaw/bin/node`
+- install OpenClaw with the official command above
+- confirm bundled Node at `/home/ppo/.local/openclaw/tools/node/bin/node`
 - install OpenClaw at `/home/ppo/.local/openclaw/bin/openclaw`
-- confirm with `sudo -u ppo /home/ppo/.local/openclaw/bin/node --version`
+- confirm with `sudo -u ppo /home/ppo/.local/openclaw/tools/node/bin/node --version`
 - confirm with `sudo -u ppo /home/ppo/.local/openclaw/bin/openclaw --version`
 
 Then manually configure OpenClaw for the service user:
@@ -227,12 +245,12 @@ The rollback script reads only that recorded revision, validates it as a commit 
 Local read-only health check:
 
 ```bash
-node deployment/scripts/vps-health.mjs
+/home/ppo/.local/openclaw/tools/node/bin/node /opt/personal-project-operator/deployment/scripts/vps-health.mjs
 ```
 
 The health checker reports:
 
-- Node.js availability
+- bundled OpenClaw Node.js availability
 - `git` availability
 - `gh` availability
 - OpenClaw availability
@@ -253,6 +271,7 @@ Run from the repo root:
 ```bash
 node deployment/vps-health.test.mjs
 bash -n deployment/scripts/bootstrap-ubuntu-24.04.sh
+bash -n deployment/scripts/preflight-openclaw-runtime.sh
 bash -n deployment/scripts/install-or-update-repo.sh
 bash -n deployment/scripts/service-control.sh
 bash -n deployment/scripts/firewall-ssh-hardening.sh

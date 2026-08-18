@@ -11,7 +11,7 @@ Future command for checking server health after VPS deployment.
 Phase 4A adds only a local read-only health-check foundation:
 
 ```bash
-node deployment/scripts/vps-health.mjs
+/home/ppo/.local/openclaw/tools/node/bin/node /opt/personal-project-operator/deployment/scripts/vps-health.mjs
 ```
 
 It is not routed through OpenClaw/Telegram yet.
@@ -19,7 +19,7 @@ It is not routed through OpenClaw/Telegram yet.
 The script checks the Phase 4A local-prefix runtime paths:
 
 ```text
-/home/ppo/.local/openclaw/bin/node
+/home/ppo/.local/openclaw/tools/node/bin/node
 /home/ppo/.local/openclaw/bin/openclaw
 ```
 
