@@ -555,6 +555,11 @@ for (const [task, expectedKey] of [
 
   assert.equal(result.status, 0)
   assert.match(result.stdout, /^Task Split/)
+  assert.doesNotMatch(result.stdout, /Keep arbitrary text routing behind separate review\./)
+  assert.match(
+    result.stdout,
+    /Phase 3C routing is limited to the four approved text command envelopes; richer arbitrary-text workflows require separate review\./
+  )
 }
 
 {

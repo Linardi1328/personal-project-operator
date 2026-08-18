@@ -96,7 +96,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Do not invoke Codex, ChatGPT, OpenAI APIs, or another model.
 - Do not execute generated plans, mutate repositories, create GitHub writes, or deploy services.
 - Keep `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` out of OpenClaw/Telegram routing.
-- Leave Phase 3C as the separate review point for arbitrary text routing.
+- Leave Phase 3C as the separate review point for the approved `/ppo` text command envelopes.
 
 ### Phase 3C - OpenClaw text routing
 
@@ -107,6 +107,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Keep OpenClaw direct tool dispatch with no model interpretation turn.
 - Parse only the command envelope in the bridge; treat task and draft text as inert data.
 - Preserve multiline `prompt-size` drafts as one wrapper argv value.
+- Limit routing to the four approved Phase 3C command envelopes; richer arbitrary-text workflows require separate review.
 - Keep all existing Phase 2/3A/3B security boundaries: no new GitHub endpoints, no writes, no Codex/model invocation, no deployment, and no new OpenClaw tools or permissions.
 
 ### Later Phase 3 work
