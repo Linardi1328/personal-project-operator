@@ -8,6 +8,14 @@
 
 Future command for checking server health after VPS deployment.
 
+Phase 4A adds only a local read-only health-check foundation:
+
+```bash
+node deployment/scripts/vps-health.mjs
+```
+
+It is not routed through OpenClaw/Telegram yet.
+
 ## Input format
 
 ```text
@@ -33,16 +41,16 @@ VPS Health
 - chat platform connection:
 ```
 
-Phase 0 does not implement live checks.
+Phase 4A implements the local health-check script only. `/ppo vps-health` remains future routing work.
 
 ## Safety boundary
 
-Phase 0 documentation only. Future checks should be read-only and must not restart services unless an explicit approved command is created.
+Phase 4A health checks are read-only and must not restart services. They must not SSH to a host, print raw stderr, print environment variables, or expose credentials.
 
 ## Future upgrade path
 
-- Add health-check endpoint or process query.
+- Route `/ppo vps-health` after separate review.
+- Add health-check endpoint or process query if needed.
 - Add disk and memory checks.
 - Add connection status for GitHub and chat platform.
 - Add alerting after explicit approval.
-

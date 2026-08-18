@@ -1,60 +1,58 @@
 # VPS Setup
 
-This document describes the future VPS deployment plan. Phase 0 does not deploy anything.
+Phase 4A adds a VPS deployment foundation for owner review. It does not deploy a live server from this repository.
 
-## Planned VPS requirements
+Target:
 
-- Ubuntu VPS
-- 1-2 vCPU
-- 2 GB RAM preferred
-- 20-40 GB storage
-- SSH access
-- firewall enabled
-- environment variables for secrets
-- Tailscale optional
-- restart strategy required
+- Ubuntu 24.04 LTS
+- 2 vCPU / 4 GB RAM class VPS
+- non-root `ppo` service user
+- OpenClaw managed by `systemd`
+- existing PPO wrapper and existing `ppo_local` plugin tool only
 
-## Future deployment checklist
+See [../deployment/README.md](../deployment/README.md) for the bootstrap scripts, systemd unit, health check, rollback procedure, and owner-only acceptance steps.
 
-- Create VPS.
-- Harden SSH access.
-- Enable firewall.
-- Install dependencies.
-- Clone repo.
-- Configure environment variables.
-- Run OpenClaw.
-- Configure process manager.
-- Test `/vps-health`.
+## Phase 4A Boundary
 
-## Environment handling
+- No live SSH is performed by repo scripts.
+- No automated test deploys to a VPS.
+- No Telegram API behavior changes are added.
+- No GitHub writes, GraphQL, or new endpoint families are added.
+- No Codex/model invocation is added.
+- No new OpenClaw tool or permission is added.
+- `/ppo vps-health` remains future work; Phase 4A provides only the local read-only health-check foundation.
 
-Secrets must be configured outside the repo through environment variables or a secure platform secret manager.
+## Service Shape
 
-Do not commit:
+The reviewed systemd unit is:
 
-- bot tokens
-- GitHub tokens
-- API keys
-- passwords
-- private SSH keys
-- account credentials
+```text
+deployment/systemd/ppo-openclaw.service
+```
 
-## Process manager plan
+It runs OpenClaw as the non-root `ppo` user from:
 
-Future deployment should use a restart strategy such as:
+```text
+/opt/personal-project-operator
+```
 
-- `systemd`
-- Docker restart policy
-- a managed process supervisor
+Service environment is loaded from:
 
-The selected strategy must support:
+```text
+/etc/personal-project-operator/openclaw.env
+```
 
-- restart on crash
-- log inspection
-- environment variable injection
-- safe deploy and rollback process
+That file must be created and populated on the VPS only. Do not commit secrets or copied environment files.
 
-## Phase 0 boundary
+## Owner Acceptance Steps
 
-No live deployment scripts are included in Phase 0. Any future scripts must be clearly marked, reviewed, and tested before use.
+After code review, run the owner-only checklist in [../deployment/README.md](../deployment/README.md):
 
+- bootstrap Ubuntu prerequisites
+- install or update the fixed PPO repo checkout
+- configure OpenClaw manually for `ppo_local`
+- enable and start the `ppo-openclaw.service`
+- run the local health check
+- verify existing `/ppo` commands through Telegram
+
+Do not run those steps from automated tests.

@@ -116,11 +116,23 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 ## Phase 4 - VPS Deployment
 
-- Deploy OpenClaw to Ubuntu VPS.
-- Add health checks.
-- Add restart strategy.
-- Add safe environment variable handling.
-- Test `/vps-health`.
+### Phase 4A - VPS deployment foundation
+
+- Add Ubuntu 24.04 LTS deployment/bootstrap documentation.
+- Target a 2 vCPU / 4 GB RAM class VPS.
+- Add guarded VPS-local scripts for OS/runtime dependencies, a non-root service user, repo install/update, systemd service control, firewall/SSH-key hardening, rollback, and read-only health checks.
+- Add a systemd unit template for OpenClaw using the existing PPO wrapper and existing `ppo_local` tool.
+- Add safe environment-variable and secrets handling guidance.
+- Add deterministic/static tests for deployment files.
+- Do not perform live SSH, live VPS deployment, Telegram API changes, GitHub writes, model calls, or new OpenClaw permissions.
+- Keep `/ppo vps-health` routing deferred; Phase 4A provides only the local health-check foundation.
+
+### Later Phase 4 work
+
+- Owner-run deployment to the reviewed VPS.
+- Verify systemd boot recovery and restart behavior on the live host.
+- Route `/ppo vps-health` only after separate review.
+- Add alerting only after explicit approval.
 
 ## Phase 5 - Controlled Write Actions
 
