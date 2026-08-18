@@ -1,0 +1,32 @@
+[Unit]
+Description=OpenClaw gateway for Personal Project Operator
+Documentation=https://github.com/Linardi1328/personal-project-operator
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ppo
+Group=ppo
+WorkingDirectory=/opt/personal-project-operator
+Environment=NODE_ENV=production
+Environment=PPO_REPO_ROOT=/opt/personal-project-operator
+Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external
+Environment=PATH=/home/ppo/.local/openclaw/tools/node/bin:/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+EnvironmentFile=-/etc/personal-project-operator/openclaw.env
+ExecStartPre=/opt/personal-project-operator/deployment/scripts/preflight-openclaw-runtime.sh
+ExecStart=/home/ppo/.local/openclaw/bin/openclaw gateway run
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=10
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/ppo /var/lib/personal-project-operator /var/log/personal-project-operator
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

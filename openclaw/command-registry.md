@@ -11,7 +11,7 @@ Danger levels:
 - `dangerous`: would mutate external systems and requires strict approval.
 - `disabled`: not available in the current phase.
 
-In Phase 3C, all write actions remain disabled. `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output. `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` are direct-routed deterministic text commands through `ppo_local`.
+In Phase 4A, all write actions remain disabled. `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output. `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` are direct-routed deterministic text commands through `ppo_local`. Phase 4A adds VPS deployment foundation files only and does not route `/ppo vps-health` yet.
 
 | command | category | description | arguments | enabled_in_phase_0 | requires_auth | write_action | danger_level | notes |
 |---|---|---|---|---|---|---|---|---|
@@ -26,7 +26,7 @@ In Phase 3C, all write actions remain disabled. `/ppo status`, `/ppo repo <proje
 | `/ppo split-task` | Codex Workflow | Split large tasks into smaller phases. | `<task>` | Phase 3C direct route | No | No | safe | Planning only; write-action phases remain permission-gated. |
 | `/ppo codex-usage` | Usage & Limits | Show manually tracked Codex usage status. | None | Yes, docs only | No | No | safe | Manual-first; no scraping claim. |
 | `/ppo update-usage` | Usage & Limits | Manually update usage status. | `<provider> <status>` | Yes, documented only | No | Disabled in Phase 1.5 | caution | Future local state update only after approval. |
-| `/ppo vps-health` | System & Safety | Check future VPS health. | None | Yes, expected output only | Future server auth | No | safe | No live checks in Phase 1.5. |
+| `/ppo vps-health` | System & Safety | Check future VPS health. | None | Phase 4A local script foundation only | Future server auth | No | safe | Not routed through `ppo_local` yet; local script is `node deployment/scripts/vps-health.mjs`. |
 | `/ppo safe-mode` | System & Safety | Show blocked actions and safety posture. | None | Yes, docs only | No | No | safe | Does not toggle permissions in Phase 1.5. |
 | `/ppo menu` | System & Safety | Show available command menu. | Optional category | Yes, local output | No | No | safe | Supports `/ppo menu project`, `/ppo menu codex`, `/ppo menu system`. |
 | `/ppo help` | System & Safety | Explain phone usage and direct user to `/ppo menu`. | None | Yes, local output | No | No | safe | Help text only. |
@@ -36,7 +36,7 @@ In Phase 3C, all write actions remain disabled. `/ppo status`, `/ppo repo <proje
 
 ## Disabled write actions
 
-These actions are not available in Phase 3C:
+These actions are not available in Phase 4A:
 
 - creating GitHub issues
 - commenting on PRs
