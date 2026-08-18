@@ -35,9 +35,21 @@ lock_runtime_checkout_permissions() {
   chown -R root:root "$INSTALL_DIR"
   find "$INSTALL_DIR" -type d -exec chmod 0755 {} +
   find "$INSTALL_DIR" -type f -exec chmod 0644 {} +
-  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.sh' -exec chmod 0755 {} +
-  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.mjs' -exec chmod 0755 {} +
-  find "${INSTALL_DIR}/local-operator" -maxdepth 1 -type f -name '*.mjs' -exec chmod 0755 {} +
+
+  local entry mode path
+  while IFS= read -r -d '' entry; do
+    mode="${entry%% *}"
+    path="${entry#*$'\t'}"
+
+    case "$mode" in
+      100644)
+        chmod 0644 "${INSTALL_DIR}/${path}"
+        ;;
+      100755)
+        chmod 0755 "${INSTALL_DIR}/${path}"
+        ;;
+    esac
+  done < <(git -C "$INSTALL_DIR" ls-files -z -s)
 }
 
 record_last_good_revision() {
@@ -80,4 +92,6 @@ main() {
   printf 'Review changes, then use service-control.sh for explicit start or restart.\n'
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

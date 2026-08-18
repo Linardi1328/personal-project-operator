@@ -37,14 +37,32 @@ main() {
   [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || fail "last-good revision is malformed."
 
   git -C "$INSTALL_DIR" switch --detach "$revision"
-  chown -R root:root "$INSTALL_DIR"
-  find "$INSTALL_DIR" -type d -exec chmod 0755 {} +
-  find "$INSTALL_DIR" -type f -exec chmod 0644 {} +
-  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.sh' -exec chmod 0755 {} +
-  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.mjs' -exec chmod 0755 {} +
-  find "${INSTALL_DIR}/local-operator" -maxdepth 1 -type f -name '*.mjs' -exec chmod 0755 {} +
+  lock_runtime_checkout_permissions
   systemctl restart "$SERVICE_NAME"
   printf 'Rolled back PPO checkout to last-good revision and restarted %s.\n' "$SERVICE_NAME"
 }
 
-main "$@"
+lock_runtime_checkout_permissions() {
+  chown -R root:root "$INSTALL_DIR"
+  find "$INSTALL_DIR" -type d -exec chmod 0755 {} +
+  find "$INSTALL_DIR" -type f -exec chmod 0644 {} +
+
+  local entry mode path
+  while IFS= read -r -d '' entry; do
+    mode="${entry%% *}"
+    path="${entry#*$'\t'}"
+
+    case "$mode" in
+      100644)
+        chmod 0644 "${INSTALL_DIR}/${path}"
+        ;;
+      100755)
+        chmod 0755 "${INSTALL_DIR}/${path}"
+        ;;
+    esac
+  done < <(git -C "$INSTALL_DIR" ls-files -z -s)
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
