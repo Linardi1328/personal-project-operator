@@ -11,7 +11,7 @@ Danger levels:
 - `dangerous`: would mutate external systems and requires strict approval.
 - `disabled`: not available in the current phase.
 
-In Phase 4A, all write actions remain disabled. `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output. `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` are direct-routed deterministic text commands through `ppo_local`. Phase 4A adds VPS deployment foundation files only and does not route `/ppo vps-health` yet.
+In Phase 5A, `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output. `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` are direct-routed deterministic text commands through `ppo_local`. Phase 5A adds one terminal-only GitHub issue creation path, `node local-operator/ppo-command.mjs issue-create <project> <title> [body...]`, but it is not a `/ppo` command and is not routed through OpenClaw, Telegram, or `ppo_local`.
 
 | command | category | description | arguments | enabled_in_phase_0 | requires_auth | write_action | danger_level | notes |
 |---|---|---|---|---|---|---|---|---|
@@ -34,12 +34,18 @@ In Phase 4A, all write actions remain disabled. `/ppo status`, `/ppo repo <proje
 | `/ppo feature-request` | Expansion | Log or format a future feature idea. | `<idea>` | Yes, documented only | No | Disabled in Phase 1.5 | caution | Future issue creation requires approval. |
 | `/ppo backlog` | Expansion | List planned future features. | None | Yes, docs only | No | No | safe | Read-only planning output. |
 
+## Terminal-only Phase 5A write path
+
+`issue-create <project> <title> [body...]` is available only through the local terminal wrapper. It requires exact `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>`, writes only `POST /repos/<approved repo>/issues` with `title` and `body`, and records a credential-free local audit trail.
+
 ## Disabled write actions
 
-These actions are not available in Phase 4A:
+These actions are not available in Phase 5A:
 
-- creating GitHub issues
+- creating GitHub issues outside terminal-only `issue-create`
 - commenting on PRs
+- commenting on issues
+- changing labels
 - approving PRs
 - merging PRs
 - pushing branches
