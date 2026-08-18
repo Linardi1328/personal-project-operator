@@ -87,11 +87,21 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Keep `/ppo codex` out of OpenClaw/Telegram routing.
 - Do not add new GitHub endpoint families, writes, deployments, or target repo changes.
 
+### Phase 3B - Local Codex planning tools
+
+- Add terminal-only `codex-budget <project> <task>`.
+- Add terminal-only `prompt-size <draft>`.
+- Add terminal-only `split-task <task>`.
+- Keep all Phase 3B output deterministic and text-only.
+- Do not invoke Codex, ChatGPT, OpenAI APIs, or another model.
+- Do not execute generated plans, mutate repositories, create GitHub writes, or deploy services.
+- Keep `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` out of OpenClaw/Telegram routing.
+- Leave Phase 3C as the separate review point for arbitrary text routing.
+
 ### Later Phase 3 work
 
-- Add `/codex-budget`, `/prompt-size`, and `/split-task` behavior only after separate approval.
 - Review arbitrary text routing for Telegram/OpenClaw separately in Phase 3C.
-- Add prompt compression and splitting workflows after the local foundation is approved.
+- Add richer budget, prompt compression, and splitting workflows only after separate approval.
 
 ## Phase 4 - VPS Deployment
 

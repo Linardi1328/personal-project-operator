@@ -17,13 +17,13 @@ Expected reply:
 ```text
 Personal Project Operator Menu
 
-Phase 1.5 runnable PPO commands are marked [local]. Future commands are documented but not active.
+Phase 3B PPO-routed commands are marked [local] or [github read-only]. Terminal Codex prompt/planning commands are local-only.
 
 Project Control
-- /ppo status - Show all active projects and next actions. [local]
+- /ppo status - Show live GitHub project status. [github read-only]
 - /ppo next - Recommend next project priority. [future]
-- /ppo repo <project> - Summarize a project repository. [future]
-- /ppo pr <project> - Summarize latest project PR state. [future]
+- /ppo repo <project> - Summarize a project repository. [github read-only]
+- /ppo pr <project> - Summarize latest project PR state. [github read-only]
 - /ppo handoff <project> - Create compact handoff for ChatGPT or Codex. [future]
 
 Codex Workflow
@@ -47,7 +47,7 @@ Expansion
 - /ppo feature-request <idea> - Format a future feature idea. [future]
 - /ppo backlog - List planned future features. [future]
 
-Phase 1.5 boundary: no live APIs, no secrets, no writes.
+Phase 3B boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal Codex prompt/planning commands are local-only; no writes.
 ```
 
 Filtered Telegram examples:
@@ -57,4 +57,3 @@ Filtered Telegram examples:
 /ppo menu codex
 /ppo menu system
 ```
-

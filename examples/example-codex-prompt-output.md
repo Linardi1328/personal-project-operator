@@ -53,4 +53,4 @@ Safety Boundaries:
 - No unrelated scope expansion.
 ```
 
-Do not route `/ppo codex` through Telegram/OpenClaw in Phase 3A.
+Do not route `/ppo codex` through Telegram/OpenClaw in Phase 3B.
