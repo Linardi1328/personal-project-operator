@@ -13,6 +13,7 @@ import { GitHubReadOnlyError, listAllowedProjects } from "./github-readonly.mjs"
 
 const allowedProjects = listAllowedProjects()
 const allowedProjectIds = allowedProjects.map((project) => project.id)
+const unsafeTerminalControlPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u
 
 const projectDoc = `
 # Test Project
@@ -118,10 +119,10 @@ function makeClient(config = {}) {
   }
 }
 
-function makeDocLoader({ calls = [] } = {}) {
+function makeDocLoader({ calls = [], markdown = projectDoc } = {}) {
   return async (project) => {
     calls.push(project.id)
-    return projectDoc
+    return markdown
   }
 }
 
@@ -130,7 +131,7 @@ async function makePrompt(projectId, task, config = {}) {
   const docCalls = []
   const output = await generateCodexPrompt(projectId, task, {
     client,
-    loadProjectDocument: makeDocLoader({ calls: docCalls })
+    loadProjectDocument: makeDocLoader({ calls: docCalls, markdown: config.projectDoc })
   })
 
   return {
@@ -142,6 +143,65 @@ async function makePrompt(projectId, task, config = {}) {
 
 function assertSection(output, heading) {
   assert.match(output, new RegExp(`\\n${heading}:\\n`), `${heading} section exists`)
+}
+
+function assertMandatoryPromptSections(output) {
+  for (const heading of [
+    "Task Size Estimate",
+    "Goal",
+    "Scope",
+    "Requirements",
+    "Tests / Checks",
+    "Safety Boundaries",
+    "Exit Criteria"
+  ]) {
+    assertSection(output, heading)
+  }
+
+  assert.match(output, /^Codex Prompt/)
+  assert.match(output, /\nProject:\n/)
+  assert.match(output, /\nRepository:\n/)
+  assert.match(output, /\nTask:\n/)
+}
+
+function makeBigProjectDoc() {
+  const long = "This project context sentence is intentionally long but deterministic. ".repeat(20)
+
+  return `
+# Big Project
+
+## Connection status
+
+${long}
+
+## Current role
+
+${long}
+
+## OpenClaw priority
+
+${long}
+
+## Current phase
+
+${long}
+
+## Next action
+
+${long}
+
+## Codex fit
+
+${long}
+
+## Do not change
+
+- ${long}
+
+## Known risks
+
+- ${long}
+`
 }
 
 {
@@ -205,6 +265,7 @@ function assertSection(output, heading) {
   ]) {
     assertSection(output, heading)
   }
+  assertMandatoryPromptSections(output)
 
   assert.match(output, /Curated project documentation \(may be stale\):/)
   assert.match(output, /Live GitHub read-only facts \(GitHub read-only\):/)
@@ -232,6 +293,86 @@ function assertSection(output, heading) {
 }
 
 {
+  const maxTask = "x".repeat(MAX_TASK_CHARS)
+  const { output } = await makePrompt("khlim-assist", maxTask)
+
+  assert.match(output, new RegExp(`Task:\\n${maxTask}`))
+  assertMandatoryPromptSections(output)
+  assert.equal(output.length <= MAX_GENERATED_PROMPT_CHARS, true, "max task output is bounded")
+}
+
+{
+  const { output } = await makePrompt("khlim-assist", "add provider validation tests", {
+    client: {
+      commits: [
+        {
+          shortSha: "abc1234",
+          message: "long commit message ".repeat(400)
+        }
+      ]
+    }
+  })
+
+  assert.match(output, /- Latest commit: abc1234 long commit message/)
+  assert.doesNotMatch(output, new RegExp("long commit message ".repeat(50)))
+  assertMandatoryPromptSections(output)
+  assert.equal(output.length <= MAX_GENERATED_PROMPT_CHARS, true, "long commit output is bounded")
+}
+
+{
+  const { output } = await makePrompt("khlim-assist", "add provider validation tests", {
+    projectDoc: makeBigProjectDoc()
+  })
+
+  assert.match(output, /Curated project documentation \(may be stale\):/)
+  assertMandatoryPromptSections(output)
+  assert.equal(output.length <= MAX_GENERATED_PROMPT_CHARS, true, "large doc context output is bounded")
+}
+
+{
+  const maxTask = "x".repeat(MAX_TASK_CHARS)
+  const { output } = await makePrompt("khlim-assist", maxTask, {
+    projectDoc: makeBigProjectDoc(),
+    client: {
+      defaultBranch: "feature/" + "very-long-branch-name-".repeat(80),
+      commits: [
+        {
+          shortSha: "abc1234",
+          message: "worst case commit message ".repeat(400)
+        }
+      ],
+      pullRequests: Array.from({ length: 5 }, (_value, index) => ({ number: index + 1 })),
+      openIssuesPage: {
+        issues: Array.from({ length: 5 }, (_value, index) => ({ number: index + 1 })),
+        pageLimit: 5,
+        rawReturnedCount: 5,
+        limitHit: true
+      }
+    }
+  })
+
+  assert.match(output, new RegExp(`Task:\\n${maxTask}`))
+  assert.match(output, /- Exact work requested: see Task section above\./)
+  assert.match(output, /- Open PRs: 5\+/)
+  assert.match(output, /- Open issues: 5\+/)
+  assertMandatoryPromptSections(output)
+  assert.equal(output.length <= MAX_GENERATED_PROMPT_CHARS, true, "combined worst-case output is bounded")
+}
+
+{
+  const { output } = await makePrompt(
+    "khlim-assist",
+    "add GitHub integration, Telegram routing, VPS deployment, and write actions"
+  )
+
+  assert.match(output, /Task Size Estimate:\nToo large - split required/)
+  assert.match(output, /Suggested action: split before implementation\./)
+  assert.match(output, /Plan a safe split for KHLIM Assist before implementation\./)
+  assertMandatoryPromptSections(output)
+  assert.equal(output.length <= MAX_GENERATED_PROMPT_CHARS, true, "too-large guidance remains bounded")
+}
+
+{
   assert.equal(estimateTaskSize("docs update").label, "Small")
   assert.equal(estimateTaskSize("add user settings feature").label, "Medium")
   assert.equal(estimateTaskSize("refactor backend and frontend architecture").label, "Large")
@@ -239,6 +380,30 @@ function assertSection(output, heading) {
     estimateTaskSize("add GitHub integration, Telegram routing, VPS deployment, and write actions").label,
     "Too large - split required"
   )
+}
+
+{
+  const { output } = await makePrompt("khlim-assist", "clear \u001B[2J keep")
+
+  assert.match(output, /Task:\nclear keep/)
+  assert.doesNotMatch(output, /\u001B|\[2J/)
+  assert.equal(unsafeTerminalControlPattern.test(output), false, "ANSI controls are removed")
+}
+
+{
+  const { output } = await makePrompt("khlim-assist", "title \u001B]0;pwned\u0007 safe")
+
+  assert.match(output, /Task:\ntitle safe/)
+  assert.doesNotMatch(output, /\u001B|\u0007|pwned/)
+  assert.equal(unsafeTerminalControlPattern.test(output), false, "OSC controls are removed")
+}
+
+{
+  const { output } = await makePrompt("khlim-assist", "unicode café 東京 \u0000\tline \u009B31m ok")
+
+  assert.match(output, /Task:\nunicode café 東京 line ok/)
+  assert.equal(unsafeTerminalControlPattern.test(output), false, "C0/C1 controls are removed")
+  assert.match(output, /café 東京/)
 }
 
 {

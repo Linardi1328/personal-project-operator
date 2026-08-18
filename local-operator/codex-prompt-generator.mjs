@@ -3,7 +3,8 @@ import {
   GITHUB_READONLY_SOURCE,
   GitHubReadOnlyError,
   createGitHubReadOnlyClient,
-  resolveProject
+  resolveProject,
+  sanitizeGitHubText
 } from "./github-readonly.mjs"
 
 export const MAX_TASK_CHARS = 1000
@@ -13,6 +14,7 @@ const PROMPT_COMMIT_LIMIT = 1
 const PROMPT_PR_LIMIT = 5
 const PROMPT_ISSUE_LIMIT = 5
 const TEXT_FIELD_LIMIT = 180
+const TASK_SCOPE_REPEAT_LIMIT = 240
 
 const projectDocumentUrls = new Map([
   ["khlim-assist", new URL("../projects/khlim-assist.md", import.meta.url)],
@@ -42,11 +44,11 @@ export class CodexPromptError extends Error {
 }
 
 function collapseWhitespace(value) {
-  return String(value).replace(/\s+/g, " ").trim()
+  return sanitizeGitHubText(String(value)).replace(/\s+/g, " ").trim()
 }
 
 function clipText(value, limit = TEXT_FIELD_LIMIT) {
-  const compact = collapseWhitespace(value).replaceAll("`", "")
+  const compact = collapseWhitespace(value)
 
   if (compact.length <= limit) {
     return compact
@@ -188,20 +190,21 @@ function latestCommitLabel(recentCommits) {
   }
 
   const ref = latestCommit.shortSha || (latestCommit.sha ? latestCommit.sha.slice(0, 7) : "unknown")
+  const message = clipText(valueOrFallback(latestCommit.message))
 
-  return `${ref} ${valueOrFallback(latestCommit.message)}`
+  return `${clipText(ref, 40)} ${message}`
 }
 
 function liveRepoContextLines(project, liveContext) {
   const repository = liveContext.repository || {}
 
   return [
-    `Repo: ${repository.fullName || project.fullName}`,
-    `Default branch: ${valueOrFallback(repository.defaultBranch)}`,
+    `Repo: ${clipText(repository.fullName || project.fullName)}`,
+    `Default branch: ${clipText(valueOrFallback(repository.defaultBranch))}`,
     `Latest commit: ${latestCommitLabel(liveContext.recentCommits || [])}`,
     `Open PRs: ${countLabel(liveContext.openPullRequests || [], PROMPT_PR_LIMIT)}`,
     `Open issues: ${issueCountLabel(liveContext.openIssuesPage)}`,
-    `Updated: ${valueOrFallback(repository.updatedAt)}`
+    `Updated: ${clipText(valueOrFallback(repository.updatedAt))}`
   ]
 }
 
@@ -320,6 +323,14 @@ function appendSection(lines, heading, entries) {
   lines.push(...entries)
 }
 
+function scopeTaskLine(task) {
+  if (task.length > TASK_SCOPE_REPEAT_LIMIT) {
+    return "- Exact work requested: see Task section above."
+  }
+
+  return `- Exact work requested: ${task}`
+}
+
 function buildPrompt(project, task, docContextBullets, liveContext, estimate, hardening) {
   const lines = [
     "Codex Prompt",
@@ -350,13 +361,13 @@ function buildPrompt(project, task, docContextBullets, liveContext, estimate, ha
 
   appendSection(lines, "Context", [
     "Curated project documentation (may be stale):",
-    ...docContextBullets.map((line) => `- ${line}`),
+    ...docContextBullets.map((line) => `- ${clipText(line)}`),
     `Live GitHub read-only facts (${GITHUB_READONLY_SOURCE}):`,
     ...liveRepoContextLines(project, liveContext).map((line) => `- ${line}`)
   ])
 
   appendSection(lines, "Scope", [
-    `- Exact work requested: ${task}`,
+    scopeTaskLine(task),
     "- Inspect the target repository before naming or editing files.",
     "- Use project docs as background and live GitHub facts as current repo context.",
     "- Keep changes focused on the requested task; avoid unrelated refactors."
@@ -411,8 +422,10 @@ function boundPrompt(prompt) {
     return prompt
   }
 
-  const suffix = "\n\n[Prompt truncated to Phase 3A size bound. Split the task before implementation.]"
-  return `${prompt.slice(0, MAX_GENERATED_PROMPT_CHARS - suffix.length).trim()}\n${suffix}`
+  throw new CodexPromptError(
+    "PROMPT_TOO_LARGE",
+    "Generated prompt exceeded the Phase 3A size bound after context budgeting. Split the task and retry."
+  )
 }
 
 export async function generateCodexPrompt(projectId, taskInput, options = {}) {
