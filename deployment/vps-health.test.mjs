@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   VPS_HEALTH_SERVICE,
   VPS_INSTALL_DIR,
@@ -45,6 +47,73 @@ function fakeRunner(command, args, options) {
   }
 
   return responses.get(key);
+}
+
+function runPermissionLock(script, repoPath) {
+  execFileSync("bash", [
+    "-c",
+    "chown() { :; }; source \"$1\"; INSTALL_DIR=\"$2\"; lock_runtime_checkout_permissions",
+    "bash",
+    script,
+    repoPath
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+}
+
+async function createModeFixtureRepo() {
+  const repoPath = await mkdtemp(join(tmpdir(), "ppo-mode-lock-"));
+
+  await mkdir(join(repoPath, "deployment", "scripts"), { recursive: true });
+  await mkdir(join(repoPath, "local-operator"), { recursive: true });
+  await writeFile(join(repoPath, "deployment", "scripts", "run.sh"), "#!/usr/bin/env bash\nexit 0\n");
+  await writeFile(join(repoPath, "deployment", "scripts", "tool.mjs"), "#!/usr/bin/env node\nconsole.log('ok')\n");
+  await writeFile(join(repoPath, "local-operator", "plain.mjs"), "export const plain = true\n");
+  await writeFile(join(repoPath, "local-operator", "tracked-exec.mjs"), "#!/usr/bin/env node\nconsole.log('ok')\n");
+
+  await chmod(join(repoPath, "deployment", "scripts", "run.sh"), 0o755);
+  await chmod(join(repoPath, "deployment", "scripts", "tool.mjs"), 0o755);
+  await chmod(join(repoPath, "local-operator", "plain.mjs"), 0o644);
+  await chmod(join(repoPath, "local-operator", "tracked-exec.mjs"), 0o755);
+
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoPath, encoding: "utf8" });
+  execFileSync("git", ["config", "user.email", "phase4a@example.invalid"], { cwd: repoPath, encoding: "utf8" });
+  execFileSync("git", ["config", "user.name", "Phase 4A Test"], { cwd: repoPath, encoding: "utf8" });
+  execFileSync("git", ["add", "."], { cwd: repoPath, encoding: "utf8" });
+  execFileSync("git", ["commit", "-m", "mode fixture"], { cwd: repoPath, encoding: "utf8" });
+
+  return repoPath;
+}
+
+async function numericMode(path) {
+  return (await stat(path)).mode & 0o777;
+}
+
+async function dirtyFixtureModes(repoPath) {
+  await chmod(join(repoPath, "deployment", "scripts", "run.sh"), 0o644);
+  await chmod(join(repoPath, "deployment", "scripts", "tool.mjs"), 0o644);
+  await chmod(join(repoPath, "local-operator", "plain.mjs"), 0o755);
+  await chmod(join(repoPath, "local-operator", "tracked-exec.mjs"), 0o644);
+}
+
+async function assertModeLockClean(repoPath, script) {
+  await dirtyFixtureModes(repoPath);
+  assert.notEqual(execFileSync("git", ["status", "--porcelain"], { cwd: repoPath, encoding: "utf8" }), "");
+
+  runPermissionLock(script, repoPath);
+
+  assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: repoPath, encoding: "utf8" }), "");
+  assert.equal(await numericMode(join(repoPath, "deployment", "scripts", "run.sh")), 0o755);
+  assert.equal(await numericMode(join(repoPath, "deployment", "scripts", "tool.mjs")), 0o755);
+  assert.equal(await numericMode(join(repoPath, "local-operator", "plain.mjs")), 0o644);
+  assert.equal(await numericMode(join(repoPath, "local-operator", "tracked-exec.mjs")), 0o755);
+
+  const modes = execFileSync("git", ["ls-files", "-s"], { cwd: repoPath, encoding: "utf8" });
+  assert.match(modes, /^100755 .*	deployment\/scripts\/run\.sh$/m);
+  assert.match(modes, /^100755 .*	deployment\/scripts\/tool\.mjs$/m);
+  assert.match(modes, /^100644 .*	local-operator\/plain\.mjs$/m);
+  assert.match(modes, /^100755 .*	local-operator\/tracked-exec\.mjs$/m);
 }
 
 {
@@ -186,10 +255,29 @@ for (const version of [
   assert.match(installScript, /chown -R root:root "\$INSTALL_DIR"/);
   assert.match(installScript, /find "\$INSTALL_DIR" -type d -exec chmod 0755/);
   assert.match(installScript, /find "\$INSTALL_DIR" -type f -exec chmod 0644/);
+  assert.match(installScript, /git -C "\$INSTALL_DIR" ls-files -z -s/);
+  assert.match(installScript, /100644\)/);
+  assert.match(installScript, /100755\)/);
   assert.doesNotMatch(installScript, /sudo -u "\$SERVICE_USER" git|chown "\$SERVICE_USER:\$SERVICE_GROUP" "\$INSTALL_DIR"/);
+  assert.doesNotMatch(installScript, /local-operator".*name '\*\.mjs'.*chmod 0755/s);
   assert.match(rollbackScript, /git -C "\$INSTALL_DIR" switch --detach "\$revision"/);
   assert.match(rollbackScript, /chown -R root:root "\$INSTALL_DIR"/);
+  assert.match(rollbackScript, /git -C "\$INSTALL_DIR" ls-files -z -s/);
+  assert.match(rollbackScript, /100644\)/);
+  assert.match(rollbackScript, /100755\)/);
   assert.doesNotMatch(rollbackScript, /sudo -u "\$SERVICE_USER" git/);
+  assert.doesNotMatch(rollbackScript, /local-operator".*name '\*\.mjs'.*chmod 0755/s);
+}
+
+{
+  const repoPath = await createModeFixtureRepo();
+
+  try {
+    await assertModeLockClean(repoPath, "deployment/scripts/install-or-update-repo.sh");
+    await assertModeLockClean(repoPath, "deployment/scripts/rollback-repo.sh");
+  } finally {
+    await rm(repoPath, { recursive: true, force: true });
+  }
 }
 
 {
