@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import * as githubPpoCommands from "./github-ppo-commands.mjs"
 import { GitHubReadOnlyError, listAllowedProjects } from "./github-readonly.mjs"
 
-const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio"]
+const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine"]
 
 const repository = {
   fullName: "Linardi1328/khlim-assist",
@@ -154,9 +154,27 @@ for (const projectId of allowedProjectIds) {
   assert.equal(prResult.ok, true, `${projectId} pr command succeeds`)
 }
 
+{
+  const client = makeClient({
+    getRepoMetadata: () => ({
+      ...repository,
+      fullName: "Linardi1328/rbl-content-engine",
+      description: "RBL content workflow engine"
+    })
+  })
+  const repoResult = await githubPpoCommands.handleGitHubPpoCommand("repo", "rbl-content-engine", { client })
+  const prResult = await githubPpoCommands.handleGitHubPpoCommand("pr", "rbl-content-engine", { client })
+
+  assert.equal(repoResult.ok, true)
+  assert.match(repoResult.output, /^Repo Summary: RBL Content Engine/)
+  assert.match(repoResult.output, /Repo: Linardi1328\/rbl-content-engine/)
+  assert.equal(prResult.ok, true)
+  assert.match(prResult.output, /^PR Summary: RBL Content Engine/)
+  assert.match(prResult.output, /Repo: Linardi1328\/rbl-content-engine/)
+}
+
 for (const projectId of [
   "unknown",
-  "rbl-content-engine",
   "prooflab",
   "jom-jelajah",
   "khlim-assist && whoami",
@@ -169,6 +187,9 @@ for (const projectId of [
 
   assert.equal(result.ok, false, `${projectId} is rejected`)
   assert.match(result.output, /^PPO GitHub read-only error \[/)
+  if (projectId === "prooflab" || projectId === "jom-jelajah") {
+    assert.match(result.output, /\[UNKNOWN_PROJECT\]/, `${projectId} is rejected as unknown`)
+  }
   assert.deepEqual(client.calls, [], `${projectId} performs zero client calls`)
 }
 

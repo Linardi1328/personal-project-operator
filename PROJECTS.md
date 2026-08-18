@@ -1,6 +1,6 @@
 # Projects
 
-This table is the Phase 0 project registry for Personal Project Operator. Phase 2A adds a separate narrow GitHub read-only allowlist for the four connected candidates only; future and paused projects remain disconnected.
+This table is the project registry for Personal Project Operator. Phase 2 GitHub read-only behavior uses a separate narrow allowlist for connected candidates only.
 
 | Project | Repo | Status | Current Role | OpenClaw Priority | Notes |
 |---|---|---:|---|---:|---|
@@ -8,13 +8,9 @@ This table is the Phase 0 project registry for Personal Project Operator. Phase 
 | LedgerPilot AI | `Linardi1328/ledgerpilot-ai` | Connected candidate | AI-assisted bookkeeping platform | High | Business-platform candidate with likely backend, frontend, and data workflows. |
 | SPY Market Agent | `Linardi1328/spy-market-agent` | Connected candidate | SPY market research/trading-system project | Medium | Research and systemization project; trading execution remains blocked. |
 | Portfolio Website | `Linardi1328/richie-linardi-portfolio-website` | Connected candidate | Personal portfolio website | Medium | Useful for public proof of work and project case studies. |
-| RBL Content Engine | Not connected yet | Future project | Future content generation system | Medium | Future RBL Productions content workflow; no repo connected. |
-| ProofLab | Not connected yet | Future project | Future faceless tech-documentary project | Low | Future content/business experiment; no repo connected. |
-| Jom Jelajah | Not connected yet | Paused | Design/concept project, not a coding priority yet | Low | Not connected yet; keep as a concept placeholder. |
+| RBL Content Engine | `Linardi1328/rbl-content-engine` | Connected candidate | RBL Productions content workflow engine | Medium | Includes research organization, scripts, source/asset workflow, and production approval boundaries. |
 
 ## Status Meanings
 
-- `Connected candidate`: A real repository exists and can be connected in a future read-only GitHub phase.
+- `Connected candidate`: A real repository exists and is in the fixed GitHub read-only project allowlist.
 - `Documentation only`: The project exists in planning docs but should not be treated as actively connected.
-- `Future project`: Placeholder for a future system or business workflow.
-- `Paused`: Known concept, but not a current coding priority.

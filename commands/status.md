@@ -22,7 +22,7 @@ Show all active projects and their current next action in a phone-friendly summa
 
 ## Expected output
 
-Phase 2C implements a compact GitHub read-only project status summary for the four connected projects.
+Phase 2C implements a compact GitHub read-only project status summary for the connected projects in the fixed registry.
 
 For each project:
 

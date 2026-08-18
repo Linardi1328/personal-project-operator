@@ -17,10 +17,12 @@ const expectedMappings = new Map([
   ["repo ledgerpilot-ai", ["repo", "ledgerpilot-ai"]],
   ["repo spy-market-agent", ["repo", "spy-market-agent"]],
   ["repo portfolio", ["repo", "portfolio"]],
+  ["repo rbl-content-engine", ["repo", "rbl-content-engine"]],
   ["pr khlim-assist", ["pr", "khlim-assist"]],
   ["pr ledgerpilot-ai", ["pr", "ledgerpilot-ai"]],
   ["pr spy-market-agent", ["pr", "spy-market-agent"]],
-  ["pr portfolio", ["pr", "portfolio"]]
+  ["pr portfolio", ["pr", "portfolio"]],
+  ["pr rbl-content-engine", ["pr", "rbl-content-engine"]]
 ]);
 
 for (const [input, expected] of expectedMappings) {
@@ -68,7 +70,9 @@ assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo pay
 for (const [input, expected] of [
   ["/ppo status", ["status"]],
   ["/ppo repo khlim-assist", ["repo", "khlim-assist"]],
-  ["/ppo pr portfolio", ["pr", "portfolio"]]
+  ["/ppo repo rbl-content-engine", ["repo", "rbl-content-engine"]],
+  ["/ppo pr portfolio", ["pr", "portfolio"]],
+  ["/ppo pr rbl-content-engine", ["pr", "rbl-content-engine"]]
 ]) {
   const result = await runPpoLocalTool(
     { command: input },
@@ -159,6 +163,10 @@ const rejectedInputs = [
   "pr",
   "repo unknown",
   "pr unknown",
+  "repo prooflab",
+  "pr prooflab",
+  "repo jom-jelajah",
+  "pr jom-jelajah",
   "repo KHLIM-assist",
   "repo Linardi1328/khlim-assist",
   "repo khlim-assist extra",

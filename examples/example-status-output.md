@@ -6,33 +6,45 @@
 
 ```text
 Project Status
+Source: GitHub read-only
 
 KHLIM Assist
 - Repo: Linardi1328/khlim-assist
-- Current phase: Phase 0 documentation
-- Last known status: connected candidate
-- Next action: prepare read-only repo and PR summary
-- Codex needed: not yet
+- Default: main
+- Latest: 1dd9e08 Merge pull request #5
+- Open PRs: none
+- Open issues: none
+- Updated: 2026-08-16T19:09:45Z
 
 LedgerPilot AI
 - Repo: Linardi1328/ledgerpilot-ai
-- Current phase: Phase 0 documentation
-- Last known status: connected candidate
-- Next action: define first read-only GitHub inspection task
-- Codex needed: later, likely medium task
+- Default: main
+- Latest: none returned
+- Open PRs: 1
+- Open issues: 1
+- Updated: 2026-08-16T20:00:00Z
 
 SPY Market Agent
 - Repo: Linardi1328/spy-market-agent
-- Current phase: Phase 0 documentation
-- Last known status: connected candidate
-- Next action: document research vs execution boundaries
-- Codex needed: later, read-only or simulation only
+- Default: main
+- Latest: abcdef1 Refresh market notes
+- Open PRs: 4
+- Open issues: 4
+- Updated: 2026-08-16T21:00:00Z
 
 Portfolio Website
 - Repo: Linardi1328/richie-linardi-portfolio-website
-- Current phase: Phase 0 documentation
-- Last known status: connected candidate
-- Next action: identify case-study/content updates
-- Codex needed: optional small task
-```
+- Default: main
+- Latest: aaabbbb Polish case study
+- Open PRs: 5+
+- Open issues: 5+
+- Updated: 2026-08-16T22:00:00Z
 
+RBL Content Engine
+- Repo: Linardi1328/rbl-content-engine
+- Default: main
+- Latest: rbl1234 Update rbl-content-engine
+- Open PRs: none
+- Open issues: none
+- Updated: 2026-08-16T23:00:00Z
+```

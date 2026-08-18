@@ -11,7 +11,7 @@ import {
   sanitizeGitHubText
 } from "./github-readonly.mjs"
 
-const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio"]
+const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine"]
 const unsafeTerminalControlPattern = /[\u0000-\u001F\u007F-\u009F]/u
 
 const repoPayload = {
@@ -173,7 +173,6 @@ const rejectedProjectInputs = [
   "Linardi1328/khlim-assist",
   "octocat/Hello-World",
   "unknown-project",
-  "rbl-content-engine",
   "prooflab",
   "jom-jelajah",
   "khlim-assist && whoami",
@@ -189,12 +188,8 @@ for (const input of rejectedProjectInputs) {
   const calls = []
   const client = createGitHubReadOnlyClient({ runner: makeFixtureRunner(calls) })
 
-  await expectReadOnlyError(() => client.getRepoMetadata(input), input === null || input === "" ? "INVALID_PROJECT" : blockedProjectIds(input) ? "PROJECT_NOT_CONNECTED" : "UNKNOWN_PROJECT")
+  await expectReadOnlyError(() => client.getRepoMetadata(input), input === null || input === "" ? "INVALID_PROJECT" : "UNKNOWN_PROJECT")
   assert.equal(calls.length, 0, `${String(input)} performs zero GitHub calls`)
-}
-
-function blockedProjectIds(projectId) {
-  return ["rbl-content-engine", "prooflab", "jom-jelajah"].includes(projectId)
 }
 
 {
@@ -215,6 +210,39 @@ function blockedProjectIds(projectId) {
   assert.deepEqual(calls[0], {
     method: "GET",
     endpoint: "/repos/Linardi1328/khlim-assist",
+    queryParams: {}
+  })
+}
+
+{
+  const calls = []
+  const client = createGitHubReadOnlyClient({
+    runner: async (request) => {
+      calls.push({
+        method: request.method,
+        endpoint: request.endpoint,
+        queryParams: { ...request.queryParams }
+      })
+
+      assert.equal(request.method, "GET")
+
+      return {
+        stdout: JSON.stringify({
+          ...repoPayload,
+          full_name: "Linardi1328/rbl-content-engine",
+          description: "RBL content workflow engine",
+          html_url: "https://github.com/Linardi1328/rbl-content-engine"
+        })
+      }
+    }
+  })
+  const metadata = await client.getRepoMetadata("rbl-content-engine")
+
+  assert.equal(metadata.fullName, "Linardi1328/rbl-content-engine")
+  assert.equal(metadata.description, "RBL content workflow engine")
+  assert.deepEqual(calls[0], {
+    method: "GET",
+    endpoint: "/repos/Linardi1328/rbl-content-engine",
     queryParams: {}
   })
 }

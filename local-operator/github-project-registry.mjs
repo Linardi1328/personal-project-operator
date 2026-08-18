@@ -34,14 +34,19 @@ const connectedProjects = new Map([
       owner: "Linardi1328",
       repo: "richie-linardi-portfolio-website"
     }
+  ],
+  [
+    "rbl-content-engine",
+    {
+      id: "rbl-content-engine",
+      displayName: "RBL Content Engine",
+      owner: "Linardi1328",
+      repo: "rbl-content-engine"
+    }
   ]
 ])
 
-const blockedProjectStatuses = new Map([
-  ["rbl-content-engine", "Future project"],
-  ["prooflab", "Future project"],
-  ["jom-jelajah", "Paused"]
-])
+const blockedProjectStatuses = new Map()
 
 function cloneProject(project) {
   return {

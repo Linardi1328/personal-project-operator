@@ -73,48 +73,17 @@
     {
       "id": "rbl-content-engine",
       "displayName": "RBL Content Engine",
-      "repo": "Not connected yet",
-      "active": false,
-      "status": "Future project",
-      "currentRole": "Future content generation system.",
+      "repo": "Linardi1328/rbl-content-engine",
+      "active": true,
+      "status": "Connected candidate",
+      "currentRole": "RBL Productions content workflow engine.",
       "openclawPriority": "Medium",
-      "currentPhase": "Placeholder",
-      "lastKnownStatus": "Not connected yet.",
-      "nextAction": "Define content workflow requirements before implementation.",
-      "codexNeeded": "No",
+      "currentPhase": "Phase 1 local command output test",
+      "lastKnownStatus": "Roster connected; fixture remains local mock state with no live GitHub calls.",
+      "nextAction": "Use read-only repo summaries before planning content workflow changes.",
+      "codexNeeded": "Later",
       "phoneSafe": true,
-      "notes": "Draft only; no auto-posting."
-    },
-    {
-      "id": "prooflab",
-      "displayName": "ProofLab",
-      "repo": "Not connected yet",
-      "active": false,
-      "status": "Future project",
-      "currentRole": "Future faceless tech-documentary project.",
-      "openclawPriority": "Low",
-      "currentPhase": "Placeholder",
-      "lastKnownStatus": "Not connected yet.",
-      "nextAction": "Clarify research workflow and source rules.",
-      "codexNeeded": "No",
-      "phoneSafe": true,
-      "notes": "No publishing automation."
-    },
-    {
-      "id": "jom-jelajah",
-      "displayName": "Jom Jelajah",
-      "repo": "Not connected yet",
-      "active": false,
-      "status": "Paused",
-      "currentRole": "Design/concept project, not a coding priority yet.",
-      "openclawPriority": "Low",
-      "currentPhase": "Placeholder",
-      "lastKnownStatus": "Not connected yet.",
-      "nextAction": "Keep paused until product direction is approved.",
-      "codexNeeded": "No",
-      "phoneSafe": true,
-      "notes": "Do not create implementation work yet."
+      "notes": "Draft/research/script/asset workflows require approval boundaries; no auto-publishing."
     }
   ]
 }
-

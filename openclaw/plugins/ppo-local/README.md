@@ -40,10 +40,12 @@ repo khlim-assist
 repo ledgerpilot-ai
 repo spy-market-agent
 repo portfolio
+repo rbl-content-engine
 pr khlim-assist
 pr ledgerpilot-ai
 pr spy-market-agent
 pr portfolio
+pr rbl-content-engine
 ```
 
 The bridge also accepts full `/ppo ...` payloads for local validation, but OpenClaw `command-arg-mode: raw` normally forwards only the text after `/ppo`.

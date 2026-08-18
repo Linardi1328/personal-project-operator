@@ -158,6 +158,7 @@ Allowed Phase 2A projects are fixed in the local read-only registry:
 - `ledgerpilot-ai` -> `Linardi1328/ledgerpilot-ai`
 - `spy-market-agent` -> `Linardi1328/spy-market-agent`
 - `portfolio` -> `Linardi1328/richie-linardi-portfolio-website`
+- `rbl-content-engine` -> `Linardi1328/rbl-content-engine`
 
 Allowed GitHub endpoint families:
 
@@ -189,6 +190,7 @@ Supported projects remain fixed:
 - `ledgerpilot-ai`
 - `spy-market-agent`
 - `portfolio`
+- `rbl-content-engine`
 
 `/ppo repo <project>` returns repository metadata and a small bounded recent-commit list. `/ppo pr <project>` returns a bounded open-PR summary. Both use only the Phase 2A endpoint families already listed above.
 
@@ -202,7 +204,7 @@ Phase 2C upgrades `/ppo status` to a live GitHub read-only summary through the s
 /ppo status -> ppo_local -> local-operator/ppo-command.mjs -> GitHub status formatter -> Phase 2A client
 ```
 
-The command covers exactly the four connected project ids in registry order and reports observable GitHub facts only:
+The command covers exactly the five connected project ids in registry order and reports observable GitHub facts only:
 
 - repository full name
 - default branch
@@ -232,7 +234,7 @@ Phase 3A prompt context is split into:
 - curated project documentation from the fixed `projects/` mapping
 - live GitHub read-only facts from the approved Phase 2A endpoint families
 
-The command accepts exactly the four connected project ids, bounds task text to 1000 characters, includes a simple deterministic task-size estimate, and adds hardening emphasis for explicit hardening or error-boundary tasks.
+The command accepts exactly the five connected project ids, bounds task text to 1000 characters, includes a simple deterministic task-size estimate, and adds hardening emphasis for explicit hardening or error-boundary tasks.
 
 Telegram/OpenClaw exposure is deferred. `/ppo codex ...` is not accepted by the `ppo_local` bridge in Phase 3A.
 
@@ -244,12 +246,7 @@ Current connected candidates:
 - LedgerPilot AI: `Linardi1328/ledgerpilot-ai`
 - SPY Market Agent: `Linardi1328/spy-market-agent`
 - Portfolio Website: `Linardi1328/richie-linardi-portfolio-website`
-
-Future placeholder projects:
-
-- RBL Content Engine: not connected yet
-- ProofLab: not connected yet
-- Jom Jelajah: not connected yet
+- RBL Content Engine: `Linardi1328/rbl-content-engine`
 
 See [PROJECTS.md](PROJECTS.md) and the files in [projects/](projects/) for project-level state docs.
 
