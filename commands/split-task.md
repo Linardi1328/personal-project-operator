@@ -1,52 +1,64 @@
-# /split-task
+# split-task
 
 ## Command name
 
-`/split-task <task>`
+`split-task <task>`
 
 ## Purpose
 
-Break a large development task into smaller Codex phases.
+Produce a deterministic local split for broad development work.
 
-## Input format
+Phase 3B is terminal-only:
 
-```text
-/split-task <task>
+```bash
+node local-operator/ppo-command.mjs split-task <task>
 ```
+
+Do not expose `/ppo split-task` through Telegram/OpenClaw in Phase 3B.
 
 ## Example input
 
-```text
-/split-task add GitHub integration, Telegram bot, Codex prompt generator, and VPS deployment
+```bash
+node local-operator/ppo-command.mjs split-task "add GitHub integration, Telegram bot, Codex prompt generator, VPS deployment, and write actions"
 ```
 
 ## Expected output
 
-```text
-Recommended split:
-1. Phase A
-2. Phase B
-3. Hardening
-4. Review
-```
+The output includes:
 
-Example:
+- original inert task text
+- the same deterministic task-size estimate used by `codex`
+- a split-not-required workflow for small tasks
+- an optional short workflow for medium tasks
+- focused domain phases for large or too-large tasks
+- hardening and review phases where appropriate
 
-```text
-Recommended split:
-1. Phase A - document command behavior and state files.
-2. Phase B - implement read-only GitHub metadata fetch.
-3. Hardening - add error handling, rate-limit behavior, and tests.
-4. Review - inspect security boundaries and output quality.
-```
+Detected domains use a fixed order:
+
+- documentation
+- GitHub/repository
+- Telegram/OpenClaw/routing
+- Codex/prompt tooling
+- frontend/UI
+- backend/API
+- database/schema/migration
+- deployment/VPS/production
+- write actions/mutations/permissions
+- tests/hardening/security
+
+The split is bounded to eight phases.
+
+## Write-action boundary
+
+If the task mentions write actions, mutations, merges, pushes, issue creation, or other external writes, the output labels that work as permission-gated design. It does not authorize implementation. Separate explicit approval is required and current PPO write permissions remain disabled.
 
 ## Safety boundary
 
-Planning only. Do not start implementation, deployment, or external API setup.
+This command plans only. It must not invoke Codex, call OpenAI APIs, call another model, execute generated plans, mutate repositories, create branches, commit, push, create issues, open or merge PRs, deploy services, or edit OpenClaw configuration.
+
+The task string is data only. Shell-looking punctuation, `$()`, backticks, and paths are not executed or interpreted.
 
 ## Future upgrade path
 
-- Combine with `/codex-budget`.
-- Generate one compact Codex prompt per phase.
-- Track phase completion in project state docs.
-
+- Generate per-phase Codex prompts only after separate approval.
+- Review Telegram/OpenClaw arbitrary-text routing in Phase 3C.

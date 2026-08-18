@@ -16,7 +16,7 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts only the approved PPO command surface for Phase 2C while Phase 3A `codex` remains terminal-only
+- accepts only the approved PPO command surface for Phase 2C while Phase 3A/3B Codex commands remain terminal-only
 - invokes only `local-operator/ppo-command.mjs`
 - passes arguments as an argv array through `execFile`
 - does not use a shell
@@ -25,7 +25,7 @@ The plugin:
 - does not use secrets
 - does not mutate files
 - does not add GitHub writes or generic GitHub tools
-- does not accept `codex ...` through OpenClaw/Telegram in Phase 3A
+- does not accept `codex ...`, `codex-budget ...`, `prompt-size ...`, or `split-task ...` through OpenClaw/Telegram in Phase 3B
 
 ## Supported Raw Inputs
 
