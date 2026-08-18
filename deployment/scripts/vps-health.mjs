@@ -8,6 +8,9 @@ export const VPS_HEALTH_SERVICE = "ppo-openclaw.service";
 export const VPS_TARGET = "Ubuntu 24.04 LTS, 2 vCPU / 4 GB RAM class VPS";
 export const VPS_INSTALL_DIR = "/opt/personal-project-operator";
 export const VPS_WRAPPER_PATH = `${VPS_INSTALL_DIR}/local-operator/ppo-command.mjs`;
+export const VPS_OPENCLAW_PREFIX = "/home/ppo/.local/openclaw";
+export const VPS_NODE_PATH = `${VPS_OPENCLAW_PREFIX}/bin/node`;
+export const VPS_OPENCLAW_PATH = `${VPS_OPENCLAW_PREFIX}/bin/openclaw`;
 export const VPS_HEALTH_TIMEOUT_MS = 3000;
 
 const execFileAsync = promisify(execFile);
@@ -87,8 +90,8 @@ export async function collectVpsHealth(options = {}) {
   const now = options.now ?? new Date().toISOString();
   const checks = [];
 
-  const nodeVersion = await runReadOnlyCommand(runner, process.execPath, ["--version"]);
-  checks.push(check("Node.js", nodeVersion.ok ? "available" : "unavailable", firstLine(nodeVersion.stdout)));
+  const nodeVersion = await runReadOnlyCommand(runner, VPS_NODE_PATH, ["--version"]);
+  checks.push(check("OpenClaw local-prefix Node.js", nodeVersion.ok ? "available" : "unavailable", firstLine(nodeVersion.stdout)));
 
   const gitVersion = await runReadOnlyCommand(runner, "git", ["--version"]);
   checks.push(check("git", gitVersion.ok ? "available" : "unavailable", firstLine(gitVersion.stdout)));
@@ -96,8 +99,8 @@ export async function collectVpsHealth(options = {}) {
   const ghVersion = await runReadOnlyCommand(runner, "gh", ["--version"]);
   checks.push(check("gh", ghVersion.ok ? "available" : "unavailable", firstLine(ghVersion.stdout)));
 
-  const openclawVersion = await runReadOnlyCommand(runner, "openclaw", ["--version"]);
-  checks.push(check("OpenClaw", openclawVersion.ok ? "available" : "unavailable", firstLine(openclawVersion.stdout)));
+  const openclawVersion = await runReadOnlyCommand(runner, VPS_OPENCLAW_PATH, ["--version"]);
+  checks.push(check("OpenClaw local-prefix executable", openclawVersion.ok ? "available" : "unavailable", firstLine(openclawVersion.stdout)));
 
   const serviceActive = await runReadOnlyCommand(runner, "systemctl", ["is-active", VPS_HEALTH_SERVICE]);
   checks.push(check("systemd active", serviceActive.ok ? "active" : "inactive or unavailable", firstLine(serviceActive.stdout)));

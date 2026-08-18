@@ -8,6 +8,7 @@ Target host:
 - 2 vCPU / 4 GB RAM class VPS
 - OpenClaw running persistently under `systemd`
 - Personal Project Operator checked out at `/opt/personal-project-operator`
+- OpenClaw local-prefix runtime under `/home/ppo/.local/openclaw`
 - one existing OpenClaw plugin tool: `ppo_local`
 
 ## Safety Boundary
@@ -27,6 +28,7 @@ Phase 4A files are server-local bootstrap materials only.
 - `deployment/systemd/ppo-openclaw.service`: systemd unit template for OpenClaw.
 - `deployment/logrotate/ppo-openclaw`: logrotate template for optional file logs.
 - `deployment/scripts/bootstrap-ubuntu-24.04.sh`: installs OS packages, creates the non-root service user, creates directories, and installs systemd/logrotate templates.
+- `deployment/scripts/preflight-openclaw-runtime.sh`: fail-closed service preflight for the supported local-prefix Node/OpenClaw runtime.
 - `deployment/scripts/install-or-update-repo.sh`: installs or updates the PPO checkout from the fixed main branch.
 - `deployment/scripts/service-control.sh`: owner-confirmed `systemd` status/start/restart/enable controls.
 - `deployment/scripts/firewall-ssh-hardening.sh`: owner-confirmed OpenSSH-only UFW baseline.
@@ -41,12 +43,36 @@ The bootstrap script targets Ubuntu 24.04 only and installs:
 - `curl`
 - `git`
 - `gh`
-- `nodejs`
-- `npm`
 - `ufw`
 - `logrotate`
+- `iproute2`
+
+Ubuntu 24.04 apt `nodejs` is intentionally not installed because that package provides Node 18, which is not the supported Phase 4A runtime target.
 
 OpenClaw itself remains installed/configured by the owner according to OpenClaw's current installation process. This repository does not vendor OpenClaw and does not edit `~/.openclaw` automatically.
+
+## OpenClaw Local-Prefix Runtime Layout
+
+Phase 4A uses one deterministic owner-run runtime layout:
+
+```text
+/home/ppo/.local/openclaw/bin/node
+/home/ppo/.local/openclaw/bin/openclaw
+```
+
+Install a currently supported Node runtime and OpenClaw for the `ppo` user into that prefix before starting the systemd service. The service sets:
+
+```text
+PATH=/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+```
+
+The systemd unit runs this preflight before service start:
+
+```text
+ExecStartPre=/opt/personal-project-operator/deployment/scripts/preflight-openclaw-runtime.sh
+```
+
+The preflight exits with status `78` when the local-prefix Node/OpenClaw runtime is missing or unsupported. The unit includes `RestartPreventExitStatus=78`, so systemd does not repeatedly restart a misprovisioned service. Repair remains owner-operated through `OPENCLAW_SERVICE_REPAIR_POLICY=external`.
 
 ## Service User
 
@@ -65,8 +91,14 @@ User=ppo
 Group=ppo
 WorkingDirectory=/opt/personal-project-operator
 EnvironmentFile=-/etc/personal-project-operator/openclaw.env
+ExecStart=/home/ppo/.local/openclaw/bin/openclaw gateway run
 Restart=on-failure
+RestartPreventExitStatus=78
 ```
+
+The foreground command is `openclaw gateway run`. The unit must not use `openclaw gateway start`, because that subcommand manages a service rather than remaining in the foreground for this system-level unit.
+
+The systemd unit itself remains installed under `/etc/systemd/system` and owned by root.
 
 ## Secrets And Environment Variables
 
@@ -93,6 +125,13 @@ sudo PPO_BOOTSTRAP_CONFIRM=ubuntu-24.04-vps deployment/scripts/bootstrap-ubuntu-
 sudo PPO_REPO_UPDATE_CONFIRM=install-or-update-main deployment/scripts/install-or-update-repo.sh
 ```
 
+Then manually install/configure the OpenClaw local-prefix runtime for the service user:
+
+- install current supported Node at `/home/ppo/.local/openclaw/bin/node`
+- install OpenClaw at `/home/ppo/.local/openclaw/bin/openclaw`
+- confirm with `sudo -u ppo /home/ppo/.local/openclaw/bin/node --version`
+- confirm with `sudo -u ppo /home/ppo/.local/openclaw/bin/openclaw --version`
+
 Then manually configure OpenClaw for the service user:
 
 - load the skill root from `/opt/personal-project-operator/openclaw/skills`
@@ -101,6 +140,16 @@ Then manually configure OpenClaw for the service user:
 - keep `command-dispatch: tool`, `command-tool: ppo_local`, and `command-arg-mode: raw`
 
 Do not use `group:plugins`, wildcard tool permissions, or a generic GitHub tool.
+
+## Repo Ownership Model
+
+The checkout at `/opt/personal-project-operator` is root-owned and read-only to the runtime user.
+
+- `install-or-update-repo.sh` runs git clone/fetch/pull as root.
+- after install/update, the script enforces root ownership and read/execute permissions.
+- `ppo` may read and execute the wrapper but must not mutate the checkout.
+- the systemd unit does not include `/opt/personal-project-operator` in `ReadWritePaths`.
+- writable runtime paths are limited to `/home/ppo`, `/var/lib/personal-project-operator`, and `/var/log/personal-project-operator`.
 
 ## systemd Start, Restart, And Boot Recovery
 
@@ -127,16 +176,18 @@ Before changing firewall posture:
 
 - confirm SSH key login works
 - keep a second SSH session open
-- confirm at least one populated `authorized_keys` file exists
+- run the script from an active SSH session
 - do not paste keys into this repository
 
 Owner-confirmed OpenSSH-only UFW baseline:
 
 ```bash
-sudo PPO_FIREWALL_CONFIRM=openssh-only deployment/scripts/firewall-ssh-hardening.sh
+sudo --preserve-env=SSH_CONNECTION PPO_FIREWALL_CONFIRM=openssh-only deployment/scripts/firewall-ssh-hardening.sh
 ```
 
-SSH daemon settings should be reviewed manually and tested with `sshd -t` before reload. This repository does not auto-edit SSH daemon configuration.
+The firewall script validates `sshd -t`, detects actual listening `sshd` TCP ports with `ss`, validates the detected ports, verifies the active SSH session is using one of those detected ports, allows those ports first, and fails closed if no listener or matching active session is found. It does not assume port 22 from `authorized_keys`.
+
+SSH daemon settings should be reviewed manually before reload. This repository does not auto-edit SSH daemon configuration.
 
 ## Logs And Rotation
 

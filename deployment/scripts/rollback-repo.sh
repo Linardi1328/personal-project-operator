@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SERVICE_USER="ppo"
 INSTALL_DIR="/opt/personal-project-operator"
 STATE_DIR="/var/lib/personal-project-operator"
 SERVICE_NAME="ppo-openclaw.service"
@@ -37,7 +36,13 @@ main() {
   revision="$(tr -d '\n\r' <"${STATE_DIR}/last-good-revision")"
   [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || fail "last-good revision is malformed."
 
-  sudo -u "$SERVICE_USER" git -C "$INSTALL_DIR" switch --detach "$revision"
+  git -C "$INSTALL_DIR" switch --detach "$revision"
+  chown -R root:root "$INSTALL_DIR"
+  find "$INSTALL_DIR" -type d -exec chmod 0755 {} +
+  find "$INSTALL_DIR" -type f -exec chmod 0644 {} +
+  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.sh' -exec chmod 0755 {} +
+  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.mjs' -exec chmod 0755 {} +
+  find "${INSTALL_DIR}/local-operator" -maxdepth 1 -type f -name '*.mjs' -exec chmod 0755 {} +
   systemctl restart "$SERVICE_NAME"
   printf 'Rolled back PPO checkout to last-good revision and restarted %s.\n' "$SERVICE_NAME"
 }

@@ -16,6 +16,13 @@ node deployment/scripts/vps-health.mjs
 
 It is not routed through OpenClaw/Telegram yet.
 
+The script checks the Phase 4A local-prefix runtime paths:
+
+```text
+/home/ppo/.local/openclaw/bin/node
+/home/ppo/.local/openclaw/bin/openclaw
+```
+
 ## Input format
 
 ```text

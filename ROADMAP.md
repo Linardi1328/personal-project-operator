@@ -121,7 +121,9 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Add Ubuntu 24.04 LTS deployment/bootstrap documentation.
 - Target a 2 vCPU / 4 GB RAM class VPS.
 - Add guarded VPS-local scripts for OS/runtime dependencies, a non-root service user, repo install/update, systemd service control, firewall/SSH-key hardening, rollback, and read-only health checks.
-- Add a systemd unit template for OpenClaw using the existing PPO wrapper and existing `ppo_local` tool.
+- Add a systemd unit template for the foreground OpenClaw gateway using the existing PPO wrapper and existing `ppo_local` tool.
+- Use a deterministic owner-installed OpenClaw local-prefix runtime under `/home/ppo/.local/openclaw` rather than Ubuntu 24.04 apt Node.
+- Keep the PPO checkout root-owned and read-only to the runtime user.
 - Add safe environment-variable and secrets handling guidance.
 - Add deterministic/static tests for deployment files.
 - Do not perform live SSH, live VPS deployment, Telegram API changes, GitHub writes, model calls, or new OpenClaw permissions.

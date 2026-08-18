@@ -22,24 +22,72 @@ require_root() {
   fi
 }
 
-require_ssh_key_presence() {
-  if ! find /home /root -maxdepth 3 -path '*/.ssh/authorized_keys' -type f -size +0c -print -quit | grep -q .; then
-    fail "no populated authorized_keys file found; refusing to change firewall posture."
-  fi
+unique_ports=()
+
+add_port() {
+  local port="$1"
+  [[ "$port" =~ ^[0-9]+$ ]] || fail "detected SSH port is not numeric."
+  (( port >= 1 && port <= 65535 )) || fail "detected SSH port is out of range."
+
+  local existing
+  for existing in "${unique_ports[@]}"; do
+    [[ "$existing" == "$port" ]] && return
+  done
+
+  unique_ports+=("$port")
+}
+
+detect_sshd_ports() {
+  local line local_address port
+
+  while IFS= read -r line; do
+    [[ "$line" == *sshd* ]] || continue
+    local_address="$(awk '{print $4}' <<<"$line")"
+    port="${local_address##*:}"
+    port="${port//]/}"
+    add_port "$port"
+  done < <(ss -H -ltnp)
+
+  ((${#unique_ports[@]} > 0)) || fail "no listening sshd port detected; refusing to enable UFW."
+}
+
+require_current_ssh_session_matches_detected_port() {
+  [[ -n "${SSH_CONNECTION:-}" ]] || fail "SSH_CONNECTION is missing; run from an active SSH session and preserve that environment value through sudo."
+
+  local server_port
+  server_port="$(awk '{print $4}' <<<"$SSH_CONNECTION")"
+  [[ "$server_port" =~ ^[0-9]+$ ]] || fail "active SSH session port is not numeric."
+
+  local port
+  for port in "${unique_ports[@]}"; do
+    [[ "$port" == "$server_port" ]] && return
+  done
+
+  fail "active SSH session port does not match detected sshd listeners."
+}
+
+validate_sshd_config() {
+  sshd -t || fail "sshd configuration validation failed; refusing firewall changes."
 }
 
 main() {
   require_confirmation
   require_root
-  require_ssh_key_presence
+  validate_sshd_config
+  detect_sshd_ports
+  require_current_ssh_session_matches_detected_port
 
-  ufw allow OpenSSH
+  local port
+  for port in "${unique_ports[@]}"; do
+    ufw allow "${port}/tcp" comment 'PPO Phase 4A detected sshd listener'
+  done
+
   ufw default deny incoming
   ufw default allow outgoing
   ufw --force enable
   ufw status verbose
 
-  printf 'Firewall hardened for OpenSSH-only ingress.\n'
+  printf 'Firewall hardened for detected SSH ingress ports: %s\n' "${unique_ports[*]}"
   printf 'Review SSH daemon key-only settings manually, run sshd -t, then reload the SSH service only after confirming a second session can connect.\n'
 }
 

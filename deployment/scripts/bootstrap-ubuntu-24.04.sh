@@ -47,7 +47,7 @@ repo_root() {
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y --no-install-recommends ca-certificates curl git gh nodejs npm ufw logrotate
+  apt-get install -y --no-install-recommends ca-certificates curl git gh ufw logrotate iproute2
 }
 
 create_service_user() {
@@ -61,7 +61,9 @@ create_service_user() {
 }
 
 create_directories() {
-  install -d -m 0755 "$INSTALL_DIR"
+  install -d -m 0755 -o root -g root "$INSTALL_DIR"
+  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "/home/${SERVICE_USER}/.local"
+  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "/home/${SERVICE_USER}/.local/openclaw"
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR"
   install -d -m 0750 -o "$SERVICE_USER" -g adm "$LOG_DIR"
   install -d -m 0750 "$CONFIG_DIR"

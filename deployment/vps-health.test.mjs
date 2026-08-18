@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import {
   VPS_HEALTH_SERVICE,
   VPS_INSTALL_DIR,
+  VPS_NODE_PATH,
+  VPS_OPENCLAW_PATH,
   VPS_WRAPPER_PATH,
   collectVpsHealth,
   formatVpsHealth
@@ -15,10 +17,10 @@ function fakeRunner(command, args, options) {
 
   const key = `${command} ${args.join(" ")}`;
   const responses = new Map([
-    [keyForProcessVersion(command, args), { stdout: "v24.4.0\n", stderr: sensitiveSentinel }],
+    [`${VPS_NODE_PATH} --version`, { stdout: "v24.4.0\n", stderr: sensitiveSentinel }],
     ["git --version", { stdout: "git version 2.43.0\n", stderr: sensitiveSentinel }],
     ["gh --version", { stdout: "gh version 2.97.0\nhttps://example.invalid\n", stderr: sensitiveSentinel }],
-    ["openclaw --version", { stdout: "openclaw 2026.5.17\n", stderr: sensitiveSentinel }],
+    [`${VPS_OPENCLAW_PATH} --version`, { stdout: "openclaw 2026.5.17\n", stderr: sensitiveSentinel }],
     [`systemctl is-active ${VPS_HEALTH_SERVICE}`, { stdout: "active\n", stderr: sensitiveSentinel }],
     [`systemctl is-enabled ${VPS_HEALTH_SERVICE}`, { stdout: "enabled\n", stderr: sensitiveSentinel }],
     ["uptime -p", { stdout: "up 2 hours, 4 minutes\n", stderr: sensitiveSentinel }],
@@ -33,10 +35,6 @@ function fakeRunner(command, args, options) {
   return responses.get(key);
 }
 
-function keyForProcessVersion(command, args) {
-  return `${command} ${args.join(" ")}`;
-}
-
 {
   const report = await collectVpsHealth({
     runner: fakeRunner,
@@ -49,6 +47,8 @@ function keyForProcessVersion(command, args) {
   assert.match(output, /Source: local read-only host checks/);
   assert.match(output, /Target: Ubuntu 24\.04 LTS, 2 vCPU \/ 4 GB RAM class VPS/);
   assert.match(output, /Service: ppo-openclaw\.service/);
+  assert.match(output, /- OpenClaw local-prefix Node\.js: available \(v24\.4\.0\)/);
+  assert.match(output, /- OpenClaw local-prefix executable: available \(openclaw 2026\.5\.17\)/);
   assert.match(output, /- systemd active: active \(active\)/);
   assert.match(output, /- systemd boot recovery: enabled \(enabled\)/);
   assert.match(output, /- repo checkout: present \(\/opt\/personal-project-operator\)/);
@@ -68,7 +68,7 @@ function keyForProcessVersion(command, args) {
   });
   const output = formatVpsHealth(report);
 
-  assert.match(output, /- Node\.js: unavailable/);
+  assert.match(output, /- OpenClaw local-prefix Node\.js: unavailable/);
   assert.match(output, /- systemd active: inactive or unavailable/);
   assert.match(output, /- repo checkout: missing/);
   assert.doesNotMatch(output, new RegExp(sensitiveSentinel));
@@ -85,6 +85,7 @@ function keyForProcessVersion(command, args) {
 {
   const shellScripts = [
     "bootstrap-ubuntu-24.04.sh",
+    "preflight-openclaw-runtime.sh",
     "install-or-update-repo.sh",
     "service-control.sh",
     "firewall-ssh-hardening.sh",
@@ -105,11 +106,65 @@ function keyForProcessVersion(command, args) {
 
   assert.match(unit, /User=ppo/);
   assert.match(unit, /Group=ppo/);
-  assert.match(unit, /ExecStart=\/usr\/bin\/env openclaw gateway start/);
+  assert.match(unit, /Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external/);
+  assert.match(unit, /Environment=PATH=\/home\/ppo\/\.local\/openclaw\/bin:/);
+  assert.match(unit, /ExecStartPre=\/opt\/personal-project-operator\/deployment\/scripts\/preflight-openclaw-runtime\.sh/);
+  assert.match(unit, /ExecStart=\/home\/ppo\/\.local\/openclaw\/bin\/openclaw gateway run/);
+  assert.doesNotMatch(unit, /gateway start/);
   assert.match(unit, /EnvironmentFile=-\/etc\/personal-project-operator\/openclaw\.env/);
   assert.match(unit, /Restart=on-failure/);
+  assert.match(unit, /RestartPreventExitStatus=78/);
   assert.match(unit, /NoNewPrivileges=true/);
+  assert.match(unit, /ReadWritePaths=\/home\/ppo \/var\/lib\/personal-project-operator \/var\/log\/personal-project-operator/);
+  assert.doesNotMatch(unit, /ReadWritePaths=.*\/opt\/personal-project-operator/);
   assert.doesNotMatch(unit, /group:plugins|\*|TOKEN=|PASSWORD=|SECRET=|PRIVATE KEY/);
+}
+
+{
+  const bootstrap = await readFile(new URL("./scripts/bootstrap-ubuntu-24.04.sh", import.meta.url), "utf8");
+
+  assert.doesNotMatch(bootstrap, /\bnodejs\b|\bnpm\b/, "bootstrap does not install unsupported Ubuntu apt Node runtime");
+  assert.match(bootstrap, /ca-certificates curl git gh ufw logrotate iproute2/);
+  assert.match(bootstrap, /\/home\/\$\{SERVICE_USER\}\/\.local\/openclaw/);
+}
+
+{
+  const preflight = await readFile(new URL("./scripts/preflight-openclaw-runtime.sh", import.meta.url), "utf8");
+
+  assert.match(preflight, /OPENCLAW_PREFIX="\/home\/ppo\/\.local\/openclaw"/);
+  assert.match(preflight, /MIN_NODE_MAJOR=20/);
+  assert.match(preflight, /EX_SOFTWARE=78/);
+  assert.match(preflight, /exit "\$EX_SOFTWARE"/);
+  assert.match(preflight, /\$OPENCLAW_BIN" --version/);
+}
+
+{
+  const installScript = await readFile(new URL("./scripts/install-or-update-repo.sh", import.meta.url), "utf8");
+  const rollbackScript = await readFile(new URL("./scripts/rollback-repo.sh", import.meta.url), "utf8");
+
+  assert.match(installScript, /git clone --branch "\$BRANCH" --depth 1 "\$REPO_URL" "\$INSTALL_DIR"/);
+  assert.match(installScript, /git -C "\$INSTALL_DIR" pull --ff-only origin "\$BRANCH"/);
+  assert.match(installScript, /chown -R root:root "\$INSTALL_DIR"/);
+  assert.match(installScript, /find "\$INSTALL_DIR" -type d -exec chmod 0755/);
+  assert.match(installScript, /find "\$INSTALL_DIR" -type f -exec chmod 0644/);
+  assert.doesNotMatch(installScript, /sudo -u "\$SERVICE_USER" git|chown "\$SERVICE_USER:\$SERVICE_GROUP" "\$INSTALL_DIR"/);
+  assert.match(rollbackScript, /git -C "\$INSTALL_DIR" switch --detach "\$revision"/);
+  assert.match(rollbackScript, /chown -R root:root "\$INSTALL_DIR"/);
+  assert.doesNotMatch(rollbackScript, /sudo -u "\$SERVICE_USER" git/);
+}
+
+{
+  const firewall = await readFile(new URL("./scripts/firewall-ssh-hardening.sh", import.meta.url), "utf8");
+
+  assert.match(firewall, /ss -H -ltnp/);
+  assert.match(firewall, /local_address="\$\(awk '\{print \$4\}' <<<"\$line"\)"/);
+  assert.match(firewall, /port="\$\{local_address##\*:\}"/);
+  assert.match(firewall, /SSH_CONNECTION is missing; run from an active SSH session/);
+  assert.match(firewall, /server_port="\$\(awk '\{print \$4\}' <<<"\$SSH_CONNECTION"\)"/);
+  assert.match(firewall, /active SSH session port does not match detected sshd listeners/);
+  assert.match(firewall, /ufw allow "\$\{port\}\/tcp"/);
+  assert.match(firewall, /no listening sshd port detected; refusing to enable UFW/);
+  assert.doesNotMatch(firewall, /ufw allow OpenSSH|authorized_keys/);
 }
 
 console.log("Phase 4A VPS health and deployment static tests passed.");

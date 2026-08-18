@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SERVICE_USER="ppo"
 SERVICE_GROUP="ppo"
 INSTALL_DIR="/opt/personal-project-operator"
 STATE_DIR="/var/lib/personal-project-operator"
@@ -29,37 +28,46 @@ require_root() {
 }
 
 require_service_user() {
-  id "$SERVICE_USER" >/dev/null 2>&1 || fail "service user '${SERVICE_USER}' does not exist; run bootstrap first."
   getent group "$SERVICE_GROUP" >/dev/null || fail "service group '${SERVICE_GROUP}' does not exist; run bootstrap first."
+}
+
+lock_runtime_checkout_permissions() {
+  chown -R root:root "$INSTALL_DIR"
+  find "$INSTALL_DIR" -type d -exec chmod 0755 {} +
+  find "$INSTALL_DIR" -type f -exec chmod 0644 {} +
+  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.sh' -exec chmod 0755 {} +
+  find "${INSTALL_DIR}/deployment/scripts" -type f -name '*.mjs' -exec chmod 0755 {} +
+  find "${INSTALL_DIR}/local-operator" -maxdepth 1 -type f -name '*.mjs' -exec chmod 0755 {} +
 }
 
 record_last_good_revision() {
   if [[ -d "${INSTALL_DIR}/.git" ]]; then
     local revision
-    revision="$(sudo -u "$SERVICE_USER" git -C "$INSTALL_DIR" rev-parse HEAD)"
+    revision="$(git -C "$INSTALL_DIR" rev-parse HEAD)"
     if [[ "$revision" =~ ^[0-9a-f]{40}$ ]]; then
-      install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR"
+      install -d -m 0750 -o root -g "$SERVICE_GROUP" "$STATE_DIR"
       printf '%s\n' "$revision" >"${STATE_DIR}/last-good-revision"
-      chown "$SERVICE_USER:$SERVICE_GROUP" "${STATE_DIR}/last-good-revision"
+      chown root:"$SERVICE_GROUP" "${STATE_DIR}/last-good-revision"
       chmod 0640 "${STATE_DIR}/last-good-revision"
     fi
   fi
 }
 
 clone_or_update() {
-  install -d -m 0755 "$INSTALL_DIR"
-  chown "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
+  install -d -m 0755 -o root -g root "$INSTALL_DIR"
 
   if [[ ! -d "${INSTALL_DIR}/.git" ]]; then
     rmdir "$INSTALL_DIR" 2>/dev/null || true
-    sudo -u "$SERVICE_USER" git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    lock_runtime_checkout_permissions
     return
   fi
 
   record_last_good_revision
-  sudo -u "$SERVICE_USER" git -C "$INSTALL_DIR" fetch --prune origin "$BRANCH"
-  sudo -u "$SERVICE_USER" git -C "$INSTALL_DIR" checkout "$BRANCH"
-  sudo -u "$SERVICE_USER" git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
+  git -C "$INSTALL_DIR" fetch --prune origin "$BRANCH"
+  git -C "$INSTALL_DIR" checkout "$BRANCH"
+  git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
+  lock_runtime_checkout_permissions
 }
 
 main() {
