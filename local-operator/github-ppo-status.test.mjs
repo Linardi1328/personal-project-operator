@@ -178,6 +178,7 @@ function makeClient(config = {}) {
   assert.match(result.output, /LedgerPilot AI[\s\S]*- Latest: none returned[\s\S]*- Open PRs: 1[\s\S]*- Open issues: 1/)
   assert.match(result.output, /SPY Market Agent[\s\S]*- Latest: abcdef1 Refresh market notes[\s\S]*- Open PRs: 4[\s\S]*- Open issues: 4/)
   assert.match(result.output, /Portfolio Website[\s\S]*- Open PRs: 5\+[\s\S]*- Open issues: 5\+/)
+  assert.match(result.output, /RBL Content Engine[\s\S]*- Repo: Linardi1328\/rbl-content-engine[\s\S]*- Latest: rbl1234 Update rbl-content-engine/)
 
   const queriedProjectIds = new Set(client.calls.map((call) => call[1]))
   assert.deepEqual([...queriedProjectIds], allowedProjectIds)

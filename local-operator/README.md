@@ -149,8 +149,11 @@ Owner test plan after branch review:
 ```bash
 node local-operator/ppo-command.mjs status
 node local-operator/ppo-command.mjs repo khlim-assist
+node local-operator/ppo-command.mjs repo rbl-content-engine
 node local-operator/ppo-command.mjs pr khlim-assist
+node local-operator/ppo-command.mjs pr rbl-content-engine
 node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
+node local-operator/ppo-command.mjs codex rbl-content-engine "organize source asset workflow"
 node local-operator/ppo-command.mjs codex portfolio "harden contact form error handling"
 node local-operator/ppo-command.mjs codex khlim-assist "add GitHub integration, Telegram routing, VPS deployment, and write actions"
 ```
@@ -160,7 +163,9 @@ Then through OpenClaw/Telegram after review:
 ```text
 /ppo status
 /ppo repo khlim-assist
+/ppo repo rbl-content-engine
 /ppo pr khlim-assist
+/ppo pr rbl-content-engine
 ```
 
 ## OpenClaw handoff shape

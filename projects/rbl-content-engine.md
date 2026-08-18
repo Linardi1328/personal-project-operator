@@ -6,15 +6,15 @@ RBL Content Engine
 
 ## Repo
 
-Not connected yet.
+`Linardi1328/rbl-content-engine`
 
 ## Connection status
 
-Not connected yet.
+Connected candidate.
 
 ## Current role
 
-Future content generation system.
+Content engine for RBL Productions workflows, including research organization, scripts, source handling, asset planning, and approval-gated production support.
 
 ## OpenClaw priority
 
@@ -22,28 +22,33 @@ Medium.
 
 ## Current phase
 
-Phase 0 placeholder.
+Connected project roster.
 
 ## Last known status
 
-Future project. No repo is connected and no implementation exists in this operator.
+Repository is connected to Personal Project Operator GitHub read-only status, repo, PR, and local Codex prompt generation paths.
 
 ## Next action
 
-Define content workflow requirements before connecting a repo or building integrations.
+Use GitHub read-only summaries and local Codex prompts to inspect the repo before planning workflow, script, source, or asset-system changes.
 
 ## Codex fit
 
-Future fit for content planning tools, content calendars, draft generation, and approval workflows.
+Good fit for bounded implementation, docs, hardening, and planning tasks around content workflows, content calendars, research organization, script templates, source/asset checklists, and production approval flows.
 
 ## Do not change
 
 - Do not auto-post content.
+- Do not auto-publish scripts, videos, assets, or campaign material.
 - Do not impersonate brands, customers, or team members.
-- Do not connect publishing platforms in Phase 0.
+- Do not scrape sources without review.
+- Do not store account credentials.
+- Do not connect publishing platforms or production accounts without explicit approval.
+- Do not bypass human review for public-facing content.
 
 ## Known risks
 
 - Content workflows can publish publicly if permissions are not controlled.
 - Brand voice and approval rules must be defined before automation.
-
+- Research quality, source attribution, and asset rights must remain reviewable.
+- Production workflows need explicit approval boundaries before any external write, upload, or publishing action.

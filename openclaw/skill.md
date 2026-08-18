@@ -59,12 +59,7 @@ Current connected candidates:
 - `ledgerpilot-ai`: `Linardi1328/ledgerpilot-ai`
 - `spy-market-agent`: `Linardi1328/spy-market-agent`
 - `portfolio`: `Linardi1328/richie-linardi-portfolio-website`
-
-Future placeholders:
-
-- `rbl-content-engine`: not connected yet
-- `prooflab`: not connected yet
-- `jom-jelajah`: not connected yet
+- `rbl-content-engine`: `Linardi1328/rbl-content-engine`
 
 ## Safety boundaries
 

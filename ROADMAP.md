@@ -42,7 +42,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 ### Phase 2A - Local read-only foundation
 
 - Add a deterministic GitHub read-only client using local `gh`.
-- Allow only the four connected-candidate project ids.
+- Allow only the fixed connected-candidate project ids.
 - Fetch and normalize repo metadata, recent commits, open PRs, and open issues.
 - Build compact project snapshots for terminal validation.
 - Keep all GitHub requests explicit `GET`.
@@ -60,7 +60,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 ### Phase 2C - Live GitHub project status
 
 - Route `/ppo status` through `ppo_local` to the Phase 2A read-only client.
-- Summarize the four connected projects in registry order.
+- Summarize the connected projects in registry order.
 - Show only observable GitHub facts: repo, default branch, latest returned commit, bounded PR counts, conservative bounded issue counts, and updated timestamp.
 - Keep menu/help fixture-backed with Phase 2C wording.
 - Do not add `/ppo next`, recommendations, Codex prompt generation, new endpoint families, GraphQL, or write actions.

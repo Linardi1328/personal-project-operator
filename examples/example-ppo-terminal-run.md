@@ -10,8 +10,11 @@ node local-operator/ppo-command.mjs menu codex
 node local-operator/ppo-command.mjs menu system
 node local-operator/ppo-command.mjs help
 node local-operator/ppo-command.mjs repo khlim-assist
+node local-operator/ppo-command.mjs repo rbl-content-engine
 node local-operator/ppo-command.mjs pr khlim-assist
+node local-operator/ppo-command.mjs pr rbl-content-engine
 node local-operator/ppo-command.mjs codex khlim-assist "add provider validation tests"
+node local-operator/ppo-command.mjs codex rbl-content-engine "organize source asset workflow"
 node local-operator/ppo-command.mjs unknown
 ```
 

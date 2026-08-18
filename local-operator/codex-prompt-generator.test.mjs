@@ -416,6 +416,25 @@ ${long}
 }
 
 {
+  const client = makeClient()
+  const output = await generateCodexPrompt("rbl-content-engine", "organize source asset workflow", {
+    client
+  })
+
+  assert.match(output, /^Codex Prompt/)
+  assert.match(output, /Project:\nRBL Content Engine/)
+  assert.match(output, /Repository:\nLinardi1328\/rbl-content-engine/)
+  assert.match(output, /Task:\norganize source asset workflow/)
+  assert.match(output, /research organization, scripts, source handling, asset planning/)
+  assert.deepEqual(client.calls, [
+    ["getRepoMetadata", "rbl-content-engine"],
+    ["getRecentCommits", "rbl-content-engine", 1],
+    ["getOpenPullRequests", "rbl-content-engine", 5],
+    ["getOpenIssuesPage", "rbl-content-engine", 5]
+  ])
+}
+
+{
   await assert.rejects(
     () => generateCodexPrompt("khlim-assist", "", {
       client: makeClient(),
@@ -436,6 +455,7 @@ ${long}
 for (const rejectedProjectId of [
   "unknown-project",
   "prooflab",
+  "jom-jelajah",
   "Linardi1328/khlim-assist",
   "../../khlim-assist",
   ""
@@ -447,7 +467,14 @@ for (const rejectedProjectId of [
     () => generateCodexPrompt(rejectedProjectId, "add tests", {
       client,
       loadProjectDocument: makeDocLoader({ calls: docCalls })
-    })
+    }),
+    (error) => {
+      if (rejectedProjectId === "prooflab" || rejectedProjectId === "jom-jelajah") {
+        assert.equal(error.code, "UNKNOWN_PROJECT", `${rejectedProjectId} is rejected as unknown`)
+      }
+
+      return true
+    }
   )
   assert.equal(client.calls.length, 0, `${rejectedProjectId} performs zero GitHub reads`)
   assert.equal(docCalls.length, 0, `${rejectedProjectId} performs zero project doc reads`)

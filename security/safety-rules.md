@@ -38,7 +38,7 @@ The simulator and wrapper must use local fixture files only and must not:
 
 ## Phase 2A GitHub read-only boundary
 
-Phase 2A may run terminal-only GitHub read-only validation for the four connected-candidate repos.
+Phase 2A may run terminal-only GitHub read-only validation for the fixed connected-candidate repos.
 
 The GitHub client must:
 

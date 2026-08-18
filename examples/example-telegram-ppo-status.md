@@ -16,48 +16,51 @@ Expected reply:
 
 ```text
 Project Status
-
-Source: local mock fixture
-Phase: Phase 1.5 - OpenClaw Telegram routing preparation
-Last updated: 2026-08-16
-Safety: read-only local mock output; no external calls
+Source: GitHub read-only
 
 KHLIM Assist
 - Repo: Linardi1328/khlim-assist
-- Current phase: Phase 1.5 local PPO routing test
-- Last known status: Phase 0 docs approved; no live GitHub state connected.
-- Next action: Use local /ppo status output as the baseline before read-only GitHub inspection.
-- Codex needed: No
+- Default: main
+- Latest: 1dd9e08 Merge pull request #5
+- Open PRs: none
+- Open issues: none
+- Updated: 2026-08-16T19:09:45Z
 
 LedgerPilot AI
 - Repo: Linardi1328/ledgerpilot-ai
-- Current phase: Phase 1.5 local PPO routing test
-- Last known status: Phase 0 docs approved; no live GitHub state connected.
-- Next action: Confirm phone-style status/menu/help output before planning read-only repo summaries.
-- Codex needed: Later
+- Default: main
+- Latest: none returned
+- Open PRs: 1
+- Open issues: 1
+- Updated: 2026-08-16T20:00:00Z
 
 SPY Market Agent
 - Repo: Linardi1328/spy-market-agent
-- Current phase: Phase 1.5 local PPO routing test
-- Last known status: Phase 0 docs approved; no live GitHub state connected.
-- Next action: Keep research and simulation separated from any execution behavior.
-- Codex needed: Later
+- Default: main
+- Latest: abcdef1 Refresh market notes
+- Open PRs: 4
+- Open issues: 4
+- Updated: 2026-08-16T21:00:00Z
 
 Portfolio Website
 - Repo: Linardi1328/richie-linardi-portfolio-website
-- Current phase: Phase 1.5 local PPO routing test
-- Last known status: Phase 0 docs approved; no live GitHub state connected.
-- Next action: Use future progress summaries for portfolio case-study ideas.
-- Codex needed: Optional small task
+- Default: main
+- Latest: aaabbbb Polish case study
+- Open PRs: 5+
+- Open issues: 5+
+- Updated: 2026-08-16T22:00:00Z
 
-Future/placeholders not shown: 3
-Try: /ppo menu project
+RBL Content Engine
+- Repo: Linardi1328/rbl-content-engine
+- Default: main
+- Latest: rbl1234 Update rbl-content-engine
+- Open PRs: none
+- Open issues: none
+- Updated: 2026-08-16T23:00:00Z
 ```
 
 Safety:
 
-- Local fixture data only.
-- No GitHub API calls.
+- GitHub read-only calls only.
 - No Telegram API calls from repo code.
 - No write actions.
-
