@@ -52,7 +52,7 @@ function makeCountingStore(options = {}) {
       }
 
       return {
-        noteId: "A".repeat(43),
+        noteId: intent.noteId,
         notePath: intent.notePath
       }
     }
@@ -70,13 +70,16 @@ function assertNoNoteContent(output) {
 function assertAuditMetadataOnly(record) {
   const serialized = JSON.stringify(record)
 
-  assert.doesNotMatch(serialized, /SENSITIVE_TEST_SENTINEL|PPO_NOTE_WRITE_CONFIRM|add-note:|gho_|token|raw audit|raw note/i)
+  assert.doesNotMatch(serialized, /SENSITIVE_TEST_SENTINEL|PPO_NOTE_WRITE_CONFIRM|add-note:|gho_|gho_fake_token|raw audit|raw note/i)
   assert.equal(Object.hasOwn(record, "note"), false)
   assert.equal(Object.hasOwn(record, "confirmationValue"), false)
   assert.equal(Object.hasOwn(record, "requestId"), false)
   assert.equal(Object.hasOwn(record, "token"), false)
   assert.equal(Object.hasOwn(record, "rawFailure"), false)
-  assert.equal(Object.hasOwn(record, "noteId"), false)
+
+  if (Object.hasOwn(record, "noteId")) {
+    assert.match(record.noteId, PROJECT_NOTE_ID_PATTERN)
+  }
 }
 
 async function withStore(fn) {
@@ -179,6 +182,7 @@ for (const projectId of [
   assert.deepEqual(auditRecorder.records.map((record) => record.status), ["refused"])
   assert.equal(auditRecorder.records[0].reason, "confirmation_missing")
   assert.equal(auditRecorder.records[0].noteChars, sensitiveNote.length)
+  assert.equal(Object.hasOwn(auditRecorder.records[0], "noteId"), false)
   assertNoNoteContent(result.output)
   assertAuditMetadataOnly(auditRecorder.records[0])
 }
@@ -200,6 +204,7 @@ for (const projectId of [
   assert.equal(store.calls.length, 0)
   assert.deepEqual(auditRecorder.records.map((record) => record.status), ["refused"])
   assert.equal(auditRecorder.records[0].reason, "confirmation_mismatch")
+  assert.equal(Object.hasOwn(auditRecorder.records[0], "noteId"), false)
   assertAuditMetadataOnly(auditRecorder.records[0])
 }
 
@@ -241,6 +246,8 @@ await withStore(async (writeDataDir) => {
 
   assert.deepEqual(auditRecorder.records.map((record) => record.status), ["attempted", "succeeded"])
   assert.equal(auditRecorder.records[0].reason, "confirmed")
+  assert.equal(auditRecorder.records[0].noteId, records[0].noteId)
+  assert.equal(auditRecorder.records[1].noteId, records[0].noteId)
   for (const record of auditRecorder.records) {
     assertAuditMetadataOnly(record)
   }
@@ -262,6 +269,8 @@ await withStore(async (writeDataDir) => {
 
   const auditRecords = await readAuditRecords(writeDataDir)
   assert.deepEqual(auditRecords.map((record) => record.status), ["attempted", "succeeded"])
+  assert.match(auditRecords[0].noteId, PROJECT_NOTE_ID_PATTERN)
+  assert.equal(auditRecords[1].noteId, auditRecords[0].noteId)
   for (const record of auditRecords) {
     assertAuditMetadataOnly(record)
   }
@@ -359,8 +368,8 @@ await withStore(async (writeDataDir) => {
   assert.equal(auditRecord.status, "attempted")
   assert.equal(auditRecord.reason, "confirmed")
   assert.equal(auditRecord.code, "UNCLASSIFIED_FAILURE")
+  assert.equal(auditRecord.noteId, "B".repeat(43))
   assert.equal(auditRecord.noteChars, sensitiveNote.length)
-  assert.equal(Object.hasOwn(auditRecord, "noteId"), false)
   assertAuditMetadataOnly(auditRecord)
 }
 
@@ -381,6 +390,9 @@ await withStore(async (writeDataDir) => {
   assert.equal(store.calls.length, 1)
   assert.deepEqual(auditRecorder.records.map((record) => record.status), ["attempted", "failed"])
   assert.equal(auditRecorder.records[1].code, "NOTE_STORE_UNAVAILABLE")
+  assert.match(store.calls[0].intent.noteId, PROJECT_NOTE_ID_PATTERN)
+  assert.equal(auditRecorder.records[0].noteId, store.calls[0].intent.noteId)
+  assert.equal(auditRecorder.records[1].noteId, store.calls[0].intent.noteId)
   assertSafeErrorOutput(result.output)
   for (const record of auditRecorder.records) {
     assertAuditMetadataOnly(record)
@@ -423,6 +435,7 @@ await withStore(async (writeDataDir) => {
   const records = await readProjectNoteRecords("khlim-assist", { writeDataDir })
   assert.equal(records.length, 1, "success-audit failure warns after exactly one append")
   assert.equal(records[0].note, sensitiveNote)
+  assert.equal(auditRecorder.records[0].noteId, records[0].noteId)
 })
 
 await withStore(async (writeDataDir) => {
@@ -435,10 +448,34 @@ await withStore(async (writeDataDir) => {
 
   assert.equal(auditRecords.length, 1)
   assert.equal(auditRecords[0].status, "refused")
+  assert.equal(Object.hasOwn(auditRecords[0], "noteId"), false)
   assertAuditMetadataOnly(auditRecords[0])
   await assertMode(writeDataDir, 0o700)
   await assertMode(join(writeDataDir, "custom-audit"), 0o700)
   await assertMode(auditPath, 0o600)
+})
+
+await withStore(async (writeDataDir) => {
+  const recorder = createProjectNoteAuditRecorder({ writeDataDir })
+  const intent = prepareProjectNoteIntent("khlim-assist", sensitiveNote)
+  const noteId = "C".repeat(43)
+
+  assert.equal(recorder.auditPath, join(writeDataDir, "audit", "project-note-audit.ndjson"))
+
+  await recorder.record(buildProjectNoteAuditRecord(
+    intent,
+    "attempted",
+    { reason: "confirmed", noteId },
+    fixedNow()
+  ))
+
+  const auditRecords = await readAuditRecords(writeDataDir)
+  assert.equal(auditRecords.length, 1)
+  assert.equal(auditRecords[0].noteId, noteId)
+  assertAuditMetadataOnly(auditRecords[0])
+  await assertMode(writeDataDir, 0o700)
+  await assertMode(join(writeDataDir, "audit"), 0o700)
+  await assertMode(join(writeDataDir, "audit", "project-note-audit.ndjson"), 0o600)
 })
 
 await withStore(async (writeDataDir) => {
@@ -455,6 +492,7 @@ await withStore(async (writeDataDir) => {
   const auditRecords = await readAuditRecords(writeDataDir)
   assert.equal(auditRecords.length, 1)
   assert.equal(auditRecords[0].status, "refused")
+  assert.equal(Object.hasOwn(auditRecords[0], "noteId"), false)
   assertAuditMetadataOnly(auditRecords[0])
 })
 

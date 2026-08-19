@@ -252,6 +252,10 @@ export function buildProjectNoteAuditRecord(intent, status, details = {}, now = 
     record.code = "UNCLASSIFIED_FAILURE"
   }
 
+  if (typeof details.noteId === "string" && PROJECT_NOTE_ID_PATTERN.test(details.noteId)) {
+    record.noteId = details.noteId
+  }
+
   return record
 }
 
@@ -296,8 +300,12 @@ export function createProjectNoteAuditRecorder({
   auditPath,
   writeDataDir
 } = {}) {
-  const resolvedAuditPath = auditPath || noteAuditPath()
-  const resolvedWriteDataDir = writeDataDir ? resolveWriteDataDir({ writeDataDir }) : null
+  const resolvedAuditPath = auditPath || noteAuditPath({ writeDataDir })
+  const resolvedWriteDataDir = writeDataDir
+    ? resolveWriteDataDir({ writeDataDir })
+    : auditPath
+      ? null
+      : resolveWriteDataDir()
 
   return {
     auditPath: resolvedAuditPath,
@@ -324,12 +332,19 @@ async function tryRecordAudit(auditRecorder, intent, status, details, now) {
 }
 
 export function createProjectNoteStore({
-  writeDataDir,
-  randomBytesImpl = randomBytes
+  writeDataDir
 } = {}) {
   return {
     async append(intent, now = new Date()) {
-      const noteId = makeProjectNoteId({ randomBytesImpl })
+      const noteId = intent.noteId
+
+      if (!PROJECT_NOTE_ID_PATTERN.test(String(noteId ?? ""))) {
+        throw projectNoteError(
+          "MALFORMED_NOTE_INTENT",
+          "Project note id is invalid; no project note write was attempted."
+        )
+      }
+
       const paths = noteStorePaths(intent.project.id, { writeDataDir })
       const record = projectNoteRecord(intent, noteId, now)
 
@@ -361,6 +376,13 @@ function normalizeStoredNoteResult(result, intent) {
     throw projectNoteError(
       "MALFORMED_NOTE_RESULT",
       `Project note store returned an invalid note result for ${intent.project.id}. Inspect the note store before retrying.`
+    )
+  }
+
+  if (result.noteId !== intent.noteId) {
+    throw projectNoteError(
+      "MALFORMED_NOTE_RESULT",
+      `Project note store returned a mismatched note id for ${intent.project.id}. Inspect the note store before retrying.`
     )
   }
 
@@ -441,8 +463,21 @@ export async function handleProjectNoteAddCommand(projectId, noteInput = [], opt
       }
     }
 
+    const noteId = makeProjectNoteId({ randomBytesImpl: options.randomBytesImpl })
+    const confirmedIntent = {
+      ...intent,
+      notePath: paths.notePath,
+      noteId
+    }
+
     try {
-      await recordAudit(auditRecorder, intent, "attempted", { reason: "confirmed" }, now)
+      await recordAudit(
+        auditRecorder,
+        confirmedIntent,
+        "attempted",
+        { reason: "confirmed", noteId },
+        now
+      )
     } catch {
       return {
         ok: false,
@@ -454,29 +489,22 @@ export async function handleProjectNoteAddCommand(projectId, noteInput = [], opt
     }
 
     const store = options.store || createProjectNoteStore({
-      writeDataDir: options.writeDataDir,
-      randomBytesImpl: options.randomBytesImpl
+      writeDataDir: options.writeDataDir
     })
     let storedNote
 
     try {
       storedNote = normalizeStoredNoteResult(
-        await runInjectedStore(store, {
-          ...intent,
-          notePath: paths.notePath
-        }, now),
-        {
-          ...intent,
-          notePath: paths.notePath
-        }
+        await runInjectedStore(store, confirmedIntent, now),
+        confirmedIntent
       )
     } catch (error) {
       const safeError = classifyProjectNoteFailure(error, intent)
       const failureRecorded = await tryRecordAudit(
         auditRecorder,
-        intent,
+        confirmedIntent,
         "failed",
-        { code: safeError.code },
+        { code: safeError.code, noteId },
         options.now ? options.now() : new Date()
       )
 
@@ -499,9 +527,9 @@ export async function handleProjectNoteAddCommand(projectId, noteInput = [], opt
     try {
       await recordAudit(
         auditRecorder,
-        intent,
+        confirmedIntent,
         "succeeded",
-        {},
+        { noteId },
         options.now ? options.now() : new Date()
       )
     } catch {
@@ -516,7 +544,7 @@ export async function handleProjectNoteAddCommand(projectId, noteInput = [], opt
 
     return {
       ok: true,
-      output: formatCreatedProjectNote(intent, storedNote)
+      output: formatCreatedProjectNote(confirmedIntent, storedNote)
     }
   } catch (error) {
     return {
