@@ -83,7 +83,16 @@ Phase 5A adds terminal-only controlled GitHub issue creation:
 node local-operator/ppo-command.mjs issue-create khlim-assist "issue title" "optional body"
 ```
 
-This command is not routed through OpenClaw/Telegram. It refuses to write unless `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` exactly matches the target project.
+This Phase 5A terminal command is not the `/ppo` chat command. It refuses to write unless `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` exactly matches the target project.
+
+Phase 5B adds approval-gated issue creation through the existing `/ppo` -> `ppo_local` direct-tool path:
+
+```bash
+node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
+node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
+```
+
+`/ppo issue-create` never calls GitHub. It validates the project, title, and body, writes one private pending request, and returns the confirmation command. `/ppo issue-confirm` atomically claims and consumes one unexpired request before invoking the Phase 5A writer with internal confirmation.
 
 ## Files
 
@@ -97,11 +106,14 @@ This command is not routed through OpenClaw/Telegram. It refuses to write unless
 - `github-ppo-commands.mjs`: Phase 2B phone-friendly `/ppo repo` and `/ppo pr` formatter.
 - `github-ppo-status.mjs`: Phase 2C live GitHub read-only `/ppo status` formatter.
 - `github-issue-create.mjs`: Phase 5A terminal-only, confirmation-gated GitHub issue creation.
+- `github-issue-approval.mjs`: Phase 5B local pending-request store and `/ppo issue-create`/`/ppo issue-confirm` handlers.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
+- `write-data/`: local ignored Phase 5B pending request store; runtime directories/files are private.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
 - `github-issue-create.test.mjs`: fake-writer and fake-runner tests for Phase 5A write gating and audit behavior.
+- `github-issue-approval.test.mjs`: fake-writer tests for Phase 5B staging, expiry, single-use confirmation, concurrency, and safe errors.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -181,7 +193,10 @@ Phase 5A allows exactly one write action from the terminal wrapper: `issue-creat
 - requires exact `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` before any network write
 - records a credential-free local audit trail without title/body contents, tokens, or environment values
 - fails closed before confirmed writes if auditing cannot be established
-- remains unavailable through `/ppo`, `ppo_local`, OpenClaw, and Telegram
+
+Phase 5B adds exactly one approval-gated chat write workflow through the existing `ppo_local` tool. `/ppo issue-create <project> <title> [--body <body>]` stages only and performs zero GitHub writes. `/ppo issue-confirm <request-id>` atomically claims one matching unexpired request, consumes the id and pending content before any network write, and then reuses the Phase 5A writer with internal confirmation. Unknown, expired, already-consumed, malformed, or replayed ids perform zero GitHub writes. The chat path must not accept or expose terminal write confirmation environment values.
+
+Pending issue requests default to `local-operator/write-data/` for local use. Set `PPO_WRITE_DATA_DIR` to move the private pending store. Set `PPO_GITHUB_WRITE_AUDIT_PATH` to move the credential-free audit trail.
 
 Owner test plan after branch review:
 
@@ -203,6 +218,7 @@ node local-operator/ppo-command.mjs "/ppo prompt-size Goal: keep line structure
 Requirements:
 - preserve multiline input"
 node local-operator/ppo-command.mjs issue-create khlim-assist "owner review test issue"
+node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review test issue --body created only after confirmation"
 ```
 
 Then through OpenClaw/Telegram after review:
@@ -219,6 +235,8 @@ Then through OpenClaw/Telegram after review:
 Requirements:
 - preserve multiline input
 /ppo split-task add GitHub integration and Telegram routing
+/ppo issue-create khlim-assist owner review test issue --body created only after confirmation
+/ppo issue-confirm <request-id>
 ```
 
 ## OpenClaw handoff shape

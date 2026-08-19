@@ -149,6 +149,18 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Keep OpenClaw/Telegram unchanged; do not route `issue-create` through `ppo_local`.
 - Do not add PR writes, comments, labels, branches, commits, merges, workflow dispatches, project-state mutations, or deployment behavior.
 
+### Phase 5B - Approval-gated Telegram issue creation
+
+- Add `/ppo issue-create <project> <title> [--body <body>]` through the existing `ppo_local` direct-tool path.
+- Add `/ppo issue-confirm <request-id>` through the same `ppo_local` tool.
+- Keep `issue-create` as staging only: validate through the existing five-project registry and Phase 5A title/body limits, show the deterministic preview, persist the normalized intent locally, and return the confirmation command.
+- Generate cryptographically random opaque one-time request ids and expire pending requests after 10 minutes.
+- Keep pending request storage private and configurable with `PPO_WRITE_DATA_DIR`, defaulting to `local-operator/write-data/` for local use and `/var/lib/personal-project-operator/write-data` in systemd.
+- Make `issue-confirm` atomically claim one unexpired request before any network write, consume it before invoking the writer, and make replay, expired, malformed, unknown, or already-consumed ids perform zero GitHub writes.
+- Reuse the Phase 5A issue writer with its internal exact confirmation value; do not accept or expose terminal write confirmation environment values through chat.
+- Preserve the credential-free attempted/succeeded/failed audit trail, with `PPO_GITHUB_WRITE_AUDIT_PATH` configured to `/var/lib/personal-project-operator/audit/github-write-audit.ndjson` on the VPS.
+- Do not add a model turn, new OpenClaw tools, provider access, arbitrary GitHub endpoints, comments, labels, assignees, milestones, PR/branch/commit/merge/workflow writes, project-state mutations, or deployments.
+
 ### Later Phase 5 work
 
 Only after separate explicit approval:

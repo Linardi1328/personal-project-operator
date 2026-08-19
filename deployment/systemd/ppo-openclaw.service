@@ -11,6 +11,8 @@ Group=ppo
 WorkingDirectory=/opt/personal-project-operator
 Environment=NODE_ENV=production
 Environment=PPO_REPO_ROOT=/opt/personal-project-operator
+Environment=PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
+Environment=PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-write-audit.ndjson
 Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external
 Environment=PATH=/home/ppo/.local/openclaw/tools/node/bin:/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 EnvironmentFile=-/etc/personal-project-operator/openclaw.env

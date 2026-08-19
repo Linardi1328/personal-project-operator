@@ -2,7 +2,7 @@
 
 This document describes how Telegram should expose Personal Project Operator commands.
 
-Phase 3C extends the `/ppo` Telegram surface for deterministic Codex text commands while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`.
+Phase 5B extends the `/ppo` Telegram surface with approval-gated GitHub issue creation while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`.
 
 This repo does not register commands with Telegram and does not call Telegram APIs.
 
@@ -19,6 +19,8 @@ Expected message forms:
 /ppo next - Recommend next project priority
 /ppo repo <project> - Summarize a project repository [github read-only]
 /ppo pr <project> - Summarize latest project PR [github read-only]
+/ppo issue-create <project> <title> [--body <body>] - Stage a GitHub issue for confirmation
+/ppo issue-confirm <request-id> - Confirm one staged issue creation request
 /ppo codex <project> <task> - Generate deterministic Codex prompt text
 /ppo codex-usage - Check Codex usage status
 /ppo codex-budget <project> <task> - Estimate deterministic Codex task size
@@ -46,6 +48,8 @@ Expected message forms:
 - `/ppo next`
 - `/ppo repo <project>`
 - `/ppo pr <project>`
+- `/ppo issue-create <project> <title> [--body <body>]` (Phase 5B staging only)
+- `/ppo issue-confirm <request-id>` (Phase 5B single-use confirmation)
 - `/ppo handoff <project>`
 
 ## Codex Workflow
@@ -74,9 +78,9 @@ Expected message forms:
 
 ## Safety
 
-Inline buttons should only prefill or request confirmation for commands. They must not execute write actions in Phase 3C.
+Inline buttons may prefill `/ppo issue-create` or `/ppo issue-confirm`, but they must not bypass the request id confirmation step.
 
-Phase 3C Codex commands generate deterministic text only. They must not invoke Codex, call a model, perform GitHub writes, deploy services, or create new OpenClaw tool permissions.
+Phase 5B keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. The chat path must not accept or expose terminal write confirmation environment values.
 
 Do not override OpenClaw built-ins:
 

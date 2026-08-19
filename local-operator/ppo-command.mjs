@@ -8,6 +8,10 @@ import {
   handlePromptSizeCommand,
   handleSplitTaskCommand
 } from "./codex-planning-tools.mjs";
+import {
+  handlePpoIssueConfirmCommand,
+  handlePpoIssueCreateApprovalCommand
+} from "./github-issue-approval.mjs";
 import { handleGitHubIssueCreateCommand } from "./github-issue-create.mjs";
 import { handleGitHubPpoCommand } from "./github-ppo-commands.mjs";
 import { handleGitHubPpoStatus } from "./github-ppo-status.mjs";
@@ -169,7 +173,7 @@ function usage() {
   return [
     "Personal Project Operator PPO Wrapper",
     "",
-    "Use this wrapper for approved /ppo routing and local deterministic text commands.",
+    "Use this wrapper for approved /ppo routing, local deterministic text commands, and approval-gated issue creation.",
     "",
     "Terminal usage:",
     "  node local-operator/ppo-command.mjs status",
@@ -192,6 +196,8 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo codex-budget ledgerpilot-ai add invoice import workflow\"",
     "  node local-operator/ppo-command.mjs \"/ppo prompt-size Goal: build one focused feature\"",
     "  node local-operator/ppo-command.mjs \"/ppo split-task add GitHub integration and Telegram routing\"",
+    "  node local-operator/ppo-command.mjs \"/ppo issue-create khlim-assist issue title --body optional body\"",
+    "  node local-operator/ppo-command.mjs \"/ppo issue-confirm <request-id>\"",
     "",
     "Supported Telegram messages:",
     "  /ppo status",
@@ -206,8 +212,11 @@ function usage() {
     "  /ppo codex-budget <project> <task>",
     "  /ppo prompt-size <draft>",
     "  /ppo split-task <task>",
+    "  /ppo issue-create <project> <title> [--body <body>]",
+    "  /ppo issue-confirm <request-id>",
     "",
-    "Phase 5A boundary: issue-create is terminal-only and requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>; it is not routed through /ppo or OpenClaw."
+    "Phase 5A boundary: terminal issue-create requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>.",
+    "Phase 5B boundary: /ppo issue-create only stages a pending request; /ppo issue-confirm performs the approved single-use write."
   ].join("\n");
 }
 
@@ -216,7 +225,7 @@ function unsupported(command) {
   return [
     `Unsupported PPO command: ${commandLabel}`,
     "",
-    "Phase 3C supports only:",
+    "Phase 5B supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",
@@ -229,6 +238,8 @@ function unsupported(command) {
     "- /ppo codex-budget <project> <task>",
     "- /ppo prompt-size <draft>",
     "- /ppo split-task <task>",
+    "- /ppo issue-create <project> <title> [--body <body>]",
+    "- /ppo issue-confirm <request-id>",
     "",
     "Phase 5A terminal-only addition:",
     "- issue-create <project> <title> [body...]",
@@ -306,7 +317,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B PPO-routed commands are marked [local] or [github read-only]. Terminal Codex prompt/planning commands are local-only.",
-      "Phase 3C PPO-routed commands include local menus, GitHub read-only summaries, and deterministic Codex text planning."
+      "Phase 5B PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, and approval-gated issue creation."
     )
     .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
@@ -338,7 +349,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal Codex prompt/planning commands are local-only; no writes.",
-      "Phase 3C boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; /ppo codex and planning commands generate deterministic text only; no writes."
+      "Phase 5B boundary: /ppo issue-create stages only; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation."
     )
     .replace(
       [
@@ -351,7 +362,7 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 3B:",
+        "Supported through /ppo in Phase 5B:",
         "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
@@ -363,12 +374,14 @@ function applyPpoNamespace(output) {
         "- /ppo codex <project> <task> [local text]",
         "- /ppo codex-budget <project> <task> [local text]",
         "- /ppo prompt-size <draft> [local text]",
-        "- /ppo split-task <task> [local text]"
+        "- /ppo split-task <task> [local text]",
+        "- /ppo issue-create <project> <title> [approval stage]",
+        "- /ppo issue-confirm <request-id> [approved write]"
       ].join("\n")
     )
     .replace(
       "Supported through /ppo in Phase 3B:",
-      "Supported through /ppo in Phase 3C:"
+      "Supported through /ppo in Phase 5B:"
     )
     .replace(
       "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt. [future]",
@@ -404,7 +417,7 @@ function applyPpoNamespace(output) {
         "- No Telegram API calls",
         "- No Codex usage scraping",
         "- No VPS deployment",
-        "- No write actions"
+        "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation"
       ].join("\n")
     );
 }
@@ -472,9 +485,16 @@ async function main() {
   }
 
   if (command === "issue-create") {
+    if (isPpoEnvelope(rawProcessArgs)) {
+      const result = await handlePpoIssueCreateApprovalCommand(payloadAfterCommand(rawProcessArgs, command));
+      console.log(result.output);
+      process.exitCode = result.ok ? 0 : 1;
+      return;
+    }
+
     const commandArgs = issueCreateTerminalArgs(rawProcessArgs);
 
-    if (isPpoEnvelope(rawProcessArgs) || commandArgs.length < 2) {
+    if (commandArgs.length < 2) {
       console.log(unsupported(rawCommand));
       process.exitCode = 1;
       return;
@@ -484,6 +504,19 @@ async function main() {
     const result = await handleGitHubIssueCreateCommand(projectId, title, bodyArgs, {
       confirmationValue: process.env.PPO_GITHUB_WRITE_CONFIRM
     });
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (command === "issue-confirm") {
+    if (!isPpoEnvelope(rawProcessArgs)) {
+      console.log(unsupported(rawCommand));
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = await handlePpoIssueConfirmCommand(payloadAfterCommand(rawProcessArgs, command));
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;

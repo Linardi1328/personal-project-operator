@@ -90,13 +90,22 @@ Phase 5A allows one write action only after exact terminal confirmation:
 
 This exception is limited to `POST /repos/<approved repo>/issues` for registry projects, with `title` and `body` fields only. It must write a credential-free audit record and must not be routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram.
 
+## Phase 5B approval-gated chat write exception
+
+Phase 5B allows one chat-routed write workflow through the existing `ppo_local` tool:
+
+- `/ppo issue-create <project> <title> [--body <body>]` stages only and performs no GitHub write.
+- `/ppo issue-confirm <request-id>` atomically claims one unexpired pending request, consumes it, and then invokes the Phase 5A issue writer with internal confirmation.
+
+The pending request store is private local write data. Request ids are random, opaque, single-use, and expire after 10 minutes. The chat workflow must not accept or expose terminal write confirmation environment values, and failed, expired, malformed, unknown, or replayed ids must perform zero GitHub writes.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
 
 Examples requiring explicit approval:
 
-- creating GitHub issues outside the Phase 5A terminal-only path
+- creating GitHub issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
 - updating project state files
 - restarting services
 - publishing content

@@ -38,6 +38,15 @@ Rules:
 - avoid copying secrets into chat
 - document required variable names without real values
 
+Phase 5B write-data configuration uses paths, not secrets:
+
+```text
+PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
+PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-write-audit.ndjson
+```
+
+Do not paste terminal write confirmation environment values into chat. The `/ppo issue-confirm <request-id>` flow supplies the Phase 5A confirmation internally after the local request id has been atomically claimed.
+
 ## Documentation examples
 
 Allowed:

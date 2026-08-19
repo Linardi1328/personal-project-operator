@@ -8,7 +8,7 @@ export default defineToolPlugin({
   tools: (tool) => [
     tool({
       name: "ppo_local",
-      description: "Run one approved Personal Project Operator command through the local deterministic wrapper, including GitHub read-only and Phase 3C text routes.",
+      description: "Run one approved Personal Project Operator command through the local deterministic wrapper, including GitHub read-only, deterministic text routes, and Phase 5B approval-gated issue creation.",
       parameters: {
         type: "object",
         additionalProperties: false,

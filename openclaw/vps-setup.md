@@ -10,6 +10,7 @@ Target:
 - OpenClaw managed by `systemd`
 - OpenClaw local-prefix runtime under `/home/ppo/.local/openclaw`
 - existing PPO wrapper and existing `ppo_local` plugin tool only
+- private Phase 5B write-data under `/var/lib/personal-project-operator`
 
 See [../deployment/README.md](../deployment/README.md) for the bootstrap scripts, systemd unit, health check, rollback procedure, and owner-only acceptance steps.
 
@@ -18,7 +19,8 @@ See [../deployment/README.md](../deployment/README.md) for the bootstrap scripts
 - No live SSH is performed by repo scripts.
 - No automated test deploys to a VPS.
 - No Telegram API behavior changes are added.
-- No GitHub writes, GraphQL, or new endpoint families are added.
+- No GitHub writes, GraphQL, or new endpoint families are added by deployment scripts.
+- Phase 5B runtime issue creation is limited to `/ppo issue-create` staging and `/ppo issue-confirm` single-use approval through the existing `ppo_local` tool.
 - No Codex/model invocation is added.
 - No new OpenClaw tool or permission is added.
 - `/ppo vps-health` remains future work; Phase 4A provides only the local read-only health-check foundation.
@@ -93,6 +95,15 @@ The PPO checkout at `/opt/personal-project-operator` is root-owned and read-only
 /var/lib/personal-project-operator
 /var/log/personal-project-operator
 ```
+
+Phase 5B uses these non-secret service environment paths:
+
+```text
+PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
+PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-write-audit.ndjson
+```
+
+Pending issue request directories are private (`0700`) and request files are private (`0600`). Do not paste terminal write confirmation environment values into Telegram; `/ppo issue-confirm <request-id>` performs internal confirmation only after atomically claiming one unexpired request id.
 
 The systemd unit remains installed as a root-owned system unit under `/etc/systemd/system`.
 

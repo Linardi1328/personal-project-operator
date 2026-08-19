@@ -3,6 +3,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
+import {
+  parsePpoIssueConfirmRequest,
+  parsePpoIssueCreateRequest
+} from "../../../local-operator/github-issue-approval.mjs";
 import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -24,11 +28,13 @@ export const defaultWrapperPath = fileURLToPath(
 );
 
 export function unsupportedPpoToolInput(rawCommand) {
-  const commandLabel = rawCommand || "(missing)";
+  const commandText = unwrapPpoEnvelope(typeof rawCommand === "string" ? rawCommand : "") || String(rawCommand || "");
+  const commandLabel = splitFirstToken(commandText)?.token || "(missing)";
+
   return [
     `Unsupported PPO tool input: ${commandLabel}`,
     "",
-    "Phase 3C supports only:",
+    "Phase 5B supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",
@@ -40,7 +46,9 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo codex <project> <task>",
     "- /ppo codex-budget <project> <task>",
     "- /ppo prompt-size <draft>",
-    "- /ppo split-task <task>"
+    "- /ppo split-task <task>",
+    "- /ppo issue-create <project> <title> [--body <body>]",
+    "- /ppo issue-confirm <request-id>"
   ].join("\n");
 }
 
@@ -120,6 +128,29 @@ function parseTextOnlyCommand(commandName, rest, limit) {
   return payload ? [commandName, payload] : null;
 }
 
+function parseIssueCreateCommand(rest) {
+  try {
+    const parsed = parsePpoIssueCreateRequest(rest);
+    const args = ["/ppo", "issue-create", parsed.projectId, parsed.title];
+
+    if (parsed.body) {
+      args.push("--body", parsed.body);
+    }
+
+    return args;
+  } catch {
+    return null;
+  }
+}
+
+function parseIssueConfirmCommand(rest) {
+  try {
+    return ["/ppo", "issue-confirm", parsePpoIssueConfirmRequest(rest)];
+  } catch {
+    return null;
+  }
+}
+
 export function toPpoWrapperArgs(rawCommand) {
   if (typeof rawCommand !== "string") {
     return null;
@@ -165,6 +196,14 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "split-task") {
     return parseTextOnlyCommand(commandName, commandEnvelope.rest, MAX_TASK_CHARS);
+  }
+
+  if (commandName === "issue-create") {
+    return parseIssueCreateCommand(commandEnvelope.rest);
+  }
+
+  if (commandName === "issue-confirm") {
+    return parseIssueConfirmCommand(commandEnvelope.rest);
   }
 
   return null;

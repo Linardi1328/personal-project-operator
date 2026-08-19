@@ -510,8 +510,18 @@ for (const stdout of [
   assertSafeOutput(result.output)
 }
 
-assert.equal(toPpoWrapperArgs("issue-create khlim-assist Title"), null)
-assert.equal(toPpoWrapperArgs("/ppo issue-create khlim-assist Title"), null)
+assert.deepEqual(toPpoWrapperArgs("issue-create khlim-assist Title"), [
+  "/ppo",
+  "issue-create",
+  "khlim-assist",
+  "Title"
+])
+assert.deepEqual(toPpoWrapperArgs("/ppo issue-create khlim-assist Title"), [
+  "/ppo",
+  "issue-create",
+  "khlim-assist",
+  "Title"
+])
 assert.equal(toPpoWrapperArgs(`ppo issue-create khlim-assist Title ${GITHUB_WRITE_CONFIRM_ENV}=create-issue:khlim-assist`), null)
 
 {
@@ -538,15 +548,25 @@ assert.equal(toPpoWrapperArgs(`ppo issue-create khlim-assist Title ${GITHUB_WRIT
 }
 
 {
+  const tempDir = await mkdtemp(join(tmpdir(), "ppo-issue-cli-stage-"))
   const result = spawnSync(process.execPath, [
     "local-operator/ppo-command.mjs",
     "/ppo issue-create khlim-assist Title"
-  ], { encoding: "utf8" })
+  ], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PPO_WRITE_DATA_DIR: tempDir
+    }
+  })
 
-  assert.equal(result.status, 1)
-  assert.match(result.stdout, /^Unsupported PPO command: issue-create/)
-  assert.doesNotMatch(result.stdout, /GitHub Issue Create Preview/)
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /^GitHub Issue Create Preview/)
+  assert.match(result.stdout, /^Confirm: \/ppo issue-confirm [A-Za-z0-9_-]{43}$/m)
+  assert.doesNotMatch(result.stdout, /Required confirmation: PPO_GITHUB_WRITE_CONFIRM/)
   assert.equal(result.stderr, "")
+
+  await rm(tempDir, { recursive: true, force: true })
 }
 
-console.log("GitHub issue-create tests passed: allowlist, confirmation, POST guard, validation, audit, safe errors, mocked success, and no OpenClaw route.")
+console.log("GitHub issue-create tests passed: allowlist, terminal confirmation, POST guard, validation, audit, safe errors, mocked success, and Phase 5B staging route.")

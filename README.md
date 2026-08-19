@@ -72,6 +72,8 @@ The OpenClaw/Telegram command interface is designed for short `/ppo` chat comman
 /ppo codex-budget ledgerpilot-ai add invoice import workflow
 /ppo prompt-size Goal: build one focused feature
 /ppo split-task add GitHub integration and Telegram routing
+/ppo issue-create khlim-assist Document provider validation --body Add owner-visible context
+/ppo issue-confirm <request-id>
 /ppo codex-usage
 /ppo menu
 ```
@@ -84,6 +86,8 @@ When routed through OpenClaw and Telegram, Personal Project Operator uses the cu
 /ppo status
 /ppo repo <project>
 /ppo pr <project>
+/ppo issue-create <project> <title> [--body <body>]
+/ppo issue-confirm <request-id>
 /ppo menu
 /ppo menu project
 /ppo menu codex
@@ -316,9 +320,24 @@ Without exact confirmation, the command prints a deterministic preview and refus
 PPO_GITHUB_WRITE_CONFIRM=create-issue:khlim-assist
 ```
 
-The only permitted network write is `POST /repos/<approved repo>/issues` for the existing five-project registry, with `title` and `body` fields only. `issue-create` is not a `/ppo` command, is not routed through `ppo_local`, and is not available through OpenClaw/Telegram.
+The only permitted network write is `POST /repos/<approved repo>/issues` for the existing five-project registry, with `title` and `body` fields only. The Phase 5A terminal command is not a `/ppo` command.
 
 Phase 5A keeps PR writes, comments, labels, branch creation, commits, merges, workflow dispatches, project-state file updates, VPS deployment, and other GitHub writes disabled. Local audit records are stored under `local-operator/audit/` as credential-free JSONL and are ignored by git.
+
+## Phase 5B Approval-Gated Telegram Issue Creation
+
+Phase 5B adds two `/ppo` commands through the existing `ppo_local` direct-tool path:
+
+```text
+/ppo issue-create <project> <title> [--body <body>]
+/ppo issue-confirm <request-id>
+```
+
+`/ppo issue-create` never calls GitHub. It validates against the existing five-project registry and Phase 5A title/body limits, shows the deterministic preview, writes the normalized intent into a private local pending store, and returns `/ppo issue-confirm <request-id>`.
+
+`/ppo issue-confirm` atomically claims one matching unexpired request before any network write, deletes the pending content, and then invokes the Phase 5A issue writer with internal confirmation. Request ids are cryptographically random, opaque, single-use, and expire after 10 minutes. Unknown, expired, malformed, already-consumed, or replayed ids perform zero GitHub writes.
+
+The chat path must not accept or expose terminal write confirmation environment values. Pending write data defaults to `local-operator/write-data/` locally and is configured to `/var/lib/personal-project-operator/write-data` in systemd. VPS audit records are configured at `/var/lib/personal-project-operator/audit/github-write-audit.ndjson`.
 
 ## Command Menu System
 
@@ -349,17 +368,17 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool.
 
 The project still does not implement:
 
-- GitHub `/ppo` commands beyond `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>`
-- richer Telegram/OpenClaw arbitrary text workflows beyond the four Phase 3C command envelopes
+- GitHub `/ppo` commands beyond `/ppo status`, `/ppo repo <project>`, `/ppo pr <project>`, `/ppo issue-create`, and `/ppo issue-confirm`
+- richer Telegram/OpenClaw arbitrary text workflows beyond the approved Phase 3C text commands and Phase 5B issue approval commands
 - `/ppo next` or status-based recommendations
 - Telegram API registration
 - live VPS deployment from this repository
 - `/ppo vps-health` routing
-- GitHub writes beyond terminal-only `issue-create`
+- GitHub writes beyond terminal-only `issue-create` or the Phase 5B `/ppo issue-create` plus `/ppo issue-confirm` approval path
 - issue comments, labels, PR writes, branch writes, commits, merges, or workflow dispatches
 - real Codex usage scraping
 - customer messaging
