@@ -66,6 +66,8 @@ create_directories() {
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "/home/${SERVICE_USER}/.local/openclaw"
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR"
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "${STATE_DIR}/write-data"
+  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "${STATE_DIR}/write-data/project-notes"
+  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "${STATE_DIR}/write-data/audit"
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "${STATE_DIR}/audit"
   install -d -m 0750 -o "$SERVICE_USER" -g adm "$LOG_DIR"
   install -d -m 0750 "$CONFIG_DIR"

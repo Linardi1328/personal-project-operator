@@ -39,6 +39,14 @@ node local-operator/ppo-command.mjs pr khlim-assist
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
 ```
 
+Phase 5C project notes are terminal-only:
+
+```bash
+node local-operator/ppo-command.mjs note-add khlim-assist "project note text"
+```
+
+Do not route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram.
+
 OpenClaw direct command dispatch uses the local plugin tool:
 
 ```text
@@ -80,5 +88,6 @@ This scaffold does not:
 - accept or expose terminal write confirmation environment values through chat
 - create comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, or deployments
 - route `/ppo` through model interpretation
+- route `note-add` through `/ppo` or mutate project-state files
 
 Use it as the local routing contract for OpenClaw.

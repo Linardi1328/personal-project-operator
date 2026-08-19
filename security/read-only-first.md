@@ -99,6 +99,16 @@ Phase 5B allows one chat-routed write workflow through the existing `ppo_local` 
 
 The pending request store is private local write data. Request ids are random, opaque, single-use, and expire after 10 minutes. The chat workflow must not accept or expose terminal write confirmation environment values, and failed, expired, malformed, unknown, or replayed ids must perform zero GitHub writes.
 
+## Phase 5C controlled local note exception
+
+Phase 5C allows one terminal-only local write action after exact confirmation:
+
+- `note-add <project> <note...>`
+
+This exception is limited to append-only local records under `${PPO_WRITE_DATA_DIR}/project-notes`. It must not be routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not call GitHub, modify `projects/*.md`, update project-state files, create issues/comments/labels/PRs/branches/commits/merges/workflow dispatches, deploy services, or invoke models.
+
+Audit records for note actions must be metadata-only and must not contain note text, confirmation values, request ids, tokens, or raw failures.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -106,7 +116,8 @@ Write actions must be treated as separate features, not automatic extensions of 
 Examples requiring explicit approval:
 
 - creating GitHub issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
-- updating project state files
+- updating project state files from stored notes
+- routing project note creation through chat
 - restarting services
 - publishing content
 - sending messages

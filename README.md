@@ -339,6 +339,26 @@ Phase 5B adds two `/ppo` commands through the existing `ppo_local` direct-tool p
 
 The chat path must not accept or expose terminal write confirmation environment values. Pending write data defaults to `local-operator/write-data/` locally and is configured to `/var/lib/personal-project-operator/write-data` in systemd. VPS audit records are configured at `/var/lib/personal-project-operator/audit/github-write-audit.ndjson`.
 
+## Phase 5C Controlled Project Notes Foundation
+
+Phase 5C adds one terminal-only local write path:
+
+```bash
+node local-operator/ppo-command.mjs note-add khlim-assist "project note text"
+```
+
+Without exact confirmation, the command prints a deterministic preview and refuses the note append. A confirmed append requires:
+
+```bash
+PPO_NOTE_WRITE_CONFIRM=add-note:khlim-assist
+```
+
+The command resolves projects only through the existing five-project registry, validates note text as inert terminal data, rejects empty, oversized, or terminal-control input, and stores append-only note records under `${PPO_WRITE_DATA_DIR}/project-notes`. Local write data defaults to `local-operator/write-data/`; systemd sets `PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data` for the VPS.
+
+Each stored note has a random opaque note id, timestamp, project metadata, and the exact note text. Audit records are metadata-only and must not include note text, confirmation values, tokens, raw failures, or request ids. If the attempted audit record cannot be established, no note is appended. If the append succeeds but success audit fails, the command returns an explicit "note may have been written" result so the store can be inspected before retrying.
+
+Phase 5C is not a `/ppo`, Telegram, OpenClaw, or GitHub API workflow. It does not modify `projects/*.md`, project-state fixtures, issues, comments, labels, PRs, branches, commits, workflow dispatches, deployments, or model calls.
+
 ## Command Menu System
 
 Commands are grouped into phone-friendly categories:
@@ -368,7 +388,7 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data.
 
 The project still does not implement:
 
@@ -379,6 +399,8 @@ The project still does not implement:
 - live VPS deployment from this repository
 - `/ppo vps-health` routing
 - GitHub writes beyond terminal-only `issue-create` or the Phase 5B `/ppo issue-create` plus `/ppo issue-confirm` approval path
+- Telegram/OpenClaw-routed project note creation
+- mutation of `projects/*.md` or project-state files
 - issue comments, labels, PR writes, branch writes, commits, merges, or workflow dispatches
 - real Codex usage scraping
 - customer messaging

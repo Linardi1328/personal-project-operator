@@ -1,7 +1,7 @@
 {
   "id": "ppo-local",
   "name": "PPO Local",
-  "description": "Registers the deterministic Personal Project Operator local wrapper tool, including Phase 5B approval-gated issue creation.",
+  "description": "Registers the deterministic Personal Project Operator /ppo wrapper tool, including Phase 5B approval-gated issue creation; Phase 5C note-add is terminal-only.",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",

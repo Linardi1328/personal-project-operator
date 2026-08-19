@@ -99,6 +99,31 @@ The chat path must not accept or print terminal write confirmation environment v
 
 Phase 5B must not add a model turn, new OpenClaw tools, provider access, arbitrary GitHub endpoints, comments, labels, assignees, milestones, PR/branch/commit/merge/workflow writes, project-state mutations, deployment behavior, or any write other than creating one approved GitHub issue after single-use confirmation.
 
+## Phase 5C controlled terminal project-note boundary
+
+Phase 5C allows exactly one terminal-only local write action:
+
+```text
+node local-operator/ppo-command.mjs note-add <project> <note...>
+```
+
+The command must:
+
+- resolve project ids only through the existing five-project registry
+- treat note text as inert data
+- reject empty, oversized, terminal-control, or escape-sequence input
+- require exact `PPO_NOTE_WRITE_CONFIRM=add-note:<project>` before appending a note
+- show a deterministic preview and refuse the append when confirmation is missing or mismatched
+- store notes under `${PPO_WRITE_DATA_DIR}/project-notes`
+- use private `0700` directories and `0600` files
+- append one durable fsynced note record per confirmed action
+- assign a cryptographically random opaque note id plus timestamp/project metadata
+- create credential/content-free audit records for refused, attempted, succeeded, and failed actions
+- fail closed before note mutation if the attempted audit record cannot be established
+- warn that the note may have been written if append succeeds but success audit fails
+
+Phase 5C must not route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not call GitHub APIs, create issues, comments, labels, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployment behavior, model calls, or new OpenClaw tools.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.

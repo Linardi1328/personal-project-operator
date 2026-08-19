@@ -54,7 +54,7 @@ The split is bounded to eight phases.
 
 ## Write-action boundary
 
-If the task mentions write actions, mutations, merges, pushes, issue creation, or other external writes, the output labels that work as permission-gated design. It does not authorize implementation. Separate explicit approval is required for any write outside the Phase 5A/5B controlled issue creation paths.
+If the task mentions write actions, mutations, merges, pushes, issue creation, note creation, or other writes, the output labels that work as permission-gated design. It does not authorize implementation. Separate explicit approval is required for any write outside the Phase 5A/5B controlled issue creation paths and the Phase 5C terminal-only project note append path.
 
 ## Safety boundary
 

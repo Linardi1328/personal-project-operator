@@ -10,7 +10,7 @@ Target:
 - OpenClaw managed by `systemd`
 - OpenClaw local-prefix runtime under `/home/ppo/.local/openclaw`
 - existing PPO wrapper and existing `ppo_local` plugin tool only
-- private Phase 5B write-data under `/var/lib/personal-project-operator`
+- private Phase 5B/5C write-data under `/var/lib/personal-project-operator`
 
 See [../deployment/README.md](../deployment/README.md) for the bootstrap scripts, systemd unit, health check, rollback procedure, and owner-only acceptance steps.
 
@@ -104,6 +104,14 @@ PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-writ
 ```
 
 Pending issue request directories are private (`0700`) and request files are private (`0600`). Do not paste terminal write confirmation environment values into Telegram; `/ppo issue-confirm <request-id>` performs internal confirmation only after atomically claiming one unexpired request id.
+
+Phase 5C project notes use the same `PPO_WRITE_DATA_DIR` root and store append-only note files under:
+
+```text
+/var/lib/personal-project-operator/write-data/project-notes
+```
+
+`note-add` is terminal-only and is not routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not mutate `projects/*.md` or project-state files.
 
 The systemd unit remains installed as a root-owned system unit under `/etc/systemd/system`.
 

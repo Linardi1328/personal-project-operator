@@ -10,6 +10,7 @@ It should help the user:
 - choose the next project to work on
 - summarize repos and PRs in future read-only phases
 - stage and confirm tightly scoped GitHub issue creation after approval
+- keep project note creation terminal-only until a later reviewed chat workflow exists
 - generate compact Codex prompts
 - track Codex usage manually
 - understand safe and blocked actions
@@ -94,6 +95,8 @@ Write actions must remain disabled unless:
 - the action is auditable
 
 Phase 5B permits only the listed `/ppo issue-create` staging command and `/ppo issue-confirm` single-use confirmation command. It does not add comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployments, or new OpenClaw tools.
+
+Phase 5C permits terminal-only `note-add` outside this OpenClaw skill. `/ppo note-add` remains unsupported and stored notes must not mutate project-state files automatically.
 
 ## Expected future tool integrations
 

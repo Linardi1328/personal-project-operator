@@ -2,7 +2,7 @@
 
 This document describes how Telegram should expose Personal Project Operator commands.
 
-Phase 5B extends the `/ppo` Telegram surface with approval-gated GitHub issue creation while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`.
+Phase 5C keeps the `/ppo` Telegram surface at the Phase 5B approval-gated GitHub issue commands while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`. Phase 5C `note-add` is terminal-only and must not appear as `/ppo note-add`.
 
 This repo does not register commands with Telegram and does not call Telegram APIs.
 
@@ -81,6 +81,8 @@ Expected message forms:
 Inline buttons may prefill `/ppo issue-create` or `/ppo issue-confirm`, but they must not bypass the request id confirmation step.
 
 Phase 5B keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. The chat path must not accept or expose terminal write confirmation environment values.
+
+Phase 5C project notes are not exposed through Telegram. `/ppo note-add` must remain unsupported.
 
 Do not override OpenClaw built-ins:
 

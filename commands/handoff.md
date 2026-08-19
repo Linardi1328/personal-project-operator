@@ -47,11 +47,10 @@ Handoff: SPY Market Agent
 
 ## Safety boundary
 
-The command produces a text handoff only. It must not modify project state unless a future write-enabled phase explicitly allows local note updates.
+The command produces a text handoff only. It must not modify project state. Phase 5C note append is a separate terminal-only command and does not update handoff output or project memory docs.
 
 ## Future upgrade path
 
 - Include recent read-only GitHub state.
 - Include latest Codex prompt and result summary.
 - Export to project memory docs after approval.
-
