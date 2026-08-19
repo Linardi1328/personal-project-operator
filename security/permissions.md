@@ -45,12 +45,18 @@ Allowed in Phase 5B only through the existing `ppo_local` direct-tool path with 
 - stage one issue-create request with `/ppo issue-create <project> <title> [--body <body>]`
 - create one GitHub issue only after `/ppo issue-confirm <request-id>` atomically claims and consumes one unexpired request
 
+Allowed in Phase 5C only from a trusted terminal with exact confirmation and private local write-data storage:
+
+- append one local project note under `${PPO_WRITE_DATA_DIR}/project-notes` through `note-add <project> <note...>`
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
 - create branches
 - delete branches
 - create issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
+- route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram
+- modify `projects/*.md` or project-state files from stored notes
 - comment on PRs
 - comment on issues
 - change labels

@@ -318,6 +318,8 @@ const rejectedInputs = [
   "issue-confirm",
   "issue-confirm short-id",
   `issue-confirm ${validIssueRequestId} extra`,
+  "note-add khlim-assist terminal note",
+  "/ppo note-add khlim-assist terminal note",
   "$(whoami)",
   "`whoami`",
   "../../something"

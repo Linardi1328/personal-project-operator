@@ -1,6 +1,6 @@
 ---
 name: ppo
-description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries, deterministic text tools, and Phase 5B approval-gated issue creation.
+description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries, deterministic text tools, and Phase 5B approval-gated issue creation; Phase 5C note-add remains terminal-only.
 user-invocable: true
 command-dispatch: tool
 command-tool: ppo_local
@@ -38,6 +38,8 @@ Personal Project Operator must use:
 /ppo issue-confirm <request-id>
 ```
 
+Phase 5C `note-add` is terminal-only and must not be routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram.
+
 ## Local wrapper
 
 OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
@@ -46,7 +48,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 5B, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; and routes only `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation. The bridge parses only the command envelope; task, draft, title, and body text is inert data.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 5C, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; and routes only `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation. It rejects `note-add`. The bridge parses only the command envelope; task, draft, title, and body text is inert data.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -96,7 +98,7 @@ node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
 
 ## Safety boundaries
 
-The plugin, wrapper, and simulator are read-only except for the Phase 5B local pending store and the single approved GitHub issue creation write after `/ppo issue-confirm`.
+The `/ppo` plugin path is read-only except for the Phase 5B local pending store and the single approved GitHub issue creation write after `/ppo issue-confirm`. Phase 5C note storage is terminal-only and outside this skill.
 
 They must not:
 
@@ -111,6 +113,7 @@ They must not:
 - perform external write actions other than the single approved issue creation path
 - accept or expose terminal write confirmation environment values through chat
 - create comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state changes, or deployments
+- route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram
 - execute arbitrary shell commands
 
 ## Expected OpenClaw behavior

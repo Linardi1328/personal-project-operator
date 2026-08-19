@@ -161,12 +161,27 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Preserve the credential-free attempted/succeeded/failed audit trail, with `PPO_GITHUB_WRITE_AUDIT_PATH` configured to `/var/lib/personal-project-operator/audit/github-write-audit.ndjson` on the VPS.
 - Do not add a model turn, new OpenClaw tools, provider access, arbitrary GitHub endpoints, comments, labels, assignees, milestones, PR/branch/commit/merge/workflow writes, project-state mutations, or deployments.
 
+### Phase 5C - Terminal-only controlled project notes foundation
+
+- Add terminal-only `node local-operator/ppo-command.mjs note-add <project> <note...>`.
+- Resolve `<project>` only through the existing five-project registry.
+- Validate note text as inert terminal data: non-empty, maximum 2000 characters, and no terminal control or escape input.
+- Require exact `PPO_NOTE_WRITE_CONFIRM=add-note:<project>` before appending a note.
+- Show a deterministic preview and refuse the write when confirmation is missing or mismatched.
+- Store append-only note records under `${PPO_WRITE_DATA_DIR}/project-notes`, defaulting to `local-operator/write-data/` locally and using `/var/lib/personal-project-operator/write-data` on the VPS.
+- Use private `0700` directories and `0600` files, append one fsynced durable note record per confirmed action, and assign a cryptographically random opaque note id plus timestamp/project metadata.
+- Write credential/content-free audit records for refused, attempted, succeeded, and failed note actions.
+- Fail closed before note mutation if the attempted audit record cannot be established.
+- Return an explicit duplicate-warning result if the note append succeeds but the success audit record cannot be written.
+- Keep Phase 5C terminal-only; do not route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram.
+- Do not call GitHub APIs, modify `projects/*.md` or project-state files, create comments, labels, issues, PRs, branches, commits, merges, workflow dispatches, deployments, model calls, or new OpenClaw tools.
+
 ### Later Phase 5 work
 
 Only after separate explicit approval:
 
-- Create project notes.
 - Update project state files.
+- Promote or summarize stored project notes into project state files.
 - Never auto-merge or deploy.
 
 Phase 5 write actions must be individually reviewed, permissioned, and auditable.

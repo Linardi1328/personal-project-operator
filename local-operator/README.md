@@ -94,6 +94,14 @@ node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
 
 `/ppo issue-create` never calls GitHub. It validates the project, title, and body, writes one private pending request, and returns the confirmation command. `/ppo issue-confirm` atomically claims and consumes one unexpired request before invoking the Phase 5A writer with internal confirmation.
 
+Phase 5C adds terminal-only controlled project note creation:
+
+```bash
+node local-operator/ppo-command.mjs note-add khlim-assist "project note text"
+```
+
+This command is not routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It refuses to append unless `PPO_NOTE_WRITE_CONFIRM=add-note:<project>` exactly matches the target project. Notes are stored under `${PPO_WRITE_DATA_DIR}/project-notes`, with local default `local-operator/write-data/` and VPS default configured by systemd at `/var/lib/personal-project-operator/write-data`.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -107,13 +115,15 @@ node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
 - `github-ppo-status.mjs`: Phase 2C live GitHub read-only `/ppo status` formatter.
 - `github-issue-create.mjs`: Phase 5A terminal-only, confirmation-gated GitHub issue creation.
 - `github-issue-approval.mjs`: Phase 5B local pending-request store and `/ppo issue-create`/`/ppo issue-confirm` handlers.
+- `project-note-add.mjs`: Phase 5C terminal-only, confirmation-gated append-only project note storage.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
-- `write-data/`: local ignored Phase 5B pending request store; runtime directories/files are private.
+- `write-data/`: local ignored Phase 5B pending request store and Phase 5C project note store; runtime directories/files are private.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
 - `github-issue-create.test.mjs`: fake-writer and fake-runner tests for Phase 5A write gating and audit behavior.
 - `github-issue-approval.test.mjs`: fake-writer tests for Phase 5B staging, expiry, single-use confirmation, concurrency, and safe errors.
+- `project-note-add.test.mjs`: local temp-store tests for Phase 5C allowlisting, confirmation, private modes, append-only notes, metadata audit, safe failure handling, and `/ppo` rejection.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -198,6 +208,10 @@ Phase 5B adds exactly one approval-gated chat write workflow through the existin
 
 Pending issue requests default to `local-operator/write-data/` for local use. Set `PPO_WRITE_DATA_DIR` to move the private pending store. Set `PPO_GITHUB_WRITE_AUDIT_PATH` to move the credential-free audit trail.
 
+Phase 5C project notes use the same `PPO_WRITE_DATA_DIR` root and append note records under `${PPO_WRITE_DATA_DIR}/project-notes`. The command creates private `0700` directories and `0600` files, appends one fsynced durable record per confirmed action, and never edits, deletes, or replaces prior notes. Each record includes a random opaque note id, timestamp, project metadata, and the note text. The separate note audit trail is metadata-only and excludes note text, confirmation values, request ids, tokens, and raw failures. If attempted audit cannot be established, no note is appended; if append succeeds but success audit fails, the command warns that the note may have been written and should be inspected before retrying.
+
+Phase 5C does not route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It does not call GitHub, create issues, comments, labels, branches, PRs, commits, merges, workflow dispatches, deployments, model calls, or mutate `projects/*.md` or project-state files.
+
 Owner test plan after branch review:
 
 ```bash
@@ -218,6 +232,7 @@ node local-operator/ppo-command.mjs "/ppo prompt-size Goal: keep line structure
 Requirements:
 - preserve multiline input"
 node local-operator/ppo-command.mjs issue-create khlim-assist "owner review test issue"
+node local-operator/ppo-command.mjs note-add khlim-assist "owner review local note"
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review test issue --body created only after confirmation"
 ```
 

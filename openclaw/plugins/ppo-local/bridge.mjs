@@ -34,7 +34,7 @@ export function unsupportedPpoToolInput(rawCommand) {
   return [
     `Unsupported PPO tool input: ${commandLabel}`,
     "",
-    "Phase 5B supports only:",
+    "PPO local tool supports only:",
     "- /ppo status",
     "- /ppo menu",
     "- /ppo menu project",

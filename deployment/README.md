@@ -76,6 +76,8 @@ PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
 PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-write-audit.ndjson
 ```
 
+Phase 5C project notes use the same non-secret `PPO_WRITE_DATA_DIR` root and store append-only note files under `/var/lib/personal-project-operator/write-data/project-notes`.
+
 The systemd unit runs this preflight before service start:
 
 ```text
@@ -133,6 +135,7 @@ Rules:
 - configure only values required by OpenClaw or its connected providers
 - authenticate `gh` as the service user outside this repository when GitHub read-only commands are needed
 - keep Phase 5B write-data path variables pointed at private directories under `/var/lib/personal-project-operator`
+- keep Phase 5C project notes under the same private write-data root
 - never paste credentials into Markdown, tests, fixtures, logs, commits, or chat
 - do not commit `.env` files or copied service environment files
 
@@ -144,6 +147,8 @@ PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-writ
 ```
 
 Do not configure or paste terminal write confirmation environment values in OpenClaw chat. `/ppo issue-confirm <request-id>` supplies the Phase 5A confirmation internally after a pending request has been atomically claimed.
+
+`PPO_NOTE_WRITE_CONFIRM=add-note:<project>` is terminal-only and must not be configured in OpenClaw chat. Phase 5C `note-add` is not routed through `ppo_local`.
 
 ## Owner-Only VPS Bootstrap
 
@@ -182,6 +187,7 @@ The checkout at `/opt/personal-project-operator` is root-owned and read-only to 
 - writable runtime paths are limited to `/home/ppo`, `/var/lib/personal-project-operator`, and `/var/log/personal-project-operator`.
 - Phase 5B pending request directories under `/var/lib/personal-project-operator/write-data` are created with `0700`, and pending request files are created with `0600`.
 - Phase 5B audit records are written to `/var/lib/personal-project-operator/audit/github-write-audit.ndjson` without title/body contents, request ids, tokens, or confirmation values.
+- Phase 5C note directories under `/var/lib/personal-project-operator/write-data/project-notes` are `0700`, note files are `0600`, and note audit records are metadata-only without note text, confirmation values, request ids, tokens, or raw failures.
 
 ## Phase 5B Issue Approval Storage
 
@@ -194,6 +200,22 @@ The checkout at `/opt/personal-project-operator` is root-owned and read-only to 
 It performs no GitHub call. The response includes the deterministic preview, an opaque one-time request id, the expiry timestamp, and `/ppo issue-confirm <request-id>`.
 
 `/ppo issue-confirm <request-id>` atomically renames one pending file into a claimed path, validates that it has not expired, deletes the claimed file, then invokes the existing Phase 5A issue writer with internal confirmation. Unknown, expired, malformed, already-consumed, or replayed ids perform zero GitHub writes. Requests expire after 10 minutes.
+
+## Phase 5C Project Note Storage
+
+The terminal-only command:
+
+```bash
+node local-operator/ppo-command.mjs note-add <project> <note...>
+```
+
+stores confirmed append-only notes under:
+
+```text
+/var/lib/personal-project-operator/write-data/project-notes
+```
+
+The command is not routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It uses exact terminal confirmation, creates private directories/files, appends one fsynced note record per confirmed action, and must not mutate `projects/*.md` or any project-state file.
 
 ## systemd Start, Restart, And Boot Recovery
 
