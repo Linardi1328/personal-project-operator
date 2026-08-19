@@ -102,6 +102,15 @@ node local-operator/ppo-command.mjs note-add khlim-assist "project note text"
 
 This command is not routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It refuses to append unless `PPO_NOTE_WRITE_CONFIRM=add-note:<project>` exactly matches the target project. Notes are stored under `${PPO_WRITE_DATA_DIR}/project-notes`, with local default `local-operator/write-data/` and VPS default configured by systemd at `/var/lib/personal-project-operator/write-data`.
 
+Phase 5D adds approval-gated note creation through the existing `/ppo` -> `ppo_local` direct-tool path:
+
+```bash
+node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note text"
+node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
+```
+
+`/ppo note-add` stages only and performs zero note writes. It rejects chat input containing `PPO_NOTE_WRITE_CONFIRM`, stores one private pending request under `${PPO_WRITE_DATA_DIR}/pending-project-notes`, and returns `/ppo note-confirm <request-id>`. `/ppo note-confirm` atomically consumes one unexpired request before invoking the Phase 5C writer with internal confirmation.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -116,14 +125,16 @@ This command is not routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. I
 - `github-issue-create.mjs`: Phase 5A terminal-only, confirmation-gated GitHub issue creation.
 - `github-issue-approval.mjs`: Phase 5B local pending-request store and `/ppo issue-create`/`/ppo issue-confirm` handlers.
 - `project-note-add.mjs`: Phase 5C terminal-only, confirmation-gated append-only project note storage.
+- `project-note-approval.mjs`: Phase 5D local pending-request store and `/ppo note-add`/`/ppo note-confirm` handlers.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
-- `write-data/`: local ignored Phase 5B pending request store and Phase 5C project note store; runtime directories/files are private.
+- `write-data/`: local ignored Phase 5B/5D pending request stores and Phase 5C/5D project note store; runtime directories/files are private.
 - `github-readonly.test.mjs`: fake-runner tests that do not require live GitHub network access.
 - `github-issue-create.test.mjs`: fake-writer and fake-runner tests for Phase 5A write gating and audit behavior.
 - `github-issue-approval.test.mjs`: fake-writer tests for Phase 5B staging, expiry, single-use confirmation, concurrency, and safe errors.
-- `project-note-add.test.mjs`: local temp-store tests for Phase 5C allowlisting, confirmation, private modes, append-only notes, metadata audit, safe failure handling, and `/ppo` rejection.
+- `project-note-add.test.mjs`: local temp-store tests for Phase 5C allowlisting, confirmation, private modes, append-only notes, metadata audit, safe failure handling, and terminal behavior.
+- `project-note-approval.test.mjs`: temp-store tests for Phase 5D staging, expiry, single-use confirmation, concurrency, metadata audit preservation, safe errors, `ppo_local` routing, and Phase 5C terminal regression.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -212,6 +223,10 @@ Phase 5C project notes use the same `PPO_WRITE_DATA_DIR` root and append note re
 
 Phase 5C does not route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It does not call GitHub, create issues, comments, labels, branches, PRs, commits, merges, workflow dispatches, deployments, model calls, or mutate `projects/*.md` or project-state files.
 
+Phase 5D adds exactly one approval-gated chat note workflow through the existing `ppo_local` tool. `/ppo note-add <project> <note...>` stages only and performs zero note writes. `/ppo note-confirm <request-id>` atomically claims one matching unexpired request, consumes the id and pending content before any note write, and then reuses the Phase 5C writer with internal confirmation. Unknown, expired, already-consumed, malformed, or replayed ids perform zero note writes. The chat path must not accept or expose terminal note confirmation environment values.
+
+Pending note requests use `${PPO_WRITE_DATA_DIR}/pending-project-notes`. The store uses private `0700` directories and `0600` files, persists note text only temporarily for the pending request, and deletes consumed or expired content. The Phase 5C note audit remains metadata-only and does not include Phase 5D request ids.
+
 Owner test plan after branch review:
 
 ```bash
@@ -234,6 +249,7 @@ Requirements:
 node local-operator/ppo-command.mjs issue-create khlim-assist "owner review test issue"
 node local-operator/ppo-command.mjs note-add khlim-assist "owner review local note"
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review test issue --body created only after confirmation"
+node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
 ```
 
 Then through OpenClaw/Telegram after review:
@@ -252,6 +268,8 @@ Requirements:
 /ppo split-task add GitHub integration and Telegram routing
 /ppo issue-create khlim-assist owner review test issue --body created only after confirmation
 /ppo issue-confirm <request-id>
+/ppo note-add khlim-assist owner review staged note
+/ppo note-confirm <request-id>
 ```
 
 ## OpenClaw handoff shape

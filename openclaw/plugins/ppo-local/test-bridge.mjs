@@ -32,6 +32,7 @@ const currentProjectIds = listPhase2GitHubProjects().map((project) => project.id
 const phase3cTask = "; rm -rf / $(whoami) `whoami` ../../etc/passwd café 東京";
 const multilineDraft = "Goal: keep line structure\nRequirements:\n- preserve newline one\n- preserve newline two\nExit Criteria: reviewed";
 const validIssueRequestId = "A".repeat(43);
+const validNoteRequestId = "B".repeat(43);
 
 for (const projectId of currentProjectIds) {
   expectedMappings.set(
@@ -49,6 +50,8 @@ expectedMappings.set(`split-task ${phase3cTask}`, ["split-task", phase3cTask]);
 expectedMappings.set("issue-create khlim-assist Add issue title", ["/ppo", "issue-create", "khlim-assist", "Add issue title"]);
 expectedMappings.set("issue-create khlim-assist Add issue title --body Body text", ["/ppo", "issue-create", "khlim-assist", "Add issue title", "--body", "Body text"]);
 expectedMappings.set(`issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]);
+expectedMappings.set("note-add khlim-assist Add project note", ["/ppo", "note-add", "khlim-assist", "Add project note"]);
+expectedMappings.set(`note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]);
 
 for (const [input, expected] of expectedMappings) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} maps to approved wrapper argv`);
@@ -103,7 +106,9 @@ for (const [input, expected] of [
   [`/ppo prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]],
   [`/ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]],
   ["/ppo issue-create khlim-assist Full payload title --body Full payload body", ["/ppo", "issue-create", "khlim-assist", "Full payload title", "--body", "Full payload body"]],
-  [`/ppo issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]]
+  [`/ppo issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]],
+  ["/ppo note-add khlim-assist Full payload project note", ["/ppo", "note-add", "khlim-assist", "Full payload project note"]],
+  [`/ppo note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]]
 ]) {
   const result = await runPpoLocalTool(
     { command: input },
@@ -318,8 +323,14 @@ const rejectedInputs = [
   "issue-confirm",
   "issue-confirm short-id",
   `issue-confirm ${validIssueRequestId} extra`,
-  "note-add khlim-assist terminal note",
-  "/ppo note-add khlim-assist terminal note",
+  "note-add",
+  "note-add unknown project note",
+  "note-add khlim-assist",
+  "note-add khlim-assist bad\u001B[31m note",
+  "note-add khlim-assist PPO_NOTE_WRITE_CONFIRM=add-note:khlim-assist SENSITIVE_TEST_SENTINEL",
+  "note-confirm",
+  "note-confirm short-id",
+  `note-confirm ${validNoteRequestId} extra`,
   "$(whoami)",
   "`whoami`",
   "../../something"
@@ -333,7 +344,7 @@ for (const input of rejectedInputs) {
   assert.equal(result.exitCode, 1, `${input} failure exit code`);
   assert.deepEqual(result.wrapperArgs, [], `${input} does not call wrapper`);
   assert.match(result.stdout, /^Unsupported PPO tool input:/, `${input} returns safe unsupported text`);
-  assert.doesNotMatch(result.stdout, /PPO_GITHUB_WRITE_CONFIRM|SENSITIVE_TEST_SENTINEL|create-issue:khlim-assist/);
+  assert.doesNotMatch(result.stdout, /PPO_(?:GITHUB|NOTE)_WRITE_CONFIRM|SENSITIVE_TEST_SENTINEL|create-issue:khlim-assist|add-note:khlim-assist/);
 
   const fakeResult = await runPpoLocalTool(
     { command: input },

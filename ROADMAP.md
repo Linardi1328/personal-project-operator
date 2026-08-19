@@ -176,6 +176,18 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Keep Phase 5C terminal-only; do not route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram.
 - Do not call GitHub APIs, modify `projects/*.md` or project-state files, create comments, labels, issues, PRs, branches, commits, merges, workflow dispatches, deployments, model calls, or new OpenClaw tools.
 
+### Phase 5D - Approval-gated Telegram project notes
+
+- Add `/ppo note-add <project> <note...>` through the existing `ppo_local` direct-tool path.
+- Add `/ppo note-confirm <request-id>` through the same `ppo_local` tool.
+- Keep `/ppo note-add` as staging only: resolve the project through the existing five-project registry, reuse Phase 5C note validation and the 2000-character limit, reject chat input containing `PPO_NOTE_WRITE_CONFIRM`, perform zero note writes, show project/repo/note length without note text, persist the normalized intent locally, and return the confirmation command.
+- Generate cryptographically random opaque one-time request ids and expire pending requests after 10 minutes.
+- Store pending note requests under `${PPO_WRITE_DATA_DIR}/pending-project-notes` using private `0700` directories and `0600` files. Persist note text only temporarily for the pending request and delete consumed or expired content.
+- Make `/ppo note-confirm` atomically claim and consume one unexpired request before invoking the Phase 5C writer with internal `add-note:<project>` confirmation. Unknown, expired, malformed, already-consumed, or replayed ids perform zero note writes.
+- Preserve Phase 5C metadata-only note audit records and do not include Phase 5D request ids, note text, terminal confirmation values, tokens, or raw failures.
+- Keep the existing `ppo_local` tool only, direct command dispatch only, and bare terminal `note-add` behavior unchanged. Bare terminal `note-confirm` remains unsupported.
+- Do not call GitHub APIs, modify `projects/*.md` or project-state files, create comments, labels, issues, PRs, branches, commits, merges, workflow dispatches, deployments, model calls, or new OpenClaw tools.
+
 ### Later Phase 5 work
 
 Only after separate explicit approval:

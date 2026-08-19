@@ -109,6 +109,17 @@ This exception is limited to append-only local records under `${PPO_WRITE_DATA_D
 
 Audit records for note actions must be metadata-only and must not contain note text, confirmation values, request ids, tokens, or raw failures.
 
+## Phase 5D approval-gated chat note exception
+
+Phase 5D allows one chat-routed note workflow through the existing `ppo_local` tool:
+
+- `/ppo note-add <project> <note...>` stages only and performs no note write.
+- `/ppo note-confirm <request-id>` atomically claims one unexpired pending request, consumes it, and then invokes the Phase 5C note writer with internal confirmation.
+
+The pending request store is private local write data. Request ids are random, opaque, single-use, and expire after 10 minutes. The chat workflow must not accept or expose terminal note confirmation environment values, and failed, expired, malformed, unknown, or replayed ids must perform zero note writes.
+
+The Phase 5C note audit remains metadata-only and must not contain note text, Phase 5D request ids, confirmation values, tokens, or raw failures.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -117,7 +128,7 @@ Examples requiring explicit approval:
 
 - creating GitHub issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
 - updating project state files from stored notes
-- routing project note creation through chat
+- creating project notes outside the Phase 5C terminal path or Phase 5D approval-gated chat path
 - restarting services
 - publishing content
 - sending messages

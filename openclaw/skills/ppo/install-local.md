@@ -157,11 +157,11 @@ OpenClaw forwards the raw `/ppo` argument string to `ppo_local` as:
 }
 ```
 
-The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds only `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface.
+The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` confirmation through the same existing tool.
 
-Phase 5C `note-add` is terminal-only. Do not add it to the OpenClaw command surface, do not route it through `ppo_local`, and do not configure note confirmation values in Telegram/OpenClaw chat.
+Phase 5C bare terminal `note-add` remains terminal-only. Do not configure `PPO_NOTE_WRITE_CONFIRM` in Telegram/OpenClaw chat; `/ppo note-confirm <request-id>` supplies the Phase 5C confirmation internally after atomically claiming a pending request.
 
-## Local Phase 5B/5C write-data paths
+## Local Phase 5B/5C/5D write-data paths
 
 For local testing, pending issue requests default to:
 
@@ -177,7 +177,7 @@ PPO_GITHUB_WRITE_AUDIT_PATH=/private/tmp/ppo-audit/github-write-audit.ndjson \
 openclaw gateway restart
 ```
 
-Pending request directories are created with `0700`, request files are created with `0600`, and request ids expire after 10 minutes. Do not paste terminal write confirmation environment values into Telegram; `/ppo issue-confirm <request-id>` supplies confirmation internally after the id is claimed.
+Pending issue and note request directories are created with `0700`, request files are created with `0600`, and request ids expire after 10 minutes. Do not paste terminal write confirmation environment values into Telegram; confirm commands supply confirmation internally after the id is claimed.
 
 Phase 5C notes use the same `PPO_WRITE_DATA_DIR` root for terminal-only storage under:
 
@@ -185,7 +185,11 @@ Phase 5C notes use the same `PPO_WRITE_DATA_DIR` root for terminal-only storage 
 <ppo-repo>/local-operator/write-data/project-notes
 ```
 
-The OpenClaw plugin does not accept `note-add`.
+Phase 5D pending note requests use:
+
+```text
+<ppo-repo>/local-operator/write-data/pending-project-notes
+```
 
 ## Refresh OpenClaw
 
@@ -396,9 +400,11 @@ If those pass, test:
 /ppo pr khlim-assist
 /ppo codex khlim-assist add provider validation tests
 /ppo issue-create khlim-assist owner review test issue --body created only after confirmation
+/ppo note-add khlim-assist owner review staged note
 ```
 
 Only confirm a staged issue with `/ppo issue-confirm <request-id>` when the owner intends to create that GitHub issue.
+Only confirm a staged note with `/ppo note-confirm <request-id>` when the owner intends to append that local project note.
 
 ## Safety Boundary
 
@@ -413,3 +419,4 @@ Do not add:
 - Codex usage scraping
 - OpenClaw tools beyond `ppo_local`
 - GitHub writes beyond Phase 5B `/ppo issue-create` staging plus `/ppo issue-confirm` single-use issue creation
+- project note writes beyond Phase 5D `/ppo note-add` staging plus `/ppo note-confirm` single-use note creation

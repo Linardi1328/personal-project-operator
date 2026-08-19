@@ -124,6 +124,23 @@ The command must:
 
 Phase 5C must not route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not call GitHub APIs, create issues, comments, labels, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployment behavior, model calls, or new OpenClaw tools.
 
+## Phase 5D approval-gated chat project-note boundary
+
+Phase 5D allows exactly two `/ppo` chat commands through the existing `ppo_local` direct-tool path:
+
+```text
+/ppo note-add <project> <note...>
+/ppo note-confirm <request-id>
+```
+
+`/ppo note-add` must not append a note. It validates the project id and note using Phase 5C rules, rejects chat input containing `PPO_NOTE_WRITE_CONFIRM`, prints a deterministic preview with project/repo/note length but not note text, stores the exact normalized intent in the private local pending store, and returns only `/ppo note-confirm <request-id>`.
+
+`/ppo note-confirm` must atomically claim one matching unexpired request before any note write. Claiming consumes the id, and the persisted request content is deleted before the Phase 5C writer is invoked with internal `add-note:<project>` confirmation. Unknown, expired, already-consumed, malformed, or replayed request ids must not append notes.
+
+Pending request directories must be `0700`, pending files must be `0600`, request ids must be cryptographically random and opaque, and requests expire after 10 minutes. The note audit trail must remain metadata-only and must not include note text, Phase 5D request ids, terminal confirmation values, tokens, or raw failures.
+
+Phase 5D must not add a model turn, new OpenClaw tools, GitHub API writes, comments, labels, issues, PR/branch/commit/merge/workflow writes, project-state mutations, deployment behavior, or any write other than appending one approved local note after single-use confirmation.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.

@@ -94,9 +94,9 @@ Write actions must remain disabled unless:
 - explicit user approval is captured
 - the action is auditable
 
-Phase 5B permits only the listed `/ppo issue-create` staging command and `/ppo issue-confirm` single-use confirmation command. It does not add comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployments, or new OpenClaw tools.
+Phase 5B permits only the listed `/ppo issue-create` staging command and `/ppo issue-confirm` single-use confirmation command.
 
-Phase 5C permits terminal-only `note-add` outside this OpenClaw skill. `/ppo note-add` remains unsupported and stored notes must not mutate project-state files automatically.
+Phase 5D permits only the listed `/ppo note-add` staging command and `/ppo note-confirm` single-use confirmation command through the same existing `ppo_local` tool. It does not add comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployments, or new OpenClaw tools. Stored notes must not mutate project-state files automatically.
 
 ## Expected future tool integrations
 
