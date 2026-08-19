@@ -16,6 +16,10 @@ import { handleGitHubIssueCreateCommand } from "./github-issue-create.mjs";
 import { handleGitHubPpoCommand } from "./github-ppo-commands.mjs";
 import { handleGitHubPpoStatus } from "./github-ppo-status.mjs";
 import { handleProjectNoteAddCommand } from "./project-note-add.mjs";
+import {
+  handlePpoNoteAddApprovalCommand,
+  handlePpoNoteConfirmCommand
+} from "./project-note-approval.mjs";
 
 const execFileAsync = promisify(execFile);
 const simulatorPath = fileURLToPath(new URL("simulate-command.mjs", import.meta.url));
@@ -225,6 +229,8 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo split-task add GitHub integration and Telegram routing\"",
     "  node local-operator/ppo-command.mjs \"/ppo issue-create khlim-assist issue title --body optional body\"",
     "  node local-operator/ppo-command.mjs \"/ppo issue-confirm <request-id>\"",
+    "  node local-operator/ppo-command.mjs \"/ppo note-add khlim-assist project note text\"",
+    "  node local-operator/ppo-command.mjs \"/ppo note-confirm <request-id>\"",
     "",
     "Supported Telegram messages:",
     "  /ppo status",
@@ -241,10 +247,13 @@ function usage() {
     "  /ppo split-task <task>",
     "  /ppo issue-create <project> <title> [--body <body>]",
     "  /ppo issue-confirm <request-id>",
+    "  /ppo note-add <project> <note...>",
+    "  /ppo note-confirm <request-id>",
     "",
     "Phase 5A boundary: terminal issue-create requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>.",
     "Phase 5B boundary: /ppo issue-create only stages a pending request; /ppo issue-confirm performs the approved single-use write.",
-    "Phase 5C boundary: terminal note-add requires PPO_NOTE_WRITE_CONFIRM=add-note:<project> and is not routed through /ppo."
+    "Phase 5C boundary: terminal note-add requires PPO_NOTE_WRITE_CONFIRM=add-note:<project>.",
+    "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append."
   ].join("\n");
 }
 
@@ -268,6 +277,8 @@ function unsupported(command) {
     "- /ppo split-task <task>",
     "- /ppo issue-create <project> <title> [--body <body>]",
     "- /ppo issue-confirm <request-id>",
+    "- /ppo note-add <project> <note...>",
+    "- /ppo note-confirm <request-id>",
     "",
     "Terminal-only additions:",
     "- issue-create <project> <title> [body...]",
@@ -346,7 +357,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B PPO-routed commands are marked [local] or [github read-only]. Terminal Codex prompt/planning commands are local-only.",
-      "Phase 5C PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, and approval-gated issue creation. Terminal note-add stays outside /ppo."
+      "Phase 5D PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, and approval-gated project note creation."
     )
     .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
@@ -378,7 +389,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal Codex prompt/planning commands are local-only; no writes.",
-      "Phase 5C boundary: /ppo issue-create stages only; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation; note-add is terminal-only."
+      "Phase 5D boundary: /ppo issue-create and /ppo note-add stage only; confirm commands consume one request before the approved write."
     )
     .replace(
       [
@@ -391,7 +402,7 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 5C:",
+        "Supported through /ppo in Phase 5D:",
         "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
@@ -405,12 +416,14 @@ function applyPpoNamespace(output) {
         "- /ppo prompt-size <draft> [local text]",
         "- /ppo split-task <task> [local text]",
         "- /ppo issue-create <project> <title> [approval stage]",
-        "- /ppo issue-confirm <request-id> [approved write]"
+        "- /ppo issue-confirm <request-id> [approved write]",
+        "- /ppo note-add <project> <note...> [approval stage]",
+        "- /ppo note-confirm <request-id> [approved write]"
       ].join("\n")
     )
     .replace(
       "Supported through /ppo in Phase 3B:",
-      "Supported through /ppo in Phase 5C:"
+      "Supported through /ppo in Phase 5D:"
     )
     .replace(
       "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt. [future]",
@@ -446,7 +459,8 @@ function applyPpoNamespace(output) {
         "- No Telegram API calls",
         "- No Codex usage scraping",
         "- No VPS deployment",
-        "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation"
+        "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation",
+        "- /ppo note-add stages locally; /ppo note-confirm can append one approved local project note after single-use confirmation"
       ].join("\n")
     );
 }
@@ -552,9 +566,16 @@ async function main() {
   }
 
   if (command === "note-add") {
+    if (isPpoEnvelope(rawProcessArgs)) {
+      const result = await handlePpoNoteAddApprovalCommand(payloadAfterCommand(rawProcessArgs, command));
+      console.log(result.output);
+      process.exitCode = result.ok ? 0 : 1;
+      return;
+    }
+
     const commandArgs = noteAddTerminalArgs(rawProcessArgs);
 
-    if (isPpoEnvelope(rawProcessArgs) || commandArgs.length < 2) {
+    if (commandArgs.length < 2) {
       console.log(unsupported(rawCommand));
       process.exitCode = 1;
       return;
@@ -564,6 +585,19 @@ async function main() {
     const result = await handleProjectNoteAddCommand(projectId, noteArgs, {
       confirmationValue: process.env.PPO_NOTE_WRITE_CONFIRM
     });
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (command === "note-confirm") {
+    if (!isPpoEnvelope(rawProcessArgs)) {
+      console.log(unsupported(rawCommand));
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = await handlePpoNoteConfirmCommand(payloadAfterCommand(rawProcessArgs, command));
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;

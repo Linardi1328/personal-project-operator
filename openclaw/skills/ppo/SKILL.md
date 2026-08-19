@@ -1,6 +1,6 @@
 ---
 name: ppo
-description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries, deterministic text tools, and Phase 5B approval-gated issue creation; Phase 5C note-add remains terminal-only.
+description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries, deterministic text tools, Phase 5B approval-gated issue creation, and Phase 5D approval-gated project note creation.
 user-invocable: true
 command-dispatch: tool
 command-tool: ppo_local
@@ -36,9 +36,11 @@ Personal Project Operator must use:
 /ppo split-task <task>
 /ppo issue-create <project> <title> [--body <body>]
 /ppo issue-confirm <request-id>
+/ppo note-add <project> <note...>
+/ppo note-confirm <request-id>
 ```
 
-Phase 5C `note-add` is terminal-only and must not be routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram.
+Phase 5C bare terminal `note-add` remains terminal-only. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` approval through the existing `ppo_local` path.
 
 ## Local wrapper
 
@@ -48,7 +50,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 5C, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; and routes only `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation. It rejects `note-add`. The bridge parses only the command envelope; task, draft, title, and body text is inert data.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 5D, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; routes `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation; and routes `/ppo note-add` plus `/ppo note-confirm` for approval-gated local project note creation. The bridge parses only the command envelope; task, draft, title, body, and note text are inert data.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -75,6 +77,8 @@ node local-operator/ppo-command.mjs repo khlim-assist
 node local-operator/ppo-command.mjs pr khlim-assist
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
 node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
+node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note text"
+node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
 ```
 
 ## Command mapping
@@ -90,6 +94,8 @@ node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
 | `/ppo split-task <task>` | `ppo_local` raw `split-task <task>` | Local deterministic task split |
 | `/ppo issue-create <project> <title> [--body <body>]` | `ppo_local` raw `issue-create <project> <title> [--body <body>]` | Stage one approved-project issue intent; no GitHub write |
 | `/ppo issue-confirm <request-id>` | `ppo_local` raw `issue-confirm <request-id>` | Atomically claim one pending request, then create one issue through the Phase 5A writer |
+| `/ppo note-add <project> <note...>` | `ppo_local` raw `note-add <project> <note...>` | Stage one approved-project note intent; no note append |
+| `/ppo note-confirm <request-id>` | `ppo_local` raw `note-confirm <request-id>` | Atomically claim one pending request, then append one note through the Phase 5C writer |
 | `/ppo menu` | `ppo_local` raw `menu` | `/menu` |
 | `/ppo menu project` | `ppo_local` raw `menu project` | `/menu project` |
 | `/ppo menu codex` | `ppo_local` raw `menu codex` | `/menu codex` |
@@ -98,7 +104,7 @@ node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
 
 ## Safety boundaries
 
-The `/ppo` plugin path is read-only except for the Phase 5B local pending store and the single approved GitHub issue creation write after `/ppo issue-confirm`. Phase 5C note storage is terminal-only and outside this skill.
+The `/ppo` plugin path is read-only except for the Phase 5B issue pending store, the single approved GitHub issue creation write after `/ppo issue-confirm`, the Phase 5D note pending store, and the single approved local note append after `/ppo note-confirm`.
 
 They must not:
 
@@ -111,9 +117,9 @@ They must not:
 - store secrets
 - mutate project files
 - perform external write actions other than the single approved issue creation path
+- perform local note writes outside the single approved note confirmation path
 - accept or expose terminal write confirmation environment values through chat
 - create comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state changes, or deployments
-- route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram
 - execute arbitrary shell commands
 
 ## Expected OpenClaw behavior
@@ -123,7 +129,7 @@ OpenClaw should parse Telegram text that starts with `/ppo`, then pass the raw a
 Expected flow:
 
 ```text
-Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture, GitHub read-only, deterministic text output, or Phase 5B issue approval flow
+Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture, GitHub read-only, deterministic text output, Phase 5B issue approval flow, or Phase 5D note approval flow
 ```
 
 ## Unsupported commands

@@ -2,7 +2,7 @@
 
 This document describes how Telegram should expose Personal Project Operator commands.
 
-Phase 5C keeps the `/ppo` Telegram surface at the Phase 5B approval-gated GitHub issue commands while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`. Phase 5C `note-add` is terminal-only and must not appear as `/ppo note-add`.
+Phase 5D exposes approval-gated project note staging through `/ppo` while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`. `/ppo note-add` stages only; `/ppo note-confirm` performs the approved single-use local append.
 
 This repo does not register commands with Telegram and does not call Telegram APIs.
 
@@ -21,6 +21,8 @@ Expected message forms:
 /ppo pr <project> - Summarize latest project PR [github read-only]
 /ppo issue-create <project> <title> [--body <body>] - Stage a GitHub issue for confirmation
 /ppo issue-confirm <request-id> - Confirm one staged issue creation request
+/ppo note-add <project> <note...> - Stage a project note for confirmation
+/ppo note-confirm <request-id> - Confirm one staged project note request
 /ppo codex <project> <task> - Generate deterministic Codex prompt text
 /ppo codex-usage - Check Codex usage status
 /ppo codex-budget <project> <task> - Estimate deterministic Codex task size
@@ -50,6 +52,8 @@ Expected message forms:
 - `/ppo pr <project>`
 - `/ppo issue-create <project> <title> [--body <body>]` (Phase 5B staging only)
 - `/ppo issue-confirm <request-id>` (Phase 5B single-use confirmation)
+- `/ppo note-add <project> <note...>` (Phase 5D staging only)
+- `/ppo note-confirm <request-id>` (Phase 5D single-use confirmation)
 - `/ppo handoff <project>`
 
 ## Codex Workflow
@@ -80,9 +84,9 @@ Expected message forms:
 
 Inline buttons may prefill `/ppo issue-create` or `/ppo issue-confirm`, but they must not bypass the request id confirmation step.
 
-Phase 5B keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. The chat path must not accept or expose terminal write confirmation environment values.
+Inline buttons may prefill `/ppo note-add` or `/ppo note-confirm`, but they must not bypass the request id confirmation step.
 
-Phase 5C project notes are not exposed through Telegram. `/ppo note-add` must remain unsupported.
+Phase 5D keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. `note-add` performs no note write; `note-confirm` can append only one approved local note after atomically claiming an unexpired one-time id. The chat path must not accept or expose terminal write confirmation environment values.
 
 Do not override OpenClaw built-ins:
 

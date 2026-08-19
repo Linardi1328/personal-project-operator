@@ -211,6 +211,9 @@ async function assertModeLockClean(repoPath, script) {
   assert.match(bootstrap, /\/home\/\$\{SERVICE_USER\}\/\.local\/openclaw/);
   assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/write-data"/);
   assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/write-data\/project-notes"/);
+  assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/write-data\/pending-project-notes"/);
+  assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/write-data\/pending-project-notes\/pending"/);
+  assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/write-data\/pending-project-notes\/claimed"/);
   assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/write-data\/audit"/);
   assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/audit"/);
 }
@@ -314,6 +317,7 @@ for (const version of [
   assert.match(joinedSources, /\/home\/ppo\/\.local\/openclaw\/tools\/node\/bin\/node/);
   assert.match(joinedSources, /\/home\/ppo\/\.local\/openclaw\/bin\/openclaw/);
   assert.match(joinedSources, /\/var\/lib\/personal-project-operator\/write-data\/project-notes/);
+  assert.match(joinedSources, /\/var\/lib\/personal-project-operator\/write-data\/pending-project-notes/);
   assert.doesNotMatch(joinedSources, /\/home\/ppo\/\.local\/openclaw\/bin\/node/);
   assert.match(joinedSources, /install-cli\.sh \| bash -s -- --prefix \/home\/ppo\/\.local\/openclaw --no-onboard/);
 }

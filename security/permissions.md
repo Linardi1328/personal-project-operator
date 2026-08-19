@@ -49,13 +49,18 @@ Allowed in Phase 5C only from a trusted terminal with exact confirmation and pri
 
 - append one local project note under `${PPO_WRITE_DATA_DIR}/project-notes` through `note-add <project> <note...>`
 
+Allowed in Phase 5D only through the existing `ppo_local` direct-tool path with local approval state:
+
+- stage one note-add request with `/ppo note-add <project> <note...>`
+- append one local project note only after `/ppo note-confirm <request-id>` atomically claims and consumes one unexpired request
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
 - create branches
 - delete branches
 - create issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
-- route `note-add` through `/ppo`, `ppo_local`, OpenClaw, or Telegram
+- create project notes outside the Phase 5C terminal path or Phase 5D approval-gated chat path
 - modify `projects/*.md` or project-state files from stored notes
 - comment on PRs
 - comment on issues

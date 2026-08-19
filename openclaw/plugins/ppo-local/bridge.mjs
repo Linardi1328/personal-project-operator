@@ -8,6 +8,10 @@ import {
   parsePpoIssueCreateRequest
 } from "../../../local-operator/github-issue-approval.mjs";
 import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
+import {
+  parsePpoNoteAddRequest,
+  parsePpoNoteConfirmRequest
+} from "../../../local-operator/project-note-approval.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -48,7 +52,9 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo prompt-size <draft>",
     "- /ppo split-task <task>",
     "- /ppo issue-create <project> <title> [--body <body>]",
-    "- /ppo issue-confirm <request-id>"
+    "- /ppo issue-confirm <request-id>",
+    "- /ppo note-add <project> <note...>",
+    "- /ppo note-confirm <request-id>"
   ].join("\n");
 }
 
@@ -151,6 +157,24 @@ function parseIssueConfirmCommand(rest) {
   }
 }
 
+function parseNoteAddCommand(rest) {
+  try {
+    const parsed = parsePpoNoteAddRequest(rest);
+
+    return ["/ppo", "note-add", parsed.projectId, parsed.note];
+  } catch {
+    return null;
+  }
+}
+
+function parseNoteConfirmCommand(rest) {
+  try {
+    return ["/ppo", "note-confirm", parsePpoNoteConfirmRequest(rest)];
+  } catch {
+    return null;
+  }
+}
+
 export function toPpoWrapperArgs(rawCommand) {
   if (typeof rawCommand !== "string") {
     return null;
@@ -204,6 +228,14 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "issue-confirm") {
     return parseIssueConfirmCommand(commandEnvelope.rest);
+  }
+
+  if (commandName === "note-add") {
+    return parseNoteAddCommand(commandEnvelope.rest);
+  }
+
+  if (commandName === "note-confirm") {
+    return parseNoteConfirmCommand(commandEnvelope.rest);
   }
 
   return null;

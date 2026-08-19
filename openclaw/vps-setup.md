@@ -10,7 +10,7 @@ Target:
 - OpenClaw managed by `systemd`
 - OpenClaw local-prefix runtime under `/home/ppo/.local/openclaw`
 - existing PPO wrapper and existing `ppo_local` plugin tool only
-- private Phase 5B/5C write-data under `/var/lib/personal-project-operator`
+- private Phase 5B/5C/5D write-data under `/var/lib/personal-project-operator`
 
 See [../deployment/README.md](../deployment/README.md) for the bootstrap scripts, systemd unit, health check, rollback procedure, and owner-only acceptance steps.
 
@@ -21,6 +21,7 @@ See [../deployment/README.md](../deployment/README.md) for the bootstrap scripts
 - No Telegram API behavior changes are added.
 - No GitHub writes, GraphQL, or new endpoint families are added by deployment scripts.
 - Phase 5B runtime issue creation is limited to `/ppo issue-create` staging and `/ppo issue-confirm` single-use approval through the existing `ppo_local` tool.
+- Phase 5D runtime note creation is limited to `/ppo note-add` staging and `/ppo note-confirm` single-use approval through the same existing `ppo_local` tool.
 - No Codex/model invocation is added.
 - No new OpenClaw tool or permission is added.
 - `/ppo vps-health` remains future work; Phase 4A provides only the local read-only health-check foundation.
@@ -105,13 +106,19 @@ PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-writ
 
 Pending issue request directories are private (`0700`) and request files are private (`0600`). Do not paste terminal write confirmation environment values into Telegram; `/ppo issue-confirm <request-id>` performs internal confirmation only after atomically claiming one unexpired request id.
 
-Phase 5C project notes use the same `PPO_WRITE_DATA_DIR` root and store append-only note files under:
+Phase 5C/5D project notes use the same `PPO_WRITE_DATA_DIR` root. Append-only note files are stored under:
 
 ```text
 /var/lib/personal-project-operator/write-data/project-notes
 ```
 
-`note-add` is terminal-only and is not routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not mutate `projects/*.md` or project-state files.
+Phase 5D pending note requests are stored temporarily under:
+
+```text
+/var/lib/personal-project-operator/write-data/pending-project-notes
+```
+
+`PPO_NOTE_WRITE_CONFIRM=add-note:<project>` is terminal-only and must not be configured in chat. `/ppo note-add` stages only, and `/ppo note-confirm <request-id>` consumes one pending request before invoking the Phase 5C writer with internal confirmation. Stored notes must not mutate `projects/*.md` or project-state files.
 
 The systemd unit remains installed as a root-owned system unit under `/etc/systemd/system`.
 

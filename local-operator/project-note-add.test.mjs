@@ -15,7 +15,6 @@ import {
   readProjectNoteRecords
 } from "./project-note-add.mjs"
 import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
-import { runPpoLocalTool, toPpoWrapperArgs } from "../openclaw/plugins/ppo-local/bridge.mjs"
 
 const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine"]
 const fixedNow = () => new Date("2026-08-19T01:02:03.000Z")
@@ -496,32 +495,6 @@ await withStore(async (writeDataDir) => {
   assertAuditMetadataOnly(auditRecords[0])
 })
 
-assert.equal(toPpoWrapperArgs("note-add khlim-assist terminal note"), null)
-assert.equal(toPpoWrapperArgs("/ppo note-add khlim-assist terminal note"), null)
-
-for (const input of [
-  "note-add khlim-assist terminal note",
-  "/ppo note-add khlim-assist terminal note"
-]) {
-  let wrapperCalls = 0
-  const result = await runPpoLocalTool(
-    { command: input },
-    {
-      runWrapper: async () => {
-        wrapperCalls += 1
-        return { stdout: "", stderr: "" }
-      }
-    }
-  )
-
-  assert.equal(result.ok, false, `${input} fails safely through ppo_local`)
-  assert.equal(result.exitCode, 1)
-  assert.deepEqual(result.wrapperArgs, [])
-  assert.equal(wrapperCalls, 0, `${input} executes zero wrapper calls`)
-  assert.match(result.stdout, /^Unsupported PPO tool input:/)
-  assert.doesNotMatch(result.stdout, /PPO_NOTE_WRITE_CONFIRM|SENSITIVE_TEST_SENTINEL|add-note:khlim-assist/)
-}
-
 await withStore(async (writeDataDir) => {
   const refused = spawnSync(process.execPath, [
     "local-operator/ppo-command.mjs",
@@ -567,24 +540,4 @@ await withStore(async (writeDataDir) => {
   assert.equal(records[0].note, "terminal confirmed note")
 })
 
-await withStore(async (writeDataDir) => {
-  const result = spawnSync(process.execPath, [
-    "local-operator/ppo-command.mjs",
-    "/ppo note-add khlim-assist should remain unsupported"
-  ], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PPO_WRITE_DATA_DIR: writeDataDir,
-      [NOTE_WRITE_CONFIRM_ENV]: khlimConfirmation
-    }
-  })
-
-  assert.equal(result.status, 1)
-  assert.match(result.stdout, /^Unsupported PPO command: note-add/)
-  assert.equal(result.stderr, "")
-  assert.equal((await readProjectNoteRecords("khlim-assist", { writeDataDir })).length, 0)
-  assert.equal((await readAuditRecords(writeDataDir)).length, 0)
-})
-
-console.log("Project note add tests passed: allowlist, terminal confirmation, append-only notes, metadata audit, safe failures, and /ppo rejection.")
+console.log("Project note add tests passed: allowlist, terminal confirmation, append-only notes, metadata audit, safe failures, and terminal behavior.")

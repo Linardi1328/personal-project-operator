@@ -17,7 +17,7 @@ Phase 4A files are server-local bootstrap materials only.
 
 - No live SSH is performed by these scripts.
 - No Telegram API behavior changes are introduced.
-- No GitHub write endpoint, GraphQL endpoint, or new endpoint family is added by the deployment files. Phase 5B runtime issue creation remains limited to the reviewed `/ppo issue-create` plus `/ppo issue-confirm` workflow.
+- No GitHub write endpoint, GraphQL endpoint, or new endpoint family is added by the deployment files. Phase 5B runtime issue creation remains limited to the reviewed `/ppo issue-create` plus `/ppo issue-confirm` workflow. Phase 5D runtime note creation remains limited to the reviewed `/ppo note-add` plus `/ppo note-confirm` local approval workflow.
 - No Codex, ChatGPT, OpenAI API, or model call is made.
 - No deployment is performed by automated tests.
 - No credentials, tokens, private keys, host addresses, or real secrets belong in this repository.
@@ -76,7 +76,7 @@ PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
 PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-write-audit.ndjson
 ```
 
-Phase 5C project notes use the same non-secret `PPO_WRITE_DATA_DIR` root and store append-only note files under `/var/lib/personal-project-operator/write-data/project-notes`.
+Phase 5C/5D project notes use the same non-secret `PPO_WRITE_DATA_DIR` root. Append-only note files live under `/var/lib/personal-project-operator/write-data/project-notes`; Phase 5D pending note requests live temporarily under `/var/lib/personal-project-operator/write-data/pending-project-notes`.
 
 The systemd unit runs this preflight before service start:
 
@@ -135,11 +135,11 @@ Rules:
 - configure only values required by OpenClaw or its connected providers
 - authenticate `gh` as the service user outside this repository when GitHub read-only commands are needed
 - keep Phase 5B write-data path variables pointed at private directories under `/var/lib/personal-project-operator`
-- keep Phase 5C project notes under the same private write-data root
+- keep Phase 5C/5D project notes under the same private write-data root
 - never paste credentials into Markdown, tests, fixtures, logs, commits, or chat
 - do not commit `.env` files or copied service environment files
 
-The systemd unit sets the non-secret Phase 5B paths directly:
+The systemd unit sets the non-secret Phase 5B/5D write-data paths directly:
 
 ```text
 PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
@@ -148,7 +148,7 @@ PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-writ
 
 Do not configure or paste terminal write confirmation environment values in OpenClaw chat. `/ppo issue-confirm <request-id>` supplies the Phase 5A confirmation internally after a pending request has been atomically claimed.
 
-`PPO_NOTE_WRITE_CONFIRM=add-note:<project>` is terminal-only and must not be configured in OpenClaw chat. Phase 5C `note-add` is not routed through `ppo_local`.
+`PPO_NOTE_WRITE_CONFIRM=add-note:<project>` is terminal-only and must not be configured in OpenClaw chat. Phase 5D `/ppo note-confirm <request-id>` supplies the Phase 5C confirmation internally after a pending request has been atomically claimed.
 
 ## Owner-Only VPS Bootstrap
 
@@ -188,6 +188,7 @@ The checkout at `/opt/personal-project-operator` is root-owned and read-only to 
 - Phase 5B pending request directories under `/var/lib/personal-project-operator/write-data` are created with `0700`, and pending request files are created with `0600`.
 - Phase 5B audit records are written to `/var/lib/personal-project-operator/audit/github-write-audit.ndjson` without title/body contents, request ids, tokens, or confirmation values.
 - Phase 5C note directories under `/var/lib/personal-project-operator/write-data/project-notes` are `0700`, note files are `0600`, and note audit records are metadata-only without note text, confirmation values, request ids, tokens, or raw failures.
+- Phase 5D pending note request directories under `/var/lib/personal-project-operator/write-data/pending-project-notes` are `0700`, pending files are `0600`, and pending note content is deleted on confirmation or expiry.
 
 ## Phase 5B Issue Approval Storage
 
@@ -216,6 +217,20 @@ stores confirmed append-only notes under:
 ```
 
 The command is not routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It uses exact terminal confirmation, creates private directories/files, appends one fsynced note record per confirmed action, and must not mutate `projects/*.md` or any project-state file.
+
+## Phase 5D Project Note Approval Storage
+
+`/ppo note-add <project> <note...>` writes one private pending request under:
+
+```text
+/var/lib/personal-project-operator/write-data/pending-project-notes
+```
+
+It performs no note append. The response includes the deterministic preview with project/repo/note length, an opaque one-time request id, the expiry timestamp, and `/ppo note-confirm <request-id>`.
+
+`/ppo note-confirm <request-id>` atomically renames one pending file into a claimed path, validates that it has not expired, deletes the claimed file, then invokes the existing Phase 5C note writer with internal confirmation. Unknown, expired, malformed, already-consumed, or replayed ids perform zero note writes. Requests expire after 10 minutes.
+
+The Phase 5C note audit remains metadata-only and must not include Phase 5D request ids, note text, terminal confirmation values, tokens, or raw failures.
 
 ## systemd Start, Restart, And Boot Recovery
 
