@@ -1,0 +1,149 @@
+name: Phase 5E branch validation
+
+on:
+  push:
+    branches:
+      - phase/5e-controlled-project-state-promotion
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase/5e-controlled-project-state-promotion
+          fetch-depth: 0
+
+      - name: Finalize terminal-only dispatcher
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("local-operator/ppo-command.mjs")
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '} from "./project-note-approval.mjs";\n',
+                  '} from "./project-note-approval.mjs";\nimport { handleProjectStatePromoteCommand } from "./project-state-promote.mjs";\n',
+                  'from "./project-state-promote.mjs";'
+              ),
+              (
+                  '    "  node local-operator/ppo-command.mjs note-add khlim-assist \\"project note text\\"",\n',
+                  '    "  node local-operator/ppo-command.mjs note-add khlim-assist \\"project note text\\"",\n    "  node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase",\n',
+                  'node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase'
+              ),
+              (
+                  '    "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append."\n',
+                  '    "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append.",\n    "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported."\n',
+                  'Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM'
+              ),
+              (
+                  '    "- note-add <project> <note...>",\n',
+                  '    "- note-add <project> <note...>",\n    "- state-promote <project> <note-id> <current-phase|last-known-status|next-action>",\n',
+                  '"- state-promote <project> <note-id> <current-phase|last-known-status|next-action>"'
+              )
+          ]
+
+          for anchor, replacement, marker in replacements:
+              if marker not in text:
+                  if anchor not in text:
+                      raise SystemExit(f"missing dispatcher anchor: {anchor!r}")
+                  text = text.replace(anchor, replacement, 1)
+
+          dispatch = '''  if (command === "state-promote") {
+            if (isPpoEnvelope(rawProcessArgs)) {
+              console.log(unsupported(rawCommand));
+              process.exitCode = 1;
+              return;
+            }
+
+            if (args.length !== 3) {
+              console.log(unsupported(rawCommand));
+              process.exitCode = 1;
+              return;
+            }
+
+            const [projectId, noteId, field] = args;
+            const result = await handleProjectStatePromoteCommand(projectId, noteId, field, {
+              confirmationValue: process.env.PPO_PROJECT_STATE_CONFIRM
+            });
+            console.log(result.output);
+            process.exitCode = result.ok ? 0 : 1;
+            return;
+          }
+
+          '''.replace("          ", "")
+          if 'command === "state-promote"' not in text:
+              anchor = '  if (command === "codex") {\n'
+              if anchor not in text:
+                  raise SystemExit("missing codex dispatcher anchor")
+              text = text.replace(anchor, dispatch + anchor, 1)
+
+          path.write_text(text)
+
+      - name: Node syntax checks
+        run: find local-operator deployment openclaw -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
+
+      - name: Shell syntax checks
+        run: find deployment -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      - name: Full regression suite
+        run: node --test --test-concurrency=1 local-operator/*.test.mjs deployment/*.test.mjs openclaw/plugins/ppo-local/test-bridge.mjs
+
+      - name: Terminal state-promote smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="projects/khlim-assist.md"
+          backup="$(mktemp)"
+          cp "$target" "$backup"
+          cleanup() {
+            cp "$backup" "$target"
+            rm -f "$backup"
+          }
+          trap cleanup EXIT
+
+          note_output="$(PPO_NOTE_WRITE_CONFIRM=add-note:khlim-assist node local-operator/ppo-command.mjs note-add khlim-assist 'Phase 5E CLI smoke promotion text.')"
+          note_id="$(printf '%s\n' "$note_output" | sed -n 's/^Note ID: //p')"
+          test "${#note_id}" -eq 43
+
+          PPO_PROJECT_STATE_CONFIRM="promote-note:khlim-assist:${note_id}:current-phase" \
+            node local-operator/ppo-command.mjs state-promote khlim-assist "$note_id" current-phase
+          grep -Fq 'Phase 5E CLI smoke promotion text.' "$target"
+
+          if node local-operator/ppo-command.mjs "/ppo state-promote khlim-assist ${note_id} current-phase"; then
+            echo '/ppo state-promote unexpectedly succeeded' >&2
+            exit 1
+          fi
+
+          cleanup
+          trap - EXIT
+          git diff --exit-code -- "$target"
+
+      - name: Diff and boundary checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --check origin/main...HEAD
+          file="local-operator/project-state-promote.mjs"
+          ! grep -Eqi 'api\.github\.com|openai|chatgpt|workflow_dispatch' "$file"
+          ! grep -Eqi 'git (add|commit|push|merge|checkout|reset|branch)' "$file"
+          grep -Fq '["rev-parse", "--abbrev-ref", "HEAD"]' "$file"
+          grep -Fq '"status"' "$file"
+
+      - name: Commit validated dispatcher and remove temporary validation workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/phase-5e-validation.yml .github/workflows/phase-5e-push-validation.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add local-operator/ppo-command.mjs .github/workflows/phase-5e-validation.yml .github/workflows/phase-5e-push-validation.yml
+          git commit -m "Wire Phase 5E terminal state promotion"
+          git push origin HEAD:phase/5e-controlled-project-state-promotion
