@@ -40,12 +40,17 @@ Allowed in Phase 5A only from a trusted terminal with exact confirmation and aud
 
 - create one GitHub issue in an approved project repo through `issue-create <project> <title> [body...]`
 
+Allowed in Phase 5B only through the existing `ppo_local` direct-tool path with local approval state:
+
+- stage one issue-create request with `/ppo issue-create <project> <title> [--body <body>]`
+- create one GitHub issue only after `/ppo issue-confirm <request-id>` atomically claims and consumes one unexpired request
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
 - create branches
 - delete branches
-- create issues outside the Phase 5A terminal-only path
+- create issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
 - comment on PRs
 - comment on issues
 - change labels

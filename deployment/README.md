@@ -17,7 +17,7 @@ Phase 4A files are server-local bootstrap materials only.
 
 - No live SSH is performed by these scripts.
 - No Telegram API behavior changes are introduced.
-- No GitHub write endpoint, GraphQL endpoint, or new endpoint family is added.
+- No GitHub write endpoint, GraphQL endpoint, or new endpoint family is added by the deployment files. Phase 5B runtime issue creation remains limited to the reviewed `/ppo issue-create` plus `/ppo issue-confirm` workflow.
 - No Codex, ChatGPT, OpenAI API, or model call is made.
 - No deployment is performed by automated tests.
 - No credentials, tokens, private keys, host addresses, or real secrets belong in this repository.
@@ -72,6 +72,8 @@ The service sets:
 
 ```text
 PATH=/home/ppo/.local/openclaw/tools/node/bin:/home/ppo/.local/openclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
+PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-write-audit.ndjson
 ```
 
 The systemd unit runs this preflight before service start:
@@ -130,8 +132,18 @@ Rules:
 - keep the file owned by root with restrictive permissions
 - configure only values required by OpenClaw or its connected providers
 - authenticate `gh` as the service user outside this repository when GitHub read-only commands are needed
+- keep Phase 5B write-data path variables pointed at private directories under `/var/lib/personal-project-operator`
 - never paste credentials into Markdown, tests, fixtures, logs, commits, or chat
 - do not commit `.env` files or copied service environment files
+
+The systemd unit sets the non-secret Phase 5B paths directly:
+
+```text
+PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
+PPO_GITHUB_WRITE_AUDIT_PATH=/var/lib/personal-project-operator/audit/github-write-audit.ndjson
+```
+
+Do not configure or paste terminal write confirmation environment values in OpenClaw chat. `/ppo issue-confirm <request-id>` supplies the Phase 5A confirmation internally after a pending request has been atomically claimed.
 
 ## Owner-Only VPS Bootstrap
 
@@ -168,6 +180,20 @@ The checkout at `/opt/personal-project-operator` is root-owned and read-only to 
 - `ppo` may read and execute the wrapper but must not mutate the checkout.
 - the systemd unit does not include `/opt/personal-project-operator` in `ReadWritePaths`.
 - writable runtime paths are limited to `/home/ppo`, `/var/lib/personal-project-operator`, and `/var/log/personal-project-operator`.
+- Phase 5B pending request directories under `/var/lib/personal-project-operator/write-data` are created with `0700`, and pending request files are created with `0600`.
+- Phase 5B audit records are written to `/var/lib/personal-project-operator/audit/github-write-audit.ndjson` without title/body contents, request ids, tokens, or confirmation values.
+
+## Phase 5B Issue Approval Storage
+
+`/ppo issue-create <project> <title> [--body <body>]` writes one private pending request under:
+
+```text
+/var/lib/personal-project-operator/write-data/pending-github-issues
+```
+
+It performs no GitHub call. The response includes the deterministic preview, an opaque one-time request id, the expiry timestamp, and `/ppo issue-confirm <request-id>`.
+
+`/ppo issue-confirm <request-id>` atomically renames one pending file into a claimed path, validates that it has not expired, deletes the claimed file, then invokes the existing Phase 5A issue writer with internal confirmation. Unknown, expired, malformed, already-consumed, or replayed ids perform zero GitHub writes. Requests expire after 10 minutes.
 
 ## systemd Start, Restart, And Boot Recovery
 

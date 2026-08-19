@@ -1,6 +1,6 @@
 ---
 name: ppo
-description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries and Phase 3C text tools.
+description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries, deterministic text tools, and Phase 5B approval-gated issue creation.
 user-invocable: true
 command-dispatch: tool
 command-tool: ppo_local
@@ -34,6 +34,8 @@ Personal Project Operator must use:
 /ppo codex-budget <project> <task>
 /ppo prompt-size <draft>
 /ppo split-task <task>
+/ppo issue-create <project> <title> [--body <body>]
+/ppo issue-confirm <request-id>
 ```
 
 ## Local wrapper
@@ -44,7 +46,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 3C, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids, and routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers. The bridge parses only the command envelope; task and draft text is inert data.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 5B, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; and routes only `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation. The bridge parses only the command envelope; task, draft, title, and body text is inert data.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -69,6 +71,8 @@ node local-operator/ppo-command.mjs menu project
 node local-operator/ppo-command.mjs help
 node local-operator/ppo-command.mjs repo khlim-assist
 node local-operator/ppo-command.mjs pr khlim-assist
+node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
+node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
 ```
 
 ## Command mapping
@@ -82,6 +86,8 @@ node local-operator/ppo-command.mjs pr khlim-assist
 | `/ppo codex-budget <project> <task>` | `ppo_local` raw `codex-budget <project> <task>` | Local deterministic budget estimate |
 | `/ppo prompt-size <draft>` | `ppo_local` raw `prompt-size <draft>` | Local prompt-size review |
 | `/ppo split-task <task>` | `ppo_local` raw `split-task <task>` | Local deterministic task split |
+| `/ppo issue-create <project> <title> [--body <body>]` | `ppo_local` raw `issue-create <project> <title> [--body <body>]` | Stage one approved-project issue intent; no GitHub write |
+| `/ppo issue-confirm <request-id>` | `ppo_local` raw `issue-confirm <request-id>` | Atomically claim one pending request, then create one issue through the Phase 5A writer |
 | `/ppo menu` | `ppo_local` raw `menu` | `/menu` |
 | `/ppo menu project` | `ppo_local` raw `menu project` | `/menu project` |
 | `/ppo menu codex` | `ppo_local` raw `menu codex` | `/menu codex` |
@@ -90,11 +96,11 @@ node local-operator/ppo-command.mjs pr khlim-assist
 
 ## Safety boundaries
 
-The plugin, wrapper, and simulator are read-only.
+The plugin, wrapper, and simulator are read-only except for the Phase 5B local pending store and the single approved GitHub issue creation write after `/ppo issue-confirm`.
 
 They must not:
 
-- call GitHub APIs except the approved Phase 2A read-only endpoint families for `/ppo status`, `/ppo repo`, and `/ppo pr`
+- call GitHub APIs except the approved Phase 2A read-only endpoint families for `/ppo status`, `/ppo repo`, and `/ppo pr`, and the Phase 5A `POST /repos/<approved repo>/issues` writer after `/ppo issue-confirm`
 - call Telegram APIs
 - handle bot tokens
 - scrape Codex usage
@@ -102,7 +108,9 @@ They must not:
 - deploy to VPS
 - store secrets
 - mutate project files
-- perform external write actions
+- perform external write actions other than the single approved issue creation path
+- accept or expose terminal write confirmation environment values through chat
+- create comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state changes, or deployments
 - execute arbitrary shell commands
 
 ## Expected OpenClaw behavior
@@ -112,7 +120,7 @@ OpenClaw should parse Telegram text that starts with `/ppo`, then pass the raw a
 Expected flow:
 
 ```text
-Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture, GitHub read-only, or deterministic text output
+Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture, GitHub read-only, deterministic text output, or Phase 5B issue approval flow
 ```
 
 ## Unsupported commands

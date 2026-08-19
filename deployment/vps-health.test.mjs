@@ -188,6 +188,8 @@ async function assertModeLockClean(repoPath, script) {
   assert.match(unit, /User=ppo/);
   assert.match(unit, /Group=ppo/);
   assert.match(unit, /Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external/);
+  assert.match(unit, /Environment=PPO_WRITE_DATA_DIR=\/var\/lib\/personal-project-operator\/write-data/);
+  assert.match(unit, /Environment=PPO_GITHUB_WRITE_AUDIT_PATH=\/var\/lib\/personal-project-operator\/audit\/github-write-audit\.ndjson/);
   assert.match(unit, /Environment=PATH=\/home\/ppo\/\.local\/openclaw\/tools\/node\/bin:\/home\/ppo\/\.local\/openclaw\/bin:/);
   assert.match(unit, /ExecStartPre=\/opt\/personal-project-operator\/deployment\/scripts\/preflight-openclaw-runtime\.sh/);
   assert.match(unit, /ExecStart=\/home\/ppo\/\.local\/openclaw\/bin\/openclaw gateway run/);
@@ -207,6 +209,8 @@ async function assertModeLockClean(repoPath, script) {
   assert.doesNotMatch(bootstrap, /\bnodejs\b|\bnpm\b/, "bootstrap does not install unsupported Ubuntu apt Node runtime");
   assert.match(bootstrap, /ca-certificates curl git gh ufw logrotate iproute2/);
   assert.match(bootstrap, /\/home\/\$\{SERVICE_USER\}\/\.local\/openclaw/);
+  assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/write-data"/);
+  assert.match(bootstrap, /install -d -m 0700 -o "\$SERVICE_USER" -g "\$SERVICE_GROUP" "\$\{STATE_DIR\}\/audit"/);
 }
 
 {

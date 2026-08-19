@@ -1,8 +1,8 @@
 # Local Install Notes
 
-These notes describe the manual Phase 1.5 OpenClaw setup for Personal Project Operator. This repository never modifies `~/.openclaw` automatically.
+These notes describe the manual OpenClaw setup for Personal Project Operator. This repository never modifies `~/.openclaw` automatically.
 
-Phase 1.5 needs both local components:
+PPO needs both local components:
 
 - Skill: `<ppo-repo>/openclaw/skills/ppo`
 - Plugin/tool: `<ppo-repo>/openclaw/plugins/ppo-local`
@@ -15,7 +15,7 @@ The skill owns the `/ppo` command namespace and uses direct tool dispatch. The p
 - Telegram is already connected to OpenClaw locally.
 - This repository is available on the same MacBook.
 - Node.js is available on the same `PATH` used by OpenClaw.
-- The Phase 1 simulator works from terminal.
+- The local wrapper works from terminal.
 - No PPO token, API key, password, or secret is required.
 - Telegram/OpenClaw credentials stay outside this repository.
 
@@ -74,7 +74,7 @@ openclaw plugins enable ppo-local
 
 If the owner's config uses `plugins.allow`, add `ppo-local` to that allowlist manually.
 
-Do not use a copied plugin install for the Phase 1.5 Telegram owner test. The plugin intentionally resolves the wrapper from the linked repo path:
+Do not use a copied plugin install for Telegram owner tests. The plugin intentionally resolves the wrapper from the linked repo path:
 
 ```text
 openclaw/plugins/ppo-local -> ../../../local-operator/ppo-command.mjs
@@ -157,7 +157,25 @@ OpenClaw forwards the raw `/ppo` argument string to `ppo_local` as:
 }
 ```
 
-The tool validates that raw command against the approved Phase 1.5 surface before invoking the wrapper.
+The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds only `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface.
+
+## Local Phase 5B write-data paths
+
+For local testing, pending issue requests default to:
+
+```text
+<ppo-repo>/local-operator/write-data
+```
+
+You may override the local pending store and audit file:
+
+```bash
+PPO_WRITE_DATA_DIR=/private/tmp/ppo-write-data \
+PPO_GITHUB_WRITE_AUDIT_PATH=/private/tmp/ppo-audit/github-write-audit.ndjson \
+openclaw gateway restart
+```
+
+Pending request directories are created with `0700`, request files are created with `0600`, and request ids expire after 10 minutes. Do not paste terminal write confirmation environment values into Telegram; `/ppo issue-confirm <request-id>` supplies confirmation internally after the id is claimed.
 
 ## Refresh OpenClaw
 
@@ -364,11 +382,17 @@ If those pass, test:
 /ppo menu project
 /ppo menu codex
 /ppo menu system
+/ppo repo khlim-assist
+/ppo pr khlim-assist
+/ppo codex khlim-assist add provider validation tests
+/ppo issue-create khlim-assist owner review test issue --body created only after confirmation
 ```
+
+Only confirm a staged issue with `/ppo issue-confirm <request-id>` when the owner intends to create that GitHub issue.
 
 ## Safety Boundary
 
-This setup is local-only.
+This setup keeps a single OpenClaw tool, `ppo_local`.
 
 Do not add:
 
@@ -377,4 +401,5 @@ Do not add:
 - Telegram API calls in repo code
 - VPS deployment scripts
 - Codex usage scraping
-- write actions
+- OpenClaw tools beyond `ppo_local`
+- GitHub writes beyond Phase 5B `/ppo issue-create` staging plus `/ppo issue-confirm` single-use issue creation

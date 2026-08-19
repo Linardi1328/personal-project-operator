@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, open } from "node:fs/promises"
+import { chmod, mkdir, open } from "node:fs/promises"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
@@ -18,6 +18,7 @@ export const MAX_ISSUE_BODY_ARGS = 80
 export const DEFAULT_GITHUB_WRITE_AUDIT_PATH = fileURLToPath(
   new URL("./audit/github-write-audit.ndjson", import.meta.url)
 )
+export const GITHUB_WRITE_AUDIT_PATH_ENV = "PPO_GITHUB_WRITE_AUDIT_PATH"
 
 const GITHUB_WRITE_TIMEOUT_MS = 15000
 const GITHUB_WRITE_MAX_BUFFER = 512 * 1024
@@ -234,6 +235,41 @@ export function prepareIssueCreateIntent(projectId, titleInput, bodyInput = "") 
     title,
     body,
     requiredConfirmation: `${GITHUB_ISSUE_CREATE_ACTION}:${project.id}`
+  }
+}
+
+export function normalizePreparedIssueCreateIntent(intent) {
+  if (!intent || typeof intent !== "object" || Array.isArray(intent)) {
+    throw issueCreateError(
+      "INVALID_INTENT",
+      "GitHub issue-create intent is invalid; no GitHub write was attempted."
+    )
+  }
+
+  const expected = prepareIssueCreateIntent(intent.project?.id, intent.title, intent.body)
+  const storedProject = intent.project || {}
+  const matchesExpectedIntent =
+    intent.action === expected.action &&
+    intent.dangerLevel === expected.dangerLevel &&
+    intent.method === expected.method &&
+    intent.endpoint === expected.endpoint &&
+    intent.requiredConfirmation === expected.requiredConfirmation &&
+    storedProject.id === expected.project.id &&
+    storedProject.owner === expected.project.owner &&
+    storedProject.repo === expected.project.repo &&
+    storedProject.fullName === expected.project.fullName
+
+  if (!matchesExpectedIntent) {
+    throw issueCreateError(
+      "INVALID_INTENT",
+      "GitHub issue-create intent is invalid; no GitHub write was attempted."
+    )
+  }
+
+  return {
+    ...expected,
+    title: expected.title,
+    body: expected.body
   }
 }
 
@@ -460,7 +496,7 @@ export function buildGitHubWriteAuditRecord(intent, status, details = {}, now = 
 }
 
 export function createGitHubWriteAuditRecorder({
-  auditPath = DEFAULT_GITHUB_WRITE_AUDIT_PATH
+  auditPath = process.env[GITHUB_WRITE_AUDIT_PATH_ENV] || DEFAULT_GITHUB_WRITE_AUDIT_PATH
 } = {}) {
   return {
     auditPath,
@@ -468,6 +504,7 @@ export function createGitHubWriteAuditRecorder({
     async record(entry) {
       const line = `${JSON.stringify(entry)}\n`
       await mkdir(dirname(auditPath), { recursive: true, mode: 0o700 })
+      await chmod(dirname(auditPath), 0o700)
       const file = await open(auditPath, "a", 0o600)
 
       try {
@@ -476,6 +513,8 @@ export function createGitHubWriteAuditRecorder({
       } finally {
         await file.close()
       }
+
+      await chmod(auditPath, 0o600)
     }
   }
 }
@@ -541,99 +580,114 @@ function normalizeCreatedIssueResult(createdIssue, intent) {
   }
 }
 
-export async function handleGitHubIssueCreateCommand(projectId, titleInput, bodyInput = [], options = {}) {
+async function runGitHubIssueCreateIntent(intent, options = {}) {
+  const now = options.now ? options.now() : new Date()
+  const auditRecorder = options.auditRecorder || createGitHubWriteAuditRecorder({
+    auditPath: options.auditPath || process.env[GITHUB_WRITE_AUDIT_PATH_ENV] || DEFAULT_GITHUB_WRITE_AUDIT_PATH
+  })
+  const confirmationValue = String(options.confirmationValue ?? "")
+  const preview = buildIssueCreatePreview(intent)
+
+  if (confirmationValue !== intent.requiredConfirmation) {
+    const reason = confirmationValue ? "confirmation_mismatch" : "confirmation_missing"
+    const auditRecorded = await tryRecordAudit(auditRecorder, intent, "refused", { reason }, now)
+    const auditLine = auditRecorded
+      ? "Audit: refusal recorded"
+      : "Audit: unavailable for refused write attempt; no GitHub write was attempted"
+
+    return {
+      ok: false,
+      output: [
+        preview,
+        confirmationRefusalLine(intent, confirmationValue),
+        confirmationInstruction(intent),
+        auditLine
+      ].join("\n")
+    }
+  }
+
   try {
-    const intent = prepareIssueCreateIntent(projectId, titleInput, bodyInput)
-    const now = options.now ? options.now() : new Date()
-    const auditRecorder = options.auditRecorder || createGitHubWriteAuditRecorder({
-      auditPath: options.auditPath || DEFAULT_GITHUB_WRITE_AUDIT_PATH
-    })
-    const confirmationValue = String(options.confirmationValue ?? "")
-    const preview = buildIssueCreatePreview(intent)
-
-    if (confirmationValue !== intent.requiredConfirmation) {
-      const reason = confirmationValue ? "confirmation_mismatch" : "confirmation_missing"
-      const auditRecorded = await tryRecordAudit(auditRecorder, intent, "refused", { reason }, now)
-      const auditLine = auditRecorded
-        ? "Audit: refusal recorded"
-        : "Audit: unavailable for refused write attempt; no GitHub write was attempted"
-
-      return {
-        ok: false,
-        output: [
-          preview,
-          confirmationRefusalLine(intent, confirmationValue),
-          confirmationInstruction(intent),
-          auditLine
-        ].join("\n")
-      }
+    await recordAudit(auditRecorder, intent, "attempted", { reason: "confirmed" }, now)
+  } catch {
+    return {
+      ok: false,
+      output: formatGitHubIssueCreateError(issueCreateError(
+        "AUDIT_UNAVAILABLE",
+        "GitHub write audit trail is unavailable; no GitHub write was attempted."
+      ))
     }
+  }
 
-    try {
-      await recordAudit(auditRecorder, intent, "attempted", { reason: "confirmed" }, now)
-    } catch {
+  const writer = options.writer || createGitHubIssueWriter()
+  let createdIssue
+
+  try {
+    createdIssue = normalizeCreatedIssueResult(await runInjectedWriter(writer, intent), intent)
+  } catch (error) {
+    const safeError = classifyIssueCreateFailure(error, intent)
+    const failureRecorded = await tryRecordAudit(
+      auditRecorder,
+      intent,
+      "failed",
+      { code: safeError.code },
+      options.now ? options.now() : new Date()
+    )
+
+    if (!failureRecorded) {
       return {
         ok: false,
         output: formatGitHubIssueCreateError(issueCreateError(
           "AUDIT_UNAVAILABLE",
-          "GitHub write audit trail is unavailable; no GitHub write was attempted."
-        ))
-      }
-    }
-
-    const writer = options.writer || createGitHubIssueWriter()
-    let createdIssue
-
-    try {
-      createdIssue = normalizeCreatedIssueResult(await runInjectedWriter(writer, intent), intent)
-    } catch (error) {
-      const safeError = classifyIssueCreateFailure(error, intent)
-      const failureRecorded = await tryRecordAudit(
-        auditRecorder,
-        intent,
-        "failed",
-        { code: safeError.code },
-        options.now ? options.now() : new Date()
-      )
-
-      if (!failureRecorded) {
-        return {
-          ok: false,
-          output: formatGitHubIssueCreateError(issueCreateError(
-            "AUDIT_UNAVAILABLE",
-            "GitHub issue creation failed and the failure audit record could not be written."
-          ))
-        }
-      }
-
-      return {
-        ok: false,
-        output: formatGitHubIssueCreateError(safeError)
-      }
-    }
-
-    try {
-      await recordAudit(
-        auditRecorder,
-        intent,
-        "succeeded",
-        { issueNumber: createdIssue.number },
-        options.now ? options.now() : new Date()
-      )
-    } catch {
-      return {
-        ok: false,
-        output: formatGitHubIssueCreateError(issueCreateError(
-          "AUDIT_UNAVAILABLE",
-          "GitHub issue may have been created, but the success audit record could not be written. Inspect the repository and audit trail before retrying."
+          "GitHub issue creation failed and the failure audit record could not be written."
         ))
       }
     }
 
     return {
-      ok: true,
-      output: formatCreatedIssue(intent, createdIssue)
+      ok: false,
+      output: formatGitHubIssueCreateError(safeError)
     }
+  }
+
+  try {
+    await recordAudit(
+      auditRecorder,
+      intent,
+      "succeeded",
+      { issueNumber: createdIssue.number },
+      options.now ? options.now() : new Date()
+    )
+  } catch {
+    return {
+      ok: false,
+      output: formatGitHubIssueCreateError(issueCreateError(
+        "AUDIT_UNAVAILABLE",
+        "GitHub issue may have been created, but the success audit record could not be written. Inspect the repository and audit trail before retrying."
+      ))
+    }
+  }
+
+  return {
+    ok: true,
+    output: formatCreatedIssue(intent, createdIssue)
+  }
+}
+
+export async function handlePreparedGitHubIssueCreateIntent(intent, options = {}) {
+  try {
+    return await runGitHubIssueCreateIntent(normalizePreparedIssueCreateIntent(intent), options)
+  } catch (error) {
+    return {
+      ok: false,
+      output: formatGitHubIssueCreateError(error)
+    }
+  }
+}
+
+export async function handleGitHubIssueCreateCommand(projectId, titleInput, bodyInput = [], options = {}) {
+  try {
+    const intent = prepareIssueCreateIntent(projectId, titleInput, bodyInput)
+    return await runGitHubIssueCreateIntent(intent, options)
   } catch (error) {
     return {
       ok: false,

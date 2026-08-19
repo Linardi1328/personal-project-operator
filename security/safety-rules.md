@@ -62,7 +62,7 @@ Future write actions require:
 - documented danger level
 - audit trail
 
-## Phase 5A controlled issue-create boundary
+## Phase 5A controlled terminal issue-create boundary
 
 Phase 5A allows exactly one terminal-only write action:
 
@@ -81,6 +81,23 @@ The command must:
 - fail closed before confirmed writes if audit logging cannot be established
 
 Phase 5A must not route `issue-create` through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not create or update PRs, comments, labels, branches, commits, merges, workflow dispatches, project-state files, VPS deployment, or any other GitHub write.
+
+## Phase 5B approval-gated chat issue-create boundary
+
+Phase 5B allows exactly two `/ppo` chat commands through the existing `ppo_local` direct-tool path:
+
+```text
+/ppo issue-create <project> <title> [--body <body>]
+/ppo issue-confirm <request-id>
+```
+
+`/ppo issue-create` must not call GitHub. It validates the project id, title, and body using the Phase 5A rules, prints the deterministic issue preview, stores the exact normalized intent in the private local pending store, and returns only `/ppo issue-confirm <request-id>`.
+
+`/ppo issue-confirm` must atomically claim one matching unexpired request before any network write. Claiming consumes the id, and the persisted request content is deleted before the Phase 5A writer is invoked. Unknown, expired, already-consumed, malformed, or replayed request ids must not perform GitHub writes.
+
+The chat path must not accept or print terminal write confirmation environment values. Confirmation is internal to the local operator process. Pending request directories must be `0700`, pending files must be `0600`, request ids must be cryptographically random and opaque, and requests expire after 10 minutes.
+
+Phase 5B must not add a model turn, new OpenClaw tools, provider access, arbitrary GitHub endpoints, comments, labels, assignees, milestones, PR/branch/commit/merge/workflow writes, project-state mutations, deployment behavior, or any write other than creating one approved GitHub issue after single-use confirmation.
 
 ## Financial and trading boundary
 

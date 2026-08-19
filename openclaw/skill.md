@@ -9,6 +9,7 @@ It should help the user:
 - inspect project status
 - choose the next project to work on
 - summarize repos and PRs in future read-only phases
+- stage and confirm tightly scoped GitHub issue creation after approval
 - generate compact Codex prompts
 - track Codex usage manually
 - understand safe and blocked actions
@@ -24,6 +25,8 @@ Project Control:
 - `/ppo next`
 - `/ppo repo <project>`
 - `/ppo pr <project>`
+- `/ppo issue-create <project> <title> [--body <body>]`
+- `/ppo issue-confirm <request-id>`
 - `/ppo handoff <project>`
 
 Codex Workflow:
@@ -90,6 +93,8 @@ Write actions must remain disabled unless:
 - explicit user approval is captured
 - the action is auditable
 
+Phase 5B permits only the listed `/ppo issue-create` staging command and `/ppo issue-confirm` single-use confirmation command. It does not add comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployments, or new OpenClaw tools.
+
 ## Expected future tool integrations
 
 - OpenClaw command routing
@@ -108,6 +113,8 @@ Write actions must remain disabled unless:
 /ppo next
 /ppo repo khlim-assist
 /ppo pr ledgerpilot-ai
+/ppo issue-create khlim-assist Document provider validation --body Add owner-visible test notes
+/ppo issue-confirm <request-id>
 /ppo codex spy-market-agent hardening
 /ppo codex-usage
 /ppo safe-mode
