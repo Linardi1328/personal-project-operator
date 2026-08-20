@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Generate the normal PPO Codex implementation prompt with the mandatory PPO Implementation Learning Debrief standard appended.
+Generate the normal PPO Codex implementation prompt with the PPO Implementation Learning Debrief standard appended as an optional learning artifact.
 
-The goal is to make AI-assisted development transfer engineering knowledge back to the project owner instead of only producing code.
+The goal is to make AI-assisted development transfer engineering knowledge back to the project owner without turning learning into a required supervision gate.
 
 ## Current implementation
 
@@ -22,9 +22,11 @@ node local-operator/codex-learning-prompt.mjs ledgerpilot-ai "add controlled rev
 
 The command reuses the existing PPO Codex prompt generator, so supported project IDs and GitHub read-only context follow the existing Codex workflow.
 
-## Required debrief
+The final learning prompt has its own deterministic size bound. If the base prompt plus learning contract exceeds that bound, generation fails safely and the task must be split or compacted before retrying.
 
-After implementation and checks, the coding agent must produce a structured debrief covering:
+## Learning debrief
+
+When the owner selects the learning workflow, the coding agent should produce a structured debrief covering:
 
 - objective and completed scope;
 - major implementation changes;
@@ -38,12 +40,12 @@ After implementation and checks, the coding agent must produce a structured debr
 - important files to inspect;
 - known limitations and technical debt;
 - learning notes for unfamiliar concepts;
-- 3-5 owner knowledge-check questions;
+- 3-5 optional owner knowledge-check questions;
 - recommended next step.
 
-## Owner-learning gate
+## Non-blocking learning policy
 
-A task should not be treated as ready for owner approval until the implementation debrief exists.
+The debrief and knowledge-check questions are learning aids only. They are not prerequisites for automated implementation, review, hardening, merge, deployment, or phase closure when the engineering policy gates have already passed.
 
 The debrief is not a request for private chain-of-thought. It should contain concise engineering rationale, evidence, alternatives, trade-offs, and conclusions grounded in the actual implementation.
 
@@ -53,3 +55,4 @@ The debrief is not a request for private chain-of-thought. It should contain con
 - It does not merge, push, deploy, send messages, spend money, or perform production mutations.
 - Repository context remains read-only through the existing PPO Codex prompt workflow.
 - Unknown rationale must be reported as unknown instead of invented.
+- Learning output must not create an additional mandatory owner-approval checkpoint.
