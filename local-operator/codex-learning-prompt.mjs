@@ -89,7 +89,11 @@ async function main() {
   try {
     console.log(await generateCodexLearningPrompt(projectId, taskParts))
   } catch (error) {
-    console.error(formatCodexPromptError(error))
+    if (error instanceof RangeError || error instanceof TypeError) {
+      console.error(`Codex learning prompt generation failed: ${error.message}`)
+    } else {
+      console.error(formatCodexPromptError(error))
+    }
     process.exitCode = 1
   }
 }
