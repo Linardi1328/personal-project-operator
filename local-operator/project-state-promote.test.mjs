@@ -3,6 +3,7 @@ import { execFile } from "node:child_process"
 import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import test from "node:test"
 import {
@@ -612,8 +613,8 @@ test("Phase 5D staged /ppo note approval remains functional", async () => {
 })
 
 test("/ppo state-promote remains unsupported while bare terminal state-promote is reserved for Phase 5E", async () => {
-  const repoRoot = new URL("../", import.meta.url)
-  const commandPath = new URL("ppo-command.mjs", import.meta.url)
+  const repoRoot = fileURLToPath(new URL("../", import.meta.url))
+  const commandPath = fileURLToPath(new URL("ppo-command.mjs", import.meta.url))
   let error
 
   try {
