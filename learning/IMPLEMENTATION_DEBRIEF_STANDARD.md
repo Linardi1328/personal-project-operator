@@ -6,10 +6,10 @@ Version: `ppo.implementation-learning-debrief.v1`
 
 Personal Project Operator should optimize for two outcomes at the same time:
 
-1. AI accelerates implementation.
-2. The project owner understands the major engineering decisions well enough to supervise, review, and explain the system.
+1. AI accelerates implementation with minimal routine owner supervision.
+2. The project owner can request concise engineering explanations that improve understanding of major implementation decisions.
 
-This standard applies to all PPO-managed software projects and future projects that use PPO-generated implementation prompts.
+This standard applies to PPO-managed software projects and future projects that use the optional PPO learning-prompt workflow.
 
 ## Lifecycle
 
@@ -19,13 +19,16 @@ Plan
   -> Implement
   -> Test / validate
   -> Review actual changes
+  -> Harden when required
+  -> Engineering policy gates
+  -> Merge / deploy / close phase when policy permits
+
+Optional learning path:
   -> Produce Implementation Learning Debrief
   -> Owner learning / knowledge check
-  -> Owner approval
-  -> Phase closure
 ```
 
-A meaningful implementation task is not considered ready for owner approval until the debrief is present.
+The learning path is informational. It must not become a prerequisite for autonomous implementation, review, hardening, merge, deployment, or phase closure when the engineering policy gates have passed.
 
 ## Evidence rule
 
@@ -33,7 +36,7 @@ The debrief must be grounded in the actual implementation, changed code, tests, 
 
 If the evidence does not establish why a choice was made, the debrief must say that the rationale is unknown or inferred. It must not invent certainty.
 
-## Required sections
+## Learning output sections
 
 ### 1. Objective and completed scope
 
@@ -90,9 +93,9 @@ State intentionally deferred work, shortcuts, edge cases, unresolved risks, and 
 
 Teach unfamiliar concepts in plain language using examples from the project. Prefer project-specific explanations over generic textbook definitions.
 
-### 13. Knowledge-check questions
+### 13. Optional knowledge-check questions
 
-Ask 3-5 short questions focused on major decisions. Questions should test explanation and judgment, not memorization.
+Ask 3-5 short questions focused on major decisions. Questions should test explanation and judgment, not memorization. Answering them is optional and must not affect engineering approval or delivery state.
 
 Examples:
 
@@ -115,6 +118,12 @@ Use proportional depth:
 
 Do not create long lectures for trivial changes.
 
+## Autonomous-delivery compatibility
+
+The learning standard is deliberately separate from delivery policy. PPO may continue through implementation, automated review, hardening, acceptance gates, merge, deployment, rollback, and project-state advancement without waiting for the owner to consume a debrief or answer knowledge-check questions, provided the relevant engineering policy authorizes those actions.
+
+The owner may request a debrief before, during, or after delivery without changing the reviewed SHA or delivery decision.
+
 ## Knowledge map direction
 
 Future PPO phases may maintain a cross-project owner knowledge map with concept states such as:
@@ -125,7 +134,7 @@ Introduced -> Explained -> Practiced -> Demonstrated -> Comfortable
 
 The map should connect repeated concepts across projects so that, for example, idempotency learned from KHLIM Assist can be reinforced when it appears in LedgerPilot AI.
 
-The current v1 implementation does not persist proficiency claims automatically. It establishes the prompt/debrief contract first.
+The current v1 implementation does not persist proficiency claims automatically. It establishes an optional prompt/debrief contract first.
 
 ## Reasoning privacy
 
