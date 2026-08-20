@@ -1,0 +1,35 @@
+name: PPO PR validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - 'phase/**'
+      - 'feature/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node syntax checks
+        run: find local-operator deployment openclaw -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
+
+      - name: Shell syntax checks
+        run: find deployment -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      - name: Full regression suite
+        run: node --test --test-concurrency=1 local-operator/*.test.mjs deployment/*.test.mjs openclaw/plugins/ppo-local/test-bridge.mjs
+
+      - name: Diff whitespace checks
+        run: |
+          git diff --check
+          git diff --check origin/main...HEAD
