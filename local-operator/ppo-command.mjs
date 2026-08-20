@@ -20,6 +20,7 @@ import {
   handlePpoNoteAddApprovalCommand,
   handlePpoNoteConfirmCommand
 } from "./project-note-approval.mjs";
+import { handleProjectStatePromoteCommand } from "./project-state-promote.mjs";
 
 const execFileAsync = promisify(execFile);
 const simulatorPath = fileURLToPath(new URL("simulate-command.mjs", import.meta.url));
@@ -216,6 +217,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs pr khlim-assist",
     "  node local-operator/ppo-command.mjs issue-create khlim-assist \"issue title\" \"optional body\"",
     "  node local-operator/ppo-command.mjs note-add khlim-assist \"project note text\"",
+    "  node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase",
     "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
     "  node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai \"add invoice import workflow\"",
     "  node local-operator/ppo-command.mjs prompt-size \"Goal: build one focused feature\"",
@@ -253,7 +255,8 @@ function usage() {
     "Phase 5A boundary: terminal issue-create requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>.",
     "Phase 5B boundary: /ppo issue-create only stages a pending request; /ppo issue-confirm performs the approved single-use write.",
     "Phase 5C boundary: terminal note-add requires PPO_NOTE_WRITE_CONFIRM=add-note:<project>.",
-    "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append."
+    "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append.",
+    "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported."
   ].join("\n");
 }
 
@@ -283,6 +286,7 @@ function unsupported(command) {
     "Terminal-only additions:",
     "- issue-create <project> <title> [body...]",
     "- note-add <project> <note...>",
+    "- state-promote <project> <note-id> <current-phase|last-known-status|next-action>",
     "",
     "Try: node local-operator/ppo-command.mjs menu"
   ].join("\n");
@@ -598,6 +602,28 @@ async function main() {
     }
 
     const result = await handlePpoNoteConfirmCommand(payloadAfterCommand(rawProcessArgs, command));
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (command === "state-promote") {
+    if (isPpoEnvelope(rawProcessArgs)) {
+      console.log(unsupported(rawCommand));
+      process.exitCode = 1;
+      return;
+    }
+
+    if (args.length !== 3) {
+      console.log(unsupported(rawCommand));
+      process.exitCode = 1;
+      return;
+    }
+
+    const [projectId, noteId, field] = args;
+    const result = await handleProjectStatePromoteCommand(projectId, noteId, field, {
+      confirmationValue: process.env.PPO_PROJECT_STATE_CONFIRM
+    });
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;

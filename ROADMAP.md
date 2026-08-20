@@ -188,12 +188,27 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 - Keep the existing `ppo_local` tool only, direct command dispatch only, and bare terminal `note-add` behavior unchanged. Bare terminal `note-confirm` remains unsupported.
 - Do not call GitHub APIs, modify `projects/*.md` or project-state files, create comments, labels, issues, PRs, branches, commits, merges, workflow dispatches, deployments, model calls, or new OpenClaw tools.
 
+### Phase 5E - Terminal-only controlled project-state promotion foundation
+
+- Add terminal-only `node local-operator/ppo-command.mjs state-promote <project> <note-id> <field>`.
+- Allow exactly `current-phase`, `last-known-status`, and `next-action` as project-state fields.
+- Resolve the project only through the existing five-project registry and require the durable Phase 5C/5D note to belong to that project.
+- Require the exact `PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>` confirmation before mutation.
+- Refuse on `main`, refuse when the selected project-state file is dirty, and re-check the target hash immediately before replacement.
+- Replace only the selected level-two Markdown section body and preserve all other bytes.
+- Use same-directory temporary-file write, file fsync, atomic rename, and directory fsync for durable replacement.
+- Record metadata-only attempted/succeeded/failed/refused audit entries with project, field, note id, timestamps, and before/after hashes; never record note text, confirmation values, tokens, or raw failures.
+- Fail closed before mutation when the attempted audit cannot be established; report ambiguous outcomes when mutation may have occurred but durability or final success audit cannot be confirmed.
+- Refuse duplicate promotion of the same project/note/field tuple and block automatic retry after a dangling attempted record.
+- Keep Phase 5E terminal-only. `/ppo state-promote` remains unsupported and Telegram/OpenClaw project-state promotion is deferred to a separately reviewed later stage.
+- Do not add GitHub API writes, model calls, deployment actions, or git add/commit/push/merge/checkout/reset/branch operations to the runtime path.
+
 ### Later Phase 5 work
 
 Only after separate explicit approval:
 
-- Update project state files.
-- Promote or summarize stored project notes into project state files.
-- Never auto-merge or deploy.
+- Add approval-gated Telegram/OpenClaw project-state promotion.
+- Add richer note summarization/promotion only with separately reviewed deterministic or model boundaries.
+- Never auto-merge or deploy as part of Phase 5 project-state mutation work.
 
 Phase 5 write actions must be individually reviewed, permissioned, and auditable.
