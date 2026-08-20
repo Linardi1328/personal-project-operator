@@ -378,6 +378,24 @@ Phase 5D adds two `/ppo` commands through the existing `ppo_local` direct-tool p
 
 Pending note requests live under `${PPO_WRITE_DATA_DIR}/pending-project-notes`; confirmed notes remain append-only under `${PPO_WRITE_DATA_DIR}/project-notes`. Phase 5D preserves the Phase 5C metadata-only note audit and does not include note text, request ids, terminal confirmation values, tokens, or raw failures. It does not call GitHub or mutate `projects/*.md` or project-state files.
 
+## Phase 5E Controlled Project-State Promotion Foundation
+
+Phase 5E adds one terminal-only project-state mutation path:
+
+```bash
+node local-operator/ppo-command.mjs state-promote <project> <note-id> <current-phase|last-known-status|next-action>
+```
+
+A confirmed promotion requires the exact tuple-specific environment value:
+
+```bash
+PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>
+```
+
+The command promotes one durable Phase 5C/5D note verbatim into exactly one approved section of `projects/<project>.md`. It only allows `## Current phase`, `## Last known status`, or `## Next action`; all other project-state sections are protected. It refuses on `main`, refuses a dirty target file, rechecks the target hash immediately before mutation, uses atomic same-directory replacement with fsync, and writes metadata-only promotion audit records with before/after hashes.
+
+`/ppo state-promote` is intentionally unsupported in Phase 5E. Telegram/OpenClaw project-state promotion remains deferred to a separately reviewed later stage. See [commands/state-promote.md](commands/state-promote.md), [security/phase-5e-project-state-promotion.md](security/phase-5e-project-state-promotion.md), and [local-operator/phase-5e-project-state-promotion.md](local-operator/phase-5e-project-state-promotion.md).
+
 ## Command Menu System
 
 Commands are grouped into phone-friendly categories:
@@ -407,19 +425,20 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5E adds terminal-only controlled promotion of one durable note into one approved project-state section with exact confirmation, git safety preflights, atomic replacement, and metadata-only audit.
 
 The project still does not implement:
 
 - GitHub `/ppo` commands beyond `/ppo status`, `/ppo repo <project>`, `/ppo pr <project>`, `/ppo issue-create`, and `/ppo issue-confirm`
 - richer Telegram/OpenClaw arbitrary text workflows beyond the approved Phase 3C text commands, Phase 5B issue approval commands, and Phase 5D note approval commands
+- `/ppo state-promote` or any Telegram/OpenClaw project-state mutation route
 - `/ppo next` or status-based recommendations
 - Telegram API registration
 - live VPS deployment from this repository
 - `/ppo vps-health` routing
 - GitHub writes beyond terminal-only `issue-create` or the Phase 5B `/ppo issue-create` plus `/ppo issue-confirm` approval path
 - project note writes beyond terminal-only `note-add` or the Phase 5D `/ppo note-add` plus `/ppo note-confirm` approval path
-- mutation of `projects/*.md` or project-state files
+- project-state mutations beyond terminal-only Phase 5E `state-promote` for the three approved fields
 - issue comments, labels, PR writes, branch writes, commits, merges, or workflow dispatches
 - real Codex usage scraping
 - customer messaging
