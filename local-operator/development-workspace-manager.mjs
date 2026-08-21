@@ -466,6 +466,40 @@ function isExitCodeOne(error) {
   return error?.code === 1 || error?.exitCode === 1
 }
 
+function isMutatingGitArgs(args) {
+  const command = args[2]
+  const subcommand = args[3]
+
+  return (
+    command === "branch" ||
+    (command === "worktree" && (subcommand === "add" || subcommand === "remove"))
+  )
+}
+
+function isUncertainGitOutcome(error) {
+  return (
+    error?.ambiguous === true ||
+    error?.uncertain === true ||
+    error?.timedOut === true ||
+    error?.killed === true ||
+    typeof error?.signal === "string" ||
+    error?.code === "ETIMEDOUT" ||
+    error?.code === "ABORT_ERR" ||
+    error?.code === "ENOBUFS" ||
+    error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+    error?.code === "WORKSPACE_GIT_TIMEOUT"
+  )
+}
+
+function ambiguousGitMutationError() {
+  const error = workspaceError(
+    "WORKSPACE_OUTCOME_AMBIGUOUS",
+    "Workspace mutation outcome is ambiguous; reconcile before retrying."
+  )
+  error.ambiguous = true
+  return error
+}
+
 function makeGitRunner(defaultRunner) {
   return defaultRunner || runGit
 }
@@ -544,7 +578,11 @@ async function runGit(args) {
       exitCode: 0
     }
   } catch (error) {
-    if (error?.killed || error?.signal) {
+    if (isUncertainGitOutcome(error)) {
+      if (isMutatingGitArgs(args)) {
+        throw ambiguousGitMutationError()
+      }
+
       throw workspaceError(
         "WORKSPACE_GIT_TIMEOUT",
         "Git operation did not finish within the workspace manager limit."
@@ -562,7 +600,21 @@ async function runGit(args) {
 
 async function git(gitRunner, args) {
   assertGitArgs(args)
-  const result = await gitRunner(args)
+  let result
+
+  try {
+    result = await gitRunner(args)
+  } catch (error) {
+    if (isMutatingGitArgs(args) && isUncertainGitOutcome(error)) {
+      throw ambiguousGitMutationError()
+    }
+
+    throw error
+  }
+
+  if (isMutatingGitArgs(args) && isUncertainGitOutcome(result)) {
+    throw ambiguousGitMutationError()
+  }
 
   if (!result || typeof result !== "object") {
     return {
@@ -616,10 +668,7 @@ async function gitOptional(gitRunner, args) {
 
 function assertDefiniteGitFailure(error) {
   if (error?.ambiguous === true || error?.code === "WORKSPACE_OUTCOME_AMBIGUOUS") {
-    throw workspaceError(
-      "WORKSPACE_OUTCOME_AMBIGUOUS",
-      "Workspace mutation outcome is ambiguous; reconcile before retrying."
-    )
+    throw ambiguousGitMutationError()
   }
 }
 
@@ -772,7 +821,8 @@ async function safeCleanupCreatedWorkspace(gitRunner, paths, branchName, created
         "--force",
         paths.workspacePath
       ])
-    } catch {
+    } catch (error) {
+      assertDefiniteGitFailure(error)
       // Best effort cleanup after a definite local failure.
     }
   }
@@ -786,7 +836,8 @@ async function safeCleanupCreatedWorkspace(gitRunner, paths, branchName, created
         "-D",
         branchName
       ])
-    } catch {
+    } catch (error) {
+      assertDefiniteGitFailure(error)
       // Best effort cleanup after a definite local failure.
     }
   }

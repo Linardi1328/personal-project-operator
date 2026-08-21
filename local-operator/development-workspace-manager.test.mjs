@@ -418,6 +418,13 @@ function makePreflightFakeRunner({ sourceRepoPath, project, baseSha, branchName,
     const signature = args.slice(2).join(" ")
 
     if (failOn && signature.startsWith(failOn.command)) {
+      if (failOn.timeout) {
+        const error = new Error("git operation timed out")
+        error.killed = true
+        error.signal = "SIGTERM"
+        throw error
+      }
+
       const error = new DevelopmentRunStateError(
         "WORKSPACE_GIT_FAILED",
         "Git operation failed; no raw Git output was stored."
@@ -528,6 +535,59 @@ test("ambiguous workspace mutation outcome fails closed and leaves reconciliatio
     gitRunner: fake.runner
   }), "WORKSPACE_OUTCOME_AMBIGUOUS")
 
+  assert.equal(fake.calls.some((args) => args.slice(2).join(" ").startsWith("worktree remove --force ")), false)
+  assert.equal(fake.calls.some((args) => args.slice(2).join(" ") === `branch -D ${branchName}`), false)
+})
+
+test("timed-out worktree add is ambiguous and performs no automatic cleanup", async () => {
+  const fixture = await makeSourceRepo()
+  const planned = await makePlannedRun(fixture)
+  const branchName = makeDevelopmentWorkspaceBranchName(planned.run)
+  const fake = makePreflightFakeRunner({
+    sourceRepoPath: fixture.sourceRepoPath,
+    project: fixture.project,
+    baseSha: fixture.baseSha,
+    branchName,
+    failOn: {
+      command: "worktree add ",
+      timeout: true
+    }
+  })
+
+  await assertRejectsCode(prepareImplementationWorkspace(planned.run.runId, {
+    expectedVersion: planned.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    gitRunner: fake.runner
+  }), "WORKSPACE_OUTCOME_AMBIGUOUS")
+
+  assert.equal(fake.calls.some((args) => args.slice(2).join(" ").startsWith("worktree remove --force ")), false)
+  assert.equal(fake.calls.some((args) => args.slice(2).join(" ") === `branch -D ${branchName}`), false)
+})
+
+test("ambiguous cleanup mutation fails closed before later cleanup", async () => {
+  const fixture = await makeSourceRepo()
+  const planned = await makePlannedRun(fixture)
+  const branchName = makeDevelopmentWorkspaceBranchName(planned.run)
+  const fake = makePreflightFakeRunner({
+    sourceRepoPath: fixture.sourceRepoPath,
+    project: fixture.project,
+    baseSha: fixture.baseSha,
+    branchName,
+    failOn: {
+      command: "worktree remove --force ",
+      timeout: true
+    }
+  })
+
+  await assertRejectsCode(prepareImplementationWorkspace(planned.run.runId, {
+    expectedVersion: planned.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    gitRunner: fake.runner
+  }), "WORKSPACE_OUTCOME_AMBIGUOUS")
+
+  assert.equal(fake.calls.some((args) => args.slice(2).join(" ").startsWith("worktree remove --force ")), true)
   assert.equal(fake.calls.some((args) => args.slice(2).join(" ") === `branch -D ${branchName}`), false)
 })
 
