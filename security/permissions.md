@@ -54,6 +54,16 @@ Allowed in Phase 5D only through the existing `ppo_local` direct-tool path with 
 - stage one note-add request with `/ppo note-add <project> <note...>`
 - append one local project note only after `/ppo note-confirm <request-id>` atomically claims and consumes one unexpired request
 
+Allowed in Phase 5E only from a trusted terminal with exact confirmation, git safety preflights, and metadata-only audit:
+
+- promote one durable local project note into exactly one approved `projects/<project>.md` section through `state-promote <project> <note-id> <field>`
+
+Allowed in Phase 6A only as local private run-state storage:
+
+- create and transition durable development run records under `${PPO_WRITE_DATA_DIR}/development-runs`
+- store bounded SHA-pinned implementation, review, test, deploy, and verification evidence metadata
+- reject stale expected versions and invalid lifecycle transitions
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
@@ -61,13 +71,14 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - delete branches
 - create issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
 - create project notes outside the Phase 5C terminal path or Phase 5D approval-gated chat path
-- modify `projects/*.md` or project-state files from stored notes
+- modify `projects/*.md` or project-state files outside the Phase 5E terminal promotion path
 - comment on PRs
 - comment on issues
 - change labels
 - approve PRs
 - merge PRs
 - change repo settings
+- execute planner, Codex, test, review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
 
 ## Chat platform permissions
 
