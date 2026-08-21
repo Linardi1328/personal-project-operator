@@ -143,6 +143,14 @@ local-operator/development-workspace-manager.mjs
 
 It accepts only a Phase 6A run in `planned` status, verifies the configured allowlisted source repo and exact base SHA, creates one deterministic branch/worktree under a PPO-managed workspace root, verifies the result, and transitions the run to `implementation_in_progress`. Phase 6C adds no terminal command, `/ppo` route, OpenClaw tool, Codex execution, implementation-file edit, test/review automation, GitHub write, PR automation, merge, deployment, rollback, or `/ppo continue`. See [phase-6c-isolated-workspace-manager.md](phase-6c-isolated-workspace-manager.md).
 
+Phase 6D adds a local-only bounded Codex execution adapter library:
+
+```text
+local-operator/development-codex-execution-adapter.mjs
+```
+
+It accepts only a Phase 6A run in `implementation_in_progress` with a verified Phase 6C workspace, requires an explicit active no-outbound-network OS/process sandbox before Codex starts, supports the Ubuntu 24.04 production backend through a trusted Linux network namespace plus privilege drop contract, durably records bounded implementation attempts in the Phase 6A run record, invokes Codex from trusted local configuration with `cwd` set to that workspace, verifies a new local descendant commit, and transitions the run to `implementation_ready`. Phase 6D adds no terminal command, `/ppo` route, OpenClaw tool, automated test execution, review automation, hardening loop, GitHub write, PR automation, merge, deployment, rollback, production verification, or `/ppo continue`. See [phase-6d-codex-execution-adapter.md](phase-6d-codex-execution-adapter.md).
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -166,6 +174,8 @@ It accepts only a Phase 6A run in `planned` status, verifies the configured allo
 - `phase-6b-next-stage-planner.md`: Phase 6B local usage and safety boundary.
 - `development-workspace-manager.mjs`: Phase 6C deterministic local isolated workspace manager.
 - `phase-6c-isolated-workspace-manager.md`: Phase 6C local usage and safety boundary.
+- `development-codex-execution-adapter.mjs`: Phase 6D bounded local Codex execution adapter.
+- `phase-6d-codex-execution-adapter.md`: Phase 6D local usage and safety boundary.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -179,6 +189,7 @@ It accepts only a Phase 6A run in `planned` status, verifies the configured allo
 - `development-run-state.test.mjs`: Phase 6A tests for project allowlisting, run ids, private permissions, lifecycle transitions, stale/concurrent writes, recovery, history integrity, bounded inputs, evidence metadata, safe errors, and Phase 5 regressions.
 - `development-next-stage-planner.test.mjs`: Phase 6B tests for deterministic planning, source-state refusal modes, GitHub read-only boundaries, Phase 6A integration, stale expected-version refusal, and route/execution exclusions.
 - `development-workspace-manager.test.mjs`: Phase 6C tests for planned-run gating, repo identity/base SHA preflight, dirty repo refusal, managed workspace path safety, branch/worktree creation, run-state transition, reconciliation, cleanup, ambiguous outcomes, and execution-boundary regressions.
+- `development-codex-execution-adapter.test.mjs`: Phase 6D tests for implementation-run gating, workspace reconciliation, trusted Codex config, macOS/Linux no-outbound-network sandbox backend contracts, remote-write and direct-network bypass denial, durable attempt accounting, prompt bounds, ambiguous execution, independent Git verification, implementation evidence, reconciliation, and route/execution-boundary regressions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -279,6 +290,8 @@ Phase 6B adds deterministic local next-stage planning only. It reads the fixed p
 
 Phase 6C adds deterministic local workspace preparation only. It accepts a Phase 6A run only in `planned`, requires exact expected-version checks, reads source repository locations only from a trusted project workspace registry, verifies repo identity and base SHA before mutation, creates one isolated branch/worktree under `${PPO_WRITE_DATA_DIR}/development-workspaces` or an explicitly configured PPO-managed workspace root, and transitions only `planned -> implementation_in_progress` after verification. It does not add a wrapper command, `/ppo` route, model call, Codex execution, implementation-file edit, test execution, review automation, GitHub writes, PR automation, merge, deployment/service control, rollback, or `/ppo continue`.
 
+Phase 6D adds bounded local Codex execution only. It accepts a Phase 6A run only in `implementation_in_progress`, requires exact expected-version checks, reconciles the Phase 6C workspace before execution, requires an explicit active no-outbound-network OS/process sandbox, supports Linux network namespace execution for the Ubuntu 24.04 VPS runtime with non-root/no-capability Codex children, records bounded implementation attempts durably in the run record, invokes Codex only from trusted local configuration with `cwd` set to the verified workspace, verifies a new clean descendant commit, and transitions only `implementation_in_progress -> implementation_ready`. It does not add a wrapper command, `/ppo` route, automated test execution, review automation, hardening loop, GitHub writes, PR automation, merge, deployment/service control, rollback, production verification, or `/ppo continue`.
+
 Owner test plan after branch review:
 
 ```bash
@@ -304,7 +317,7 @@ node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
 ```
 
-Phase 6A, Phase 6B, and Phase 6C remain library-only and have no owner-facing `/ppo` command in this test plan.
+Phase 6A, Phase 6B, Phase 6C, and Phase 6D remain library-only and have no owner-facing `/ppo` command in this test plan.
 
 Then through OpenClaw/Telegram after review:
 
@@ -328,7 +341,7 @@ Requirements:
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
-Phase 6A, Phase 6B, and Phase 6C remain library-only; do not add `/ppo continue` or any autonomous-development route to the OpenClaw/Telegram owner test until a later separately reviewed phase.
+Phase 6A, Phase 6B, Phase 6C, and Phase 6D remain library-only; do not add `/ppo continue` or any autonomous-development route to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
 ## OpenClaw handoff shape
 

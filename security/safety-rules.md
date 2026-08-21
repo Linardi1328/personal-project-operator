@@ -216,6 +216,37 @@ The manager must:
 
 Phase 6C must not invoke Codex or models, edit implementation files, run tests, automate review, call GitHub writes, push, merge, deploy, restart services, roll back, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
 
+## Phase 6D Codex execution adapter boundary
+
+Phase 6D allows one local-only Codex execution foundation:
+
+```text
+local-operator/development-codex-execution-adapter.mjs
+```
+
+The adapter must:
+
+- reuse Phase 6A run-state records and Phase 6C workspace reconciliation
+- accept only `implementation_in_progress` runs
+- require exact expected-version checks before run-state transition
+- refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces
+- require workspace HEAD to match the run head/base state before Codex starts
+- read Codex executable path, explicit sandbox backend configuration, Git executable path, argv, timeout, and environment only from trusted local configuration
+- establish and verify an explicit no-outbound-network OS/process sandbox before spawning Codex
+- use the Linux network-namespace backend for Ubuntu 24.04 production only when a sandboxed preflight proves non-root execution, zero effective capabilities, and `NoNewPrivs: 1`
+- keep Git wrapper/env remote-write denial only as defense in depth
+- invoke Codex through the sandbox with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified workspace
+- generate a deterministic bounded prompt with no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries
+- record bounded implementation attempts durably in the Phase 6A run record
+- treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous
+- verify resulting Git state independently rather than trusting Codex prose
+- require a clean workspace and a new local descendant implementation commit
+- transition only `implementation_in_progress -> implementation_ready` after verification
+- attach metadata-only SHA-pinned implementation evidence
+- provide read-only reconciliation for interrupted execution
+
+Phase 6D must not add automated test execution, independent review, hardening loops, PR automation, GitHub writes, push, merge, deployment/service control, rollback, production verification, `/ppo continue`, Telegram/OpenClaw routes, or new OpenClaw tools.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.
