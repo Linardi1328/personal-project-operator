@@ -221,7 +221,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Resolve projects only through the existing five-project registry.
 - Generate cryptographically random opaque run ids.
 - Store one canonical run record under `${PPO_WRITE_DATA_DIR}/development-runs` with private `0700` directories and `0600` files.
-- Include project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned evidence metadata, and immutable transition history.
+- Include project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned planning/implementation/review/test/deploy/verification evidence metadata, and immutable transition history.
 - Define explicit lifecycle statuses and allowed transitions for planning, implementation, testing, review, merge, deploy, verification, cancellation, and failure.
 - Reject invalid, skipped, terminal, and backward transitions unless they are explicit retry transitions in the state graph.
 - Require every transition to supply an expected version; stale or concurrent writers must be refused.
@@ -231,11 +231,26 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Reject secret-like evidence, raw errors, raw stdout/stderr, credentials, tokens, terminal confirmation values, and terminal control input.
 - Keep Phase 6A as a library foundation only. Do not add planner logic, model calls, Codex execution, test execution, GitHub writes, branch/commit/merge operations, deployment/service control, rollback, `/ppo continue`, or Telegram/OpenClaw routes.
 
+### Phase 6B - Deterministic autonomous next-stage planner foundation
+
+- Add a local-only `local-operator/development-next-stage-planner.mjs` planner.
+- Resolve projects only through the existing five-project registry.
+- Read only the fixed project Markdown file for the selected project, `ROADMAP.md`, and existing Phase 2 GitHub read-only snapshot facts.
+- Reject arbitrary repo names, arbitrary file paths, traversal, globs, model inputs, and unsupported source locations.
+- Deterministically classify the exact project-state `## Next action` into one supported next stage only when source state is complete and unambiguous.
+- Allow successful Phase 6B planner output only for `planning` and `implementation` next stages.
+- Return a bounded structured result with project, current phase/status, exact source-backed task, next stage, base SHA, GitHub read-only facts, source evidence references, source hashes, planner outcome, and owner-action reason when blocked.
+- Return `owner_action_required` for missing, malformed, contradictory, ambiguous, already-complete, product-choice-dependent, unsafe, unsupported, or missing-GitHub-fact state.
+- Reuse the Phase 6A run-state store. Do not create a second run-state system.
+- Support creating a new Phase 6A run and planning an existing `created` run only through `created -> planning_in_progress -> planned`.
+- Require exact expected-version checks for existing-run planning and refuse stale versions.
+- Attach metadata-only SHA-pinned `planning` evidence with plan/source hashes and bounded counts.
+- Keep Phase 6B as a library foundation only. Do not add workspace creation, branch operations, Codex execution, automated tests, review/hardening automation, PR automation, merge, deployment, rollback, `/ppo continue`, or Telegram/OpenClaw routes.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add deterministic planner integration against the run-state store.
 - Add Codex implementation execution with strict project/repo and budget gates.
 - Add test, review, merge, deploy, rollback, and verification agents one boundary at a time.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.

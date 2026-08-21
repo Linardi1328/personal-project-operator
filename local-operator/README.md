@@ -127,6 +127,14 @@ local-operator/development-run-state.mjs
 
 It stores durable run records under `${PPO_WRITE_DATA_DIR}/development-runs` with explicit lifecycle transitions, optimistic expected-version checks, atomic canonical replacement, restart recovery from version guards, and bounded SHA-pinned evidence metadata. Phase 6A adds no terminal command, `/ppo` route, OpenClaw tool, Codex execution, GitHub write, git mutation, deployment action, or `/ppo continue`. See [phase-6a-development-run-state.md](phase-6a-development-run-state.md).
 
+Phase 6B adds a local-only next-stage planner library:
+
+```text
+local-operator/development-next-stage-planner.mjs
+```
+
+It reads only fixed project docs, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts. It returns a bounded structured plan or `owner_action_required`, and can create or plan a Phase 6A run only through `created -> planning_in_progress -> planned`. Phase 6B adds no terminal command, `/ppo` route, OpenClaw tool, workspace creation, branch operation, Codex execution, GitHub write, test/review automation, deployment action, or `/ppo continue`. See [phase-6b-next-stage-planner.md](phase-6b-next-stage-planner.md).
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -146,6 +154,8 @@ It stores durable run records under `${PPO_WRITE_DATA_DIR}/development-runs` wit
 - `phase-5e-project-state-promotion.md`: Phase 5E local usage and safety boundary.
 - `development-run-state.mjs`: Phase 6A local-only durable autonomous-development run-state store.
 - `phase-6a-development-run-state.md`: Phase 6A local usage and safety boundary.
+- `development-next-stage-planner.mjs`: Phase 6B deterministic local next-stage planner.
+- `phase-6b-next-stage-planner.md`: Phase 6B local usage and safety boundary.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -157,6 +167,7 @@ It stores durable run records under `${PPO_WRITE_DATA_DIR}/development-runs` wit
 - `project-note-approval.test.mjs`: temp-store tests for Phase 5D staging, expiry, single-use confirmation, concurrency, metadata audit preservation, safe errors, `ppo_local` routing, and Phase 5C terminal regression.
 - `project-state-promote.test.mjs`: Phase 5E tests for allowlisting, field restrictions, confirmation, git safety, byte preservation, atomic replacement, metadata audit, duplicate/ambiguous behavior, and Phase 5C/5D regressions.
 - `development-run-state.test.mjs`: Phase 6A tests for project allowlisting, run ids, private permissions, lifecycle transitions, stale/concurrent writes, recovery, history integrity, bounded inputs, evidence metadata, safe errors, and Phase 5 regressions.
+- `development-next-stage-planner.test.mjs`: Phase 6B tests for deterministic planning, source-state refusal modes, GitHub read-only boundaries, Phase 6A integration, stale expected-version refusal, and route/execution exclusions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -252,6 +263,8 @@ Pending note requests use `${PPO_WRITE_DATA_DIR}/pending-project-notes`. The sto
 Phase 5E allows exactly one terminal-only project-state mutation workflow. `state-promote <project> <note-id> <field>` accepts only `current-phase`, `last-known-status`, or `next-action`, requires the durable note to belong to the selected allowlisted project, and requires exact tuple-specific `PPO_PROJECT_STATE_CONFIRM` confirmation. It refuses `main` and dirty targets, rechecks target bytes before mutation, preserves all bytes outside the selected section, and performs atomic durable replacement with metadata-only audit. It adds no `/ppo state-promote`, GitHub API writes, model calls, deployments, or mutating git command path.
 
 Phase 6A adds only local run-state storage for future autonomous-development coordination. It creates private records under `${PPO_WRITE_DATA_DIR}/development-runs`, rejects arbitrary run ids and non-allowlisted projects, bounds records/history/evidence, enforces explicit lifecycle transitions with expected-version optimistic concurrency, and stores only structured SHA-pinned metadata. It adds no command route, model call, Codex execution, test execution, GitHub write, git mutation, deployment/service control, rollback, Telegram/OpenClaw route, or `/ppo continue`.
+
+Phase 6B adds deterministic local next-stage planning only. It reads the fixed project doc for one allowlisted project, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts, then returns either a bounded plan for a `planning` or `implementation` next stage or a safe `owner_action_required` result. It may use Phase 6A primitives to create or plan a run through `created -> planning_in_progress -> planned`; it does not skip lifecycle states and does not add a wrapper command, `/ppo` route, model call, Codex execution, tests, review automation, GitHub writes, branch/worktree operations, deployment/service control, rollback, or `/ppo continue`.
 
 Owner test plan after branch review:
 

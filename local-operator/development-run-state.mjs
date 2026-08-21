@@ -69,6 +69,7 @@ export const DEVELOPMENT_RUN_STAGES = Object.freeze([
 ])
 
 export const DEVELOPMENT_RUN_EVIDENCE_KINDS = Object.freeze([
+  "planning",
   "implementation",
   "review",
   "test",
@@ -112,6 +113,7 @@ export const ALLOWED_DEVELOPMENT_RUN_TRANSITIONS = Object.freeze({
 
 const statusSet = new Set(DEVELOPMENT_RUN_STATUSES)
 const evidenceKindSet = new Set(DEVELOPMENT_RUN_EVIDENCE_KINDS)
+const legacyEvidenceKindKeys = DEVELOPMENT_RUN_EVIDENCE_KINDS.filter((kind) => kind !== "planning")
 const stageSet = new Set(DEVELOPMENT_RUN_STAGES)
 const shaPattern = /^[a-f0-9]{40}$/iu
 const actorPattern = /^[A-Za-z0-9_.:-]{1,80}$/u
@@ -1055,11 +1057,18 @@ function validateAttemptShape(attempts) {
 }
 
 function validateEvidenceShape(evidence) {
-  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || !hasOnlyKeys(evidence, DEVELOPMENT_RUN_EVIDENCE_KINDS)) {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || !(
+    hasOnlyKeys(evidence, DEVELOPMENT_RUN_EVIDENCE_KINDS) ||
+    hasOnlyKeys(evidence, legacyEvidenceKindKeys)
+  )) {
     throw runStateError(
       "RUN_RECORD_INVALID",
       "Stored development run record is invalid."
     )
+  }
+
+  if (!Object.hasOwn(evidence, "planning")) {
+    evidence.planning = []
   }
 
   for (const kind of DEVELOPMENT_RUN_EVIDENCE_KINDS) {

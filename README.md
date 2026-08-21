@@ -406,9 +406,23 @@ local-operator/development-run-state.mjs
 
 The store resolves projects only through the existing five-project registry, creates cryptographically random opaque run ids, and writes private durable records under `${PPO_WRITE_DATA_DIR}/development-runs`. Directories are `0700`; files are `0600`.
 
-Each run has one canonical JSON record containing project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned evidence metadata, and immutable hash-chained transition history. Writes use fsynced temp files, atomic replacement, directory fsync, and durable version guards so stale agents cannot overwrite newer state.
+Each run has one canonical JSON record containing project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned planning/implementation/review/test/deploy/verification evidence metadata, and immutable hash-chained transition history. Writes use fsynced temp files, atomic replacement, directory fsync, and durable version guards so stale agents cannot overwrite newer state.
 
 Phase 6A is a foundation only. It adds no command route, no `/ppo continue`, no planner logic, no Codex execution, no model calls, no test execution, no GitHub writes, no branch/commit/merge operations, no deployment/service control, and no Telegram/OpenClaw autonomous-development route. See [local-operator/phase-6a-development-run-state.md](local-operator/phase-6a-development-run-state.md) and [security/phase-6a-development-run-state.md](security/phase-6a-development-run-state.md).
+
+## Phase 6B Deterministic Next-Stage Planner Foundation
+
+Phase 6B adds a local-only deterministic planner library:
+
+```text
+local-operator/development-next-stage-planner.mjs
+```
+
+Given one allowlisted project, the planner reads only that fixed `projects/<project>.md` file, `ROADMAP.md`, and existing Phase 2 GitHub read-only snapshot facts. It returns a bounded structured plan with current phase/status, exact source-backed next task, supported next stage, base SHA, source evidence references, and planner outcome.
+
+The only successful Phase 6B next stages are `planning` and `implementation`. Missing, contradictory, ambiguous, already-complete, product-choice-dependent, unsupported, unsafe, or malformed state returns `owner_action_required`.
+
+Phase 6B reuses the Phase 6A run-state store. It can create a new run or plan an existing `created` run only through `created -> planning_in_progress -> planned` with exact expected-version checks and metadata-only SHA-pinned planning evidence. It adds no command route, no `/ppo continue`, no workspace or branch creation, no Codex/model call, no test/review automation, no GitHub writes, no PR automation, no merge, no deployment/service control, and no Telegram/OpenClaw route. See [local-operator/phase-6b-next-stage-planner.md](local-operator/phase-6b-next-stage-planner.md) and [security/phase-6b-next-stage-planner.md](security/phase-6b-next-stage-planner.md).
 
 ## Command Menu System
 
@@ -439,7 +453,7 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5E adds terminal-only controlled promotion of one durable note into one approved project-state section with exact confirmation, git safety preflights, atomic replacement, and metadata-only audit. Phase 6A adds a local-only durable development run-state store with explicit lifecycle transitions and optimistic concurrency; it adds no execution or routing path.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5E adds terminal-only controlled promotion of one durable note into one approved project-state section with exact confirmation, git safety preflights, atomic replacement, and metadata-only audit. Phase 6A adds a local-only durable development run-state store with explicit lifecycle transitions and optimistic concurrency. Phase 6B adds a deterministic local next-stage planner that can create or plan a Phase 6A run through the planning lifecycle only; it adds no execution or routing path.
 
 The project still does not implement:
 
@@ -454,7 +468,8 @@ The project still does not implement:
 - GitHub writes beyond terminal-only `issue-create` or the Phase 5B `/ppo issue-create` plus `/ppo issue-confirm` approval path
 - project note writes beyond terminal-only `note-add` or the Phase 5D `/ppo note-add` plus `/ppo note-confirm` approval path
 - project-state mutations beyond terminal-only Phase 5E `state-promote` for the three approved fields
-- planner, Codex, test, review, merge, deployment, rollback, or verification agents coordinated through the Phase 6A run-state store
+- planner behavior beyond deterministic Phase 6B next-stage planning
+- Codex, test, review, merge, deployment, rollback, or verification agents coordinated through the Phase 6A run-state store
 - issue comments, labels, PR writes, branch writes, commits, merges, or workflow dispatches
 - real Codex usage scraping
 - customer messaging

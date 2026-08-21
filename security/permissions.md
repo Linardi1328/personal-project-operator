@@ -61,8 +61,15 @@ Allowed in Phase 5E only from a trusted terminal with exact confirmation, git sa
 Allowed in Phase 6A only as local private run-state storage:
 
 - create and transition durable development run records under `${PPO_WRITE_DATA_DIR}/development-runs`
-- store bounded SHA-pinned implementation, review, test, deploy, and verification evidence metadata
+- store bounded SHA-pinned planning, implementation, review, test, deploy, and verification evidence metadata
 - reject stale expected versions and invalid lifecycle transitions
+
+Allowed in Phase 6B only as deterministic local next-stage planning:
+
+- read the fixed selected project doc, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts
+- return a bounded plan or owner-action-required result
+- create or plan a Phase 6A run only through `created -> planning_in_progress -> planned`
+- store metadata-only SHA-pinned planning evidence
 
 Blocked unless explicitly approved in a later write-enabled phase:
 
@@ -78,7 +85,8 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - approve PRs
 - merge PRs
 - change repo settings
-- execute planner, Codex, test, review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
+- execute planner behavior beyond Phase 6B deterministic next-stage planning
+- execute Codex, test, review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
 
 ## Chat platform permissions
 

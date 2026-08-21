@@ -63,6 +63,8 @@ PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
 
 Run records are stored under `${PPO_WRITE_DATA_DIR}/development-runs`. Evidence records must be structured metadata only and must not include raw credentials, access tokens, passwords, authorization headers, terminal confirmation values, raw stdout/stderr, raw exception objects, stack traces, or unbounded logs.
 
+Phase 6B planner evidence uses the Phase 6A run-state store. It may store plan hashes, source hashes, bounded counts, project ids, next-stage labels, and Git SHAs. It must not store raw project documents, raw GitHub payloads, raw planner failures, credentials, tokens, or terminal confirmation values.
+
 ## Documentation examples
 
 Allowed:
