@@ -94,6 +94,19 @@ Allowed in Phase 6D only as bounded local Codex execution:
 - store metadata-only SHA-pinned implementation evidence
 - inspect interrupted Codex execution state read-only
 
+Allowed in Phase 6E only as deterministic local automated testing:
+
+- read one Phase 6A run after Phase 6D implementation evidence is present
+- reconcile one verified Phase 6C workspace
+- require workspace branch and HEAD to equal `run.headSha`
+- read test steps only from a trusted local per-project policy registry
+- establish and verify an explicit no-outbound-network OS/process sandbox before tests execute
+- invoke trusted test executables through explicit argv with `shell: false` and `cwd` set to the verified workspace
+- record bounded testing attempts in the Phase 6A run record
+- transition the run only through `implementation_ready -> tests_in_progress -> tests_passed`
+- store metadata-only SHA-pinned test evidence
+- inspect interrupted automated testing state read-only
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
@@ -110,7 +123,8 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - change repo settings
 - execute planner behavior beyond Phase 6B deterministic next-stage planning
 - execute Codex outside the Phase 6D bounded execution adapter
-- execute test, review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
+- execute automated tests outside the Phase 6E trusted test runner
+- execute review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
 - mutate files inside Phase 6C workspaces outside the Phase 6D bounded execution adapter
 
 ## Chat platform permissions

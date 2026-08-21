@@ -69,6 +69,8 @@ Phase 6C workspace evidence uses the Phase 6A run-state store. It may store proj
 
 Phase 6D Codex execution uses a deterministic bounded prompt generated from the Phase 6A run task and metadata-only planning evidence. The prompt must not include credentials, tokens, terminal confirmation values, environment dumps, raw logs, raw errors, arbitrary paths, or secrets. Phase 6D implementation evidence may store project id, approved repo identity, branch, workspace id/reference, resulting implementation SHA, adapter id, attempt number, prompt hash, timestamps, sandbox id, sandbox backend id, sandbox platform id, no-network status, remote-write defense status, and bounded outcome counts. It must not store prompt contents, raw Codex stdout/stderr, raw Codex failures, credentials, tokens, source repository paths, workspace absolute paths, sandbox executable paths, Linux namespace paths, policy wrapper paths, or unbounded logs.
 
+Phase 6E automated testing uses only trusted local per-project test policy metadata. Test evidence may store test id, policy id/hash, implementation SHA, exit status class, duration, timestamps, attempt number, aggregate outcome, sandbox id, and no-network status. It must not store raw test stdout/stderr, raw failures, environment dumps, credentials, tokens, source repository paths, workspace absolute paths, executable paths, argv, sandbox executable paths, Linux namespace paths, terminal confirmation values, or unbounded logs. Test environments must be sanitized and must not inherit secret, auth, credential, confirmation, askpass, Git config, cloud, package-manager, model-provider, or home-directory env values.
+
 ## Documentation examples
 
 Allowed:

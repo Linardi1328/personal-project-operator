@@ -158,7 +158,8 @@ const attemptKeyByEnteringStatus = Object.freeze({
   verification_in_progress: "verification"
 })
 const sameStatusAttemptStatuses = new Set([
-  "implementation_in_progress"
+  "implementation_in_progress",
+  "tests_in_progress"
 ])
 
 export class DevelopmentRunStateError extends Error {

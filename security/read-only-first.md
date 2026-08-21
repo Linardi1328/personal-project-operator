@@ -168,6 +168,16 @@ The adapter may read one `implementation_in_progress` Phase 6A run, reconcile on
 
 This exception does not run automated tests, review changes, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
+## Phase 6E automated testing exception
+
+Phase 6E allows bounded local automated testing for an implementation-ready run:
+
+- `local-operator/development-test-runner.mjs`
+
+The runner may read one Phase 6A run after Phase 6D implementation evidence exists, reconcile one verified Phase 6C workspace, require workspace branch and HEAD to equal `run.headSha`, verify a no-outbound-network process sandbox, execute only trusted per-project test policy steps with explicit argv and `shell: false`, record bounded metadata-only test attempts, and transition only to `tests_passed` when all required tests pass for the exact implementation SHA.
+
+This exception does not invoke Codex or models, run automated review, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -180,7 +190,8 @@ Examples requiring explicit approval:
 - executing planner behavior beyond Phase 6B deterministic next-stage planning
 - creating or managing workspaces outside the Phase 6C isolated workspace manager
 - executing Codex outside the Phase 6D bounded execution adapter
-- executing test/review/merge/deploy/rollback/verification agents from Phase 6A run-state records
+- executing automated tests outside the Phase 6E trusted test runner
+- executing review/merge/deploy/rollback/verification agents from Phase 6A run-state records
 - restarting services
 - publishing content
 - sending messages

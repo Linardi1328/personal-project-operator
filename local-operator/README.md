@@ -151,6 +151,14 @@ local-operator/development-codex-execution-adapter.mjs
 
 It accepts only a Phase 6A run in `implementation_in_progress` with a verified Phase 6C workspace, requires an explicit active no-outbound-network OS/process sandbox before Codex starts, supports the Ubuntu 24.04 production backend through a trusted Linux network namespace plus privilege drop contract, durably records bounded implementation attempts in the Phase 6A run record, invokes Codex from trusted local configuration with `cwd` set to that workspace, verifies a new local descendant commit, and transitions the run to `implementation_ready`. Phase 6D adds no terminal command, `/ppo` route, OpenClaw tool, automated test execution, review automation, hardening loop, GitHub write, PR automation, merge, deployment, rollback, production verification, or `/ppo continue`. See [phase-6d-codex-execution-adapter.md](phase-6d-codex-execution-adapter.md).
 
+Phase 6E adds a local-only deterministic automated test runner library:
+
+```text
+local-operator/development-test-runner.mjs
+```
+
+It accepts a Phase 6A run after Phase 6D has transitioned it to `implementation_ready`, requires exact expected-version checks, verifies Phase 6D implementation evidence and Phase 6C workspace branch/HEAD against `run.headSha`, runs only fixed trusted per-project test policy steps through an active no-outbound-network sandbox with explicit argv and `shell: false`, stores metadata-only SHA-pinned test evidence, and transitions to `tests_passed` only when every required test passes for that exact SHA. Phase 6E adds no terminal command, `/ppo` route, OpenClaw tool, Codex/model call, automated review, hardening loop, GitHub write, PR automation, merge, deployment, rollback, production verification, or `/ppo continue`. See [phase-6e-automated-test-runner.md](phase-6e-automated-test-runner.md).
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -176,6 +184,8 @@ It accepts only a Phase 6A run in `implementation_in_progress` with a verified P
 - `phase-6c-isolated-workspace-manager.md`: Phase 6C local usage and safety boundary.
 - `development-codex-execution-adapter.mjs`: Phase 6D bounded local Codex execution adapter.
 - `phase-6d-codex-execution-adapter.md`: Phase 6D local usage and safety boundary.
+- `development-test-runner.mjs`: Phase 6E deterministic local automated test runner.
+- `phase-6e-automated-test-runner.md`: Phase 6E local usage and safety boundary.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -190,6 +200,7 @@ It accepts only a Phase 6A run in `implementation_in_progress` with a verified P
 - `development-next-stage-planner.test.mjs`: Phase 6B tests for deterministic planning, source-state refusal modes, GitHub read-only boundaries, Phase 6A integration, stale expected-version refusal, and route/execution exclusions.
 - `development-workspace-manager.test.mjs`: Phase 6C tests for planned-run gating, repo identity/base SHA preflight, dirty repo refusal, managed workspace path safety, branch/worktree creation, run-state transition, reconciliation, cleanup, ambiguous outcomes, and execution-boundary regressions.
 - `development-codex-execution-adapter.test.mjs`: Phase 6D tests for implementation-run gating, workspace reconciliation, trusted Codex config, macOS/Linux no-outbound-network sandbox backend contracts, remote-write and direct-network bypass denial, durable attempt accounting, prompt bounds, ambiguous execution, independent Git verification, implementation evidence, reconciliation, and route/execution-boundary regressions.
+- `development-test-runner.test.mjs`: Phase 6E tests for implementation-ready gating, exact expected-version checks, workspace/branch/head reconciliation, Phase 6D implementation evidence matching, trusted test policy enforcement, explicit argv and `shell: false`, sanitized env, no-network sandbox enforcement, bounded attempts, pass/failure/ambiguous outcomes, dirty/changed workspace refusal, reconciliation, SHA-pinned metadata-only evidence, and route/execution-boundary regressions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -292,6 +303,8 @@ Phase 6C adds deterministic local workspace preparation only. It accepts a Phase
 
 Phase 6D adds bounded local Codex execution only. It accepts a Phase 6A run only in `implementation_in_progress`, requires exact expected-version checks, reconciles the Phase 6C workspace before execution, requires an explicit active no-outbound-network OS/process sandbox, supports Linux network namespace execution for the Ubuntu 24.04 VPS runtime with non-root/no-capability Codex children, records bounded implementation attempts durably in the run record, invokes Codex only from trusted local configuration with `cwd` set to the verified workspace, verifies a new clean descendant commit, and transitions only `implementation_in_progress -> implementation_ready`. It does not add a wrapper command, `/ppo` route, automated test execution, review automation, hardening loop, GitHub writes, PR automation, merge, deployment/service control, rollback, production verification, or `/ppo continue`.
 
+Phase 6E adds bounded local automated testing only. It accepts a Phase 6A run after `implementation_ready`, requires exact expected-version checks, verifies Phase 6D implementation evidence and Phase 6C workspace HEAD against `run.headSha`, runs only trusted per-project test policy steps with explicit argv and `shell: false`, keeps tests in a verified no-outbound-network sandbox, refuses dirty/changed workspaces, records metadata-only test evidence, and transitions only `tests_in_progress -> tests_passed` after all required tests pass. It does not add a wrapper command, `/ppo` route, Codex/model call, automated review, hardening loop, GitHub writes, PR automation, merge, deployment/service control, rollback, production verification, or `/ppo continue`.
+
 Owner test plan after branch review:
 
 ```bash
@@ -317,7 +330,7 @@ node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
 ```
 
-Phase 6A, Phase 6B, Phase 6C, and Phase 6D remain library-only and have no owner-facing `/ppo` command in this test plan.
+Phase 6A, Phase 6B, Phase 6C, Phase 6D, and Phase 6E remain library-only and have no owner-facing `/ppo` command in this test plan.
 
 Then through OpenClaw/Telegram after review:
 
@@ -341,7 +354,7 @@ Requirements:
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
-Phase 6A, Phase 6B, Phase 6C, and Phase 6D remain library-only; do not add `/ppo continue` or any autonomous-development route to the OpenClaw/Telegram owner test until a later separately reviewed phase.
+Phase 6A, Phase 6B, Phase 6C, Phase 6D, and Phase 6E remain library-only; do not add `/ppo continue` or any autonomous-development route to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
 ## OpenClaw handoff shape
 
