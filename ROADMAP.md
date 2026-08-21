@@ -212,3 +212,30 @@ Only after separate explicit approval:
 - Never auto-merge or deploy as part of Phase 5 project-state mutation work.
 
 Phase 5 write actions must be individually reviewed, permissioned, and auditable.
+
+## Phase 6 - Autonomous Development Orchestration Foundations
+
+### Phase 6A - Durable autonomous-development run-state foundation
+
+- Add a local-only `local-operator/development-run-state.mjs` store for future PPO development runs.
+- Resolve projects only through the existing five-project registry.
+- Generate cryptographically random opaque run ids.
+- Store one canonical run record under `${PPO_WRITE_DATA_DIR}/development-runs` with private `0700` directories and `0600` files.
+- Include project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned evidence metadata, and immutable transition history.
+- Define explicit lifecycle statuses and allowed transitions for planning, implementation, testing, review, merge, deploy, verification, cancellation, and failure.
+- Reject invalid, skipped, terminal, and backward transitions unless they are explicit retry transitions in the state graph.
+- Require every transition to supply an expected version; stale or concurrent writers must be refused.
+- Use durable version guards plus fsynced temp-file write, atomic rename, and directory fsync for canonical record replacement.
+- Support restart recovery when a version guard committed but canonical refresh did not complete.
+- Bound task, metadata, evidence, record, history, and attempt sizes.
+- Reject secret-like evidence, raw errors, raw stdout/stderr, credentials, tokens, terminal confirmation values, and terminal control input.
+- Keep Phase 6A as a library foundation only. Do not add planner logic, model calls, Codex execution, test execution, GitHub writes, branch/commit/merge operations, deployment/service control, rollback, `/ppo continue`, or Telegram/OpenClaw routes.
+
+### Later Phase 6 work
+
+Only after separate explicit approval:
+
+- Add deterministic planner integration against the run-state store.
+- Add Codex implementation execution with strict project/repo and budget gates.
+- Add test, review, merge, deploy, rollback, and verification agents one boundary at a time.
+- Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.

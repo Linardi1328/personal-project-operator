@@ -55,6 +55,14 @@ PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
 
 Notes are stored under `${PPO_WRITE_DATA_DIR}/project-notes`. Phase 5D pending note requests are stored temporarily under `${PPO_WRITE_DATA_DIR}/pending-project-notes` and are consumed on confirmation or expiry. Note audit records are metadata-only and must not include note text, Phase 5D request ids, terminal confirmation values, tokens, or raw failures. `PPO_NOTE_WRITE_CONFIRM=add-note:<project>` is for trusted terminal use only and must not be pasted into OpenClaw/Telegram chat.
 
+Phase 6A development run state uses the same non-secret `PPO_WRITE_DATA_DIR` root:
+
+```text
+PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data
+```
+
+Run records are stored under `${PPO_WRITE_DATA_DIR}/development-runs`. Evidence records must be structured metadata only and must not include raw credentials, access tokens, passwords, authorization headers, terminal confirmation values, raw stdout/stderr, raw exception objects, stack traces, or unbounded logs.
+
 ## Documentation examples
 
 Allowed:

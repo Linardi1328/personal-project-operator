@@ -120,6 +120,24 @@ The pending request store is private local write data. Request ids are random, o
 
 The Phase 5C note audit remains metadata-only and must not contain note text, Phase 5D request ids, confirmation values, tokens, or raw failures.
 
+## Phase 5E controlled project-state promotion exception
+
+Phase 5E allows one terminal-only project-state mutation after exact confirmation:
+
+- `state-promote <project> <note-id> <field>`
+
+This exception is limited to promoting one durable Phase 5C/5D note into exactly one approved project-state section. It must not be routed through `/ppo`, `ppo_local`, OpenClaw, or Telegram. It must not call GitHub, create branches/commits/merges/workflow dispatches, deploy services, invoke models, or mutate unapproved project-state sections.
+
+## Phase 6A local run-state foundation
+
+Phase 6A allows local private storage for future autonomous-development coordination:
+
+- `local-operator/development-run-state.mjs`
+
+This foundation is limited to deterministic run records under `${PPO_WRITE_DATA_DIR}/development-runs`. It may record lifecycle state, optimistic versions, bounded task text, attempt counters, timestamps, SHA-pinned evidence metadata, and immutable transition history.
+
+It must not execute the lifecycle it records. It does not plan, invoke Codex or models, run tests, write GitHub, create branches or commits, merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -129,6 +147,7 @@ Examples requiring explicit approval:
 - creating GitHub issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
 - updating project state files from stored notes
 - creating project notes outside the Phase 5C terminal path or Phase 5D approval-gated chat path
+- executing planner/Codex/test/review/merge/deploy/rollback/verification agents from Phase 6A run-state records
 - restarting services
 - publishing content
 - sending messages

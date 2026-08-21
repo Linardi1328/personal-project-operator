@@ -141,6 +141,30 @@ Pending request directories must be `0700`, pending files must be `0600`, reques
 
 Phase 5D must not add a model turn, new OpenClaw tools, GitHub API writes, comments, labels, issues, PR/branch/commit/merge/workflow writes, project-state mutations, deployment behavior, or any write other than appending one approved local note after single-use confirmation.
 
+## Phase 6A development run-state boundary
+
+Phase 6A allows one local-only storage foundation:
+
+```text
+local-operator/development-run-state.mjs
+```
+
+The store must:
+
+- resolve projects through the existing five-project registry only
+- generate cryptographically random opaque run ids
+- store records under `${PPO_WRITE_DATA_DIR}/development-runs`
+- create `0700` directories and `0600` files
+- maintain one canonical run record with project, bounded task, status, stage, base SHA, optional branch/head SHA, attempt counters, timestamps, structured evidence metadata, and transition history
+- use fsynced temp-file writes, atomic rename, and directory fsync for canonical replacement
+- use durable version guards and expected-version checks so stale agents cannot overwrite newer state
+- reject invalid, skipped, terminal, and backward lifecycle transitions outside the explicit transition graph
+- bound input, metadata, evidence, record, history, and attempt sizes
+- reject secrets, raw credentials, raw errors, raw stdout/stderr, stack traces, terminal confirmation values, and terminal control input
+- return deterministic safe errors
+
+Phase 6A must not add planner logic, model calls, Codex execution, test execution, GitHub writes, PR automation, branch/commit/merge operations, deployment/service control, rollback, `/ppo continue`, Telegram/OpenClaw routes, or new OpenClaw tools.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.
