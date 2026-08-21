@@ -340,6 +340,7 @@ Phase 6G must not deploy, restart services, roll back, perform production verifi
 
 Phase 6H allows one local deployment boundary for the PPO service:
 
+- create and consume PPO self-development run-state records only through the explicit fixed `personal-project-operator` capability
 - accept only exact-version `merged` runs
 - require valid Phase 6G merged evidence for exactly `run.headSha`
 - derive the deployment target only from the Phase 6G merge commit SHA

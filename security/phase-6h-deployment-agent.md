@@ -7,11 +7,14 @@ Phase 6H covers exact-SHA deployment for the Personal Project Operator service a
 Trusted inputs are limited to:
 
 - the Phase 6A run record
+- the explicit Phase 6A PPO self-development run-state capability
 - metadata-only Phase 6D, 6E, 6F, and 6G evidence
 - the fixed `personal-project-operator` deployment profile
 - read-only facts from the fixed deployment checkout
 
 The deployment SHA must come only from Phase 6G merged evidence and must equal the Phase 6G merge commit SHA. Caller input, task text, chat, environment variables, command-line text, project Markdown, repository-controlled configuration, and model output cannot choose the deployment target.
+
+The PPO self-development run-state capability is fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`. It does not add PPO to the shared five-project registry and does not affect Telegram, OpenClaw, or ordinary PPO project resolution.
 
 ## Allowed Writes
 

@@ -393,7 +393,7 @@ function deploymentEvidence(run, deploymentSha, outcome, metadata, summary) {
 function stateApi(options = {}) {
   const runStateOptions = {
     ...options,
-    allowPersonalProjectOperatorDeploymentProject: true
+    allowPersonalProjectOperatorSelfDevelopmentProject: true
   }
 
   return {

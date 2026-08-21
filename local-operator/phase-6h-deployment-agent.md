@@ -28,6 +28,17 @@ Deployment requires:
 
 The deployment target is the Phase 6G merge commit SHA. It is not accepted from caller input, task text, chat, environment variables, project Markdown, command-line text, repository-controlled configuration, or model output.
 
+## Run Origination
+
+Personal Project Operator self-development runs use an explicit local-only Phase 6A run-state capability fixed to:
+
+- id: `personal-project-operator`
+- owner: `Linardi1328`
+- repo: `personal-project-operator`
+- fullName: `Linardi1328/personal-project-operator`
+
+Ordinary `resolveDevelopmentRunProject()` and ordinary `createDevelopmentRun()` still reject `personal-project-operator`. The shared five-project registry, Telegram project resolution, OpenClaw project resolution, and ordinary PPO project commands are not expanded.
+
 ## Trusted Profile
 
 Phase 6H supports only the `personal-project-operator` deployment profile:

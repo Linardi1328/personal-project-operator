@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import {
   PHASE_6G_DELIVERY_POLICY_HASH,
@@ -19,10 +21,16 @@ import {
   resolveApprovedDeploymentProfile
 } from "./development-deployment-agent.mjs"
 import {
+  createDevelopmentRun,
+  createPersonalProjectOperatorSelfDevelopmentRun,
   DevelopmentRunStateError,
   DEVELOPMENT_RUN_EVIDENCE_KINDS,
   normalizeDevelopmentRunEvidenceRecord,
-  resolveDevelopmentRunProject
+  readDevelopmentRun,
+  readPersonalProjectOperatorSelfDevelopmentRun,
+  resolveDevelopmentRunProject,
+  transitionDevelopmentRun,
+  transitionPersonalProjectOperatorSelfDevelopmentRun
 } from "./development-run-state.mjs"
 import {
   INDEPENDENT_REVIEW_AGENT_ID,
@@ -339,6 +347,119 @@ async function assertRejectsCode(promise, code) {
   })
 }
 
+async function withTempWriteDataDir(callback) {
+  const writeDataDir = await mkdtemp(join(tmpdir(), "ppo-phase-6h-run-state-"))
+
+  try {
+    return await callback(writeDataDir)
+  } finally {
+    await rm(writeDataDir, { recursive: true, force: true })
+  }
+}
+
+async function transitionPpoRun(run, writeDataDir, status, evidence = [], overrides = {}) {
+  return await transitionPersonalProjectOperatorSelfDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status,
+    actor: "phase-6h-test",
+    reason: `phase-6h-test-${status}`,
+    evidence,
+    ...overrides
+  }, {
+    writeDataDir,
+    now: () => new Date("2026-08-22T00:00:00.000Z")
+  })
+}
+
+async function transitionOrdinaryRun(run, writeDataDir, status, evidence = [], overrides = {}) {
+  return await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status,
+    actor: "phase-6h-test",
+    reason: `phase-6h-test-${status}`,
+    evidence,
+    ...overrides
+  }, {
+    writeDataDir,
+    now: () => new Date("2026-08-22T00:00:00.000Z")
+  })
+}
+
+async function createRealPpoSelfDevelopmentRun(writeDataDir) {
+  return await createPersonalProjectOperatorSelfDevelopmentRun({
+    projectId: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
+    task: "Deploy the Phase 6G merge commit.",
+    baseSha: "0".repeat(40),
+    branch: "phase/6h-self-development",
+    headSha: "0".repeat(40),
+    actor: "phase-6h-test"
+  }, {
+    writeDataDir,
+    now: () => new Date("2026-08-22T00:00:00.000Z")
+  })
+}
+
+async function advanceRealPpoRunToMerged(writeDataDir) {
+  let run = await createRealPpoSelfDevelopmentRun(writeDataDir)
+
+  run = await transitionPpoRun(run, writeDataDir, "planning_in_progress")
+  run = await transitionPpoRun(run, writeDataDir, "planned")
+  run = await transitionPpoRun(run, writeDataDir, "implementation_in_progress")
+  run = await transitionPpoRun(run, writeDataDir, "implementation_ready", [
+    implementationEvidence(IMPLEMENTATION_SHA)
+  ], {
+    headSha: IMPLEMENTATION_SHA
+  })
+  run = await transitionPpoRun(run, writeDataDir, "tests_in_progress")
+  run = await transitionPpoRun(run, writeDataDir, "tests_passed", [
+    testEvidence(IMPLEMENTATION_SHA)
+  ])
+  run = await transitionPpoRun(run, writeDataDir, "review_in_progress")
+  run = await transitionPpoRun(run, writeDataDir, "review_passed", [
+    approvedReviewEvidence(INDEPENDENT_REVIEW_AGENT_ID, IMPLEMENTATION_SHA),
+    approvedReviewEvidence(REMOTE_PR_REVIEW_AGENT_ID, IMPLEMENTATION_SHA)
+  ])
+  run = await transitionPpoRun(run, writeDataDir, "merge_ready")
+  run = await transitionPpoRun(run, writeDataDir, "merged", [
+    mergedEvidence({
+      implementationSha: IMPLEMENTATION_SHA,
+      mergeCommitSha: MERGE_SHA,
+      mainSha: MERGE_SHA
+    })
+  ])
+
+  return run
+}
+
+async function advanceOrdinaryRunToMerged(writeDataDir) {
+  let run = await createDevelopmentRun({
+    projectId: "khlim-assist",
+    task: "Ordinary project run must not deploy through Phase 6H.",
+    baseSha: "0".repeat(40),
+    branch: "phase/6h-ordinary-project",
+    headSha: "0".repeat(40),
+    actor: "phase-6h-test"
+  }, {
+    writeDataDir,
+    now: () => new Date("2026-08-22T00:00:00.000Z")
+  })
+
+  run = await transitionOrdinaryRun(run, writeDataDir, "planning_in_progress")
+  run = await transitionOrdinaryRun(run, writeDataDir, "planned")
+  run = await transitionOrdinaryRun(run, writeDataDir, "implementation_in_progress")
+  run = await transitionOrdinaryRun(run, writeDataDir, "implementation_ready", [], {
+    headSha: IMPLEMENTATION_SHA
+  })
+  run = await transitionOrdinaryRun(run, writeDataDir, "tests_in_progress")
+  run = await transitionOrdinaryRun(run, writeDataDir, "tests_passed")
+  run = await transitionOrdinaryRun(run, writeDataDir, "review_in_progress")
+  run = await transitionOrdinaryRun(run, writeDataDir, "review_passed")
+  run = await transitionOrdinaryRun(run, writeDataDir, "merge_ready")
+  run = await transitionOrdinaryRun(run, writeDataDir, "merged")
+
+  return run
+}
+
 function runWithDeployStarted() {
   const run = makeMergedRun({
     status: "deploy_in_progress",
@@ -389,6 +510,192 @@ test("Phase 6H does not expand the shared development project registry", () => {
   assert.throws(() => resolveDevelopmentRunProject(PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId), (error) => {
     assert.equal(error.code, "UNKNOWN_PROJECT")
     return true
+  })
+})
+
+test("ordinary run creation still rejects PPO without the self-development capability", async () => {
+  await withTempWriteDataDir(async (writeDataDir) => {
+    await assertRejectsCode(createDevelopmentRun({
+      projectId: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
+      task: "PPO self-development must require the explicit capability.",
+      baseSha: "0".repeat(40),
+      branch: "phase/6h-self-development",
+      headSha: "0".repeat(40),
+      actor: "phase-6h-test"
+    }, {
+      writeDataDir
+    }), "UNKNOWN_PROJECT")
+  })
+})
+
+test("explicit self-development capability creates and reads a durable PPO run", async () => {
+  await withTempWriteDataDir(async (writeDataDir) => {
+    const run = await createRealPpoSelfDevelopmentRun(writeDataDir)
+    const stored = await readPersonalProjectOperatorSelfDevelopmentRun(run.runId, { writeDataDir })
+
+    assert.equal(stored.project.id, PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId)
+    assert.equal(stored.project.owner, "Linardi1328")
+    assert.equal(stored.project.repo, "personal-project-operator")
+    assert.equal(stored.project.fullName, PHASE_6H_PPO_DEPLOYMENT_PROFILE.repositoryFullName)
+    assert.equal(stored.status, "created")
+    assert.equal(stored.version, 0)
+    assert.equal(stored.history.length, 1)
+
+    await assertRejectsCode(readDevelopmentRun(run.runId, { writeDataDir }), "UNKNOWN_PROJECT")
+  })
+})
+
+test("self-development runs keep normal version and transition validation", async () => {
+  await withTempWriteDataDir(async (writeDataDir) => {
+    const run = await createRealPpoSelfDevelopmentRun(writeDataDir)
+
+    await assertRejectsCode(transitionPersonalProjectOperatorSelfDevelopmentRun(run.runId, {
+      expectedVersion: run.version,
+      status: "implementation_ready",
+      actor: "phase-6h-test",
+      reason: "skipped-transition"
+    }, { writeDataDir }), "INVALID_RUN_TRANSITION")
+
+    await assertRejectsCode(transitionPersonalProjectOperatorSelfDevelopmentRun(run.runId, {
+      expectedVersion: run.version + 1,
+      status: "planning_in_progress",
+      actor: "phase-6h-test",
+      reason: "stale-version"
+    }, { writeDataDir }), "STALE_RUN_VERSION")
+
+    const planned = await transitionPpoRun(run, writeDataDir, "planning_in_progress")
+    assert.equal(planned.status, "planning_in_progress")
+    assert.equal(planned.version, 1)
+    assert.equal(planned.history.length, 2)
+  })
+})
+
+test("self-development capability refuses arbitrary project identities", async () => {
+  await withTempWriteDataDir(async (writeDataDir) => {
+    const base = {
+      projectId: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
+      task: "PPO self-development identity is fixed.",
+      baseSha: "0".repeat(40),
+      branch: "phase/6h-self-development",
+      headSha: "0".repeat(40),
+      actor: "phase-6h-test"
+    }
+
+    await assertRejectsCode(createPersonalProjectOperatorSelfDevelopmentRun({
+      ...base,
+      projectId: "khlim-assist"
+    }, { writeDataDir }), "UNKNOWN_PROJECT")
+
+    await assertRejectsCode(createPersonalProjectOperatorSelfDevelopmentRun({
+      ...base,
+      owner: "Example"
+    }, { writeDataDir }), "UNKNOWN_PROJECT")
+
+    await assertRejectsCode(createPersonalProjectOperatorSelfDevelopmentRun({
+      ...base,
+      fullName: "Linardi1328/other-repo"
+    }, { writeDataDir }), "UNKNOWN_PROJECT")
+
+    await assertRejectsCode(createPersonalProjectOperatorSelfDevelopmentRun({
+      ...base,
+      repositoryUrl: "https://github.com/Linardi1328/personal-project-operator.git"
+    }, { writeDataDir }), "UNKNOWN_PROJECT")
+
+    await assertRejectsCode(createPersonalProjectOperatorSelfDevelopmentRun({
+      ...base,
+      installDir: "/opt/personal-project-operator"
+    }, { writeDataDir }), "UNKNOWN_PROJECT")
+
+    await assertRejectsCode(createPersonalProjectOperatorSelfDevelopmentRun({
+      ...base,
+      deploymentProfile: "personal-project-operator-production"
+    }, { writeDataDir }), "UNKNOWN_PROJECT")
+
+    await assertRejectsCode(createPersonalProjectOperatorSelfDevelopmentRun({
+      ...base,
+      project: {
+        id: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
+        displayName: "Personal Project Operator",
+        owner: "Linardi1328",
+        repo: "other-repo",
+        fullName: PHASE_6H_PPO_DEPLOYMENT_PROFILE.repositoryFullName
+      }
+    }, { writeDataDir }), "UNKNOWN_PROJECT")
+  })
+})
+
+test("real PPO self-development run can reach merged and reserve exact-SHA deployment", async () => {
+  await withTempWriteDataDir(async (writeDataDir) => {
+    const merged = await advanceRealPpoRunToMerged(writeDataDir)
+    const storedMerged = await readPersonalProjectOperatorSelfDevelopmentRun(merged.runId, { writeDataDir })
+    const runner = makeDeploymentRunner({ mode: "ambiguous" })
+
+    assert.equal(storedMerged.status, "merged")
+    assert.equal(storedMerged.headSha, IMPLEMENTATION_SHA)
+    assert.equal(storedMerged.evidence.merge.at(-1).metadata.mergeCommitSha, MERGE_SHA)
+    assert.equal(storedMerged.history.length, storedMerged.version + 1)
+
+    await assertRejectsCode(executeDevelopmentDeployment(storedMerged.runId, {
+      writeDataDir,
+      deploymentRunner: runner,
+      expectedVersion: storedMerged.version,
+      now: () => new Date("2026-08-22T00:00:01.000Z")
+    }), "DEPLOYMENT_AMBIGUOUS")
+
+    const reserved = await readPersonalProjectOperatorSelfDevelopmentRun(storedMerged.runId, { writeDataDir })
+
+    assert.equal(reserved.status, "deploy_in_progress")
+    assert.equal(reserved.attempts.deploy, 1)
+    assert.equal(reserved.evidence.deploy.at(-1).metadata.outcome, "deploy_started")
+    assert.equal(reserved.evidence.deploy.at(-1).metadata.deploymentSha, MERGE_SHA)
+    assert.equal(runner.state.deployCalls.length, 1)
+    assert.equal(runner.state.deployCalls.at(0).expectedSha, MERGE_SHA)
+  })
+})
+
+test("real-store unauthorized or incomplete runs do not invoke deployment", async () => {
+  await withTempWriteDataDir(async (writeDataDir) => {
+    {
+      const run = await advanceOrdinaryRunToMerged(writeDataDir)
+      const runner = makeDeploymentRunner()
+
+      await assertRejectsCode(executeDevelopmentDeployment(run.runId, {
+        writeDataDir,
+        deploymentRunner: runner,
+        expectedVersion: run.version
+      }), "DEPLOYMENT_PROJECT_REFUSED")
+
+      assert.equal(runner.state.inspectCalls.length, 0)
+      assert.equal(runner.state.deployCalls.length, 0)
+    }
+
+    {
+      let run = await createRealPpoSelfDevelopmentRun(writeDataDir)
+
+      run = await transitionPpoRun(run, writeDataDir, "planning_in_progress")
+      run = await transitionPpoRun(run, writeDataDir, "planned")
+      run = await transitionPpoRun(run, writeDataDir, "implementation_in_progress")
+      run = await transitionPpoRun(run, writeDataDir, "implementation_ready", [], {
+        headSha: IMPLEMENTATION_SHA
+      })
+      run = await transitionPpoRun(run, writeDataDir, "tests_in_progress")
+      run = await transitionPpoRun(run, writeDataDir, "tests_passed")
+      run = await transitionPpoRun(run, writeDataDir, "review_in_progress")
+      run = await transitionPpoRun(run, writeDataDir, "review_passed")
+      run = await transitionPpoRun(run, writeDataDir, "merge_ready")
+      run = await transitionPpoRun(run, writeDataDir, "merged")
+
+      const runner = makeDeploymentRunner()
+
+      await assertRejectsCode(executeDevelopmentDeployment(run.runId, {
+        writeDataDir,
+        deploymentRunner: runner,
+        expectedVersion: run.version
+      }), "DEPLOYMENT_EVIDENCE_CHAIN_INVALID")
+
+      assert.equal(runner.state.inspectCalls.length, 0)
+      assert.equal(runner.state.deployCalls.length, 0)
+    }
   })
 })
 

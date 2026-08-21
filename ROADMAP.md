@@ -382,6 +382,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 
 - Add a trusted local deployment agent for a Phase 6A run that has reached exactly `merged` through Phase 6G.
 - Require an exact expected version before any state transition and reject stale writers.
+- Add an explicit local-only Personal Project Operator self-development run-state capability fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`, while ordinary development-run creation and the public project resolver continue to use only the existing five-project registry.
 - Support only the reviewed `personal-project-operator` deployment profile; do not automatically generalize deployment to the five-project registry.
 - Read the deployment target SHA only from durable Phase 6G `merged` evidence. The target must equal the Phase 6G merge commit SHA and must not come from caller input, task text, chat, environment variables, project Markdown, command-line text, repository-controlled configuration, or model output.
 - Preserve the Phase 6G SHA chain: implementation SHA, tested SHA, local reviewed SHA, remote reviewed SHA, merged implementation SHA, and deployment target SHA must all point to the approved development result through durable evidence.

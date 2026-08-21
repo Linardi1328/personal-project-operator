@@ -20,7 +20,7 @@ import {
   listPhase2GitHubProjects
 } from "./github-project-registry.mjs"
 
-const personalProjectOperatorDeploymentProject = Object.freeze({
+export const PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT = Object.freeze({
   id: "personal-project-operator",
   displayName: "Personal Project Operator",
   owner: "Linardi1328",
@@ -1158,10 +1158,10 @@ function normalizeExpectedVersion(value) {
 
 function resolveOptionalDevelopmentRunProject(projectId, options = {}) {
   if (
-    options.allowPersonalProjectOperatorDeploymentProject === true &&
-    projectId === personalProjectOperatorDeploymentProject.id
+    options.allowPersonalProjectOperatorSelfDevelopmentProject === true &&
+    projectId === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id
   ) {
-    return personalProjectOperatorDeploymentProject
+    return PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
   }
 
   return null
@@ -1652,8 +1652,80 @@ async function commitRecord(paths, record) {
   }
 }
 
-async function createDevelopmentRunInternal(input, options = {}) {
-  const project = resolveDevelopmentRunProject(input?.projectId)
+function validatePersonalProjectOperatorSelfDevelopmentInput(input = {}) {
+  const hasProjectId = Object.hasOwn(input || {}, "projectId")
+  const projectId = hasProjectId ? String(input.projectId ?? "").trim() : PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id
+
+  if (projectId !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id) {
+    throw runStateError(
+      "UNKNOWN_PROJECT",
+      "Personal Project Operator self-development runs are fixed to the approved PPO repository."
+    )
+  }
+
+  const fixedFields = Object.freeze({
+    owner: PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.owner,
+    repo: PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.repo,
+    fullName: PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.fullName,
+    repositoryFullName: PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.fullName
+  })
+  const refusedIdentityKeys = Object.freeze([
+    "url",
+    "repoUrl",
+    "repositoryUrl",
+    "remote",
+    "remoteUrl",
+    "origin",
+    "installDir",
+    "installationDirectory",
+    "path",
+    "deploymentProfile",
+    "service",
+    "serviceName"
+  ])
+
+  for (const [key, expected] of Object.entries(fixedFields)) {
+    if (Object.hasOwn(input || {}, key) && input[key] !== expected) {
+      throw runStateError(
+        "UNKNOWN_PROJECT",
+        "Personal Project Operator self-development runs are fixed to the approved PPO repository."
+      )
+    }
+  }
+
+  for (const key of refusedIdentityKeys) {
+    if (Object.hasOwn(input || {}, key)) {
+      throw runStateError(
+        "UNKNOWN_PROJECT",
+        "Personal Project Operator self-development runs are fixed to the approved PPO repository."
+      )
+    }
+  }
+
+  if (Object.hasOwn(input || {}, "project")) {
+    const project = input.project
+
+    if (
+      !project ||
+      typeof project !== "object" ||
+      Array.isArray(project) ||
+      project.id !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id ||
+      project.displayName !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.displayName ||
+      project.owner !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.owner ||
+      project.repo !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.repo ||
+      project.fullName !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.fullName
+    ) {
+      throw runStateError(
+        "UNKNOWN_PROJECT",
+        "Personal Project Operator self-development runs are fixed to the approved PPO repository."
+      )
+    }
+  }
+
+  return PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
+}
+
+async function createDevelopmentRunWithProject(input, project, options = {}) {
   const task = normalizeSafeText(input?.task, {
     fieldName: "Task",
     maxChars: MAX_DEVELOPMENT_RUN_TASK_CHARS,
@@ -1715,6 +1787,24 @@ async function createDevelopmentRunInternal(input, options = {}) {
   throw lastError || runStateError(
     "RUN_ID_GENERATION_FAILED",
     "Development run id could not be generated; no run-state write was attempted."
+  )
+}
+
+async function createDevelopmentRunInternal(input, options = {}) {
+  return await createDevelopmentRunWithProject(input, resolveDevelopmentRunProject(input?.projectId), options)
+}
+
+async function createPersonalProjectOperatorSelfDevelopmentRunInternal(input, options = {}) {
+  return await createDevelopmentRunWithProject(
+    {
+      ...input,
+      projectId: PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id
+    },
+    validatePersonalProjectOperatorSelfDevelopmentInput(input),
+    {
+      ...options,
+      allowPersonalProjectOperatorSelfDevelopmentProject: true
+    }
   )
 }
 
@@ -1859,9 +1949,28 @@ export async function createDevelopmentRun(input, options = {}) {
   }
 }
 
+export async function createPersonalProjectOperatorSelfDevelopmentRun(input, options = {}) {
+  try {
+    return await createPersonalProjectOperatorSelfDevelopmentRunInternal(input, options)
+  } catch (error) {
+    throw safeRunStateFailure(error)
+  }
+}
+
 export async function readDevelopmentRun(runId, options = {}) {
   try {
     return await readDevelopmentRunInternal(runId, options)
+  } catch (error) {
+    throw safeRunStateFailure(error)
+  }
+}
+
+export async function readPersonalProjectOperatorSelfDevelopmentRun(runId, options = {}) {
+  try {
+    return await readDevelopmentRunInternal(runId, {
+      ...options,
+      allowPersonalProjectOperatorSelfDevelopmentProject: true
+    })
   } catch (error) {
     throw safeRunStateFailure(error)
   }
@@ -1875,9 +1984,31 @@ export async function transitionDevelopmentRun(runId, transition, options = {}) 
   }
 }
 
+export async function transitionPersonalProjectOperatorSelfDevelopmentRun(runId, transition, options = {}) {
+  try {
+    return await transitionDevelopmentRunInternal(runId, transition, {
+      ...options,
+      allowPersonalProjectOperatorSelfDevelopmentProject: true
+    })
+  } catch (error) {
+    throw safeRunStateFailure(error)
+  }
+}
+
 export async function recordDevelopmentRunProgress(runId, progress, options = {}) {
   try {
     return await recordDevelopmentRunProgressInternal(runId, progress, options)
+  } catch (error) {
+    throw safeRunStateFailure(error)
+  }
+}
+
+export async function recordPersonalProjectOperatorSelfDevelopmentRunProgress(runId, progress, options = {}) {
+  try {
+    return await recordDevelopmentRunProgressInternal(runId, progress, {
+      ...options,
+      allowPersonalProjectOperatorSelfDevelopmentProject: true
+    })
   } catch (error) {
     throw safeRunStateFailure(error)
   }

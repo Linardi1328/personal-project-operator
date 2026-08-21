@@ -146,6 +146,7 @@ Allowed in Phase 6G only as deterministic acceptance, GitHub delivery, remote re
 
 Allowed in Phase 6H only as exact-SHA PPO deployment:
 
+- create/read/transition Personal Project Operator self-development runs only through the explicit fixed run-state capability for `personal-project-operator` / `Linardi1328/personal-project-operator`
 - accept only exact-version `merged` runs
 - require Phase 6G merged evidence for exactly `run.headSha`
 - derive the deployment target only from the Phase 6G merge commit SHA

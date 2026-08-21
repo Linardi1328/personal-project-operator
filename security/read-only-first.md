@@ -206,6 +206,7 @@ This exception stops at `merged`. It does not deploy, restart services, roll bac
 
 Phase 6H allows exact-SHA PPO deployment for a `merged` Phase 6A run:
 
+- create and read Personal Project Operator self-development runs only through the explicit fixed run-state capability
 - read the deployment target only from Phase 6G merged evidence
 - transition `merged -> deploy_in_progress -> deployed` or `deploy_failed`
 - switch only the fixed PPO checkout to the exact Phase 6G merge commit SHA
