@@ -353,6 +353,25 @@ test("run state recovers safely from durable version markers after restart", asy
   assert.equal(modeBits(await stat(paths.recordPath)), 0o600)
 })
 
+test("legacy Phase 6A records without planning evidence remain readable", async () => {
+  const fixture = await makeRun()
+  const paths = runPaths(fixture.writeDataDir, fixture.record.runId)
+  const canonical = JSON.parse(await readFile(paths.recordPath, "utf8"))
+  const markerPath = join(paths.versionDir, "000000.json")
+  const marker = JSON.parse(await readFile(markerPath, "utf8"))
+
+  delete canonical.evidence.planning
+  delete marker.evidence.planning
+  await writeFile(paths.recordPath, `${JSON.stringify(canonical)}\n`, { mode: 0o600 })
+  await writeFile(markerPath, `${JSON.stringify(marker)}\n`, { mode: 0o600 })
+
+  const recovered = await readDevelopmentRun(fixture.record.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.deepEqual(recovered.evidence.planning, [])
+})
+
 test("transition history integrity is enforced", async () => {
   const fixture = await runToStatus("planned")
   const paths = runPaths(fixture.writeDataDir, fixture.record.runId)

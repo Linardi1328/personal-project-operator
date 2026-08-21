@@ -138,6 +138,16 @@ This foundation is limited to deterministic run records under `${PPO_WRITE_DATA_
 
 It must not execute the lifecycle it records. It does not plan, invoke Codex or models, run tests, write GitHub, create branches or commits, merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
+## Phase 6B local next-stage planner foundation
+
+Phase 6B allows deterministic local planning against approved state:
+
+- `local-operator/development-next-stage-planner.mjs`
+
+The planner may read the fixed project doc for one allowlisted project, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts. It may return a bounded plan or `owner_action_required`, and it may create or plan a Phase 6A run only through `created -> planning_in_progress -> planned`.
+
+It must not execute the plan. It does not create workspaces, create branches, invoke Codex or models, run tests, review changes, write GitHub, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -147,7 +157,8 @@ Examples requiring explicit approval:
 - creating GitHub issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
 - updating project state files from stored notes
 - creating project notes outside the Phase 5C terminal path or Phase 5D approval-gated chat path
-- executing planner/Codex/test/review/merge/deploy/rollback/verification agents from Phase 6A run-state records
+- executing planner behavior beyond Phase 6B deterministic next-stage planning
+- executing Codex/test/review/merge/deploy/rollback/verification agents from Phase 6A run-state records
 - restarting services
 - publishing content
 - sending messages

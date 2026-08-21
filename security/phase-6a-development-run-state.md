@@ -16,7 +16,7 @@ Phase 6A may:
 - use durable version guards for optimistic concurrency and restart recovery
 - reject stale expected versions
 - reject skipped, invalid, terminal, and backward lifecycle transitions outside the explicit transition graph
-- store bounded SHA-pinned evidence metadata for implementation, review, test, deploy, and verification stages
+- store bounded SHA-pinned evidence metadata for planning, implementation, review, test, deploy, and verification stages
 - maintain immutable hash-chained transition history inside the canonical record
 
 ## Protected Data

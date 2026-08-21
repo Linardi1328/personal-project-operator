@@ -165,6 +165,28 @@ The store must:
 
 Phase 6A must not add planner logic, model calls, Codex execution, test execution, GitHub writes, PR automation, branch/commit/merge operations, deployment/service control, rollback, `/ppo continue`, Telegram/OpenClaw routes, or new OpenClaw tools.
 
+## Phase 6B next-stage planner boundary
+
+Phase 6B allows one local-only deterministic planner foundation:
+
+```text
+local-operator/development-next-stage-planner.mjs
+```
+
+The planner must:
+
+- resolve project ids through the existing five-project registry only
+- read only the fixed selected `projects/<project>.md`, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts
+- reject arbitrary repo names, arbitrary paths, traversal, globs, and unsupported source locations
+- return bounded structured output with project, current state, source-backed next task, next stage, base SHA, source evidence, and planner outcome
+- return `owner_action_required` for missing, malformed, contradictory, ambiguous, already-complete, product-choice-dependent, unsafe, unsupported, or missing-GitHub-fact state
+- reuse Phase 6A run-state primitives for run creation and transitions
+- transition runs only through `created -> planning_in_progress -> planned`
+- require exact expected-version checks for existing-run planning
+- attach metadata-only SHA-pinned planning evidence without secrets or raw logs
+
+Phase 6B must not add workspace creation, branch/worktree operations, Codex execution, model calls, automated tests, review automation, PR automation, GitHub writes, merges, deployment/service control, rollback, `/ppo continue`, Telegram/OpenClaw routes, or new OpenClaw tools.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.

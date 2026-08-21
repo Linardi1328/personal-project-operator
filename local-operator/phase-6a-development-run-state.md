@@ -49,7 +49,7 @@ The canonical record contains:
 - optional head SHA
 - per-stage attempt counters
 - created/updated/status/terminal timestamps
-- SHA-pinned implementation, review, test, deploy, and verification evidence metadata
+- SHA-pinned planning, implementation, review, test, deploy, and verification evidence metadata
 - immutable hash-chained transition history
 
 Evidence metadata is structured and bounded. It rejects secret-like values, raw errors, stdout/stderr, stack traces, credentials, tokens, passwords, and terminal control input.
