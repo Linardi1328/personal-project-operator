@@ -247,6 +247,25 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Attach metadata-only SHA-pinned `planning` evidence with plan/source hashes and bounded counts.
 - Keep Phase 6B as a library foundation only. Do not add workspace creation, branch operations, Codex execution, automated tests, review/hardening automation, PR automation, merge, deployment, rollback, `/ppo continue`, or Telegram/OpenClaw routes.
 
+### Phase 6C - Isolated workspace/worktree manager foundation
+
+- Add a local-only `local-operator/development-workspace-manager.mjs` workspace manager.
+- Resolve projects only through the existing five-project registry.
+- Reuse the Phase 6A run-state store and accept only runs already in `planned` status.
+- Require exact expected-version checks before transitioning run state.
+- Read repository locations only from an explicit configured project workspace registry; reject paths from user/task text, planner output, project Markdown, and arbitrary filesystem traversal.
+- Verify the configured source path is canonical, local, not a symlink, a Git repository root, clean, and identity-matched to the allowlisted project.
+- Verify `run.baseSha` exists locally before any workspace mutation.
+- Generate a deterministic bounded branch name from project, implementation stage, base SHA, and opaque run-id material; validate it through Git.
+- Create the branch exactly at `run.baseSha` and create the worktree only under a PPO-managed workspace root.
+- Protect against path traversal, symlink escapes, nested source/workspace roots, duplicate workspace ownership, and collisions.
+- Use explicit argv Git execution with no shell interpolation and only the minimum read/preflight, branch/worktree create, verification, and definite cleanup command shapes.
+- Re-check branch/worktree HEAD before transitioning `planned -> implementation_in_progress`.
+- Attach metadata-only SHA-pinned `implementation` evidence with project, repo identity, base SHA, branch, workspace id/reference, and timestamps.
+- Add read-only inspection helpers for restart recovery and recorded-workspace reconciliation.
+- Fail closed on ambiguous branch/worktree creation outcomes; clean up only when the partial outcome is definite.
+- Keep Phase 6C as a library foundation only. Do not add Codex execution, implementation-file edits, test execution, automated review/hardening, PR automation, GitHub writes, push, merge, deployment, rollback, `/ppo continue`, or Telegram/OpenClaw routes.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:

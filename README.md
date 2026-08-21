@@ -424,6 +424,18 @@ The only successful Phase 6B next stages are `planning` and `implementation`. Mi
 
 Phase 6B reuses the Phase 6A run-state store. It can create a new run or plan an existing `created` run only through `created -> planning_in_progress -> planned` with exact expected-version checks and metadata-only SHA-pinned planning evidence. It adds no command route, no `/ppo continue`, no workspace or branch creation, no Codex/model call, no test/review automation, no GitHub writes, no PR automation, no merge, no deployment/service control, and no Telegram/OpenClaw route. See [local-operator/phase-6b-next-stage-planner.md](local-operator/phase-6b-next-stage-planner.md) and [security/phase-6b-next-stage-planner.md](security/phase-6b-next-stage-planner.md).
 
+## Phase 6C Isolated Workspace Manager Foundation
+
+Phase 6C adds a local-only workspace manager foundation:
+
+```text
+local-operator/development-workspace-manager.mjs
+```
+
+It accepts only a Phase 6A run in `planned` status, verifies the allowlisted project/repo identity and exact base SHA from a configured project workspace registry, creates one deterministic branch/worktree under a PPO-managed workspace root, and then transitions the run to `implementation_in_progress` with metadata-only implementation evidence.
+
+Phase 6C adds no terminal command, `/ppo` route, Codex/model execution, implementation-file edit, automated tests, review automation, PR automation, GitHub write, push, merge, deployment, rollback, or `/ppo continue`. See [local-operator/phase-6c-isolated-workspace-manager.md](local-operator/phase-6c-isolated-workspace-manager.md) and [security/phase-6c-isolated-workspace-manager.md](security/phase-6c-isolated-workspace-manager.md).
+
 ## Command Menu System
 
 Commands are grouped into phone-friendly categories:
@@ -453,7 +465,7 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5E adds terminal-only controlled promotion of one durable note into one approved project-state section with exact confirmation, git safety preflights, atomic replacement, and metadata-only audit. Phase 6A adds a local-only durable development run-state store with explicit lifecycle transitions and optimistic concurrency. Phase 6B adds a deterministic local next-stage planner that can create or plan a Phase 6A run through the planning lifecycle only; it adds no execution or routing path.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5E adds terminal-only controlled promotion of one durable note into one approved project-state section with exact confirmation, git safety preflights, atomic replacement, and metadata-only audit. Phase 6A adds a local-only durable development run-state store with explicit lifecycle transitions and optimistic concurrency. Phase 6B adds a deterministic local next-stage planner that can create or plan a Phase 6A run through the planning lifecycle only. Phase 6C adds a deterministic local workspace manager that can prepare one isolated branch/worktree for a planned run only; it adds no implementation execution or routing path.
 
 The project still does not implement:
 
@@ -469,6 +481,7 @@ The project still does not implement:
 - project note writes beyond terminal-only `note-add` or the Phase 5D `/ppo note-add` plus `/ppo note-confirm` approval path
 - project-state mutations beyond terminal-only Phase 5E `state-promote` for the three approved fields
 - planner behavior beyond deterministic Phase 6B next-stage planning
+- workspace creation outside the Phase 6C isolated workspace manager
 - Codex, test, review, merge, deployment, rollback, or verification agents coordinated through the Phase 6A run-state store
 - issue comments, labels, PR writes, branch writes, commits, merges, or workflow dispatches
 - real Codex usage scraping
