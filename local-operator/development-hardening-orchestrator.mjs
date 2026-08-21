@@ -250,6 +250,13 @@ function validateChangesRequestedReview(run) {
     )
   }
 
+  if (!Number.isInteger(decisionEvidence.metadata?.attempt) || decisionEvidence.metadata.attempt <= 0) {
+    throw hardeningError(
+      "HARDENING_REVIEW_FINDINGS_INVALID",
+      "Review findings are missing, malformed, oversized, or unsafe for automated hardening."
+    )
+  }
+
   const findingsEvidence = matchingReviewFindingsEvidence(run, decisionEvidence)
 
   if (!findingsEvidence || findingsEvidence.metadata?.decision !== REVIEW_DECISIONS.CHANGES_REQUESTED || findingsEvidence.metadata?.mergeAllowed !== false) {

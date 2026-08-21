@@ -457,6 +457,30 @@ function latestRemoteReviewEvidence(run, outcome = null) {
   return null
 }
 
+function nextRemoteReviewAttempt(run) {
+  const evidence = Array.isArray(run?.evidence?.review) ? run.evidence.review : []
+  let latestAttempt = 0
+
+  for (const entry of evidence) {
+    if (entry?.source !== REMOTE_PR_REVIEW_AGENT_ID || entry?.metadata?.reviewer !== REMOTE_PR_REVIEW_AGENT_ID) {
+      continue
+    }
+
+    if (!Number.isInteger(entry?.metadata?.attempt) || entry.metadata.attempt <= 0) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_REMOTE_REVIEW_ATTEMPT_INVALID",
+        "Remote PR review attempt evidence is ambiguous; owner action is required."
+      )
+    }
+
+    if (entry.metadata.attempt > latestAttempt) {
+      latestAttempt = entry.metadata.attempt
+    }
+  }
+
+  return latestAttempt + 1
+}
+
 function latestPushedShaForBranch(run, branch) {
   const evidence = Array.isArray(run?.evidence?.merge) ? run.evidence.merge : []
 
@@ -1211,7 +1235,7 @@ function remoteReviewFindingHash(decision, reviewedSha) {
   }))
 }
 
-function remoteReviewStartedEvidence(run, pr, promptHash, startedAt) {
+function remoteReviewStartedEvidence(run, pr, promptHash, attempt, startedAt) {
   return {
     kind: "review",
     sha: normalizeSha(run.headSha, "Run head SHA"),
@@ -1222,8 +1246,8 @@ function remoteReviewStartedEvidence(run, pr, promptHash, startedAt) {
       reviewer: REMOTE_PR_REVIEW_AGENT_ID,
       policyId: PHASE_6G_DELIVERY_POLICY_ID,
       policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+      attempt,
       prNumber: pr.number,
-      base: PHASE_6G_DEFAULT_BASE_BRANCH,
       branch: pr.headRef,
       reviewedSha: run.headSha,
       promptHash,
@@ -1235,7 +1259,7 @@ function remoteReviewStartedEvidence(run, pr, promptHash, startedAt) {
   }
 }
 
-function remoteReviewFindingsEvidence(run, pr, decision) {
+function remoteReviewFindingsEvidence(run, pr, decision, attempt) {
   return {
     kind: "review",
     sha: normalizeSha(run.headSha, "Run head SHA"),
@@ -1244,6 +1268,7 @@ function remoteReviewFindingsEvidence(run, pr, decision) {
     metadata: {
       project: run.project.id,
       reviewer: REMOTE_PR_REVIEW_AGENT_ID,
+      attempt,
       prNumber: pr.number,
       reviewedSha: run.headSha,
       decision: decision.decision,
@@ -1260,7 +1285,7 @@ function remoteReviewFindingsEvidence(run, pr, decision) {
   }
 }
 
-function remoteReviewDecisionEvidence(run, pr, promptHash, decision, endedAt) {
+function remoteReviewDecisionEvidence(run, pr, promptHash, decision, attempt, endedAt) {
   return {
     kind: "review",
     sha: normalizeSha(run.headSha, "Run head SHA"),
@@ -1271,8 +1296,8 @@ function remoteReviewDecisionEvidence(run, pr, promptHash, decision, endedAt) {
       reviewer: REMOTE_PR_REVIEW_AGENT_ID,
       policyId: PHASE_6G_DELIVERY_POLICY_ID,
       policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+      attempt,
       prNumber: pr.number,
-      base: PHASE_6G_DEFAULT_BASE_BRANCH,
       branch: pr.headRef,
       reviewedSha: run.headSha,
       decision: decision.decision,
@@ -1287,12 +1312,12 @@ function remoteReviewDecisionEvidence(run, pr, promptHash, decision, endedAt) {
   }
 }
 
-async function recordRemoteReviewDecision(run, pr, promptHash, decision, options = {}) {
+async function recordRemoteReviewDecision(run, pr, promptHash, decision, attempt, options = {}) {
   const evidence = [
     ...(decision.decision === REVIEW_DECISIONS.APPROVED ? [] : [
-      remoteReviewFindingsEvidence(run, pr, decision)
+      remoteReviewFindingsEvidence(run, pr, decision, attempt)
     ]),
-    remoteReviewDecisionEvidence(run, pr, promptHash, decision, timestamp(options))
+    remoteReviewDecisionEvidence(run, pr, promptHash, decision, attempt, timestamp(options))
   ]
 
   if (decision.decision === REVIEW_DECISIONS.APPROVED) {
@@ -1330,6 +1355,7 @@ export async function executeRemotePrReview(run, pr, ci, options = {}) {
 
   const config = normalizeTrustedReviewConfig(options.reviewConfig)
   const approvedSha = normalizeSha(run.headSha, "Run head SHA")
+  const attempt = nextRemoteReviewAttempt(run)
   const preflight = await reconcileTrustedReviewWorkspace(run, options)
   const diffFacts = await collectTrustedReviewDiffFacts(run, preflight.location, approvedSha, options)
   const prompt = buildRemoteReviewPrompt(run, pr, ci, diffFacts)
@@ -1342,7 +1368,7 @@ export async function executeRemotePrReview(run, pr, ci, options = {}) {
     status: "review_passed",
     actor: REMOTE_PR_REVIEW_AGENT_ID,
     reason: "phase-6g-remote-pr-review-attempt",
-    evidence: [remoteReviewStartedEvidence(run, pr, promptHash, timestamp(options))]
+    evidence: [remoteReviewStartedEvidence(run, pr, promptHash, attempt, timestamp(options))]
   }, options)
 
   const postReservation = await reconcileTrustedReviewWorkspace(attemptRun, options)
@@ -1371,7 +1397,7 @@ export async function executeRemotePrReview(run, pr, ci, options = {}) {
       summary: "Remote PR review failed closed before a valid decision."
     }
 
-    await recordRemoteReviewDecision(attemptRun, pr, promptHash, ownerAction, options)
+    await recordRemoteReviewDecision(attemptRun, pr, promptHash, ownerAction, attempt, options)
     throw deliveryError(
       "GITHUB_DELIVERY_REMOTE_REVIEW_FAILED",
       "Remote PR review failed closed before a valid approval decision."
@@ -1395,7 +1421,7 @@ export async function executeRemotePrReview(run, pr, ci, options = {}) {
     )
   }
 
-  attemptRun = await recordRemoteReviewDecision(attemptRun, pr, promptHash, decision, options)
+  attemptRun = await recordRemoteReviewDecision(attemptRun, pr, promptHash, decision, attempt, options)
 
   return {
     ok: decision.decision === REVIEW_DECISIONS.APPROVED,
@@ -1558,7 +1584,7 @@ function latestMergedEvidence(run) {
   return latestDeliveryEvidence(run, "merged")
 }
 
-async function mergeReadyFacts(run, options = {}) {
+function mergeReadyEvidenceFacts(run) {
   const ready = latestMergeReadyEvidence(run)
   const approvedSha = normalizeSha(run.headSha, "Run head SHA")
 
@@ -1575,19 +1601,29 @@ async function mergeReadyFacts(run, options = {}) {
     )
   }
 
+  return {
+    ready,
+    approvedSha,
+    prNumber: normalizePrNumber(ready.metadata.prNumber),
+    branch: normalizeBranch(ready.metadata.branch)
+  }
+}
+
+async function mergeReadyFacts(run, options = {}) {
+  const readyFacts = mergeReadyEvidenceFacts(run)
   const acceptanceLike = {
     project: run.project,
-    approvedSha,
-    branch: ready.metadata.branch,
+    approvedSha: readyFacts.approvedSha,
+    branch: readyFacts.branch,
     base: PHASE_6G_DEFAULT_BASE_BRANCH
   }
   const pr = validateExactPullRequest(
-    await githubClient(options).getPullRequest(run.project, ready.metadata.prNumber),
+    await githubClient(options).getPullRequest(run.project, readyFacts.prNumber),
     acceptanceLike,
-    ready.metadata.prNumber
+    readyFacts.prNumber
   )
   const ci = await requireExactHeadCi(acceptanceLike, pr, options)
-  const remoteReview = assertRemoteApprovalEvidence(run, pr, approvedSha)
+  const remoteReview = assertRemoteApprovalEvidence(run, pr, readyFacts.approvedSha)
 
   if (pr.mergeable !== true) {
     throw deliveryError(
@@ -1597,11 +1633,40 @@ async function mergeReadyFacts(run, options = {}) {
   }
 
   return {
-    ready,
+    ready: readyFacts.ready,
     pr,
     ci,
     remoteReview,
-    approvedSha
+    approvedSha: readyFacts.approvedSha
+  }
+}
+
+async function mergeStartedReconciliationFacts(run) {
+  const readyFacts = mergeReadyEvidenceFacts(run)
+  const started = latestMergeStartedEvidence(run)
+
+  if (
+    !started ||
+    started.sha !== readyFacts.approvedSha ||
+    started.metadata?.implementationSha !== readyFacts.approvedSha ||
+    started.metadata?.expectedHeadSha !== readyFacts.approvedSha ||
+    started.metadata?.prNumber !== readyFacts.prNumber ||
+    started.metadata?.mergeMethod !== PHASE_6G_APPROVED_MERGE_METHOD
+  ) {
+    throw deliveryError(
+      "GITHUB_DELIVERY_MERGE_RECONCILE_CONFLICT",
+      "Merge attempt evidence does not match the expected exact head."
+    )
+  }
+
+  return {
+    ready: readyFacts.ready,
+    started,
+    pr: {
+      number: readyFacts.prNumber,
+      headRef: readyFacts.branch
+    },
+    approvedSha: readyFacts.approvedSha
   }
 }
 
@@ -1685,25 +1750,8 @@ export async function executeShaPinnedMerge(runId, options = {}) {
     )
   }
 
-  let facts = await mergeReadyFacts(run, options)
-
-  if (latestMergedEvidence(run)?.metadata?.mergeCommitSha) {
-    const completed = await reconcileMergeCompletion(run, facts, options)
-
-    return {
-      ok: true,
-      outcome: "merged",
-      run,
-      pr: completed.pr,
-      merge: {
-        implementationSha: facts.approvedSha,
-        mergeCommitSha: completed.mergeCommitSha,
-        mainSha: completed.mainSha
-      }
-    }
-  }
-
-  if (latestMergeStartedEvidence(run)?.sha === facts.approvedSha) {
+  if (latestMergeStartedEvidence(run)?.sha === normalizeSha(run.headSha, "Run head SHA")) {
+    const facts = await mergeStartedReconciliationFacts(run)
     const completed = await reconcileMergeCompletion(run, facts, options)
     const mergedRun = await transitionMerged(run, facts, completed, options)
 
@@ -1719,6 +1767,8 @@ export async function executeShaPinnedMerge(runId, options = {}) {
       }
     }
   }
+
+  let facts = await mergeReadyFacts(run, options)
 
   run = await recordDeliveryProgress(run, deliveryEvidence(run, facts.approvedSha, "merge_started", {
     prNumber: facts.pr.number,
@@ -1834,7 +1884,10 @@ export async function reconcileGitHubDelivery(runId, options = {}) {
 
     if (run.status === "merge_ready" && latestReady?.metadata?.prNumber) {
       try {
-        const facts = await mergeReadyFacts(run, options)
+        const mergeStarted = latestMergeStartedEvidence(run)
+        const facts = mergeStarted?.sha === approvedSha
+          ? await mergeStartedReconciliationFacts(run)
+          : await mergeReadyFacts(run, options)
         const completed = await reconcileMergeCompletion(run, facts, options)
         mergeStatus = completed.mergeCommitSha ? "merged_remote" : "merge_ready"
       } catch {

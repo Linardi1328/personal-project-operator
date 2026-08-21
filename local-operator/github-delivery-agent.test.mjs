@@ -20,9 +20,13 @@ import {
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
+  buildCodexImplementationPrompt,
   CODEX_EXECUTION_ADAPTER_ID,
   PHASE_6F_HARDENING_ORCHESTRATOR_ID
 } from "./development-codex-execution-adapter.mjs"
+import {
+  executeBoundedHardening
+} from "./development-hardening-orchestrator.mjs"
 import {
   AUTOMATED_TEST_RUNNER_ID
 } from "./development-test-runner.mjs"
@@ -308,6 +312,18 @@ async function assertRejectsCode(promise, code) {
   )
 }
 
+function remoteReviewEntries(run, outcome = null) {
+  return run.evidence.review.filter((entry) => (
+    entry.source === REMOTE_PR_REVIEW_AGENT_ID &&
+    entry.metadata?.reviewer === REMOTE_PR_REVIEW_AGENT_ID &&
+    (outcome === null || entry.metadata?.outcome === outcome)
+  ))
+}
+
+function latestRemoteReviewEntry(run, outcome) {
+  return remoteReviewEntries(run, outcome).at(-1)
+}
+
 function trustedReviewConfig() {
   return {
     executablePath: process.execPath,
@@ -431,7 +447,8 @@ function makeGitHubClient(project, branch, headSha, options = {}) {
     jobs: options.jobs || successJobs(),
     createAmbiguous: options.createAmbiguous || false,
     mergeAmbiguous: options.mergeAmbiguous || false,
-    mergeAmbiguousWithoutRemote: options.mergeAmbiguousWithoutRemote || false
+    mergeAmbiguousWithoutRemote: options.mergeAmbiguousWithoutRemote || false,
+    mergeCrashAfterRemote: options.mergeCrashAfterRemote || false
   }
 
   return {
@@ -502,6 +519,11 @@ function makeGitHubClient(project, branch, headSha, options = {}) {
       pr.state = "closed"
       pr.mergeCommitSha = MERGE_SHA
       state.mainSha = MERGE_SHA
+
+      if (state.mergeCrashAfterRemote) {
+        state.mergeCrashAfterRemote = false
+        throw new Error("local process crashed after remote merge")
+      }
 
       return {
         merged: true,
@@ -577,6 +599,62 @@ function makeGitRunner(remoteState = {}) {
 
   runner.state = state
   return runner
+}
+
+async function makeMergeReadyDeliveryFixture(options = {}) {
+  const fixture = await makeReviewPassedFixture(options.fixtureOptions || {})
+  const githubClient = options.githubClient || makeGitHubClient(
+    fixture.project,
+    fixture.run.branch,
+    fixture.headSha,
+    options.githubOptions || {}
+  )
+  const delivered = await executeGitHubDeliveryToMergeReady(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    gitRunner: makeGitRunner(),
+    githubClient,
+    reviewConfig: trustedReviewConfig(),
+    reviewRunner: makeReviewRunner(),
+    now: fixture.now
+  })
+
+  return {
+    ...fixture,
+    githubClient,
+    delivered
+  }
+}
+
+async function makeMergeStartedCrashFixture(options = {}) {
+  const fixture = await makeMergeReadyDeliveryFixture({
+    githubOptions: {
+      mainSha: "c".repeat(40),
+      mergeCrashAfterRemote: true,
+      ...(options.githubOptions || {})
+    }
+  })
+
+  await assert.rejects(executeShaPinnedMerge(fixture.run.runId, {
+    expectedVersion: fixture.delivered.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    githubClient: fixture.githubClient,
+    now: fixture.now
+  }), /local process crashed after remote merge/u)
+
+  const withStarted = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  assert.equal(withStarted.status, "merge_ready")
+  assert.equal(withStarted.evidence.merge.at(-1).metadata.outcome, "merge_started")
+  assert.equal(fixture.githubClient.state.mergeCalls.length, 1)
+
+  return {
+    ...fixture,
+    withStarted
+  }
 }
 
 test("acceptance gate requires exact review_passed state, SHA equality, clean workspace, and no open attempts", async () => {
@@ -877,6 +955,20 @@ test("remote PR review is exact-head, sandboxed, structured, and can re-enter ha
   assert.doesNotMatch(reviewCall.prompt, /SENSITIVE_TEST_SENTINEL|github_pat_|gho_|raw CI logs|stdout:|stderr:/iu)
   assert.equal(reviewCall.readOnlyPaths.includes(fixture.location.workspacePath), true)
   assert.equal(reviewCall.readOnlyPaths.includes(fixture.sourceRepoPath), true)
+  assert.equal(latestRemoteReviewEntry(approved.run, "remote_review_started").metadata.attempt, 1)
+  assert.equal(latestRemoteReviewEntry(approved.run, "approved").metadata.attempt, 1)
+
+  const secondApproved = await executeRemotePrReview(approved.run, pr, ci, {
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    reviewConfig: trustedReviewConfig(),
+    reviewRunner: makeReviewRunner((invocation) => reviewerDecision(invocation.reviewedSha)),
+    now: fixture.now
+  })
+
+  assert.equal(secondApproved.ok, true)
+  assert.equal(latestRemoteReviewEntry(secondApproved.run, "remote_review_started").metadata.attempt, 2)
+  assert.equal(latestRemoteReviewEntry(secondApproved.run, "approved").metadata.attempt, 2)
 
   const changes = await makeReviewPassedFixture()
   const changesPr = makePr(changes.project, changes.run.branch, changes.headSha)
@@ -891,6 +983,7 @@ test("remote PR review is exact-head, sandboxed, structured, and can re-enter ha
       decision: REVIEW_DECISIONS.CHANGES_REQUESTED,
       mergeAllowed: false,
       blockers: ["Remote PR head misses validation coverage."],
+      securityFindings: ["Remote PR review found a bounded security issue."],
       summary: "Changes requested."
     })),
     now: changes.now
@@ -898,8 +991,32 @@ test("remote PR review is exact-head, sandboxed, structured, and can re-enter ha
 
   assert.equal(requested.ok, false)
   assert.equal(requested.run.status, "review_changes_requested")
-  assert.equal(requested.run.evidence.review.at(-1).source, REMOTE_PR_REVIEW_AGENT_ID)
-  assert.equal(requested.run.evidence.review.at(-1).metadata.mergeAllowed, false)
+  assert.equal(latestRemoteReviewEntry(requested.run, "remote_review_started").metadata.attempt, 1)
+  assert.equal(latestRemoteReviewEntry(requested.run, "review_findings").metadata.attempt, 1)
+  assert.equal(latestRemoteReviewEntry(requested.run, "changes_requested").metadata.attempt, 1)
+  assert.equal(latestRemoteReviewEntry(requested.run, "changes_requested").metadata.mergeAllowed, false)
+
+  await assertRejectsCode(executeBoundedHardening(changes.run.runId, {
+    expectedVersion: requested.run.version,
+    writeDataDir: changes.writeDataDir,
+    workspaceRegistry: changes.registry,
+    now: changes.now
+  }), "CODEX_CONFIG_REQUIRED")
+
+  const hardeningRun = await readDevelopmentRun(changes.run.runId, {
+    writeDataDir: changes.writeDataDir
+  })
+  const hardeningStarted = hardeningRun.evidence.implementation.findLast((entry) => (
+    entry.source === PHASE_6F_HARDENING_ORCHESTRATOR_ID &&
+    entry.metadata?.outcome === "hardening_started"
+  ))
+  assert.equal(hardeningRun.status, "implementation_in_progress")
+  assert.equal(hardeningStarted.metadata.reviewAttempt, 1)
+  assert.equal(hardeningStarted.metadata.reviewer, REMOTE_PR_REVIEW_AGENT_ID)
+
+  const remediationPrompt = buildCodexImplementationPrompt(hardeningRun, changes.location)
+  assert.match(remediationPrompt, /Remote PR head misses validation coverage\./u)
+  assert.match(remediationPrompt, /Remote PR review found a bounded security issue\./u)
 
   const malformed = await makeReviewPassedFixture()
   await assertRejectsCode(executeRemotePrReview(malformed.run, makePr(malformed.project, malformed.run.branch, malformed.headSha), {
@@ -918,6 +1035,95 @@ test("remote PR review is exact-head, sandboxed, structured, and can re-enter ha
   })
   assert.equal(malformedReloaded.status, "review_changes_requested")
   assert.equal(malformedReloaded.evidence.review.at(-1).metadata.decision, REVIEW_DECISIONS.OWNER_ACTION_REQUIRED)
+  assert.equal(malformedReloaded.evidence.review.at(-1).metadata.attempt, 1)
+
+  const openAttempt = await makeReviewPassedFixture()
+  const openAttemptRun = await recordDevelopmentRunProgress(openAttempt.run.runId, {
+    expectedVersion: openAttempt.run.version,
+    status: "review_passed",
+    actor: REMOTE_PR_REVIEW_AGENT_ID,
+    reason: "test-open-remote-review-attempt",
+    evidence: [{
+      kind: "review",
+      sha: openAttempt.headSha,
+      source: REMOTE_PR_REVIEW_AGENT_ID,
+      summary: "Open remote PR review attempt should block retry.",
+      metadata: {
+        project: openAttempt.project.id,
+        reviewer: REMOTE_PR_REVIEW_AGENT_ID,
+        attempt: 1,
+        prNumber: 1,
+        branch: openAttempt.run.branch,
+        reviewedSha: openAttempt.headSha,
+        promptHash: "f".repeat(64),
+        outcome: "remote_review_started"
+      }
+    }]
+  }, {
+    writeDataDir: openAttempt.writeDataDir,
+    now: openAttempt.now
+  })
+
+  await assertRejectsCode(executeRemotePrReview(openAttemptRun, makePr(openAttempt.project, openAttempt.run.branch, openAttempt.headSha), {
+    ...ci,
+    headSha: openAttempt.headSha
+  }, {
+    writeDataDir: openAttempt.writeDataDir,
+    workspaceRegistry: openAttempt.registry,
+    reviewConfig: trustedReviewConfig(),
+    reviewRunner: makeReviewRunner(),
+    now: openAttempt.now
+  }), "GITHUB_DELIVERY_REMOTE_REVIEW_RECONCILIATION_REQUIRED")
+
+  for (const invalidAttempt of [undefined, 0, "1"]) {
+    const invalid = await makeReviewPassedFixture()
+    const metadata = {
+      project: invalid.project.id,
+      reviewer: REMOTE_PR_REVIEW_AGENT_ID,
+      prNumber: 1,
+      branch: invalid.run.branch,
+      reviewedSha: invalid.headSha,
+      decision: REVIEW_DECISIONS.APPROVED,
+      mergeAllowed: true,
+      blockers: 0,
+      securityFindings: 0,
+      testsRequired: 0,
+      summaryHash: "a".repeat(64),
+      outcome: "approved"
+    }
+
+    if (invalidAttempt !== undefined) {
+      metadata.attempt = invalidAttempt
+    }
+
+    const invalidRun = await recordDevelopmentRunProgress(invalid.run.runId, {
+      expectedVersion: invalid.run.version,
+      status: "review_passed",
+      actor: REMOTE_PR_REVIEW_AGENT_ID,
+      reason: "test-invalid-remote-review-attempt",
+      evidence: [{
+        kind: "review",
+        sha: invalid.headSha,
+        source: REMOTE_PR_REVIEW_AGENT_ID,
+        summary: "Invalid remote PR review attempt should block retry.",
+        metadata
+      }]
+    }, {
+      writeDataDir: invalid.writeDataDir,
+      now: invalid.now
+    })
+
+    await assertRejectsCode(executeRemotePrReview(invalidRun, makePr(invalid.project, invalid.run.branch, invalid.headSha), {
+      ...ci,
+      headSha: invalid.headSha
+    }, {
+      writeDataDir: invalid.writeDataDir,
+      workspaceRegistry: invalid.registry,
+      reviewConfig: trustedReviewConfig(),
+      reviewRunner: makeReviewRunner(),
+      now: invalid.now
+    }), "GITHUB_DELIVERY_REMOTE_REVIEW_ATTEMPT_INVALID")
+  }
 })
 
 test("delivery reaches merge_ready only after push, PR, exact-head CI, remote approval, and persisted metadata-only evidence", async () => {
@@ -1025,6 +1231,105 @@ test("SHA-pinned merge requires merge_ready, exact current head, mergeability, e
     workspaceRegistry: blocked.registry,
     githubClient: blockedClient
   }), "GITHUB_DELIVERY_PR_NOT_MERGEABLE")
+})
+
+test("SHA-pinned merge recovers a successful remote merge after process crash without a duplicate merge", async () => {
+  const fixture = await makeMergeStartedCrashFixture()
+
+  assert.equal(fixture.githubClient.state.prs[0].state, "closed")
+  assert.equal(fixture.githubClient.state.prs[0].merged, true)
+  assert.equal(fixture.githubClient.state.prs[0].headSha, fixture.headSha)
+  assert.equal(fixture.githubClient.state.prs[0].mergeCommitSha, MERGE_SHA)
+  assert.equal(fixture.githubClient.state.mainSha, MERGE_SHA)
+
+  const recovered = await executeShaPinnedMerge(fixture.run.runId, {
+    expectedVersion: fixture.withStarted.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    githubClient: fixture.githubClient,
+    now: fixture.now
+  })
+
+  assert.equal(fixture.githubClient.state.mergeCalls.length, 1)
+  assert.equal(recovered.run.status, "merged")
+  assert.equal(recovered.merge.implementationSha, fixture.headSha)
+  assert.equal(recovered.merge.mergeCommitSha, MERGE_SHA)
+  assert.equal(recovered.merge.mainSha, MERGE_SHA)
+  assert.equal(recovered.run.evidence.merge.at(-1).metadata.expectedHeadSha, fixture.headSha)
+  assert.equal(recovered.run.evidence.merge.at(-1).metadata.mergeCommitSha, MERGE_SHA)
+  assert.equal(recovered.run.evidence.merge.at(-1).metadata.mainSha, MERGE_SHA)
+})
+
+test("SHA-pinned merge recovery fails closed for conflicting remote state after merge_started", async () => {
+  const cases = [
+    {
+      name: "PR closed but not merged",
+      mutate({ pr }) {
+        pr.state = "closed"
+        pr.merged = false
+        pr.mergeCommitSha = null
+      }
+    },
+    {
+      name: "merged PR has wrong head SHA",
+      mutate({ pr }) {
+        pr.headSha = "e".repeat(40)
+      }
+    },
+    {
+      name: "wrong PR branch",
+      mutate({ pr }) {
+        pr.headRef = "phase/unexpected"
+      }
+    },
+    {
+      name: "wrong PR base",
+      mutate({ pr }) {
+        pr.baseRef = "develop"
+      }
+    },
+    {
+      name: "wrong PR repository",
+      mutate({ pr }) {
+        pr.baseRepoFullName = "Linardi1328/unexpected"
+      }
+    },
+    {
+      name: "missing merge commit SHA",
+      mutate({ pr }) {
+        pr.mergeCommitSha = null
+      }
+    },
+    {
+      name: "main does not equal merge commit",
+      mutate({ client }) {
+        client.state.mainSha = "e".repeat(40)
+      }
+    }
+  ]
+
+  for (const entry of cases) {
+    const fixture = await makeMergeStartedCrashFixture()
+    entry.mutate({
+      client: fixture.githubClient,
+      pr: fixture.githubClient.state.prs[0]
+    })
+
+    await assertRejectsCode(executeShaPinnedMerge(fixture.run.runId, {
+      expectedVersion: fixture.withStarted.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      githubClient: fixture.githubClient,
+      now: fixture.now
+    }), "GITHUB_DELIVERY_MERGE_RECONCILE_CONFLICT")
+
+    const reloaded = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    assert.equal(fixture.githubClient.state.mergeCalls.length, 1, entry.name)
+    assert.equal(reloaded.status, "merge_ready", entry.name)
+    assert.equal(reloaded.evidence.merge.at(-1).metadata.outcome, "merge_started", entry.name)
+  }
 })
 
 test("ambiguous merge is reconciled before retry and duplicate merge attempts are prevented", async () => {
