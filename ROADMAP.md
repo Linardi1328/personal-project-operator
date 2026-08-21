@@ -378,9 +378,29 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Never persist tokens, authorization headers, credentials, SSH material, raw API bodies, raw CI logs, raw stdout/stderr, arbitrary executable paths, or unbounded errors.
 - Phase 6G ends at `merged`. It must not deploy, restart services, roll back production, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials/authentication, or merge an unreviewed SHA.
 
+### Phase 6H - Exact-SHA Deployment Agent Foundation
+
+- Add a trusted local deployment agent for a Phase 6A run that has reached exactly `merged` through Phase 6G.
+- Require an exact expected version before any state transition and reject stale writers.
+- Add an explicit local-only Personal Project Operator self-development run-state capability fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`, while ordinary development-run creation and the public project resolver continue to use only the existing five-project registry.
+- Support only the reviewed `personal-project-operator` deployment profile; do not automatically generalize deployment to the five-project registry.
+- Read the deployment target SHA only from durable Phase 6G `merged` evidence. The target must equal the Phase 6G merge commit SHA and must not come from caller input, task text, chat, environment variables, project Markdown, command-line text, repository-controlled configuration, or model output.
+- Preserve the Phase 6G SHA chain: implementation SHA, tested SHA, local reviewed SHA, remote reviewed SHA, merged implementation SHA, and deployment target SHA must all point to the approved development result through durable evidence.
+- Add a narrowly scoped exact-SHA deployment primitive for the PPO checkout. It verifies the fixed profile, fixed installation path, fixed repository identity, fixed origin, expected commit existence, expected commit reachability from approved `main`, previous installed revision when available, checkout HEAD after mutation, approved runtime preflight, and restart of only the fixed PPO service.
+- Use trusted executable paths, explicit argv, `shell: false`, bounded timeout/output, and sanitized process environment from Node. Trusted shell scripts must use `set -Eeuo pipefail`, fixed command shapes, fixed paths, fixed repository identity, malformed-SHA rejection, no `eval`, no arbitrary remotes, no arbitrary services, and no caller-controlled shell command strings.
+- Do not use `git pull` as final deployment selection. A fetch may refresh the fixed origin, but final checkout selection must be the exact approved SHA.
+- Transition `merged -> deploy_in_progress` before deployment mutation and reserve durable metadata-only deployment attempt evidence.
+- Transition `deploy_in_progress -> deployed` only after deterministic postconditions prove the approved deployment operation completed, the deployment repository identity is correct, deployed checkout HEAD equals the Phase 6G merge SHA, approved runtime preflight passed, and the fixed service restart command completed.
+- On definitive deployment failure, transition `deploy_in_progress -> deploy_failed` with metadata-only failure classification. Do not automatically rollback.
+- Treat timeout, signal, process interruption, killed process, output overflow, uncertain checkout completion, uncertain service restart completion, and uncertain filesystem durability as ambiguous. Preserve the open deployment attempt and require read-only reconciliation before retry.
+- Add read-only deployment reconciliation that reports current run status, expected deployment SHA, recorded attempt, current checkout SHA, exact target installation state, evidence completeness, and owner-action requirement. Reconciliation must not mutate the repo, restart the service, retry deployment, or infer full success when service restart completion cannot be proven.
+- Store only bounded metadata such as project, deployment agent id, policy id/hash, attempt, expected deployment SHA, previous installed SHA when available, checkout SHA, service identity, timestamps, result classes, and outcome.
+- Never persist tokens, authorization headers, credentials, SSH material, environment dumps, raw stdout/stderr, raw process failures, arbitrary absolute paths, shell command strings, or unbounded errors.
+- Phase 6H stops at `deployed`. It must not automatically rollback, perform production verification, run health validation, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials/authentication, or modify production except through the fixed exact-SHA deployment operation.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add deploy, rollback, and verification agents one boundary at a time.
+- Add rollback and verification agents one boundary at a time.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.

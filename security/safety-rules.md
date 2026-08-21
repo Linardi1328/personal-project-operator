@@ -321,6 +321,42 @@ The agent must:
 
 Phase 6F must not create parallel implementation/test/review engines, accept arbitrary remediation text, harden beyond the three-round cap, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
 
+## Phase 6G acceptance and GitHub delivery boundary
+
+Phase 6G allows deterministic exact-SHA delivery after local Phase 6F approval:
+
+- accept only exact-version `review_passed` runs whose implementation, tests, local review, and workspace HEAD all match `run.headSha`
+- push only the approved implementation SHA to the approved Phase 6C branch on fixed `origin`
+- create or reuse one approved PR to `main`
+- require exact-head `PPO PR validation`
+- run independent exact-head remote PR review inside the Phase 6F no-network/read-only review sandbox
+- transition to `merge_ready` only after all gates pass
+- merge only with a fixed method and GitHub expected-head-SHA protection
+- reconcile ambiguous push, PR creation, and merge writes read-only
+
+Phase 6G must not deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials, or merge an unreviewed SHA.
+
+## Phase 6H exact-SHA deployment boundary
+
+Phase 6H allows one local deployment boundary for the PPO service:
+
+- create and consume PPO self-development run-state records only through the explicit fixed `personal-project-operator` capability
+- accept only exact-version `merged` runs
+- require valid Phase 6G merged evidence for exactly `run.headSha`
+- derive the deployment target only from the Phase 6G merge commit SHA
+- support only the fixed `personal-project-operator` deployment profile
+- reject arbitrary repository URLs, install paths, remotes, service names, executable paths, command strings, and caller-supplied SHAs
+- transition `merged -> deploy_in_progress` before mutation
+- use trusted executable paths, explicit argv, `shell: false`, bounded timeout/output, and sanitized environment
+- check out exactly the approved SHA, not branch names or latest `main`
+- run only the approved runtime preflight
+- restart only `ppo-openclaw.service`
+- transition to `deployed` only after exact checkout and restart postconditions are proven
+- transition definitive failures to `deploy_failed`
+- preserve ambiguous attempts for read-only reconciliation
+
+Phase 6H must not deploy arbitrary projects, use `git pull` as final deployment selection, automatically rollback, run production verification or health checks, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials, or broaden GitHub write permissions.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.
