@@ -148,6 +148,16 @@ The planner may read the fixed project doc for one allowlisted project, `ROADMAP
 
 It must not execute the plan. It does not create workspaces, create branches, invoke Codex or models, run tests, review changes, write GitHub, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
+## Phase 6C isolated workspace exception
+
+Phase 6C allows deterministic local workspace preparation for a planned run:
+
+- `local-operator/development-workspace-manager.mjs`
+
+The manager may read one `planned` Phase 6A run, verify one configured allowlisted source repository, create one deterministic branch from exactly `run.baseSha`, create one worktree under a PPO-managed workspace root, and transition only `planned -> implementation_in_progress` after verification.
+
+This exception does not execute implementation. It does not invoke Codex or models, edit workspace files, run tests, review changes, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -158,6 +168,7 @@ Examples requiring explicit approval:
 - updating project state files from stored notes
 - creating project notes outside the Phase 5C terminal path or Phase 5D approval-gated chat path
 - executing planner behavior beyond Phase 6B deterministic next-stage planning
+- creating or managing workspaces outside the Phase 6C isolated workspace manager
 - executing Codex/test/review/merge/deploy/rollback/verification agents from Phase 6A run-state records
 - restarting services
 - publishing content

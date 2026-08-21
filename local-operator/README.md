@@ -135,6 +135,14 @@ local-operator/development-next-stage-planner.mjs
 
 It reads only fixed project docs, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts. It returns a bounded structured plan or `owner_action_required`, and can create or plan a Phase 6A run only through `created -> planning_in_progress -> planned`. Phase 6B adds no terminal command, `/ppo` route, OpenClaw tool, workspace creation, branch operation, Codex execution, GitHub write, test/review automation, deployment action, or `/ppo continue`. See [phase-6b-next-stage-planner.md](phase-6b-next-stage-planner.md).
 
+Phase 6C adds a local-only isolated workspace manager library:
+
+```text
+local-operator/development-workspace-manager.mjs
+```
+
+It accepts only a Phase 6A run in `planned` status, verifies the configured allowlisted source repo and exact base SHA, creates one deterministic branch/worktree under a PPO-managed workspace root, verifies the result, and transitions the run to `implementation_in_progress`. Phase 6C adds no terminal command, `/ppo` route, OpenClaw tool, Codex execution, implementation-file edit, test/review automation, GitHub write, PR automation, merge, deployment, rollback, or `/ppo continue`. See [phase-6c-isolated-workspace-manager.md](phase-6c-isolated-workspace-manager.md).
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -156,6 +164,8 @@ It reads only fixed project docs, `ROADMAP.md`, and Phase 2 GitHub read-only sna
 - `phase-6a-development-run-state.md`: Phase 6A local usage and safety boundary.
 - `development-next-stage-planner.mjs`: Phase 6B deterministic local next-stage planner.
 - `phase-6b-next-stage-planner.md`: Phase 6B local usage and safety boundary.
+- `development-workspace-manager.mjs`: Phase 6C deterministic local isolated workspace manager.
+- `phase-6c-isolated-workspace-manager.md`: Phase 6C local usage and safety boundary.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -168,6 +178,7 @@ It reads only fixed project docs, `ROADMAP.md`, and Phase 2 GitHub read-only sna
 - `project-state-promote.test.mjs`: Phase 5E tests for allowlisting, field restrictions, confirmation, git safety, byte preservation, atomic replacement, metadata audit, duplicate/ambiguous behavior, and Phase 5C/5D regressions.
 - `development-run-state.test.mjs`: Phase 6A tests for project allowlisting, run ids, private permissions, lifecycle transitions, stale/concurrent writes, recovery, history integrity, bounded inputs, evidence metadata, safe errors, and Phase 5 regressions.
 - `development-next-stage-planner.test.mjs`: Phase 6B tests for deterministic planning, source-state refusal modes, GitHub read-only boundaries, Phase 6A integration, stale expected-version refusal, and route/execution exclusions.
+- `development-workspace-manager.test.mjs`: Phase 6C tests for planned-run gating, repo identity/base SHA preflight, dirty repo refusal, managed workspace path safety, branch/worktree creation, run-state transition, reconciliation, cleanup, ambiguous outcomes, and execution-boundary regressions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -266,6 +277,8 @@ Phase 6A adds only local run-state storage for future autonomous-development coo
 
 Phase 6B adds deterministic local next-stage planning only. It reads the fixed project doc for one allowlisted project, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts, then returns either a bounded plan for a `planning` or `implementation` next stage or a safe `owner_action_required` result. It may use Phase 6A primitives to create or plan a run through `created -> planning_in_progress -> planned`; it does not skip lifecycle states and does not add a wrapper command, `/ppo` route, model call, Codex execution, tests, review automation, GitHub writes, branch/worktree operations, deployment/service control, rollback, or `/ppo continue`.
 
+Phase 6C adds deterministic local workspace preparation only. It accepts a Phase 6A run only in `planned`, requires exact expected-version checks, reads source repository locations only from a trusted project workspace registry, verifies repo identity and base SHA before mutation, creates one isolated branch/worktree under `${PPO_WRITE_DATA_DIR}/development-workspaces` or an explicitly configured PPO-managed workspace root, and transitions only `planned -> implementation_in_progress` after verification. It does not add a wrapper command, `/ppo` route, model call, Codex execution, implementation-file edit, test execution, review automation, GitHub writes, PR automation, merge, deployment/service control, rollback, or `/ppo continue`.
+
 Owner test plan after branch review:
 
 ```bash
@@ -291,6 +304,8 @@ node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
 ```
 
+Phase 6A, Phase 6B, and Phase 6C remain library-only and have no owner-facing `/ppo` command in this test plan.
+
 Then through OpenClaw/Telegram after review:
 
 ```text
@@ -312,6 +327,8 @@ Requirements:
 ```
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
+
+Phase 6A, Phase 6B, and Phase 6C remain library-only; do not add `/ppo continue` or any autonomous-development route to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
 ## OpenClaw handoff shape
 

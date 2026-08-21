@@ -65,6 +65,8 @@ Run records are stored under `${PPO_WRITE_DATA_DIR}/development-runs`. Evidence 
 
 Phase 6B planner evidence uses the Phase 6A run-state store. It may store plan hashes, source hashes, bounded counts, project ids, next-stage labels, and Git SHAs. It must not store raw project documents, raw GitHub payloads, raw planner failures, credentials, tokens, or terminal confirmation values.
 
+Phase 6C workspace evidence uses the Phase 6A run-state store. It may store project id, approved repo identity, base SHA, deterministic branch name, workspace id, bounded workspace reference, manager id, and verification timestamp. It must not store credentials, access tokens, passwords, authorization headers, raw Git stdout/stderr, raw Git failures, arbitrary user-controlled paths, source repository paths, task text, terminal confirmation values, stack traces, or unbounded logs.
+
 ## Documentation examples
 
 Allowed:

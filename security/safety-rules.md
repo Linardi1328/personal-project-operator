@@ -187,6 +187,35 @@ The planner must:
 
 Phase 6B must not add workspace creation, branch/worktree operations, Codex execution, model calls, automated tests, review automation, PR automation, GitHub writes, merges, deployment/service control, rollback, `/ppo continue`, Telegram/OpenClaw routes, or new OpenClaw tools.
 
+## Phase 6C isolated workspace manager boundary
+
+Phase 6C allows one local-only workspace preparation foundation:
+
+```text
+local-operator/development-workspace-manager.mjs
+```
+
+The manager must:
+
+- resolve projects through the existing five-project registry only
+- reuse Phase 6A run-state records and accept only `planned` runs
+- require exact expected-version checks before run-state transition
+- read repository locations only from a trusted configured project workspace registry
+- reject repository paths from user text, task text, planner output, project Markdown, or arbitrary traversal
+- verify source repository identity and `run.baseSha` before creating a branch or worktree
+- refuse missing, unsafe, symlinked, non-Git, dirty, identity-mismatched, or base-SHA-missing source repos
+- generate a deterministic bounded branch name and validate it with Git
+- create the branch exactly at `run.baseSha`
+- create the worktree only under a PPO-managed workspace root
+- reject path traversal, symlink escapes, nested source/workspace roots, duplicate ownership, and collisions
+- use explicit argv Git execution without shell interpolation
+- transition only `planned -> implementation_in_progress` after branch/worktree verification
+- attach metadata-only SHA-pinned implementation evidence
+- provide read-only inspection for restart recovery
+- fail closed on ambiguous mutation outcomes
+
+Phase 6C must not invoke Codex or models, edit implementation files, run tests, automate review, call GitHub writes, push, merge, deploy, restart services, roll back, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.
