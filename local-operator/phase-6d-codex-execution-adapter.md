@@ -39,6 +39,8 @@ The adapter:
 - refuses missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces
 - requires workspace HEAD to equal `run.headSha` or `run.baseSha` before Codex starts
 - builds a deterministic bounded prompt from run task and planning evidence metadata
+- when coordinated by Phase 6F hardening, appends only trusted durable remediation context derived from validated Phase 6F review evidence
+- never drops validated hardening blockers, security findings, required tests, or mandatory isolated-workspace/no-push/no-merge/no-deploy/no-credential/no-destructive-operation boundaries from the prompt; only optional task/planning context may be trimmed, and required-content overflow fails closed
 - includes explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation boundaries in the prompt
 - establishes and verifies a no-outbound-network OS/process sandbox before Codex starts and fails closed if the sandbox is unavailable, inactive, or platform-incompatible
 - for Linux, verifies the sandboxed process is non-root, has zero effective capabilities, and has `NoNewPrivs: 1`

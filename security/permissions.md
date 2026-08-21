@@ -107,6 +107,31 @@ Allowed in Phase 6E only as deterministic local automated testing:
 - store metadata-only SHA-pinned test evidence
 - inspect interrupted automated testing state read-only
 
+Allowed in Phase 6F only as independent exact-SHA review and bounded hardening:
+
+- read one Phase 6A run after Phase 6E PASS evidence is present
+- reconcile one verified Phase 6C workspace
+- require workspace branch and HEAD to equal `run.headSha`
+- require a clean workspace before and after review
+- require Phase 6D implementation evidence and Phase 6E PASS evidence to match `run.headSha`
+- establish and verify an explicit no-outbound-network plus read-only workspace/source OS/process sandbox before review executes
+- deny reviewer writes to the workspace, workspace Git state, and canonical source checkout on macOS through `sandbox-exec`, and require a trusted read-only mount namespace wrapper or equivalent over the same paths on Linux
+- invoke one trusted locally configured reviewer executable through explicit argv with `shell: false` and `cwd` set to the verified workspace
+- pass only a deterministic bounded review prompt without secrets, raw outputs, arbitrary paths, or credentials, with a decision contract that matches parser validation
+- validate strict bounded structured reviewer output
+- record bounded review attempts in the Phase 6A run record
+- transition the run only through `tests_passed -> review_in_progress -> review_passed` or `review_changes_requested`
+- store metadata-only SHA-pinned review evidence
+- inspect interrupted independent review state and exact-SHA approval validity read-only
+- start hardening only from valid `review_changes_requested` evidence for exactly `run.headSha`
+- derive remediation context only from durable validated review evidence
+- include all validated remediation items and mandatory safety boundaries in Phase 6D hardening prompts, trimming only optional task/planning context or failing closed
+- reuse Phase 6D implementation, Phase 6E testing, and Phase 6F review engines
+- run at most three durable hardening rounds per development run
+- require fresh test PASS and fresh independent review after every new implementation SHA
+- record owner-action-required evidence and stop on non-convergence
+- inspect hardening status read-only
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
@@ -124,7 +149,9 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - execute planner behavior beyond Phase 6B deterministic next-stage planning
 - execute Codex outside the Phase 6D bounded execution adapter
 - execute automated tests outside the Phase 6E trusted test runner
-- execute review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
+- execute automated review outside the Phase 6F trusted independent review agent
+- execute automated hardening outside the Phase 6F bounded hardening orchestrator
+- execute merge, deployment, rollback, or verification agents from Phase 6A run-state records
 - mutate files inside Phase 6C workspaces outside the Phase 6D bounded execution adapter
 
 ## Chat platform permissions

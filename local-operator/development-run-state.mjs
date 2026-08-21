@@ -30,6 +30,7 @@ export const MAX_DEVELOPMENT_RUN_RECORD_BYTES = 128 * 1024
 export const MAX_DEVELOPMENT_RUN_EVIDENCE_PER_KIND = 32
 export const MAX_DEVELOPMENT_RUN_EVIDENCE_PER_TRANSITION = 8
 export const MAX_DEVELOPMENT_RUN_METADATA_KEYS = 16
+export const MAX_DEVELOPMENT_RUN_METADATA_ARRAY_ITEMS = 16
 export const MAX_DEVELOPMENT_RUN_STAGE_ATTEMPTS = 20
 
 export const DEVELOPMENT_RUN_STATUSES = Object.freeze([
@@ -159,7 +160,8 @@ const attemptKeyByEnteringStatus = Object.freeze({
 })
 const sameStatusAttemptStatuses = new Set([
   "implementation_in_progress",
-  "tests_in_progress"
+  "tests_in_progress",
+  "review_changes_requested"
 ])
 
 export class DevelopmentRunStateError extends Error {
@@ -592,6 +594,26 @@ function normalizeMetadataValue(value) {
     })
 
     return normalized || ""
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length > MAX_DEVELOPMENT_RUN_METADATA_ARRAY_ITEMS) {
+      throw runStateError(
+        "INVALID_EVIDENCE",
+        "Evidence metadata is invalid; no run-state write was attempted."
+      )
+    }
+
+    return value.map((entry) => {
+      if (entry && typeof entry === "object") {
+        throw runStateError(
+          "INVALID_EVIDENCE",
+          "Evidence metadata is invalid; no run-state write was attempted."
+        )
+      }
+
+      return normalizeMetadataValue(entry)
+    })
   }
 
   throw runStateError(

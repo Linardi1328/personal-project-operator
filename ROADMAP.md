@@ -314,9 +314,49 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Add read-only reconciliation helpers for interrupted testing and prior PASS evidence validity.
 - Keep Phase 6E as a library foundation only. Do not add automated review, hardening loops, PR automation, GitHub writes, push, merge, deployment, rollback, production verification, `/ppo continue`, or Telegram/OpenClaw routes.
 
+### Phase 6F - Independent Review + Bounded Hardening Pipeline
+
+- Add a local-only `local-operator/development-review-agent.mjs` independent review agent.
+- Add a local-only `local-operator/development-hardening-orchestrator.mjs` bounded hardening orchestrator.
+- Reuse the Phase 6A run-state store and Phase 6C workspace manager; do not create a second orchestration store.
+- Accept initial review only after Phase 6E has transitioned the run to `tests_passed`.
+- Require exact expected-version checks before any run-state transition.
+- Reconcile the Phase 6C workspace before review and refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, outside-managed-root, dirty, or head-mismatched workspaces.
+- Require workspace branch and HEAD to equal `run.headSha` and require a clean tree before and after review.
+- Require valid Phase 6D implementation evidence for exactly `run.headSha`.
+- Require valid Phase 6E PASS evidence for exactly `run.headSha`; stale PASS evidence is not eligible.
+- Preserve independent review separation: never reuse implementation completion, test pass status, Codex output, task text, chat, or repository-controlled commands as approval.
+- Read reviewer execution policy only from trusted local configuration, with a trusted absolute executable, fixed explicit argv, `shell: false`, fixed `cwd` set to the verified workspace, bounded timeout, and bounded output.
+- Preserve the Phase 6D no-outbound-network sandbox boundary by default, add reviewer read-only isolation for the verified workspace, Git state, and canonical source checkout, and fail closed if either boundary cannot be verified before execution.
+- For macOS review, deny file writes under the verified workspace, workspace Git state, and source checkout with `sandbox-exec`; for Linux review, require a trusted read-only workspace/source mount/bind/mount-namespace wrapper or equivalent OS boundary.
+- Build a deterministic bounded prompt from bounded task text, metadata-only implementation/test evidence, bounded local diff/file facts, and approved security/scope requirements.
+- State the review decision contract in the prompt: `APPROVED` requires `mergeAllowed=true` and empty blockers/security findings/tests required; `CHANGES_REQUESTED` and `OWNER_ACTION_REQUIRED` require `mergeAllowed=false`.
+- Exclude secrets, credentials, environment dumps, raw stdout/stderr, arbitrary logs, and arbitrary paths from prompts and evidence.
+- Validate strict bounded structured reviewer output only: `APPROVED`, `CHANGES_REQUESTED`, or `OWNER_ACTION_REQUIRED` with exact `reviewedSha`, `mergeAllowed`, blockers, security findings, tests required, and summary.
+- Require `APPROVED` decisions to have `mergeAllowed=true`, zero blockers, zero unresolved security findings, no additional required tests, and valid exact-SHA Phase 6E PASS evidence.
+- Treat malformed, contradictory, oversized, uncertain, unparseable, or wrong-SHA reviewer output as fail-closed owner action.
+- Transition `tests_passed -> review_in_progress` before review execution and reserve bounded durable review attempts.
+- Transition `review_in_progress -> review_passed` only on valid exact-SHA approval.
+- Transition `review_in_progress -> review_changes_requested` on valid blockers or owner/product/security ambiguity.
+- Leave timeout, signal, interruption, killed process, output overflow, or ambiguous outcome as an open attempt requiring read-only reconciliation before retry.
+- Store metadata-only SHA-pinned review evidence; do not store reviewer raw output, raw failures, prompt contents, executable paths, argv, credentials, or unbounded logs.
+- Permit automated hardening only from valid `review_changes_requested` evidence for exactly `run.headSha`, with `decision=CHANGES_REQUESTED`, `mergeAllowed=false`, and at least one validated bounded blocker or security finding.
+- Build remediation context only from durable Phase 6F review evidence: original task, reviewed SHA, bounded blockers, bounded security findings, and bounded required tests.
+- Reuse the Phase 6D Codex adapter, Phase 6E automated test runner, and Phase 6F reviewer; do not create parallel implementation, test, or review engines.
+- Extend Phase 6D only enough to consume trusted durable Phase 6F remediation context; do not accept caller-supplied arbitrary remediation prompts.
+- Ensure Phase 6D hardening prompt assembly never drops validated remediation findings or mandatory isolated-workspace, no-push, no-merge, no-deploy, no-credential, and no-destructive-operation boundaries; trim only lower-priority optional task/planning context or fail closed.
+- Require every remediation to produce a new verified descendant implementation SHA and update `run.headSha`.
+- Invalidate all prior test PASS and review approval/findings evidence after any implementation SHA change.
+- Rerun Phase 6E for the new SHA, and rerun Phase 6F review only after exact-SHA tests pass for that new SHA.
+- Keep implementer and reviewer independent: implementation cannot self-approve, and review cannot modify files.
+- Cap automatic hardening at three durable rounds per development run; if the cap is exhausted, record metadata-only owner-action-required evidence and stop.
+- Treat timeout, signal, interruption, killed process, output overflow, or uncertain Codex/test/review outcomes as ambiguous and stop until the appropriate read-only reconciliation path is used.
+- Add read-only hardening reconciliation that reports current round, current SHA, latest review decision, remediation pending/in progress, test/review evidence validity, and non-convergence.
+- Keep Phase 6F as a library foundation only. Do not add Phase 6G acceptance gates, PR automation, GitHub writes, push, merge, deployment, rollback, production verification, `/ppo continue`, or Telegram/OpenClaw routes.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add review, merge, deploy, rollback, and verification agents one boundary at a time.
+- Add merge, deploy, rollback, and verification agents one boundary at a time.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.

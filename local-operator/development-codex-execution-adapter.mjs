@@ -30,9 +30,12 @@ export const MAX_CODEX_ENV_VALUE_CHARS = 1000
 export const MAX_CODEX_OUTPUT_BYTES = 32 * 1024
 export const MAX_CODEX_TIMEOUT_MS = 10 * 60 * 1000
 export const MIN_CODEX_TIMEOUT_MS = 1000
-export const MAX_CODEX_IMPLEMENTATION_ATTEMPTS = 5
+export const MAX_CODEX_IMPLEMENTATION_ATTEMPTS = 10
 export const CODEX_EXECUTION_POLICY_STORE_DIR = "codex-execution-policy"
 export const CODEX_EXECUTION_SANDBOX_ID = "phase-6d-no-outbound-network-sandbox"
+export const PHASE_6F_HARDENING_ORCHESTRATOR_ID = "phase-6f-bounded-hardening-orchestrator"
+export const PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID = "phase-6f-independent-review-agent"
+export const PHASE_6F_REVIEW_FINDINGS_OUTCOME = "review_findings"
 export const CODEX_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
   LINUX_NETWORK_NAMESPACE: "linux-network-namespace"
@@ -168,22 +171,51 @@ function shellSingleQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`
 }
 
-function boundedLines(lines, maxChars) {
-  const output = []
-  let size = 0
+function promptCharSize(lines) {
+  return `${lines.join("\n")}\n`.length
+}
 
-  for (const line of lines) {
-    const nextSize = size + line.length + 1
+function assertPromptLinesFit(lines) {
+  if (promptCharSize(lines) > MAX_CODEX_PROMPT_CHARS) {
+    throw adapterError(
+      "CODEX_PROMPT_TOO_LARGE",
+      "Codex prompt exceeds the adapter size limit."
+    )
+  }
+}
 
-    if (nextSize > maxChars) {
-      break
+function optionalLineFits(lines, line, requiredTail) {
+  return promptCharSize([...lines, line, ...requiredTail]) <= MAX_CODEX_PROMPT_CHARS
+}
+
+function appendOptionalLines(lines, optionalLines, requiredTail) {
+  for (const line of optionalLines) {
+    if (!optionalLineFits(lines, line, requiredTail)) {
+      return
     }
 
-    output.push(line)
-    size = nextSize
+    lines.push(line)
+  }
+}
+
+function appendOptionalTextSection(lines, sectionPrefix, text, requiredTail) {
+  if (promptCharSize([...lines, ...sectionPrefix, text, ...requiredTail]) <= MAX_CODEX_PROMPT_CHARS) {
+    lines.push(...sectionPrefix, text)
+    return
   }
 
-  return output
+  if (promptCharSize([...lines, ...sectionPrefix, ...requiredTail]) > MAX_CODEX_PROMPT_CHARS) {
+    return
+  }
+
+  const suffix = " [truncated]"
+  const available = MAX_CODEX_PROMPT_CHARS - promptCharSize([...lines, ...sectionPrefix, ...requiredTail]) - 1
+
+  if (available <= suffix.length + 20) {
+    return
+  }
+
+  lines.push(...sectionPrefix, `${text.slice(0, available - suffix.length)}${suffix}`)
 }
 
 function latestPlanningEvidence(run) {
@@ -222,6 +254,175 @@ function promptPlanningFacts(evidence) {
   return facts
 }
 
+function latestHardeningStartedEvidence(run) {
+  const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+
+    if (
+      entry?.source === PHASE_6F_HARDENING_ORCHESTRATOR_ID &&
+      entry?.metadata?.orchestrator === PHASE_6F_HARDENING_ORCHESTRATOR_ID &&
+      entry?.metadata?.outcome === "hardening_started"
+    ) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function latestReviewFindingsEvidence(run, reviewedSha, attempt) {
+  const evidence = Array.isArray(run?.evidence?.review) ? run.evidence.review : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+
+    if (
+      entry?.source === PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID &&
+      entry?.metadata?.reviewer === PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID &&
+      entry?.metadata?.outcome === PHASE_6F_REVIEW_FINDINGS_OUTCOME &&
+      entry?.sha === reviewedSha &&
+      entry?.metadata?.reviewedSha === reviewedSha &&
+      entry?.metadata?.attempt === attempt
+    ) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function normalizeHardeningItems(value, fieldName) {
+  if (!Array.isArray(value) || value.length > 5) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  return value.map((entry) => normalizeSafeText(entry, {
+    code: "CODEX_PROMPT_UNSAFE",
+    safeMessage: "Codex prompt source is unsafe; execution refused.",
+    maxChars: fieldName === "testsRequired" ? 160 : 160
+  }))
+}
+
+function deriveHardeningRemediationContext(run) {
+  const started = latestHardeningStartedEvidence(run)
+
+  if (!started) {
+    return null
+  }
+
+  const reviewedSha = normalizeSha(started.metadata?.sourceReviewSha, "Hardening source review SHA")
+
+  if (started.sha !== reviewedSha || reviewedSha !== normalizeSha(run.headSha, "Run head SHA")) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  const attempt = started.metadata?.reviewAttempt
+
+  if (!Number.isInteger(attempt) || attempt <= 0) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  const findings = latestReviewFindingsEvidence(run, reviewedSha, attempt)
+
+  if (!findings || findings.metadata?.decision !== "CHANGES_REQUESTED" || findings.metadata?.mergeAllowed !== false) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  if (!Number.isInteger(started.metadata?.round) || started.metadata.round <= 0 || started.metadata.round > 3) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  const blockers = normalizeHardeningItems(findings.metadata?.blockerItems, "blockers")
+  const securityFindings = normalizeHardeningItems(findings.metadata?.securityItems, "securityFindings")
+  const testsRequired = normalizeHardeningItems(findings.metadata?.testItems, "testsRequired")
+  const expectedHash = sha256Text(stableStringify({
+    reviewedSha,
+    decision: "CHANGES_REQUESTED",
+    blockers,
+    securityFindings,
+    testsRequired
+  }))
+
+  if (
+    blockers.length + securityFindings.length <= 0 ||
+    findings.metadata?.blockers !== blockers.length ||
+    findings.metadata?.securityFindings !== securityFindings.length ||
+    findings.metadata?.testsRequired !== testsRequired.length ||
+    started.metadata?.blockerCount !== blockers.length ||
+    started.metadata?.securityFindingCount !== securityFindings.length ||
+    started.metadata?.testRequirementCount !== testsRequired.length ||
+    findings.metadata?.findingHash !== expectedHash ||
+    started.metadata?.remediationHash !== expectedHash
+  ) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  return {
+    round: started.metadata.round,
+    sourceReviewSha: reviewedSha,
+    reviewAttempt: attempt,
+    remediationHash: expectedHash,
+    blockers,
+    securityFindings,
+    testsRequired
+  }
+}
+
+function hardeningPromptFacts(context) {
+  if (!context) {
+    return []
+  }
+
+  const facts = [
+    "",
+    "Phase 6F hardening context:",
+    `Round: ${context.round}.`,
+    `Reviewed SHA: ${context.sourceReviewSha}.`,
+    "Blockers:",
+    ...context.blockers.map((entry, index) => `${index + 1}. ${entry}`),
+    "Security findings:",
+    ...(context.securityFindings.length > 0
+      ? context.securityFindings.map((entry, index) => `${index + 1}. ${entry}`)
+      : ["None."]),
+    "Tests required:",
+    ...(context.testsRequired.length > 0
+      ? context.testsRequired.map((entry, index) => `${index + 1}. ${entry}`)
+      : ["None."]),
+    "",
+    "Hardening boundaries:",
+    "- Implement only the minimal remediation required by the validated review evidence.",
+    "- Do not treat remediation completion as test pass or review approval.",
+    "- Leave a new local descendant commit on the current isolated branch."
+  ]
+
+  return facts.map((line) => normalizeSafeText(line, {
+    code: "CODEX_PROMPT_UNSAFE",
+    safeMessage: "Codex prompt source is unsafe; execution refused.",
+    maxChars: 500,
+    required: false
+  }))
+}
+
 export function buildCodexImplementationPrompt(run, workspace) {
   const task = normalizeSafeText(run?.task, {
     code: "CODEX_PROMPT_UNSAFE",
@@ -258,7 +459,8 @@ export function buildCodexImplementationPrompt(run, workspace) {
     })
     return line
   })
-  const lines = boundedLines([
+  const hardeningContext = deriveHardeningRemediationContext(run)
+  const requiredHead = [
     "You are executing one bounded Personal Project Operator implementation task.",
     `Project: ${projectId}`,
     `Repository: ${repo}`,
@@ -266,11 +468,9 @@ export function buildCodexImplementationPrompt(run, workspace) {
     `Workspace reference: ${workspaceRef}`,
     `Base SHA: ${baseSha}`,
     `Expected starting HEAD: ${startSha}`,
-    "",
-    "Task:",
-    task,
-    "",
-    ...planningFacts,
+  ]
+  const requiredTail = [
+    ...hardeningPromptFacts(hardeningContext),
     "",
     "Required boundaries:",
     "- Work only inside the current isolated branch and worktree.",
@@ -282,7 +482,14 @@ export function buildCodexImplementationPrompt(run, workspace) {
     "- Leave a local commit on the current isolated branch when the implementation is complete.",
     "",
     "Return concise completion notes only. The adapter will independently verify Git state and will ignore prose claims of success."
-  ], MAX_CODEX_PROMPT_CHARS)
+  ]
+
+  assertPromptLinesFit([...requiredHead, ...requiredTail])
+
+  const lines = [...requiredHead]
+  appendOptionalTextSection(lines, ["", "Task:"], task, requiredTail)
+  appendOptionalLines(lines, ["", ...planningFacts], requiredTail)
+  lines.push(...requiredTail)
   const prompt = `${lines.join("\n")}\n`
 
   if (prompt.length > MAX_CODEX_PROMPT_CHARS) {
@@ -1652,6 +1859,32 @@ function buildExecutionFailureEvidence(run, location, execution) {
   }
 }
 
+function buildHardeningImplementationEvidence(run, verified, execution, hardeningContext) {
+  return {
+    kind: "implementation",
+    sha: verified.headSha,
+    source: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+    summary: "Phase 6F hardening remediation produced a verified implementation SHA.",
+    metadata: {
+      project: run.project.id,
+      orchestrator: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+      round: hardeningContext.round,
+      sourceReviewSha: hardeningContext.sourceReviewSha,
+      resultingSha: verified.headSha,
+      blockerCount: hardeningContext.blockers.length,
+      securityFindingCount: hardeningContext.securityFindings.length,
+      testRequirementCount: hardeningContext.testsRequired.length,
+      remediationHash: hardeningContext.remediationHash,
+      startedAt: execution.startedAt,
+      endedAt: execution.endedAt,
+      outcome: "implementation_ready",
+      codex: CODEX_EXECUTION_ADAPTER_ID,
+      tests: "phase-6e-automated-test-runner",
+      reviewer: PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID
+    }
+  }
+}
+
 function latestCodexImplementationEvidence(run) {
   const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
 
@@ -1712,9 +1945,11 @@ async function recordDefinitiveCodexFailure(run, location, execution, options) {
 }
 
 async function reconcileBeforeExecution(runId, run, options) {
+  const expectedStartSha = normalizeSha(run.headSha || run.baseSha, "Expected implementation start SHA")
   const inspection = await inspectImplementationWorkspace(runId, options)
+  const requiresBaseInspectionMatch = expectedStartSha === normalizeSha(run.baseSha, "Run base SHA")
 
-  if (!inspection.exists || !inspection.matches || inspection.status !== "matching") {
+  if (!inspection.exists || (requiresBaseInspectionMatch && (!inspection.matches || inspection.status !== "matching"))) {
     throw adapterError(
       "CODEX_WORKSPACE_NOT_READY",
       "Implementation workspace is missing or mismatched; reconcile before Codex execution."
@@ -1738,8 +1973,6 @@ async function reconcileBeforeExecution(runId, run, options) {
 
   const facts = await workspaceFacts(location, options)
   assertWorkspaceMatches(location, facts)
-
-  const expectedStartSha = normalizeSha(run.headSha || run.baseSha, "Expected implementation start SHA")
 
   if (facts.headSha !== expectedStartSha || inspection.facts.headSha !== expectedStartSha) {
     throw adapterError(
@@ -1791,6 +2024,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
   assertNoOpenCodexAttempt(run)
   assertCodexAttemptAvailable(run)
 
+  const hardeningContext = deriveHardeningRemediationContext(run)
   const { location, expectedStartSha } = await reconcileBeforeExecution(runId, run, options)
   const prompt = buildCodexImplementationPrompt(run, location)
   const promptHash = sha256Text(prompt)
@@ -1845,12 +2079,22 @@ async function executeCodexImplementationInternal(runId, options = {}) {
     throw error
   }
 
-  const evidence = buildImplementationEvidence(attemptRun, postReservation.location, verified, {
+  const implementationEvidence = buildImplementationEvidence(attemptRun, postReservation.location, verified, {
     promptHash,
     startedAt,
     endedAt,
     executionSandbox: executionSandbox.metadata
   })
+  const evidence = [
+    implementationEvidence,
+    ...(hardeningContext ? [
+      buildHardeningImplementationEvidence(attemptRun, verified, {
+        promptHash,
+        startedAt,
+        endedAt
+      }, hardeningContext)
+    ] : [])
+  ]
   const transitioned = await transitionDevelopmentRun(attemptRun.runId, {
     expectedVersion: attemptRun.version,
     status: "implementation_ready",
@@ -1858,7 +2102,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
     headSha: verified.headSha,
     actor: CODEX_EXECUTION_ADAPTER_ID,
     reason: "phase-6d-codex-implementation-ready",
-    evidence: [evidence]
+    evidence
   }, options)
 
   return {

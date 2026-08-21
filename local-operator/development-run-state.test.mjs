@@ -484,7 +484,8 @@ test("evidence supports SHA-pinned implementation, review, test, and deploy meta
     summary: `${kind} metadata recorded`,
     metadata: {
       status: "recorded",
-      attempt: index + 1
+      attempt: index + 1,
+      ...(kind === "review" ? { blockerItems: ["bounded finding"] } : {})
     }
   }))
 
@@ -504,6 +505,7 @@ test("evidence supports SHA-pinned implementation, review, test, and deploy meta
     assert.match(next.evidence[kind][0].sha, /^[a-f0-9]{40}$/u)
     assert.equal(next.evidence[kind][0].metadata.status, "recorded")
   }
+  assert.deepEqual(next.evidence.review[0].metadata.blockerItems, ["bounded finding"])
 
   for (const kind of DEVELOPMENT_RUN_EVIDENCE_KINDS) {
     assert.equal(Array.isArray(next.evidence[kind]), true)
