@@ -327,8 +327,8 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Require valid Phase 6E PASS evidence for exactly `run.headSha`; stale PASS evidence is not eligible.
 - Preserve independent review separation: never reuse implementation completion, test pass status, Codex output, task text, chat, or repository-controlled commands as approval.
 - Read reviewer execution policy only from trusted local configuration, with a trusted absolute executable, fixed explicit argv, `shell: false`, fixed `cwd` set to the verified workspace, bounded timeout, and bounded output.
-- Preserve the Phase 6D no-outbound-network sandbox boundary by default, add reviewer read-only workspace isolation, and fail closed if either boundary cannot be verified before execution.
-- For macOS review, deny file writes under the verified workspace/repo with `sandbox-exec`; for Linux review, require a trusted read-only workspace mount/bind/mount-namespace wrapper or equivalent OS boundary.
+- Preserve the Phase 6D no-outbound-network sandbox boundary by default, add reviewer read-only isolation for the verified workspace, Git state, and canonical source checkout, and fail closed if either boundary cannot be verified before execution.
+- For macOS review, deny file writes under the verified workspace, workspace Git state, and source checkout with `sandbox-exec`; for Linux review, require a trusted read-only workspace/source mount/bind/mount-namespace wrapper or equivalent OS boundary.
 - Build a deterministic bounded prompt from bounded task text, metadata-only implementation/test evidence, bounded local diff/file facts, and approved security/scope requirements.
 - State the review decision contract in the prompt: `APPROVED` requires `mergeAllowed=true` and empty blockers/security findings/tests required; `CHANGES_REQUESTED` and `OWNER_ACTION_REQUIRED` require `mergeAllowed=false`.
 - Exclude secrets, credentials, environment dumps, raw stdout/stderr, arbitrary logs, and arbitrary paths from prompts and evidence.

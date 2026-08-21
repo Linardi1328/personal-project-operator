@@ -32,7 +32,7 @@ The reviewer policy contains a fixed reviewer id/version, one trusted absolute e
 
 The agent refuses arbitrary command strings, `shell: true`, shell interpreters, Codex implementation adapters, GitHub write tools, push/merge/deploy tooling, OpenClaw, secret-looking env keys, untrusted executables, unbounded timeouts, and unbounded output.
 
-Reviewer sandbox configuration must also enforce read-only access to the verified workspace while preserving local read access. On macOS, PPO generates a `sandbox-exec` profile that denies `file-write*` under the verified workspace/repo. On Linux, PPO requires a trusted read-only workspace mount/bind/mount-namespace wrapper before privilege drop. Review fails closed if local read access, workspace file-write denial, local Git mutation denial, or no-outbound-network denial cannot be verified before the review attempt is reserved.
+Reviewer sandbox configuration must also enforce read-only access to the verified workspace, workspace Git state, and canonical source checkout while preserving local read access. On macOS, PPO generates a `sandbox-exec` profile that denies `file-write*` under each verified path. On Linux, PPO requires a trusted read-only workspace/source mount/bind/mount-namespace wrapper before privilege drop. Review fails closed if local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, or no-outbound-network denial cannot be verified before the review attempt is reserved.
 
 ## Prompt
 
@@ -67,7 +67,7 @@ The agent:
 - resolves and verifies the Phase 6C workspace from the trusted workspace registry
 - requires workspace branch and HEAD to equal `run.headSha`
 - refuses dirty workspace state before and after review
-- verifies the no-outbound-network and read-only-workspace process sandbox before reserving an attempt
+- verifies the no-outbound-network and read-only workspace/source process sandbox before reserving an attempt
 - transitions `tests_passed -> review_in_progress` before executing review
 - records bounded durable review attempts in the Phase 6A run record
 - invokes the reviewer with `shell: false`, fixed `cwd` set to the verified workspace, sanitized env, bounded timeout, bounded output capture, and prompt on stdin

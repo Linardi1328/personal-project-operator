@@ -296,10 +296,10 @@ The agent must:
 - invoke only a trusted locally configured reviewer executable
 - refuse arbitrary reviewer command strings, shell interpolation, package-manager scripts, untrusted reviewer executables, implementation adapters as reviewer commands, GitHub write tools, push/merge/deploy tooling, OpenClaw, and secret-bearing env values
 - invoke the reviewer through explicit argv, `shell: false`, bounded timeout/output capture, sanitized env, and `cwd` set only to the verified workspace
-- establish and verify an explicit no-outbound-network plus read-only-workspace OS/process sandbox before executing review
-- on macOS, deny reviewer file writes under the verified workspace/repo with `sandbox-exec`
-- on Linux, require a trusted read-only workspace mount/bind/mount-namespace wrapper or equivalent OS boundary
-- verify local read access, workspace file-write denial, local Git mutation denial, and outbound-network denial before reserving a review attempt
+- establish and verify an explicit no-outbound-network plus read-only workspace/source OS/process sandbox before executing review
+- on macOS, deny reviewer file writes under the verified workspace, workspace Git state, and canonical source checkout with `sandbox-exec`
+- on Linux, require a trusted read-only workspace/source mount/bind/mount-namespace wrapper or equivalent OS boundary
+- verify local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, and outbound-network denial before reserving a review attempt
 - generate a deterministic bounded prompt from bounded task text, metadata-only evidence, bounded local diff/file facts, and approved security/scope requirements
 - state in the review prompt that `APPROVED` requires `mergeAllowed=true` and empty blockers/security findings/tests required, while `CHANGES_REQUESTED` and `OWNER_ACTION_REQUIRED` require `mergeAllowed=false`
 - validate only strict structured reviewer output and fail closed on malformed, contradictory, oversized, uncertain, unparseable, or wrong-SHA output

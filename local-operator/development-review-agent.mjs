@@ -916,6 +916,31 @@ async function assertSandboxWorkspaceFileWriteDenied(config, location, readOnlyP
   assertSandboxWriteProbeDenied(result)
 }
 
+async function assertSandboxSourceFileWriteDenied(config, location, readOnlyPaths, options) {
+  const probeCode = [
+    "const fs = require('node:fs')",
+    "const path = require('node:path')",
+    "const target = path.join(process.cwd(), `.ppo-review-source-readonly-probe-${process.pid}`)",
+    "try { fs.writeFileSync(target, 'probe', { flag: 'wx' }); try { fs.unlinkSync(target) } catch {}; process.exit(70) } catch (error) { process.exit(error && ['EACCES','EPERM','EROFS'].includes(error.code) ? 0 : 71) }"
+  ].join(";")
+
+  const result = await runSandboxedCommand({
+    kind: "sandbox-probe",
+    probe: "source-file-write",
+    sandbox: config.sandbox,
+    executablePath: process.execPath,
+    args: ["--eval", probeCode],
+    cwd: location.sourceRepoPath,
+    stdin: "",
+    timeoutMs: 5000,
+    maxOutputBytes: 1024,
+    env: config.env,
+    readOnlyPaths
+  }, options)
+
+  assertSandboxWriteProbeDenied(result)
+}
+
 async function assertSandboxWorkspaceGitMutationDenied(config, location, readOnlyPaths, options) {
   const probeCode = [
     "const { execFileSync } = require('node:child_process')",
@@ -1002,6 +1027,7 @@ async function assertReviewSandboxActive(config, location, facts, options) {
   await assertSandboxProcessAllowed(config, location, readOnlyPaths, options)
   await assertSandboxWorkspaceReadAllowed(config, location, readOnlyPaths, options)
   await assertSandboxWorkspaceFileWriteDenied(config, location, readOnlyPaths, options)
+  await assertSandboxSourceFileWriteDenied(config, location, readOnlyPaths, options)
   await assertSandboxWorkspaceGitMutationDenied(config, location, readOnlyPaths, options)
   await assertSandboxDirectNetworkDenied(config, location, readOnlyPaths, options)
 }
@@ -1138,6 +1164,70 @@ async function canonicalGitStatePath(cwd, value) {
   return realPath
 }
 
+async function canonicalSourceRepoPath(location, options) {
+  const sourceRepoPath = normalizeSafeText(location.sourceRepoPath, {
+    code: "REVIEW_WORKSPACE_NOT_READY",
+    safeMessage: "Source repository path could not be verified for independent review.",
+    maxChars: 500
+  })
+
+  if (!isAbsolute(sourceRepoPath) || sourceRepoPath !== resolvePath(sourceRepoPath)) {
+    throw reviewError(
+      "REVIEW_WORKSPACE_NOT_READY",
+      "Source repository path could not be verified for independent review."
+    )
+  }
+
+  const info = await stat(sourceRepoPath).catch((error) => {
+    if (error?.code === "ENOENT") {
+      throw reviewError(
+        "REVIEW_WORKSPACE_NOT_READY",
+        "Source repository path could not be verified for independent review."
+      )
+    }
+
+    throw error
+  })
+
+  if (!info.isDirectory()) {
+    throw reviewError(
+      "REVIEW_WORKSPACE_NOT_READY",
+      "Source repository path could not be verified for independent review."
+    )
+  }
+
+  const realPath = await realpath(sourceRepoPath).catch(() => {
+    throw reviewError(
+      "REVIEW_WORKSPACE_NOT_READY",
+      "Source repository path could not be verified for independent review."
+    )
+  })
+
+  if (!isAbsolute(realPath) || realPath !== resolvePath(realPath) || realPath !== sourceRepoPath) {
+    throw reviewError(
+      "REVIEW_WORKSPACE_NOT_READY",
+      "Source repository path could not be verified for independent review."
+    )
+  }
+
+  const topLevel = await gitLine(
+    sourceRepoPath,
+    ["rev-parse", "--show-toplevel"],
+    options,
+    "REVIEW_WORKSPACE_NOT_READY",
+    "Source repository path could not be verified for independent review."
+  )
+
+  if (topLevel !== sourceRepoPath) {
+    throw reviewError(
+      "REVIEW_WORKSPACE_NOT_READY",
+      "Source repository path could not be verified for independent review."
+    )
+  }
+
+  return realPath
+}
+
 async function workspaceFacts(location, options) {
   const info = await stat(location.workspacePath).catch((error) => {
     if (error?.code === "ENOENT") {
@@ -1182,6 +1272,7 @@ async function workspaceFacts(location, options) {
     location.workspacePath,
     await gitLine(location.workspacePath, ["rev-parse", "--git-common-dir"], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation workspace Git state could not be verified for independent review.")
   )
+  const sourceRepoPath = await canonicalSourceRepoPath(location, options)
 
   return {
     topLevel: await gitLine(location.workspacePath, ["rev-parse", "--show-toplevel"], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation workspace root could not be verified for independent review."),
@@ -1190,7 +1281,8 @@ async function workspaceFacts(location, options) {
     branchHeadSha: normalizeSha(await gitLine(location.workspacePath, ["rev-parse", `refs/heads/${location.branch}`], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation branch HEAD could not be verified for independent review."), "Implementation branch HEAD"),
     dirtyStatus: await gitText(location.workspacePath, ["status", "--porcelain=v1", "--untracked-files=all"], options),
     gitDir,
-    gitCommonDir
+    gitCommonDir,
+    sourceRepoPath
   }
 }
 
@@ -1211,7 +1303,8 @@ function readOnlyPathsForReview(location, facts) {
   return normalizeReadOnlyPaths([
     location.workspacePath,
     facts.gitDir,
-    facts.gitCommonDir
+    facts.gitCommonDir,
+    facts.sourceRepoPath
   ])
 }
 

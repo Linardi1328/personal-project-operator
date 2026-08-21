@@ -376,6 +376,12 @@ function makeReviewRunner(reviewRunner = async (invocation) => ({
           : { exitCode: 0, sandboxDenied: true, stdout: "", stderr: "" }
       }
 
+      if (invocation.probe === "source-file-write") {
+        return options.sourceWriteAllowed
+          ? { exitCode: 70, stdout: "source write allowed", stderr: "" }
+          : { exitCode: 0, sandboxDenied: true, stdout: "", stderr: "" }
+      }
+
       if (invocation.probe === "workspace-git-mutation") {
         return options.gitMutationAllowed
           ? { exitCode: 70, stdout: "git mutation allowed", stderr: "" }
@@ -541,9 +547,11 @@ test("trusted reviewer config uses explicit argv, shell=false, sanitized env, sa
     assert.equal(reviewCalls[0].sandbox.network, "none")
     assert.equal(reviewCalls[0].sandbox.readOnlyWorkspace, true)
     assert.equal(reviewCalls[0].readOnlyPaths.includes(fixture.location.workspacePath), true)
-    assert.equal(reviewCalls[0].readOnlyPaths.length >= 2, true)
+    assert.equal(reviewCalls[0].readOnlyPaths.includes(fixture.sourceRepoPath), true)
+    assert.equal(reviewCalls[0].readOnlyPaths.length >= 3, true)
     assert.match(reviewCalls[0].sandboxArgs[1], /deny file-write\* \(subpath /u)
     assert.match(reviewCalls[0].sandboxArgs[1], new RegExp(fixture.location.workspacePath.replaceAll("/", "\\/"), "u"))
+    assert.match(reviewCalls[0].sandboxArgs[1], new RegExp(fixture.sourceRepoPath.replaceAll("/", "\\/"), "u"))
     assert.match(reviewCalls[0].promptHash, /^[a-f0-9]{64}$/u)
     assert.equal(reviewCalls[0].prompt.length < 6000, true)
     assert.match(reviewCalls[0].prompt, /PPO Phase 6F independent exact-SHA review/u)
@@ -558,10 +566,14 @@ test("trusted reviewer config uses explicit argv, shell=false, sanitized env, sa
       "local-process",
       "workspace-read",
       "workspace-file-write",
+      "source-file-write",
       "workspace-git-mutation",
       "direct-network",
       "review"
     ])
+    assert.equal(calls.find((call) => call.probe === "workspace-file-write").cwd, fixture.location.workspacePath)
+    assert.equal(calls.find((call) => call.probe === "source-file-write").cwd, fixture.sourceRepoPath)
+    assert.equal(calls.find((call) => call.probe === "workspace-git-mutation").cwd, fixture.location.workspacePath)
 
     const evidenceText = JSON.stringify(result.run.evidence.review)
     assert.doesNotMatch(evidenceText, /SENSITIVE_TEST_SENTINEL|raw stderr|stdout|stderr|token|credential/u)
@@ -1068,6 +1080,7 @@ test("Linux review sandbox policy uses namespace, read-only wrapper, and privile
     "local-process",
     "workspace-read",
     "workspace-file-write",
+    "source-file-write",
     "workspace-git-mutation",
     "direct-network",
     "review"
@@ -1080,6 +1093,7 @@ test("Linux review sandbox policy uses namespace, read-only wrapper, and privile
     assert.equal(call.sandboxArgs[0], `--net=${TRUSTED_LINUX_NAMESPACE_PATH}`)
     assert.equal(call.sandboxArgs[1], TRUSTED_LINUX_READONLY_WRAPPER_EXECUTABLE)
     assert.equal(call.readOnlyPaths.includes(fixture.location.workspacePath), true)
+    assert.equal(call.readOnlyPaths.includes(fixture.sourceRepoPath), true)
     const readOnlySeparator = call.sandboxArgs.indexOf("--", 2)
     assert.deepEqual(call.sandboxArgs.slice(2, readOnlySeparator), call.readOnlyPaths.flatMap((entry) => [
       "--read-only-path",
@@ -1129,10 +1143,13 @@ test("sandbox must be active before review attempt reservation", async () => {
 
   for (const options of [
     { workspaceWriteAllowed: true },
+    { sourceWriteAllowed: true },
     { gitMutationAllowed: true }
   ]) {
     const unsafe = await makeTestsPassedFixture()
     const calls = []
+    const sourceHeadBefore = await git(["rev-parse", "HEAD"], unsafe.sourceRepoPath)
+    const sourceStatusBefore = await git(["status", "--porcelain=v1", "--untracked-files=all"], unsafe.sourceRepoPath)
 
     await assertRejectsCode(executeIndependentReview(unsafe.run.runId, {
       expectedVersion: unsafe.run.version,
@@ -1153,7 +1170,10 @@ test("sandbox must be active before review attempt reservation", async () => {
     assert.equal(unsafeReloaded.attempts.review, 0)
     assert.equal(calls.some((call) => call.kind === "review"), false)
     assert.equal(calls.some((call) => call.probe === "workspace-file-write"), true)
+    assert.equal(calls.some((call) => call.probe === "source-file-write"), !options.workspaceWriteAllowed)
     assert.equal(calls.some((call) => call.probe === "workspace-git-mutation"), Boolean(options.gitMutationAllowed))
+    assert.equal(await git(["rev-parse", "HEAD"], unsafe.sourceRepoPath), sourceHeadBefore)
+    assert.equal(await git(["status", "--porcelain=v1", "--untracked-files=all"], unsafe.sourceRepoPath), sourceStatusBefore)
   }
 })
 

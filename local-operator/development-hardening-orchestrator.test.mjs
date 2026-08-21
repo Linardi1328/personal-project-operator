@@ -260,7 +260,11 @@ function sandboxProbeResult(invocation, options = {}) {
     return { exitCode: 0, stdout: "", stderr: "" }
   }
 
-  if (invocation.probe === "workspace-file-write" || invocation.probe === "workspace-git-mutation") {
+  if (
+    invocation.probe === "workspace-file-write" ||
+    invocation.probe === "source-file-write" ||
+    invocation.probe === "workspace-git-mutation"
+  ) {
     return { exitCode: 0, sandboxDenied: true, stdout: "", stderr: "" }
   }
 

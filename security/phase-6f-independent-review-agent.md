@@ -20,10 +20,10 @@ Phase 6F may:
 - require Phase 6E PASS evidence SHA to equal `run.headSha`
 - require workspace branch and HEAD to equal `run.headSha`
 - require a clean workspace before and after review
-- establish and verify a trusted explicit no-outbound-network and read-only-workspace OS/process sandbox before review executes
-- deny workspace/repo file writes on macOS with `sandbox-exec`
-- require a trusted read-only workspace mount/bind/mount-namespace wrapper or equivalent OS boundary on Linux
-- preflight local read access, workspace file-write denial, local Git mutation denial, and outbound-network denial before reserving a review attempt
+- establish and verify a trusted explicit no-outbound-network and read-only workspace/source OS/process sandbox before review executes
+- deny isolated-workspace, workspace Git-state, and canonical source-checkout file writes on macOS with `sandbox-exec`
+- require a trusted read-only workspace/source mount/bind/mount-namespace wrapper or equivalent OS boundary on Linux
+- preflight local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, and outbound-network denial before reserving a review attempt
 - invoke one trusted locally configured reviewer executable with explicit argv, `shell: false`, and `cwd` set to the verified workspace
 - pass a deterministic bounded review prompt without secrets, raw outputs, arbitrary paths, or credentials
 - state the strict decision contract in the prompt: `APPROVED` requires `mergeAllowed=true` and empty blockers/security findings/tests required; non-approval decisions require `mergeAllowed=false`
@@ -71,4 +71,4 @@ Phase 6F must not:
 - add `/ppo continue`
 - add Telegram/OpenClaw routes or new OpenClaw tools
 
-The default Phase 6F policy is no outbound network for review and hardening execution, and read-only workspace access for reviewer execution. A network-enabled review or hardening policy is outside this phase unless a later separately reviewed trusted policy and sandbox boundary explicitly approves it.
+The default Phase 6F policy is no outbound network for review and hardening execution, and read-only workspace, workspace Git-state, and source-checkout access for reviewer execution. A network-enabled review or hardening policy is outside this phase unless a later separately reviewed trusted policy and sandbox boundary explicitly approves it.

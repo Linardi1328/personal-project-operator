@@ -114,8 +114,8 @@ Allowed in Phase 6F only as independent exact-SHA review and bounded hardening:
 - require workspace branch and HEAD to equal `run.headSha`
 - require a clean workspace before and after review
 - require Phase 6D implementation evidence and Phase 6E PASS evidence to match `run.headSha`
-- establish and verify an explicit no-outbound-network plus read-only-workspace OS/process sandbox before review executes
-- deny reviewer workspace/repo writes on macOS through `sandbox-exec`, and require a trusted read-only mount namespace wrapper or equivalent on Linux
+- establish and verify an explicit no-outbound-network plus read-only workspace/source OS/process sandbox before review executes
+- deny reviewer writes to the workspace, workspace Git state, and canonical source checkout on macOS through `sandbox-exec`, and require a trusted read-only mount namespace wrapper or equivalent over the same paths on Linux
 - invoke one trusted locally configured reviewer executable through explicit argv with `shell: false` and `cwd` set to the verified workspace
 - pass only a deterministic bounded review prompt without secrets, raw outputs, arbitrary paths, or credentials, with a decision contract that matches parser validation
 - validate strict bounded structured reviewer output
