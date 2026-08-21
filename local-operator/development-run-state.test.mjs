@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { mkdtemp, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -59,6 +60,24 @@ function runPaths(writeDataDir, runId) {
 
 function modeBits(info) {
   return info.mode & 0o777
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`
+  }
+
+  return JSON.stringify(value)
+}
+
+function eventHash(event) {
+  const hashable = { ...event }
+  delete hashable.eventHash
+  return createHash("sha256").update(stableStringify(hashable)).digest("hex")
 }
 
 async function tempWriteDataDir(label = "ppo-6a-") {
@@ -190,6 +209,8 @@ test("initial run creation writes one canonical private record", async () => {
   assert.equal(record.baseSha, BASE_SHA)
   assert.equal(record.branch, "phase/6a-orchestration-run-state")
   assert.equal(record.headSha, HEAD_SHA)
+  assert.equal(record.attempts.rollback, 0)
+  assert.deepEqual(record.evidence.rollback, [])
   assert.equal(record.history.length, 1)
   assert.equal(record.history[0].toStatus, "created")
   assert.equal(record.history[0].previousHistoryHash, null)
@@ -258,6 +279,73 @@ test("invalid, skipped, and backward lifecycle transitions are refused", async (
   }, {
     writeDataDir: verified.writeDataDir,
     now: verified.now
+  }), "INVALID_RUN_TRANSITION")
+
+  await assertRejectsCode(transitionDevelopmentRun(verified.record.runId, {
+    expectedVersion: verified.record.version,
+    status: "rollback_in_progress"
+  }, {
+    writeDataDir: verified.writeDataDir,
+    now: verified.now
+  }), "INVALID_RUN_TRANSITION")
+})
+
+test("Phase 6J rollback lifecycle transitions are explicit and bounded", async () => {
+  const verificationFailed = await runToStatus("verification_failed")
+  const rollbackStarted = await transitionDevelopmentRun(verificationFailed.record.runId, {
+    expectedVersion: verificationFailed.record.version,
+    status: "rollback_in_progress",
+    actor: "rollback-agent",
+    evidence: {
+      kind: "rollback",
+      sha: verificationFailed.record.baseSha,
+      source: "rollback-agent",
+      summary: "Rollback attempt reserved.",
+      metadata: {
+        outcome: "rollback_started",
+        attempt: verificationFailed.record.attempts.rollback + 1
+      }
+    }
+  }, {
+    writeDataDir: verificationFailed.writeDataDir,
+    now: verificationFailed.now
+  })
+
+  assert.equal(rollbackStarted.status, "rollback_in_progress")
+  assert.equal(rollbackStarted.stage, "rollback")
+  assert.equal(rollbackStarted.attempts.rollback, 1)
+  assert.equal(rollbackStarted.evidence.rollback.length, 1)
+
+  const rolledBack = await transitionDevelopmentRun(rollbackStarted.runId, {
+    expectedVersion: rollbackStarted.version,
+    status: "rolled_back",
+    actor: "rollback-agent"
+  }, {
+    writeDataDir: verificationFailed.writeDataDir,
+    now: verificationFailed.now
+  })
+
+  assert.equal(rolledBack.status, "rolled_back")
+  assert.equal(rolledBack.stage, "rollback")
+
+  const implementation = await transitionDevelopmentRun(rolledBack.runId, {
+    expectedVersion: rolledBack.version,
+    status: "implementation_in_progress",
+    actor: "owner"
+  }, {
+    writeDataDir: verificationFailed.writeDataDir,
+    now: verificationFailed.now
+  })
+
+  assert.equal(implementation.status, "implementation_in_progress")
+
+  await assertRejectsCode(transitionDevelopmentRun(implementation.runId, {
+    expectedVersion: implementation.version,
+    status: "rolled_back",
+    actor: "rollback-agent"
+  }, {
+    writeDataDir: verificationFailed.writeDataDir,
+    now: verificationFailed.now
   }), "INVALID_RUN_TRANSITION")
 })
 
@@ -422,6 +510,44 @@ test("legacy Phase 6A records without planning evidence remain readable", async 
   assert.deepEqual(recovered.evidence.planning, [])
 })
 
+test("pre-Phase-6J records without rollback attempts or evidence remain readable", async () => {
+  const fixture = await makeRun()
+  const paths = runPaths(fixture.writeDataDir, fixture.record.runId)
+  const canonical = JSON.parse(await readFile(paths.recordPath, "utf8"))
+  const markerPath = join(paths.versionDir, "000000.json")
+  const marker = JSON.parse(await readFile(markerPath, "utf8"))
+
+  for (const record of [canonical, marker]) {
+    delete record.attempts.rollback
+    delete record.evidence.rollback
+    delete record.history[0].attempts.rollback
+    record.history[0].eventHash = eventHash(record.history[0])
+    record.historyHash = record.history[0].eventHash
+  }
+
+  await writeFile(paths.recordPath, `${JSON.stringify(canonical)}\n`, { mode: 0o600 })
+  await writeFile(markerPath, `${JSON.stringify(marker)}\n`, { mode: 0o600 })
+
+  const recovered = await readDevelopmentRun(fixture.record.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(recovered.attempts.rollback, 0)
+  assert.deepEqual(recovered.evidence.rollback, [])
+
+  const next = await transitionDevelopmentRun(recovered.runId, {
+    expectedVersion: recovered.version,
+    status: "planning_in_progress",
+    actor: "compatibility-test"
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+
+  assert.equal(next.attempts.rollback, 0)
+  assert.deepEqual(next.evidence.rollback, [])
+})
+
 test("transition history integrity is enforced", async () => {
   const fixture = await runToStatus("planned")
   const paths = runPaths(fixture.writeDataDir, fixture.record.runId)
@@ -476,7 +602,8 @@ test("evidence supports SHA-pinned implementation, review, test, and deploy meta
     ["implementation", "implementation-agent"],
     ["review", "review-agent"],
     ["test", "node-test"],
-    ["deploy", "deploy-plan"]
+    ["deploy", "deploy-plan"],
+    ["rollback", "rollback-agent"]
   ].map(([kind, source], index) => ({
     kind,
     sha: `${String(index + 1).repeat(40)}`,
@@ -499,7 +626,7 @@ test("evidence supports SHA-pinned implementation, review, test, and deploy meta
     now: fixture.now
   })
 
-  for (const kind of ["implementation", "review", "test", "deploy"]) {
+  for (const kind of ["implementation", "review", "test", "deploy", "rollback"]) {
     assert.equal(next.evidence[kind].length, 1)
     assert.equal(next.evidence[kind][0].kind, kind)
     assert.match(next.evidence[kind][0].sha, /^[a-f0-9]{40}$/u)
