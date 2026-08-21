@@ -68,9 +68,24 @@ record_previous_revision() {
 }
 
 verify_expected_commit() {
-  git -C "$INSTALL_DIR" fetch --prune "$REMOTE_NAME" "${MAIN_BRANCH}:refs/remotes/${REMOTE_NAME}/${MAIN_BRANCH}"
-  git -C "$INSTALL_DIR" cat-file -e "${EXPECTED_SHA}^{commit}"
-  git -C "$INSTALL_DIR" merge-base --is-ancestor "$EXPECTED_SHA" "${REMOTE_NAME}/${MAIN_BRANCH}"
+  local source_main_ref="refs/heads/main"
+  local remote_main_ref="refs/remotes/origin/main"
+  local remote_main_sha
+
+  [[ "$REMOTE_NAME" == "origin" ]] || fail "deployment remote is not the fixed approved origin."
+  [[ "$MAIN_BRANCH" == "main" ]] || fail "deployment branch is not the fixed approved main branch."
+
+  git -C "$INSTALL_DIR" fetch "$REMOTE_NAME" "${source_main_ref}:${remote_main_ref}" ||
+    fail "failed to fetch approved origin main."
+
+  remote_main_sha="$(git -C "$INSTALL_DIR" rev-parse --verify --quiet "${remote_main_ref}^{commit}")" ||
+    fail "fetched origin main is not a valid commit."
+
+  git -C "$INSTALL_DIR" cat-file -e "${EXPECTED_SHA}^{commit}" ||
+    fail "expected deployment SHA is not a valid commit."
+
+  git -C "$INSTALL_DIR" merge-base --is-ancestor "$EXPECTED_SHA" "$remote_main_sha" ||
+    fail "expected deployment SHA is not reachable from fetched origin main."
 }
 
 deploy_exact_sha() {
