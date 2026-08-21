@@ -275,6 +275,38 @@ The runner must:
 
 Phase 6E must not invoke Codex or models, automate review, harden in loops, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
 
+## Phase 6F independent review agent boundary
+
+Phase 6F allows one local-only independent exact-SHA review foundation:
+
+```text
+local-operator/development-review-agent.mjs
+```
+
+The agent must:
+
+- reuse Phase 6A run-state records and Phase 6C workspace reconciliation
+- accept initial execution only after `tests_passed`
+- require exact expected-version checks before run-state transition
+- require Phase 6D implementation evidence SHA to equal `run.headSha`
+- require Phase 6E PASS evidence SHA to equal `run.headSha`
+- refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, outside-managed-root, dirty, or head-mismatched workspaces
+- require workspace branch, HEAD, and clean tree to match `run.headSha` before and after review
+- invoke only a trusted locally configured reviewer executable
+- refuse arbitrary command strings, shell interpolation, package-manager scripts, untrusted executables, implementation adapters, GitHub write tools, push/merge/deploy tooling, OpenClaw, and secret-bearing env values
+- invoke the reviewer through explicit argv, `shell: false`, bounded timeout/output capture, sanitized env, and `cwd` set only to the verified workspace
+- establish and verify an explicit no-outbound-network OS/process sandbox before executing review
+- generate a deterministic bounded prompt from bounded task text, metadata-only evidence, bounded local diff/file facts, and approved security/scope requirements
+- validate only strict structured reviewer output and fail closed on malformed, contradictory, oversized, uncertain, unparseable, or wrong-SHA output
+- record bounded review attempts durably in the Phase 6A run record
+- treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous
+- transition only to `review_passed` after valid approval for the exact implementation SHA
+- transition to `review_changes_requested` for valid blockers or owner/product/security ambiguity
+- attach metadata-only SHA-pinned review evidence
+- provide read-only reconciliation for interrupted review and exact-SHA approval validity
+
+Phase 6F must not edit implementation files, invoke the implementation adapter, harden in loops, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.

@@ -178,6 +178,16 @@ The runner may read one Phase 6A run after Phase 6D implementation evidence exis
 
 This exception does not invoke Codex or models, run automated review, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
+## Phase 6F independent review exception
+
+Phase 6F allows bounded local independent review for a tests-passed run:
+
+- `local-operator/development-review-agent.mjs`
+
+The agent may read one Phase 6A run after Phase 6E PASS evidence exists, reconcile one verified Phase 6C workspace, require workspace branch, HEAD, and clean tree to equal `run.headSha`, verify Phase 6D implementation evidence and Phase 6E PASS evidence for that exact SHA, verify a no-outbound-network process sandbox, invoke only a trusted locally configured reviewer executable with explicit argv and `shell: false`, record bounded metadata-only review attempts, and transition only to `review_passed` after valid exact-SHA approval.
+
+This exception does not edit implementation files, invoke the implementation adapter, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -191,7 +201,8 @@ Examples requiring explicit approval:
 - creating or managing workspaces outside the Phase 6C isolated workspace manager
 - executing Codex outside the Phase 6D bounded execution adapter
 - executing automated tests outside the Phase 6E trusted test runner
-- executing review/merge/deploy/rollback/verification agents from Phase 6A run-state records
+- executing automated review outside the Phase 6F trusted independent review agent
+- executing merge/deploy/rollback/verification agents from Phase 6A run-state records
 - restarting services
 - publishing content
 - sending messages
