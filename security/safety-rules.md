@@ -247,6 +247,34 @@ The adapter must:
 
 Phase 6D must not add automated test execution, independent review, hardening loops, PR automation, GitHub writes, push, merge, deployment/service control, rollback, production verification, `/ppo continue`, Telegram/OpenClaw routes, or new OpenClaw tools.
 
+## Phase 6E automated test runner boundary
+
+Phase 6E allows one local-only automated test foundation:
+
+```text
+local-operator/development-test-runner.mjs
+```
+
+The runner must:
+
+- reuse Phase 6A run-state records and Phase 6C workspace reconciliation
+- accept initial execution only after `implementation_ready`
+- require exact expected-version checks before run-state transition
+- require Phase 6D implementation evidence SHA to equal `run.headSha`
+- refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, outside-managed-root, dirty, or head-mismatched workspaces
+- require workspace branch and HEAD to match `run.headSha` before and after tests
+- read tests only from a trusted local per-project policy registry
+- refuse arbitrary command strings, shell interpolation, package-manager scripts, untrusted executables, and secret-bearing env values
+- invoke test commands through explicit argv, `shell: false`, bounded timeout/output capture, sanitized env, and `cwd` set only to the verified workspace
+- establish and verify an explicit no-outbound-network OS/process sandbox before executing tests
+- record bounded testing attempts durably in the Phase 6A run record
+- treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous
+- transition only to `tests_passed` after all required tests pass for the exact implementation SHA
+- attach metadata-only SHA-pinned test evidence
+- provide read-only reconciliation for interrupted testing and pass-evidence validity
+
+Phase 6E must not invoke Codex or models, automate review, harden in loops, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.

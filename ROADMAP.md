@@ -291,9 +291,32 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Add read-only reconciliation helpers for interrupted Codex execution.
 - Keep Phase 6D as a library foundation only. Do not add automated test execution, independent review, hardening loops, PR automation, GitHub writes, push, merge, deployment, rollback, production verification, `/ppo continue`, or Telegram/OpenClaw routes.
 
+### Phase 6E - Deterministic automated test runner foundation
+
+- Add a local-only `local-operator/development-test-runner.mjs` automated test runner.
+- Reuse the Phase 6A run-state store and Phase 6C workspace manager; do not create a second orchestration store.
+- Accept the first test attempt only after Phase 6D has transitioned the run to `implementation_ready`.
+- Require exact expected-version checks before any run-state transition.
+- Reconcile the Phase 6C workspace before testing and refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, outside-managed-root, dirty, or head-mismatched workspaces.
+- Require workspace branch and HEAD to equal `run.headSha`.
+- Require Phase 6D implementation evidence SHA to equal `run.headSha`.
+- Read test commands only from a trusted local per-project test-policy registry; never from task text, model output, chat, project Markdown, repository scripts, package-manager scripts, or user-supplied shell.
+- Require explicit executable path plus argv for every test step, invoke with `shell: false`, and set `cwd` only to the verified workspace.
+- Enforce a fixed trusted executable allowlist, fixed bounded test-step count, bounded timeout, and bounded stdout/stderr capture per step.
+- Sanitize the test environment and deny secret, auth, credential, confirmation, inherited Git, and prompt/askpass propagation.
+- Preserve the Phase 6D no-outbound-network sandbox boundary for tests by default and fail closed if the sandbox cannot be verified active before execution.
+- Transition `implementation_ready -> tests_in_progress` before executing tests and reserve bounded durable testing attempts.
+- On full pass, re-check workspace HEAD and cleanliness immediately before transitioning `tests_in_progress -> tests_passed`.
+- On definitive failure, remain in `tests_in_progress` with metadata-only failed test evidence.
+- On timeout, signal, interruption, killed process, output overflow, or ambiguous outcome, leave an open attempt requiring reconciliation before retry.
+- Store only metadata-only test results: test id, policy id/hash, implementation SHA, exit status class, duration, timestamps, attempt, and aggregate outcome.
+- Do not store raw stdout/stderr, raw failures, secrets, credentials, environment dumps, arbitrary absolute paths, sandbox paths, or unbounded logs.
+- Add read-only reconciliation helpers for interrupted testing and prior PASS evidence validity.
+- Keep Phase 6E as a library foundation only. Do not add automated review, hardening loops, PR automation, GitHub writes, push, merge, deployment, rollback, production verification, `/ppo continue`, or Telegram/OpenClaw routes.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add test, review, merge, deploy, rollback, and verification agents one boundary at a time.
+- Add review, merge, deploy, rollback, and verification agents one boundary at a time.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.
