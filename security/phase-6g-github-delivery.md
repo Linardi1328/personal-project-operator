@@ -1,6 +1,6 @@
 # Phase 6G Security Boundary
 
-Phase 6G covers acceptance gates, GitHub delivery, exact-head remote PR review, and SHA-pinned auto-merge. It deliberately stops at `merged`; deployment and verification belong to a later phase.
+Phase 6G covers acceptance gates, GitHub delivery, exact-head remote PR review, and SHA-pinned auto-merge. It deliberately stops at `merged`; Phase 6H owns the separate exact-SHA deployment boundary, and verification belongs to a later phase.
 
 ## Trusted Inputs
 

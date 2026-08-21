@@ -496,6 +496,23 @@ Push, PR creation, and merge writes are restart-safe. Ambiguous writes are recon
 
 Phase 6G ends at `merged`. It does not deploy, restart services, roll back production, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, modify credentials/authentication, permit model-generated GitHub commands, or merge any unreviewed SHA. See [local-operator/phase-6g-github-delivery.md](local-operator/phase-6g-github-delivery.md) and [security/phase-6g-github-delivery.md](security/phase-6g-github-delivery.md).
 
+## Phase 6H Exact-SHA Deployment Agent Foundation
+
+Phase 6H adds the first deployment boundary after Phase 6G for a Phase 6A run that has reached exactly `merged`:
+
+```text
+local-operator/development-deployment-agent.mjs
+deployment/scripts/deploy-exact-sha.sh
+```
+
+The deployment agent accepts only an exact-version `merged` run with valid Phase 6G merged evidence for exactly `run.headSha`. The deployment target SHA is not caller-supplied: it is read only from durable Phase 6G merge evidence and must equal the Phase 6G merge commit SHA. The agent also revalidates the existing Phase 6D implementation, Phase 6E tests, Phase 6F local review, Phase 6G remote review, and Phase 6G merge evidence chain before deployment.
+
+Phase 6H supports only the trusted `personal-project-operator` deployment profile. The profile fixes the repository identity, installation directory, origin, deployment script, runtime preflight, and `ppo-openclaw.service` restart target. Node process execution uses explicit argv, `shell: false`, bounded timeout/output, and sanitized environment. The shell primitive fetches the fixed origin, verifies the exact merge SHA is reachable from approved `main`, checks out exactly that SHA, runs the approved runtime preflight, restarts only the fixed PPO service, and rechecks checkout HEAD. It does not use `git pull` as the final selection mechanism.
+
+Deployment writes are restart-aware. The agent reserves `merged -> deploy_in_progress` with metadata-only attempt evidence before mutation. Successful deployment transitions `deploy_in_progress -> deployed` only after deterministic local postconditions prove the exact checkout, approved preflight, and fixed service restart completed. Definitive failure transitions to `deploy_failed`. Ambiguous outcomes preserve the open attempt and require read-only reconciliation; reconciliation does not retry deployment, mutate the repo, restart the service, or infer production correctness.
+
+Phase 6H stops at `deployed`. It does not automatically rollback, perform production verification or health validation, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials/authentication, or restart any service except the fixed PPO service as part of the exact-SHA deployment operation. See [local-operator/phase-6h-deployment-agent.md](local-operator/phase-6h-deployment-agent.md) and [security/phase-6h-deployment-agent.md](security/phase-6h-deployment-agent.md).
+
 ## Command Menu System
 
 Commands are grouped into phone-friendly categories:
@@ -525,7 +542,7 @@ The operator should use that status to recommend whether a task should be small,
 
 ## Current Implementation Boundary
 
-Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5E adds terminal-only controlled promotion of one durable note into one approved project-state section with exact confirmation, git safety preflights, atomic replacement, and metadata-only audit. Phase 6A adds a local-only durable development run-state store with explicit lifecycle transitions and optimistic concurrency. Phase 6B adds a deterministic local next-stage planner that can create or plan a Phase 6A run through the planning lifecycle only. Phase 6C adds a deterministic local workspace manager that can prepare one isolated branch/worktree for a planned run only. Phase 6D adds a bounded local Codex execution adapter with an explicit pre-spawn no-outbound-network process sandbox, including a Linux network-namespace backend for Ubuntu 24.04 production, durable attempt accounting, and independent Git verification before advancing a workspace to `implementation_ready`. Phase 6E adds a deterministic local automated test runner that runs only trusted per-project policy steps in the verified workspace and advances only exact-SHA passing runs to `tests_passed`. Phase 6F adds independent exact-SHA review plus a maximum-three-round bounded hardening pipeline that reuses Phase 6D/6E/6F engines and requires fresh tests and fresh independent review for every new implementation SHA. Phase 6G adds deterministic acceptance gates, trusted GitHub delivery, exact-head remote PR review, and SHA-pinned auto-merge from `review_passed` through `merged`; it adds no deployment or routing path.
+Phase 0 was documentation only. Phase 1 adds a local-only simulator for `/status`, `/menu`, and `/help`. Phase 1.5 adds a local-only `/ppo` wrapper for OpenClaw Telegram routing preparation. Phase 2A adds terminal-only GitHub read-only retrieval and normalization. Phase 2B routes `/ppo repo <project>` and `/ppo pr <project>` to that read-only layer through `ppo_local`. Phase 2C routes `/ppo status` to a live GitHub read-only project status summary. Phase 3A adds terminal-only local Codex prompt generation. Phase 3B adds terminal-only local Codex planning tools. Phase 3C routes Codex prompt/planning text commands through `ppo_local`. Phase 4A adds VPS deployment foundation docs, templates, guarded scripts, and local health-check tests only. Phase 5A adds terminal-only controlled GitHub issue creation with exact confirmation and audit logging. Phase 5B adds `/ppo issue-create` staging and `/ppo issue-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5C adds terminal-only controlled local project note append under private write data. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` single-use confirmation through the existing `ppo_local` tool. Phase 5E adds terminal-only controlled promotion of one durable note into one approved project-state section with exact confirmation, git safety preflights, atomic replacement, and metadata-only audit. Phase 6A adds a local-only durable development run-state store with explicit lifecycle transitions and optimistic concurrency. Phase 6B adds a deterministic local next-stage planner that can create or plan a Phase 6A run through the planning lifecycle only. Phase 6C adds a deterministic local workspace manager that can prepare one isolated branch/worktree for a planned run only. Phase 6D adds a bounded local Codex execution adapter with an explicit pre-spawn no-outbound-network process sandbox, including a Linux network-namespace backend for Ubuntu 24.04 production, durable attempt accounting, and independent Git verification before advancing a workspace to `implementation_ready`. Phase 6E adds a deterministic local automated test runner that runs only trusted per-project policy steps in the verified workspace and advances only exact-SHA passing runs to `tests_passed`. Phase 6F adds independent exact-SHA review plus a maximum-three-round bounded hardening pipeline that reuses Phase 6D/6E/6F engines and requires fresh tests and fresh independent review for every new implementation SHA. Phase 6G adds deterministic acceptance gates, trusted GitHub delivery, exact-head remote PR review, and SHA-pinned auto-merge from `review_passed` through `merged`. Phase 6H adds a PPO-only exact-SHA deployment agent that starts from `merged`, deploys only the Phase 6G merge commit SHA, supports read-only reconciliation, and stops at `deployed`.
 
 The project still does not implement:
 
@@ -535,7 +552,7 @@ The project still does not implement:
 - `/ppo continue` or any autonomous-development route
 - `/ppo next` or status-based recommendations
 - Telegram API registration
-- live VPS deployment from this repository
+- live VPS deployment outside the Phase 6H exact-SHA PPO deployment agent
 - `/ppo vps-health` routing
 - GitHub writes beyond terminal-only `issue-create`, the Phase 5B `/ppo issue-create` plus `/ppo issue-confirm` approval path, and Phase 6G's approved branch push, approved PR creation/reuse, and expected-head-SHA merge operations
 - project note writes beyond terminal-only `note-add` or the Phase 5D `/ppo note-add` plus `/ppo note-confirm` approval path
@@ -546,11 +563,13 @@ The project still does not implement:
 - automated testing outside the Phase 6E trusted test runner
 - automated review outside the Phase 6F trusted independent review agent and Phase 6G exact-head remote PR reviewer
 - automated hardening outside the Phase 6F bounded hardening orchestrator
-- deployment, rollback, or verification agents coordinated through the Phase 6A run-state store
+- deployment agents outside the Phase 6H exact-SHA PPO deployment agent
+- rollback or verification agents coordinated through the Phase 6A run-state store
 - issue comments, labels, releases, workflow dispatches, branch deletion, branch protection changes, tags, or GitHub writes outside the strict Phase 6G delivery allowlist
 - real Codex usage scraping
 - customer messaging
-- production deployment
+- production deployment outside the Phase 6H exact-SHA PPO deployment agent
+- production verification or automated rollback
 - trading execution
 - credential storage
 - automatic OpenClaw config edits

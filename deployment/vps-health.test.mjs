@@ -168,6 +168,7 @@ async function assertModeLockClean(repoPath, script) {
     "bootstrap-ubuntu-24.04.sh",
     "preflight-openclaw-runtime.sh",
     "install-or-update-repo.sh",
+    "deploy-exact-sha.sh",
     "service-control.sh",
     "firewall-ssh-hardening.sh",
     "rollback-repo.sh"
