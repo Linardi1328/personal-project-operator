@@ -357,6 +357,23 @@ Phase 6H allows one local deployment boundary for the PPO service:
 
 Phase 6H must not deploy arbitrary projects, use `git pull` as final deployment selection, automatically rollback, run production verification or health checks, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials, or broaden GitHub write permissions.
 
+## Phase 6I read-only production verification boundary
+
+Phase 6I allows one local read-only production verification boundary for the PPO service after Phase 6H:
+
+- accept only exact-version `deployed` PPO self-development runs
+- require valid Phase 6H `deployed` evidence and the Phase 6G merge-to-deploy SHA chain
+- derive the verification target only from the Phase 6H deployed SHA
+- reuse only the fixed Phase 6H `personal-project-operator` production profile
+- reject arbitrary repositories, install paths, services, commands, executables, policies, refs, branches, and caller-supplied SHAs
+- transition `deployed -> verification_in_progress` before production checks
+- run only the fixed read-only verification primitive with explicit argv, `shell: false`, bounded timeout/output, sanitized environment, and strict bounded result schema validation
+- transition to `verified` only after the full approved read-only contract is proven
+- transition definitive failures to `verification_failed`
+- preserve ambiguous attempts for read-only reconciliation
+
+Phase 6I must not deploy, redeploy, rollback, fetch, pull, checkout, switch, reset, mutate files, change permissions, change configuration, restart services, perform GitHub writes, invoke Codex or models, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials, or expand project registry support.
+
 ## Financial and trading boundary
 
 SPY Market Agent may support research, summaries, simulation, and backtesting. It must not execute trades or connect to brokerage execution without a separate approved safety design.

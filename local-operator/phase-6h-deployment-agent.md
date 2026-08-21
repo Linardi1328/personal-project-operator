@@ -94,4 +94,4 @@ Phase 6H does not:
 - alter credentials or authentication
 - accept arbitrary repository URLs, install paths, service names, executable paths, remotes, or shell command strings
 
-Verification and rollback belong to later phases.
+Read-only production verification belongs to Phase 6I. Rollback remains a separately deferred boundary.

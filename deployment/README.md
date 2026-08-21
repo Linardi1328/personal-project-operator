@@ -4,6 +4,8 @@ Phase 4A adds reviewed deployment foundation files for a future Ubuntu VPS. It d
 
 Phase 6H adds the first autonomous deployment agent boundary for the already reviewed PPO service. It is exact-SHA pinned, starts only from a Phase 6A run in `merged`, deploys only the Phase 6G merge commit SHA through the fixed PPO profile, and stops at `deployed`.
 
+Phase 6I adds the separate local-only read-only production verification boundary after Phase 6H. It verifies only the exact deployed SHA and does not redeploy, restart, rollback, or refresh Git refs.
+
 Target host:
 
 - Ubuntu 24.04 LTS
@@ -34,6 +36,8 @@ Phase 4A files are server-local bootstrap materials only.
 - `deployment/scripts/preflight-openclaw-runtime.sh`: fail-closed service preflight for the supported local-prefix Node/OpenClaw runtime.
 - `deployment/scripts/install-or-update-repo.sh`: installs or updates the PPO checkout from the fixed main branch.
 - `deployment/scripts/deploy-exact-sha.sh`: Phase 6H exact-SHA PPO deployment primitive for a trusted Phase 6G merge commit.
+- `deployment/scripts/verify-production-readonly.sh`: Phase 6I read-only production verification primitive for the exact Phase 6H deployed SHA.
+- `deployment/scripts/verify-ppo-local-help.mjs`: helper used by the Phase 6I primitive to exercise deployed `ppo_local help` through the bridge.
 - `deployment/scripts/service-control.sh`: owner-confirmed `systemd` status/start/restart/enable controls.
 - `deployment/scripts/firewall-ssh-hardening.sh`: owner-confirmed OpenSSH-only UFW baseline.
 - `deployment/scripts/rollback-repo.sh`: owner-confirmed rollback to the recorded last-good revision.
@@ -199,6 +203,14 @@ The script:
 
 It does not use `git pull` as final deployment selection, does not accept arbitrary remotes or services, does not invoke rollback, and does not run `vps-health.mjs` as production verification.
 
+## Phase 6I Read-Only Production Verification
+
+Phase 6I uses [deployment/scripts/verify-production-readonly.sh](scripts/verify-production-readonly.sh) through [local-operator/development-production-verification-agent.mjs](../local-operator/development-production-verification-agent.mjs). The agent supplies the expected SHA only from durable Phase 6H `deployed` evidence.
+
+The script checks fixed read-only production facts: approved repository origin, exact detached checkout HEAD, clean worktree, previous-revision marker when applicable, OpenClaw runtime preflight, OpenClaw version, fixed systemd service state and identity, reviewed unit match, production permission contract, and deployed `ppo_local help` bridge execution.
+
+It does not fetch, pull, checkout, switch, reset, mutate files, change permissions, change configuration, restart services, invoke rollback, install packages, call GitHub writes, invoke Codex/models, SSH elsewhere, or expose command output.
+
 ## Repo Ownership Model
 
 The checkout at `/opt/personal-project-operator` is root-owned and read-only to the runtime user.
@@ -363,10 +375,12 @@ bash -n deployment/scripts/bootstrap-ubuntu-24.04.sh
 bash -n deployment/scripts/preflight-openclaw-runtime.sh
 bash -n deployment/scripts/install-or-update-repo.sh
 bash -n deployment/scripts/deploy-exact-sha.sh
+bash -n deployment/scripts/verify-production-readonly.sh
 bash -n deployment/scripts/service-control.sh
 bash -n deployment/scripts/firewall-ssh-hardening.sh
 bash -n deployment/scripts/rollback-repo.sh
 node --check deployment/scripts/vps-health.mjs
+node --check deployment/scripts/verify-ppo-local-help.mjs
 ```
 
 These checks are local/static. They do not perform live deployment.
