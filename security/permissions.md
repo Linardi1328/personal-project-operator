@@ -132,34 +132,9 @@ Allowed in Phase 6F only as independent exact-SHA review and bounded hardening:
 - record owner-action-required evidence and stop on non-convergence
 - inspect hardening status read-only
 
-Allowed in Phase 6G only as deterministic acceptance, GitHub delivery, remote review, and exact-head merge:
-
-- accept only exact-version `review_passed` runs with matching Phase 6D implementation, Phase 6E PASS, Phase 6F approval, and clean Phase 6C workspace evidence for `run.headSha`
-- push only the approved implementation SHA to the approved Phase 6C branch on fixed `origin`
-- create or reuse exactly one PR from the approved branch to `main`
-- require exact-head `PPO PR validation`
-- run the exact-head remote PR reviewer inside the Phase 6F no-network/read-only sandbox boundary
-- transition only through `review_passed -> merge_ready -> merged`
-- merge only with the fixed method and expected-head-SHA protection
-- reconcile ambiguous push, PR creation, and merge outcomes read-only
-- store metadata-only delivery and merge evidence
-
-Allowed in Phase 6H only as exact-SHA PPO deployment:
-
-- accept only exact-version `merged` runs
-- require Phase 6G merged evidence for exactly `run.headSha`
-- derive the deployment target only from the Phase 6G merge commit SHA
-- use only the fixed `personal-project-operator` deployment profile
-- transition only through `merged -> deploy_in_progress -> deployed` or `deploy_failed`
-- switch only the fixed PPO checkout to the exact Phase 6G merge SHA
-- run the approved runtime preflight
-- restart only `ppo-openclaw.service`
-- inspect ambiguous deployment state read-only without retrying, mutating, restarting, or verifying production
-- store metadata-only deployment evidence
-
 Blocked unless explicitly approved in a later write-enabled phase:
 
-- push code outside the Phase 6G approved-branch exact-SHA push boundary
+- push code
 - create branches outside the Phase 6C isolated workspace manager
 - delete branches outside definite Phase 6C cleanup
 - create issues outside the Phase 5A terminal path or Phase 5B approval-gated chat path
@@ -169,15 +144,14 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - comment on issues
 - change labels
 - approve PRs
-- merge PRs outside the Phase 6G expected-head-SHA merge boundary
+- merge PRs
 - change repo settings
 - execute planner behavior beyond Phase 6B deterministic next-stage planning
 - execute Codex outside the Phase 6D bounded execution adapter
 - execute automated tests outside the Phase 6E trusted test runner
 - execute automated review outside the Phase 6F trusted independent review agent
 - execute automated hardening outside the Phase 6F bounded hardening orchestrator
-- execute deployment agents outside the Phase 6H exact-SHA PPO deployment boundary
-- execute rollback or verification agents from Phase 6A run-state records
+- execute merge, deployment, rollback, or verification agents from Phase 6A run-state records
 - mutate files inside Phase 6C workspaces outside the Phase 6D bounded execution adapter
 
 ## Chat platform permissions
@@ -200,8 +174,8 @@ Future VPS checks should be read-only by default.
 
 Blocked unless explicitly approved:
 
-- restart services outside the fixed Phase 6H PPO service restart
-- deploy code outside the Phase 6H exact-SHA PPO deployment boundary
+- restart services
+- deploy code
 - rotate credentials
 - change firewall rules
 - run destructive file operations

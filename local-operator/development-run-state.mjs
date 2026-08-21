@@ -20,14 +20,6 @@ import {
   listPhase2GitHubProjects
 } from "./github-project-registry.mjs"
 
-const personalProjectOperatorDeploymentProject = Object.freeze({
-  id: "personal-project-operator",
-  displayName: "Personal Project Operator",
-  owner: "Linardi1328",
-  repo: "personal-project-operator",
-  fullName: "Linardi1328/personal-project-operator"
-})
-
 export const DEVELOPMENT_RUN_SCHEMA_VERSION = 1
 export const DEVELOPMENT_RUN_ID_BYTES = 32
 export const DEVELOPMENT_RUN_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/u
@@ -1156,18 +1148,7 @@ function normalizeExpectedVersion(value) {
   return value
 }
 
-function resolveOptionalDevelopmentRunProject(projectId, options = {}) {
-  if (
-    options.allowPersonalProjectOperatorDeploymentProject === true &&
-    projectId === personalProjectOperatorDeploymentProject.id
-  ) {
-    return personalProjectOperatorDeploymentProject
-  }
-
-  return null
-}
-
-function normalizeProjectShape(project, options = {}) {
+function normalizeProjectShape(project) {
   if (!project || typeof project !== "object" || Array.isArray(project)) {
     throw runStateError(
       "RUN_RECORD_INVALID",
@@ -1175,7 +1156,7 @@ function normalizeProjectShape(project, options = {}) {
     )
   }
 
-  const resolved = resolveOptionalDevelopmentRunProject(project.id, options) || resolveDevelopmentRunProject(project.id)
+  const resolved = resolveDevelopmentRunProject(project.id)
 
   if (
     project.displayName !== resolved.displayName ||
@@ -1483,7 +1464,7 @@ function validateHistory(record) {
   }
 }
 
-function parseRunRecord(payload, expectedRunId = null, options = {}) {
+function parseRunRecord(payload, expectedRunId = null) {
   if (Buffer.byteLength(String(payload ?? ""), "utf8") > MAX_DEVELOPMENT_RUN_RECORD_BYTES) {
     throw runStateError(
       "RUN_RECORD_TOO_LARGE",
@@ -1565,7 +1546,7 @@ function parseRunRecord(payload, expectedRunId = null, options = {}) {
     )
   }
 
-  parsed.project = normalizeProjectShape(parsed.project, options)
+  parsed.project = normalizeProjectShape(parsed.project)
   validateAttemptShape(parsed.attempts)
   validateTimestamps(parsed.timestamps)
   validateEvidenceShape(parsed.evidence)
@@ -1574,7 +1555,7 @@ function parseRunRecord(payload, expectedRunId = null, options = {}) {
   return cloneJson(parsed)
 }
 
-async function readLatestVersionMarker(paths, runId, options = {}) {
+async function readLatestVersionMarker(paths, runId) {
   let entries
 
   try {
@@ -1607,7 +1588,7 @@ async function readLatestVersionMarker(paths, runId, options = {}) {
       continue
     }
 
-    const record = parseRunRecord(payload, runId, options)
+    const record = parseRunRecord(payload, runId)
 
     if (record.version !== version) {
       throw runStateError(
@@ -1727,8 +1708,8 @@ async function readDevelopmentRunInternal(runId, options = {}) {
   const payload = await readRegularFileIfPresent(paths.recordPath, "Development run record")
   const canonical = payload === null
     ? null
-    : parseRunRecord(payload, normalizedRunId, options)
-  const latest = await readLatestVersionMarker(paths, normalizedRunId, options)
+    : parseRunRecord(payload, normalizedRunId)
+  const latest = await readLatestVersionMarker(paths, normalizedRunId)
 
   if (!canonical && !latest) {
     throw runStateError(

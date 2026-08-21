@@ -191,30 +191,6 @@ The hardening orchestrator may start only from valid exact-SHA `CHANGES_REQUESTE
 
 This exception does not accept arbitrary remediation text, create parallel implementation/test/review engines, harden beyond three rounds, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
-## Phase 6G GitHub delivery exception
-
-Phase 6G allows exact-SHA GitHub delivery for a `review_passed` Phase 6A run after deterministic local acceptance:
-
-- push only the approved implementation SHA to the approved Phase 6C branch
-- create or reuse exactly one PR from that branch to `main`
-- require exact-head CI and independent remote PR review
-- merge only the reviewed PR head with expected-head-SHA protection
-
-This exception stops at `merged`. It does not deploy, restart services, roll back, perform production verification, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
-
-## Phase 6H exact-SHA deployment exception
-
-Phase 6H allows exact-SHA PPO deployment for a `merged` Phase 6A run:
-
-- read the deployment target only from Phase 6G merged evidence
-- transition `merged -> deploy_in_progress -> deployed` or `deploy_failed`
-- switch only the fixed PPO checkout to the exact Phase 6G merge commit SHA
-- run the approved runtime preflight
-- restart only `ppo-openclaw.service`
-- reconcile ambiguous deployment state read-only
-
-This exception does not deploy arbitrary projects, deploy latest `main`, use branch names as deployment targets, automatically rollback, perform production verification, run health validation, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
-
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -230,10 +206,8 @@ Examples requiring explicit approval:
 - executing automated tests outside the Phase 6E trusted test runner
 - executing automated review outside the Phase 6F trusted independent review agent
 - executing automated hardening outside the Phase 6F bounded hardening orchestrator
-- executing merge agents outside the Phase 6G GitHub delivery boundary
-- executing deployment agents outside the Phase 6H exact-SHA PPO deployment boundary
-- executing rollback/verification agents from Phase 6A run-state records
-- restarting services outside the fixed Phase 6H PPO service restart
+- executing merge/deploy/rollback/verification agents from Phase 6A run-state records
+- restarting services
 - publishing content
 - sending messages
 

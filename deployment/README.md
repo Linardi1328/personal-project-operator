@@ -2,8 +2,6 @@
 
 Phase 4A adds reviewed deployment foundation files for a future Ubuntu VPS. It does not deploy a live server from this repository.
 
-Phase 6H adds the first autonomous deployment agent boundary for the already reviewed PPO service. It is exact-SHA pinned, starts only from a Phase 6A run in `merged`, deploys only the Phase 6G merge commit SHA through the fixed PPO profile, and stops at `deployed`.
-
 Target host:
 
 - Ubuntu 24.04 LTS
@@ -22,7 +20,6 @@ Phase 4A files are server-local bootstrap materials only.
 - No GitHub write endpoint, GraphQL endpoint, or new endpoint family is added by the deployment files. Phase 5B runtime issue creation remains limited to the reviewed `/ppo issue-create` plus `/ppo issue-confirm` workflow. Phase 5D runtime note creation remains limited to the reviewed `/ppo note-add` plus `/ppo note-confirm` local approval workflow.
 - No Codex, ChatGPT, OpenAI API, or model call is made.
 - No deployment is performed by automated tests.
-- Phase 6H does not automatically rollback, run production verification, run health validation, add `/ppo continue`, or add Telegram/OpenClaw routes.
 - No credentials, tokens, private keys, host addresses, or real secrets belong in this repository.
 - `/ppo vps-health` is not routed through OpenClaw yet.
 
@@ -33,7 +30,6 @@ Phase 4A files are server-local bootstrap materials only.
 - `deployment/scripts/bootstrap-ubuntu-24.04.sh`: installs OS packages, creates the non-root service user, creates directories, and installs systemd/logrotate templates.
 - `deployment/scripts/preflight-openclaw-runtime.sh`: fail-closed service preflight for the supported local-prefix Node/OpenClaw runtime.
 - `deployment/scripts/install-or-update-repo.sh`: installs or updates the PPO checkout from the fixed main branch.
-- `deployment/scripts/deploy-exact-sha.sh`: Phase 6H exact-SHA PPO deployment primitive for a trusted Phase 6G merge commit.
 - `deployment/scripts/service-control.sh`: owner-confirmed `systemd` status/start/restart/enable controls.
 - `deployment/scripts/firewall-ssh-hardening.sh`: owner-confirmed OpenSSH-only UFW baseline.
 - `deployment/scripts/rollback-repo.sh`: owner-confirmed rollback to the recorded last-good revision.
@@ -180,25 +176,6 @@ Then manually configure OpenClaw for the service user:
 
 Do not use `group:plugins`, wildcard tool permissions, or a generic GitHub tool.
 
-## Phase 6H Exact-SHA Deployment
-
-Phase 6H uses [deployment/scripts/deploy-exact-sha.sh](scripts/deploy-exact-sha.sh) through [local-operator/development-deployment-agent.mjs](../local-operator/development-deployment-agent.mjs). The agent supplies the expected SHA from durable Phase 6G `merged` evidence only.
-
-The script:
-
-- accepts exactly one full lowercase 40-character SHA
-- verifies `/opt/personal-project-operator` is the approved PPO repository checkout
-- fetches the fixed `origin main`
-- verifies the expected SHA is a commit reachable from `origin/main`
-- records the previously installed revision when available
-- checks out exactly the expected SHA in detached HEAD state
-- restores root/`ppo` checkout ownership and executable modes
-- runs the approved OpenClaw runtime preflight
-- restarts only `ppo-openclaw.service` through the reviewed service-control script
-- re-reads checkout HEAD and requires it to equal the expected SHA
-
-It does not use `git pull` as final deployment selection, does not accept arbitrary remotes or services, does not invoke rollback, and does not run `vps-health.mjs` as production verification.
-
 ## Repo Ownership Model
 
 The checkout at `/opt/personal-project-operator` is root-owned and read-only to the runtime user.
@@ -326,8 +303,6 @@ sudo PPO_ROLLBACK_CONFIRM=rollback-last-good deployment/scripts/rollback-repo.sh
 
 The rollback script reads only that recorded revision, validates it as a commit SHA, switches the local checkout to that revision, and restarts the service.
 
-Phase 6H never invokes rollback automatically. Rollback remains owner-confirmed future/manual recovery behavior until a separately reviewed phase defines an automated rollback boundary.
-
 ## Health Check Foundation
 
 Local read-only health check:
@@ -361,7 +336,6 @@ node deployment/vps-health.test.mjs
 bash -n deployment/scripts/bootstrap-ubuntu-24.04.sh
 bash -n deployment/scripts/preflight-openclaw-runtime.sh
 bash -n deployment/scripts/install-or-update-repo.sh
-bash -n deployment/scripts/deploy-exact-sha.sh
 bash -n deployment/scripts/service-control.sh
 bash -n deployment/scripts/firewall-ssh-hardening.sh
 bash -n deployment/scripts/rollback-repo.sh
