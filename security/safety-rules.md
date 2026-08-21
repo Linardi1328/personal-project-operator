@@ -296,8 +296,12 @@ The agent must:
 - invoke only a trusted locally configured reviewer executable
 - refuse arbitrary reviewer command strings, shell interpolation, package-manager scripts, untrusted reviewer executables, implementation adapters as reviewer commands, GitHub write tools, push/merge/deploy tooling, OpenClaw, and secret-bearing env values
 - invoke the reviewer through explicit argv, `shell: false`, bounded timeout/output capture, sanitized env, and `cwd` set only to the verified workspace
-- establish and verify an explicit no-outbound-network OS/process sandbox before executing review
+- establish and verify an explicit no-outbound-network plus read-only-workspace OS/process sandbox before executing review
+- on macOS, deny reviewer file writes under the verified workspace/repo with `sandbox-exec`
+- on Linux, require a trusted read-only workspace mount/bind/mount-namespace wrapper or equivalent OS boundary
+- verify local read access, workspace file-write denial, local Git mutation denial, and outbound-network denial before reserving a review attempt
 - generate a deterministic bounded prompt from bounded task text, metadata-only evidence, bounded local diff/file facts, and approved security/scope requirements
+- state in the review prompt that `APPROVED` requires `mergeAllowed=true` and empty blockers/security findings/tests required, while `CHANGES_REQUESTED` and `OWNER_ACTION_REQUIRED` require `mergeAllowed=false`
 - validate only strict structured reviewer output and fail closed on malformed, contradictory, oversized, uncertain, unparseable, or wrong-SHA output
 - record bounded review attempts durably in the Phase 6A run record
 - treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous
@@ -307,6 +311,7 @@ The agent must:
 - provide read-only reconciliation for interrupted review and exact-SHA approval validity
 - start hardening only from valid `review_changes_requested` evidence for exactly `run.headSha`
 - derive remediation context only from durable validated review evidence, never chat, user input, model prose, repository commands, or shell strings
+- include every validated remediation item and all mandatory isolated-workspace, no-push, no-merge, no-deploy, no-credential, and no-destructive-operation boundaries in Phase 6D hardening prompts; trim only optional task/planning context or fail closed
 - reuse Phase 6D implementation, Phase 6E testing, and Phase 6F review engines without parallel engines
 - require each remediation to produce a new verified descendant implementation SHA
 - invalidate prior test and review evidence after every implementation SHA change

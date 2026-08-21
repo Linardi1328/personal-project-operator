@@ -47,7 +47,7 @@ const envKeyPattern = /^[A-Z_][A-Z0-9_]{0,39}$/u
 const unsafeControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u001F\u007F-\u009F])/u
 const unsafeMultilineOutputPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F])/u
 const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
-const forbiddenEnvKeyPattern = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|CONFIRM|ASKPASS|GIT_CONFIG|GIT_SSH|SSH_AUTH_SOCK|HOME|NETRC|NPM|AWS|GOOGLE|GCLOUD|AZURE|DOCKER|KUBE|OPENAI|ANTHROPIC|NODE_OPTIONS)/u
+const forbiddenEnvKeyPattern = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|CONFIRM|ASKPASS|GIT_CONFIG|GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_SSH|SSH_AUTH_SOCK|HOME|NETRC|NPM|AWS|GOOGLE|GCLOUD|AZURE|DOCKER|KUBE|OPENAI|ANTHROPIC|NODE_OPTIONS)/u
 const forbiddenExecutableNames = new Set([
   "bash",
   "codex",
@@ -73,10 +73,9 @@ const forbiddenExecutableNames = new Set([
   "zsh"
 ])
 const defaultExecutionPath = "/usr/bin:/bin:/usr/sbin:/sbin"
-const noOutboundNetworkSandboxProfile = `(version 1)
-(allow default)
-(deny network*)
-`
+const readOnlyWorkspaceMode = "trusted-read-only-workspace"
+const linuxReadOnlyWorkspaceMode = "trusted-read-only-mount-namespace"
+const sandboxRequiredMessage = "Independent review requires a trusted no-outbound-network and read-only-workspace process sandbox."
 
 export class DevelopmentReviewAgentError extends DevelopmentRunStateError {
   constructor(code, safeMessage) {
@@ -224,14 +223,14 @@ function normalizeExecutablePath(value, code = "REVIEW_CONFIG_INVALID") {
 function normalizeSandboxPath(value) {
   const sandboxPath = normalizeSafeText(value, {
     code: "REVIEW_SANDBOX_REQUIRED",
-    safeMessage: "Independent review requires a trusted no-outbound-network process sandbox.",
+    safeMessage: sandboxRequiredMessage,
     maxChars: 240
   })
 
   if (!isAbsolute(sandboxPath) || sandboxPath !== resolvePath(sandboxPath)) {
     throw reviewError(
       "REVIEW_SANDBOX_REQUIRED",
-      "Independent review requires a trusted no-outbound-network process sandbox."
+      sandboxRequiredMessage
     )
   }
 
@@ -242,7 +241,7 @@ function normalizeSandboxPositiveInteger(value) {
   if (!Number.isInteger(value) || value <= 0 || value > 2147483647) {
     throw reviewError(
       "REVIEW_SANDBOX_REQUIRED",
-      "Independent review requires a trusted no-outbound-network process sandbox."
+      sandboxRequiredMessage
     )
   }
 
@@ -253,7 +252,7 @@ function requireSandboxTrue(value) {
   if (value !== true) {
     throw reviewError(
       "REVIEW_SANDBOX_REQUIRED",
-      "Independent review requires a trusted no-outbound-network process sandbox."
+      sandboxRequiredMessage
     )
   }
 
@@ -264,43 +263,50 @@ function normalizeExecutionSandbox(sandbox) {
   if (!sandbox || typeof sandbox !== "object" || Array.isArray(sandbox)) {
     throw reviewError(
       "REVIEW_SANDBOX_REQUIRED",
-      "Independent review requires a trusted no-outbound-network process sandbox."
+      sandboxRequiredMessage
     )
   }
 
   const type = normalizeSafeText(sandbox.type, {
     code: "REVIEW_SANDBOX_REQUIRED",
-    safeMessage: "Independent review requires a trusted no-outbound-network process sandbox.",
+    safeMessage: sandboxRequiredMessage,
     maxChars: 80
   })
   const network = normalizeSafeText(sandbox.network, {
     code: "REVIEW_SANDBOX_REQUIRED",
-    safeMessage: "Independent review requires a trusted no-outbound-network process sandbox.",
+    safeMessage: sandboxRequiredMessage,
     maxChars: 40
   })
   const enforcement = normalizeSafeText(sandbox.enforcement, {
     code: "REVIEW_SANDBOX_REQUIRED",
-    safeMessage: "Independent review requires a trusted no-outbound-network process sandbox.",
+    safeMessage: sandboxRequiredMessage,
     maxChars: 80
   })
   const platform = normalizeSafeText(sandbox.platform, {
     code: "REVIEW_SANDBOX_REQUIRED",
-    safeMessage: "Independent review requires a trusted no-outbound-network process sandbox.",
+    safeMessage: sandboxRequiredMessage,
     maxChars: 20
   })
 
   if (network !== "none") {
     throw reviewError(
       "REVIEW_SANDBOX_REQUIRED",
-      "Independent review requires a trusted no-outbound-network process sandbox."
+      sandboxRequiredMessage
     )
   }
 
+  const readOnlyWorkspace = requireSandboxTrue(sandbox.readOnlyWorkspace)
+  const readOnlyMode = normalizeSafeText(sandbox.readOnlyWorkspaceMode, {
+    code: "REVIEW_SANDBOX_REQUIRED",
+    safeMessage: sandboxRequiredMessage,
+    maxChars: 80
+  })
+
   if (type === REVIEW_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC) {
-    if (platform !== "darwin" || enforcement !== "os-process") {
+    if (platform !== "darwin" || enforcement !== "os-process" || readOnlyMode !== readOnlyWorkspaceMode) {
       throw reviewError(
         "REVIEW_SANDBOX_REQUIRED",
-        "Independent review requires a trusted no-outbound-network process sandbox."
+        sandboxRequiredMessage
       )
     }
 
@@ -310,15 +316,17 @@ function normalizeExecutionSandbox(sandbox) {
       platform,
       network,
       enforcement,
+      readOnlyWorkspace,
+      readOnlyWorkspaceMode: readOnlyMode,
       executablePath: normalizeSandboxPath(sandbox.executablePath)
     }
   }
 
   if (type === REVIEW_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE) {
-    if (platform !== "linux" || enforcement !== "os-network-namespace") {
+    if (platform !== "linux" || enforcement !== "os-network-namespace" || readOnlyMode !== linuxReadOnlyWorkspaceMode) {
       throw reviewError(
         "REVIEW_SANDBOX_REQUIRED",
-        "Independent review requires a trusted no-outbound-network process sandbox."
+        sandboxRequiredMessage
       )
     }
 
@@ -328,7 +336,10 @@ function normalizeExecutionSandbox(sandbox) {
       platform,
       network,
       enforcement,
+      readOnlyWorkspace,
+      readOnlyWorkspaceMode: readOnlyMode,
       executablePath: normalizeSandboxPath(sandbox.executablePath),
+      readOnlyWorkspaceWrapperPath: normalizeSandboxPath(sandbox.readOnlyWorkspaceWrapperPath),
       namespacePath: normalizeSandboxPath(sandbox.namespacePath),
       setprivPath: normalizeSandboxPath(sandbox.setprivPath),
       runAsUid: normalizeSandboxPositiveInteger(sandbox.runAsUid),
@@ -340,7 +351,7 @@ function normalizeExecutionSandbox(sandbox) {
 
   throw reviewError(
     "REVIEW_SANDBOX_REQUIRED",
-    "Independent review requires a trusted no-outbound-network process sandbox."
+    sandboxRequiredMessage
   )
 }
 
@@ -493,7 +504,7 @@ function ambiguousReviewError() {
 function sandboxError() {
   return reviewError(
     "REVIEW_SANDBOX_UNAVAILABLE",
-    "Independent review no-outbound-network process sandbox could not be established."
+    "Independent review no-outbound-network and read-only-workspace process sandbox could not be established."
   )
 }
 
@@ -509,8 +520,65 @@ function assertSandboxRuntimePlatform(sandbox, options = {}) {
   }
 }
 
+function sandboxProfileString(value) {
+  return String(value).replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")
+}
+
+function normalizeReadOnlyWorkspacePath(value) {
+  const workspacePath = normalizeSafeText(value, {
+    code: "REVIEW_SANDBOX_UNAVAILABLE",
+    safeMessage: "Independent review no-outbound-network and read-only-workspace process sandbox could not be established.",
+    maxChars: 500
+  })
+
+  if (!isAbsolute(workspacePath) || workspacePath !== resolvePath(workspacePath)) {
+    throw sandboxError()
+  }
+
+  return workspacePath
+}
+
+function macosReviewSandboxProfile(workspacePath) {
+  const readOnlyPaths = normalizeReadOnlyPaths(workspacePath)
+    .map((entry) => `(deny file-write* (subpath "${sandboxProfileString(entry)}"))`)
+    .join("\n")
+
+  return `(version 1)
+(allow default)
+(deny network*)
+${readOnlyPaths}
+`
+}
+
+function normalizeReadOnlyPaths(value) {
+  const paths = Array.isArray(value) ? value : [value]
+  const normalized = []
+
+  if (paths.length < 1 || paths.length > 4) {
+    throw sandboxError()
+  }
+
+  for (const entry of paths) {
+    const workspacePath = normalizeReadOnlyWorkspacePath(entry)
+
+    if (!normalized.includes(workspacePath)) {
+      normalized.push(workspacePath)
+    }
+  }
+
+  return normalized
+}
+
+function linuxReadOnlyPathArgs(paths) {
+  return normalizeReadOnlyPaths(paths).flatMap((entry) => [
+    "--read-only-path",
+    entry
+  ])
+}
+
 function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   assertSandboxRuntimePlatform(sandbox, options)
+  const readOnlyPaths = normalizeReadOnlyPaths(options.readOnlyPaths || options.readOnlyWorkspacePath)
 
   if (sandbox.type === REVIEW_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC) {
     return {
@@ -518,7 +586,7 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
       executablePath: sandbox.executablePath,
       args: [
         "-p",
-        noOutboundNetworkSandboxProfile,
+        macosReviewSandboxProfile(readOnlyPaths),
         executablePath,
         ...args
       ]
@@ -531,6 +599,9 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
       executablePath: sandbox.executablePath,
       args: [
         `--net=${sandbox.namespacePath}`,
+        sandbox.readOnlyWorkspaceWrapperPath,
+        ...linuxReadOnlyPathArgs(readOnlyPaths),
+        "--",
         sandbox.setprivPath,
         "--no-new-privs",
         `--reuid=${sandbox.runAsUid}`,
@@ -553,7 +624,8 @@ async function runSandboxedProcess(invocation) {
   const command = invocation.sandboxCommand || sandboxedCommand(
     invocation.sandbox,
     invocation.executablePath,
-    invocation.args
+    invocation.args,
+    { readOnlyPaths: invocation.readOnlyPaths || [invocation.cwd] }
   )
 
   return await new Promise((resolve, reject) => {
@@ -635,7 +707,10 @@ async function runSandboxedCommand(invocation, options = {}) {
   const runner = options.reviewRunner || runSandboxedProcess
 
   try {
-    const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, options)
+    const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, {
+      ...options,
+      readOnlyPaths: invocation.readOnlyPaths || [invocation.cwd]
+    })
 
     return await runner({
       ...invocation,
@@ -719,7 +794,7 @@ function linuxNetworkNamespaceSandbox(sandbox) {
   return sandbox.type === REVIEW_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE
 }
 
-async function assertSandboxLinuxPrivilegeBoundary(config, location, options) {
+async function assertSandboxLinuxPrivilegeBoundary(config, location, readOnlyPaths, options) {
   if (!linuxNetworkNamespaceSandbox(config.sandbox)) {
     return
   }
@@ -746,7 +821,8 @@ async function assertSandboxLinuxPrivilegeBoundary(config, location, options) {
     stdin: "",
     timeoutMs: 5000,
     maxOutputBytes: 1024,
-    env: config.env
+    env: config.env,
+    readOnlyPaths
   }, options)
 
   assertSandboxProbeResult(result)
@@ -756,7 +832,7 @@ async function assertSandboxLinuxPrivilegeBoundary(config, location, options) {
   }
 }
 
-async function assertSandboxProcessAllowed(config, location, options) {
+async function assertSandboxProcessAllowed(config, location, readOnlyPaths, options) {
   const result = await runSandboxedCommand({
     kind: "sandbox-probe",
     probe: "local-process",
@@ -767,7 +843,8 @@ async function assertSandboxProcessAllowed(config, location, options) {
     stdin: "",
     timeoutMs: 5000,
     maxOutputBytes: 1024,
-    env: config.env
+    env: config.env,
+    readOnlyPaths
   }, options)
 
   assertSandboxProbeResult(result)
@@ -775,6 +852,91 @@ async function assertSandboxProcessAllowed(config, location, options) {
   if (result?.exitCode !== 0) {
     throw sandboxError()
   }
+}
+
+async function assertSandboxWorkspaceReadAllowed(config, location, readOnlyPaths, options) {
+  const probeCode = [
+    "const fs = require('node:fs')",
+    "try { fs.readdirSync(process.cwd()); process.exit(0) } catch { process.exit(72) }"
+  ].join(";")
+
+  const result = await runSandboxedCommand({
+    kind: "sandbox-probe",
+    probe: "workspace-read",
+    sandbox: config.sandbox,
+    executablePath: process.execPath,
+    args: ["--eval", probeCode],
+    cwd: location.workspacePath,
+    stdin: "",
+    timeoutMs: 5000,
+    maxOutputBytes: 1024,
+    env: config.env,
+    readOnlyPaths
+  }, options)
+
+  assertSandboxProbeResult(result)
+
+  if (result?.exitCode !== 0) {
+    throw sandboxError()
+  }
+}
+
+function assertSandboxWriteProbeDenied(result) {
+  assertSandboxProbeResult(result)
+
+  if (result?.sandboxDenied === true || result?.exitCode === 0) {
+    return
+  }
+
+  throw sandboxError()
+}
+
+async function assertSandboxWorkspaceFileWriteDenied(config, location, readOnlyPaths, options) {
+  const probeCode = [
+    "const fs = require('node:fs')",
+    "const path = require('node:path')",
+    "const target = path.join(process.cwd(), `.ppo-review-readonly-probe-${process.pid}`)",
+    "try { fs.writeFileSync(target, 'probe', { flag: 'wx' }); try { fs.unlinkSync(target) } catch {}; process.exit(70) } catch (error) { process.exit(error && ['EACCES','EPERM','EROFS'].includes(error.code) ? 0 : 71) }"
+  ].join(";")
+
+  const result = await runSandboxedCommand({
+    kind: "sandbox-probe",
+    probe: "workspace-file-write",
+    sandbox: config.sandbox,
+    executablePath: process.execPath,
+    args: ["--eval", probeCode],
+    cwd: location.workspacePath,
+    stdin: "",
+    timeoutMs: 5000,
+    maxOutputBytes: 1024,
+    env: config.env,
+    readOnlyPaths
+  }, options)
+
+  assertSandboxWriteProbeDenied(result)
+}
+
+async function assertSandboxWorkspaceGitMutationDenied(config, location, readOnlyPaths, options) {
+  const probeCode = [
+    "const { execFileSync } = require('node:child_process')",
+    "try { execFileSync('git', ['commit', '--allow-empty', '-m', 'ppo-review-readonly-probe'], { cwd: process.cwd(), stdio: 'ignore', timeout: 3000, env: { ...process.env, GIT_AUTHOR_NAME: 'PPO Review Probe', GIT_AUTHOR_EMAIL: 'ppo-review-probe@example.invalid', GIT_COMMITTER_NAME: 'PPO Review Probe', GIT_COMMITTER_EMAIL: 'ppo-review-probe@example.invalid' } }); process.exit(70) } catch (error) { process.exit(error && Number.isInteger(error.status) ? 0 : 71) }"
+  ].join(";")
+
+  const result = await runSandboxedCommand({
+    kind: "sandbox-probe",
+    probe: "workspace-git-mutation",
+    sandbox: config.sandbox,
+    executablePath: process.execPath,
+    args: ["--eval", probeCode],
+    cwd: location.workspacePath,
+    stdin: "",
+    timeoutMs: 5000,
+    maxOutputBytes: 1024,
+    env: config.env,
+    readOnlyPaths
+  }, options)
+
+  assertSandboxWriteProbeDenied(result)
 }
 
 function isDirectNetworkDenied(config, result, connectionCount) {
@@ -796,7 +958,7 @@ function isDirectNetworkDenied(config, result, connectionCount) {
   )
 }
 
-async function assertSandboxDirectNetworkDenied(config, location, options) {
+async function assertSandboxDirectNetworkDenied(config, location, readOnlyPaths, options) {
   const probeCode = [
     "const net = require('node:net')",
     "const port = Number(process.env.PPO_REVIEW_SANDBOX_PROBE_PORT)",
@@ -821,7 +983,8 @@ async function assertSandboxDirectNetworkDenied(config, location, options) {
       env: {
         ...config.env,
         PPO_REVIEW_SANDBOX_PROBE_PORT: String(port)
-      }
+      },
+      readOnlyPaths
     }, options)
 
     assertSandboxProbeResult(result)
@@ -832,10 +995,15 @@ async function assertSandboxDirectNetworkDenied(config, location, options) {
   }, options)
 }
 
-async function assertReviewSandboxActive(config, location, options) {
-  await assertSandboxLinuxPrivilegeBoundary(config, location, options)
-  await assertSandboxProcessAllowed(config, location, options)
-  await assertSandboxDirectNetworkDenied(config, location, options)
+async function assertReviewSandboxActive(config, location, facts, options) {
+  const readOnlyPaths = readOnlyPathsForReview(location, facts)
+
+  await assertSandboxLinuxPrivilegeBoundary(config, location, readOnlyPaths, options)
+  await assertSandboxProcessAllowed(config, location, readOnlyPaths, options)
+  await assertSandboxWorkspaceReadAllowed(config, location, readOnlyPaths, options)
+  await assertSandboxWorkspaceFileWriteDenied(config, location, readOnlyPaths, options)
+  await assertSandboxWorkspaceGitMutationDenied(config, location, readOnlyPaths, options)
+  await assertSandboxDirectNetworkDenied(config, location, readOnlyPaths, options)
 }
 
 function assertGitArgs(args) {
@@ -857,6 +1025,8 @@ function assertGitArgs(args) {
       (command === "rev-parse" && args.length === 4 && (
         subcommand === "--show-toplevel" ||
         subcommand === "HEAD" ||
+        subcommand === "--git-dir" ||
+        subcommand === "--git-common-dir" ||
         branchRef(subcommand)
       )) ||
       (command === "symbolic-ref" && args.length === 5 && subcommand === "--short" && args[4] === "HEAD") ||
@@ -942,6 +1112,32 @@ async function gitText(cwd, args, options) {
   return output.trim()
 }
 
+async function canonicalGitStatePath(cwd, value) {
+  const rawPath = normalizeSafeText(value, {
+    code: "REVIEW_WORKSPACE_NOT_READY",
+    safeMessage: "Implementation workspace Git state could not be verified for independent review.",
+    maxChars: 500
+  })
+  const absolutePath = isAbsolute(rawPath)
+    ? rawPath
+    : resolvePath(cwd, rawPath)
+  const realPath = await realpath(absolutePath).catch(() => {
+    throw reviewError(
+      "REVIEW_WORKSPACE_NOT_READY",
+      "Implementation workspace Git state could not be verified for independent review."
+    )
+  })
+
+  if (!isAbsolute(realPath) || realPath !== resolvePath(realPath)) {
+    throw reviewError(
+      "REVIEW_WORKSPACE_NOT_READY",
+      "Implementation workspace Git state could not be verified for independent review."
+    )
+  }
+
+  return realPath
+}
+
 async function workspaceFacts(location, options) {
   const info = await stat(location.workspacePath).catch((error) => {
     if (error?.code === "ENOENT") {
@@ -978,12 +1174,23 @@ async function workspaceFacts(location, options) {
     )
   }
 
+  const gitDir = await canonicalGitStatePath(
+    location.workspacePath,
+    await gitLine(location.workspacePath, ["rev-parse", "--git-dir"], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation workspace Git state could not be verified for independent review.")
+  )
+  const gitCommonDir = await canonicalGitStatePath(
+    location.workspacePath,
+    await gitLine(location.workspacePath, ["rev-parse", "--git-common-dir"], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation workspace Git state could not be verified for independent review.")
+  )
+
   return {
     topLevel: await gitLine(location.workspacePath, ["rev-parse", "--show-toplevel"], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation workspace root could not be verified for independent review."),
     branch: await gitLine(location.workspacePath, ["symbolic-ref", "--short", "HEAD"], options, "REVIEW_WORKSPACE_BRANCH_MISMATCH", "Implementation workspace is detached or on the wrong branch for independent review."),
     headSha: normalizeSha(await gitLine(location.workspacePath, ["rev-parse", "HEAD"], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation workspace HEAD could not be verified for independent review."), "Workspace HEAD"),
     branchHeadSha: normalizeSha(await gitLine(location.workspacePath, ["rev-parse", `refs/heads/${location.branch}`], options, "REVIEW_WORKSPACE_NOT_READY", "Implementation branch HEAD could not be verified for independent review."), "Implementation branch HEAD"),
-    dirtyStatus: await gitText(location.workspacePath, ["status", "--porcelain=v1", "--untracked-files=all"], options)
+    dirtyStatus: await gitText(location.workspacePath, ["status", "--porcelain=v1", "--untracked-files=all"], options),
+    gitDir,
+    gitCommonDir
   }
 }
 
@@ -998,6 +1205,14 @@ function assertWorkspaceMatches(location, facts) {
       "Implementation workspace is missing or mismatched for independent review."
     )
   }
+}
+
+function readOnlyPathsForReview(location, facts) {
+  return normalizeReadOnlyPaths([
+    location.workspacePath,
+    facts.gitDir,
+    facts.gitCommonDir
+  ])
 }
 
 async function reconcileWorkspaceForReview(run, options) {
@@ -1287,8 +1502,13 @@ function buildIndependentReviewPrompt(run, implementationEvidence, testEvidence,
     "- Treat owner/product/security ambiguity as OWNER_ACTION_REQUIRED.",
     "- Return only one JSON object and no prose outside the object.",
     "",
-    "Required JSON schema:",
-    "{\"decision\":\"APPROVED|CHANGES_REQUESTED|OWNER_ACTION_REQUIRED\",\"reviewedSha\":\"<40-char sha>\",\"mergeAllowed\":false,\"blockers\":[],\"securityFindings\":[],\"testsRequired\":[],\"summary\":\"bounded summary\"}"
+    "Decision contract:",
+    "- APPROVED => mergeAllowed=true and blockers/securityFindings/testsRequired all empty.",
+    "- CHANGES_REQUESTED => mergeAllowed=false.",
+    "- OWNER_ACTION_REQUIRED => mergeAllowed=false.",
+    "",
+    "Required JSON schema shape:",
+    "Return exactly these keys: decision, reviewedSha, mergeAllowed, blockers, securityFindings, testsRequired, summary."
   ]
   const prompt = `${lines.join("\n")}\n`
 
@@ -1320,6 +1540,7 @@ function buildReviewStartedEvidence(run, location, execution, config) {
       backend: config.sandbox.backend,
       platform: config.sandbox.platform,
       network: "none",
+      readOnlyWorkspace: true,
       branch: location.branch,
       workspaceId: location.workspaceId,
       workspaceRef: location.workspaceRef
@@ -1569,7 +1790,8 @@ async function invokeReviewer(config, invocation, options = {}) {
     promptHash: invocation.promptHash,
     timeoutMs: config.timeoutMs,
     maxOutputBytes: config.maxOutputBytes,
-    env: config.env
+    env: config.env,
+    readOnlyPaths: invocation.readOnlyPaths
   }, options)
 
   return parseReviewerDecision(result, invocation.reviewedSha, config.maxOutputBytes)
@@ -1677,7 +1899,7 @@ async function executeIndependentReviewInternal(runId, options = {}) {
   const prompt = buildIndependentReviewPrompt(run, implementationEvidence, testEvidence, diffFacts)
   const promptHash = sha256Text(prompt)
 
-  await assertReviewSandboxActive(config, preflight.location, options)
+  await assertReviewSandboxActive(config, preflight.location, preflight.facts, options)
 
   const startedAt = timestamp(nowDate(options))
   const execution = {
@@ -1699,7 +1921,8 @@ async function executeIndependentReviewInternal(runId, options = {}) {
       cwd: postReservation.location.workspacePath,
       prompt,
       promptHash,
-      reviewedSha
+      reviewedSha,
+      readOnlyPaths: readOnlyPathsForReview(postReservation.location, postReservation.facts)
     }, options)
   } catch (error) {
     if (error?.ambiguous === true || error?.code === "REVIEW_EXECUTION_AMBIGUOUS") {

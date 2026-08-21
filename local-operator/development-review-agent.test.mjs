@@ -38,6 +38,7 @@ const execFileAsync = promisify(execFile)
 const TRUSTED_MACOS_SANDBOX_EXECUTABLE = process.env.PPO_REVIEW_TEST_SANDBOX_EXECUTABLE || "/usr/bin/sandbox-exec"
 const TRUSTED_LINUX_SANDBOX_EXECUTABLE = process.env.PPO_REVIEW_TEST_LINUX_SANDBOX_EXECUTABLE || "/usr/bin/nsenter"
 const TRUSTED_LINUX_SETPRIV_EXECUTABLE = process.env.PPO_REVIEW_TEST_LINUX_SETPRIV_EXECUTABLE || "/usr/bin/setpriv"
+const TRUSTED_LINUX_READONLY_WRAPPER_EXECUTABLE = process.env.PPO_REVIEW_TEST_LINUX_READONLY_WRAPPER_EXECUTABLE || "/usr/local/bin/ppo-readonly-workspace-wrapper"
 const TRUSTED_LINUX_NAMESPACE_PATH = process.env.PPO_REVIEW_TEST_LINUX_NAMESPACE_PATH || "/run/netns/ppo-review-no-network"
 const TRUSTED_LINUX_RUN_AS_UID = 1000
 const TRUSTED_LINUX_RUN_AS_GID = 1000
@@ -278,6 +279,8 @@ function trustedSandbox(overrides = {}) {
     platform: "darwin",
     network: "none",
     enforcement: "os-process",
+    readOnlyWorkspace: true,
+    readOnlyWorkspaceMode: "trusted-read-only-workspace",
     executablePath: TRUSTED_MACOS_SANDBOX_EXECUTABLE,
     ...overrides
   }
@@ -289,7 +292,10 @@ function trustedLinuxSandbox(overrides = {}) {
     platform: "linux",
     network: "none",
     enforcement: "os-network-namespace",
+    readOnlyWorkspace: true,
+    readOnlyWorkspaceMode: "trusted-read-only-mount-namespace",
     executablePath: TRUSTED_LINUX_SANDBOX_EXECUTABLE,
+    readOnlyWorkspaceWrapperPath: TRUSTED_LINUX_READONLY_WRAPPER_EXECUTABLE,
     namespacePath: TRUSTED_LINUX_NAMESPACE_PATH,
     setprivPath: TRUSTED_LINUX_SETPRIV_EXECUTABLE,
     runAsUid: TRUSTED_LINUX_RUN_AS_UID,
@@ -343,6 +349,7 @@ function makeReviewRunner(reviewRunner = async (invocation) => ({
     })
     assert.equal(invocation.shell, false)
     assert.equal(invocation.sandbox.network, "none")
+    assert.equal(invocation.sandbox.readOnlyWorkspace, true)
     assert.equal(invocation.sandboxCommand.executablePath, invocation.sandboxExecutablePath)
     assert.deepEqual(invocation.sandboxCommand.args, invocation.sandboxArgs)
 
@@ -357,6 +364,22 @@ function makeReviewRunner(reviewRunner = async (invocation) => ({
 
       if (invocation.probe === "local-process") {
         return { exitCode: 0, stdout: "", stderr: "" }
+      }
+
+      if (invocation.probe === "workspace-read") {
+        return { exitCode: 0, stdout: "", stderr: "" }
+      }
+
+      if (invocation.probe === "workspace-file-write") {
+        return options.workspaceWriteAllowed
+          ? { exitCode: 70, stdout: "write allowed", stderr: "" }
+          : { exitCode: 0, sandboxDenied: true, stdout: "", stderr: "" }
+      }
+
+      if (invocation.probe === "workspace-git-mutation") {
+        return options.gitMutationAllowed
+          ? { exitCode: 70, stdout: "git mutation allowed", stderr: "" }
+          : { exitCode: 0, sandboxDenied: true, stdout: "", stderr: "" }
       }
 
       if (invocation.probe === "direct-network") {
@@ -516,14 +539,26 @@ test("trusted reviewer config uses explicit argv, shell=false, sanitized env, sa
     assert.equal(Object.hasOwn(reviewCalls[0].env, "PPO_SECRET_TOKEN"), false)
     assert.equal(Object.hasOwn(reviewCalls[0].env, "GITHUB_TOKEN"), false)
     assert.equal(reviewCalls[0].sandbox.network, "none")
+    assert.equal(reviewCalls[0].sandbox.readOnlyWorkspace, true)
+    assert.equal(reviewCalls[0].readOnlyPaths.includes(fixture.location.workspacePath), true)
+    assert.equal(reviewCalls[0].readOnlyPaths.length >= 2, true)
+    assert.match(reviewCalls[0].sandboxArgs[1], /deny file-write\* \(subpath /u)
+    assert.match(reviewCalls[0].sandboxArgs[1], new RegExp(fixture.location.workspacePath.replaceAll("/", "\\/"), "u"))
     assert.match(reviewCalls[0].promptHash, /^[a-f0-9]{64}$/u)
     assert.equal(reviewCalls[0].prompt.length < 6000, true)
     assert.match(reviewCalls[0].prompt, /PPO Phase 6F independent exact-SHA review/u)
     assert.match(reviewCalls[0].prompt, new RegExp(fixture.headSha, "u"))
+    assert.match(reviewCalls[0].prompt, /APPROVED => mergeAllowed=true and blockers\/securityFindings\/testsRequired all empty/u)
+    assert.match(reviewCalls[0].prompt, /CHANGES_REQUESTED => mergeAllowed=false/u)
+    assert.match(reviewCalls[0].prompt, /OWNER_ACTION_REQUIRED => mergeAllowed=false/u)
+    assert.doesNotMatch(reviewCalls[0].prompt, /APPROVED[^\n]*mergeAllowed[^\n]*false/u)
     assert.doesNotMatch(reviewCalls[0].prompt, /SENSITIVE_TEST_SENTINEL|gho_fake_token|raw stderr|stdout|stderr/u)
     assert.doesNotMatch(reviewCalls[0].prompt, new RegExp(fixture.location.workspacePath.replaceAll("/", "\\/"), "u"))
     assert.deepEqual(calls.map((call) => call.probe || call.kind), [
       "local-process",
+      "workspace-read",
+      "workspace-file-write",
+      "workspace-git-mutation",
       "direct-network",
       "review"
     ])
@@ -664,7 +699,8 @@ test("malformed, contradictory, and reviewedSha-mismatched output fails closed",
     [{ exitCode: 0, stdout: "not json" }, "REVIEW_OUTPUT_INVALID"],
     [{ exitCode: 0, stdout: `${JSON.stringify(decision("c".repeat(40)))}\n` }, "REVIEW_SHA_MISMATCH"],
     [{ exitCode: 0, stdout: null, makeStdout: (sha) => `${JSON.stringify(decision(sha, { blockers: ["blocker"] }))}\n` }, "REVIEW_OUTPUT_CONTRADICTORY"],
-    [{ exitCode: 0, stdout: null, makeStdout: (sha) => `${JSON.stringify(decision(sha, { decision: REVIEW_DECISIONS.CHANGES_REQUESTED, mergeAllowed: true }))}\n` }, "REVIEW_OUTPUT_CONTRADICTORY"]
+    [{ exitCode: 0, stdout: null, makeStdout: (sha) => `${JSON.stringify(decision(sha, { decision: REVIEW_DECISIONS.CHANGES_REQUESTED, mergeAllowed: true }))}\n` }, "REVIEW_OUTPUT_CONTRADICTORY"],
+    [{ exitCode: 0, stdout: null, makeStdout: (sha) => `${JSON.stringify(decision(sha, { decision: REVIEW_DECISIONS.OWNER_ACTION_REQUIRED, mergeAllowed: true }))}\n` }, "REVIEW_OUTPUT_CONTRADICTORY"]
   ]) {
     const fixture = await makeTestsPassedFixture()
     const result = {
@@ -1009,7 +1045,7 @@ test("read-only reconciliation invalidates prior approval when SHA or PASS evide
   assert.equal(reconciliation.facts.expectedHeadSha, fixture.headSha)
 })
 
-test("Linux review sandbox policy uses namespace and privilege-drop argv before reviewer execution", async () => {
+test("Linux review sandbox policy uses namespace, read-only wrapper, and privilege-drop argv before reviewer execution", async () => {
   const fixture = await makeTestsPassedFixture()
   const calls = []
   const result = await executeIndependentReview(fixture.run.runId, {
@@ -1030,6 +1066,9 @@ test("Linux review sandbox policy uses namespace and privilege-drop argv before 
   assert.deepEqual(calls.map((call) => call.probe || call.kind), [
     "linux-privilege-boundary",
     "local-process",
+    "workspace-read",
+    "workspace-file-write",
+    "workspace-git-mutation",
     "direct-network",
     "review"
   ])
@@ -1039,8 +1078,15 @@ test("Linux review sandbox policy uses namespace and privilege-drop argv before 
     assert.equal(call.sandbox.platform, "linux")
     assert.equal(call.sandbox.enforcement, "os-network-namespace")
     assert.equal(call.sandboxArgs[0], `--net=${TRUSTED_LINUX_NAMESPACE_PATH}`)
-    assert.equal(call.sandboxArgs[1], TRUSTED_LINUX_SETPRIV_EXECUTABLE)
-    assert.deepEqual(call.sandboxArgs.slice(2, 10), [
+    assert.equal(call.sandboxArgs[1], TRUSTED_LINUX_READONLY_WRAPPER_EXECUTABLE)
+    assert.equal(call.readOnlyPaths.includes(fixture.location.workspacePath), true)
+    const readOnlySeparator = call.sandboxArgs.indexOf("--", 2)
+    assert.deepEqual(call.sandboxArgs.slice(2, readOnlySeparator), call.readOnlyPaths.flatMap((entry) => [
+      "--read-only-path",
+      entry
+    ]))
+    assert.equal(call.sandboxArgs[readOnlySeparator + 1], TRUSTED_LINUX_SETPRIV_EXECUTABLE)
+    assert.deepEqual(call.sandboxArgs.slice(readOnlySeparator + 2, readOnlySeparator + 10), [
       "--no-new-privs",
       `--reuid=${TRUSTED_LINUX_RUN_AS_UID}`,
       `--regid=${TRUSTED_LINUX_RUN_AS_GID}`,
@@ -1057,6 +1103,7 @@ test("Linux review sandbox policy uses namespace and privilege-drop argv before 
   assert.equal(started.metadata.backend, REVIEW_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE)
   assert.equal(started.metadata.platform, "linux")
   assert.equal(started.metadata.network, "none")
+  assert.equal(started.metadata.readOnlyWorkspace, true)
 })
 
 test("sandbox must be active before review attempt reservation", async () => {
@@ -1079,6 +1126,35 @@ test("sandbox must be active before review attempt reservation", async () => {
 
   assert.equal(reloaded.status, "tests_passed")
   assert.equal(reloaded.attempts.review, 0)
+
+  for (const options of [
+    { workspaceWriteAllowed: true },
+    { gitMutationAllowed: true }
+  ]) {
+    const unsafe = await makeTestsPassedFixture()
+    const calls = []
+
+    await assertRejectsCode(executeIndependentReview(unsafe.run.runId, {
+      expectedVersion: unsafe.run.version,
+      writeDataDir: unsafe.writeDataDir,
+      workspaceRegistry: unsafe.registry,
+      reviewConfig: trustedReviewConfig(),
+      reviewRunner: makeReviewRunner(async () => ({
+        exitCode: 0,
+        stdout: `${JSON.stringify(decision(unsafe.headSha))}\n`
+      }), { ...options, calls })
+    }), "REVIEW_SANDBOX_UNAVAILABLE")
+
+    const unsafeReloaded = await readDevelopmentRun(unsafe.run.runId, {
+      writeDataDir: unsafe.writeDataDir
+    })
+
+    assert.equal(unsafeReloaded.status, "tests_passed")
+    assert.equal(unsafeReloaded.attempts.review, 0)
+    assert.equal(calls.some((call) => call.kind === "review"), false)
+    assert.equal(calls.some((call) => call.probe === "workspace-file-write"), true)
+    assert.equal(calls.some((call) => call.probe === "workspace-git-mutation"), Boolean(options.gitMutationAllowed))
+  }
 })
 
 test("independent review agent adds no implementation adapter, GitHub write, push, merge, deploy, or OpenClaw path", async () => {

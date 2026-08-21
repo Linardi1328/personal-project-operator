@@ -19,7 +19,7 @@ Independent review requires:
 - exact expected run-state version
 - a trusted Phase 6C project workspace registry
 - trusted local reviewer executable configuration
-- trusted explicit no-outbound-network OS/process sandbox configuration
+- trusted explicit no-outbound-network and read-only-workspace OS/process sandbox configuration
 - a Phase 6D implementation evidence record whose SHA equals `run.headSha`
 - a Phase 6E PASS evidence record whose SHA equals `run.headSha`
 - a verified clean Phase 6C workspace whose branch and HEAD equal `run.headSha`
@@ -31,6 +31,8 @@ Reviewer configuration is trusted local configuration. It must not be built from
 The reviewer policy contains a fixed reviewer id/version, one trusted absolute executable path, explicit argv, sanitized environment additions, sandbox backend, bounded timeout, and bounded output capture.
 
 The agent refuses arbitrary command strings, `shell: true`, shell interpreters, Codex implementation adapters, GitHub write tools, push/merge/deploy tooling, OpenClaw, secret-looking env keys, untrusted executables, unbounded timeouts, and unbounded output.
+
+Reviewer sandbox configuration must also enforce read-only access to the verified workspace while preserving local read access. On macOS, PPO generates a `sandbox-exec` profile that denies `file-write*` under the verified workspace/repo. On Linux, PPO requires a trusted read-only workspace mount/bind/mount-namespace wrapper before privilege drop. Review fails closed if local read access, workspace file-write denial, local Git mutation denial, or no-outbound-network denial cannot be verified before the review attempt is reserved.
 
 ## Prompt
 
@@ -45,6 +47,14 @@ The review prompt is deterministic and bounded. It may include:
 
 The prompt must not include secrets, raw stdout/stderr, raw failures, credentials, environment dumps, arbitrary logs, arbitrary absolute paths, or unbounded file contents.
 
+The generated prompt must align with the strict parser:
+
+- `APPROVED` means `mergeAllowed=true` and `blockers`, `securityFindings`, and `testsRequired` are all empty.
+- `CHANGES_REQUESTED` means `mergeAllowed=false`.
+- `OWNER_ACTION_REQUIRED` means `mergeAllowed=false`.
+
+It must not show a schema example that hard-codes `mergeAllowed=false` for `APPROVED`.
+
 ## Behavior
 
 The agent:
@@ -57,7 +67,7 @@ The agent:
 - resolves and verifies the Phase 6C workspace from the trusted workspace registry
 - requires workspace branch and HEAD to equal `run.headSha`
 - refuses dirty workspace state before and after review
-- verifies the no-outbound-network process sandbox before reserving an attempt
+- verifies the no-outbound-network and read-only-workspace process sandbox before reserving an attempt
 - transitions `tests_passed -> review_in_progress` before executing review
 - records bounded durable review attempts in the Phase 6A run record
 - invokes the reviewer with `shell: false`, fixed `cwd` set to the verified workspace, sanitized env, bounded timeout, bounded output capture, and prompt on stdin
@@ -108,10 +118,10 @@ Review evidence is stored under Phase 6A `review` evidence and is pinned to the 
 - started/ended timestamps
 - attempt number
 - aggregate outcome
-- sandbox id and no-network status
+- sandbox id, no-network status, and read-only workspace status
 - bounded validated blocker, security finding, and required-test items for remediation
 
-It must not include prompt contents, reviewer raw stdout/stderr, raw failures, credentials, tokens, terminal confirmation values, environment dumps, arbitrary absolute paths, executable paths, argv, sandbox executable paths, Linux namespace paths, or unbounded logs.
+It must not include prompt contents, reviewer raw stdout/stderr, raw failures, credentials, tokens, terminal confirmation values, environment dumps, arbitrary absolute paths, executable paths, argv, sandbox executable paths, Linux namespace paths, read-only wrapper paths, or unbounded logs.
 
 ## Hardening
 
@@ -146,6 +156,8 @@ review_changes_requested
 ```
 
 The implementation step reuses the Phase 6D Codex adapter. Phase 6D consumes only trusted durable remediation context, preserves the no-outbound-network sandbox, and must produce a new verified local descendant commit. The new implementation SHA becomes `run.headSha`.
+
+Phase 6D hardening prompt construction is fail-safe. Every validated blocker, security finding, and required test from durable review evidence must reach Codex, along with the mandatory isolated-workspace, no-push, no-merge, no-deploy, no-credential, and no-destructive-operation boundaries. Only lower-priority optional task/planning context may be trimmed to fit the fixed prompt bound. If required remediation or safety content cannot fit, prompt construction fails closed.
 
 Every implementation SHA change invalidates prior test PASS and review evidence. Phase 6E must run again for the new SHA, and Phase 6F review may run only after the new SHA has exact PASS evidence.
 

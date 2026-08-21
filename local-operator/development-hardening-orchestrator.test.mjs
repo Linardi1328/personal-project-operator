@@ -214,6 +214,8 @@ function trustedReviewConfig(overrides = {}) {
       platform: "darwin",
       network: "none",
       enforcement: "os-process",
+      readOnlyWorkspace: true,
+      readOnlyWorkspaceMode: "trusted-read-only-workspace",
       executablePath: TRUSTED_MACOS_SANDBOX_EXECUTABLE
     },
     ...overrides
@@ -254,8 +256,12 @@ function sandboxProbeResult(invocation, options = {}) {
     return { exitCode: 0, stdout: "", stderr: "" }
   }
 
-  if (invocation.probe === "local-process" || invocation.probe === "local-workspace-git") {
+  if (invocation.probe === "local-process" || invocation.probe === "local-workspace-git" || invocation.probe === "workspace-read") {
     return { exitCode: 0, stdout: "", stderr: "" }
+  }
+
+  if (invocation.probe === "workspace-file-write" || invocation.probe === "workspace-git-mutation") {
+    return { exitCode: 0, sandboxDenied: true, stdout: "", stderr: "" }
   }
 
   if (invocation.probe === "direct-network") {
@@ -332,6 +338,7 @@ function makeReviewRunner(reviewRunner = async (invocation) => ({
     })
     assert.equal(invocation.shell, false)
     assert.equal(invocation.sandbox.network, "none")
+    assert.equal(invocation.sandbox.readOnlyWorkspace, true)
     assert.equal(invocation.sandboxCommand.executablePath, invocation.sandboxExecutablePath)
     assert.deepEqual(invocation.sandboxCommand.args, invocation.sandboxArgs)
 

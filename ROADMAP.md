@@ -327,8 +327,10 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Require valid Phase 6E PASS evidence for exactly `run.headSha`; stale PASS evidence is not eligible.
 - Preserve independent review separation: never reuse implementation completion, test pass status, Codex output, task text, chat, or repository-controlled commands as approval.
 - Read reviewer execution policy only from trusted local configuration, with a trusted absolute executable, fixed explicit argv, `shell: false`, fixed `cwd` set to the verified workspace, bounded timeout, and bounded output.
-- Preserve the Phase 6D no-outbound-network sandbox boundary by default and fail closed if the review sandbox cannot be verified before execution.
+- Preserve the Phase 6D no-outbound-network sandbox boundary by default, add reviewer read-only workspace isolation, and fail closed if either boundary cannot be verified before execution.
+- For macOS review, deny file writes under the verified workspace/repo with `sandbox-exec`; for Linux review, require a trusted read-only workspace mount/bind/mount-namespace wrapper or equivalent OS boundary.
 - Build a deterministic bounded prompt from bounded task text, metadata-only implementation/test evidence, bounded local diff/file facts, and approved security/scope requirements.
+- State the review decision contract in the prompt: `APPROVED` requires `mergeAllowed=true` and empty blockers/security findings/tests required; `CHANGES_REQUESTED` and `OWNER_ACTION_REQUIRED` require `mergeAllowed=false`.
 - Exclude secrets, credentials, environment dumps, raw stdout/stderr, arbitrary logs, and arbitrary paths from prompts and evidence.
 - Validate strict bounded structured reviewer output only: `APPROVED`, `CHANGES_REQUESTED`, or `OWNER_ACTION_REQUIRED` with exact `reviewedSha`, `mergeAllowed`, blockers, security findings, tests required, and summary.
 - Require `APPROVED` decisions to have `mergeAllowed=true`, zero blockers, zero unresolved security findings, no additional required tests, and valid exact-SHA Phase 6E PASS evidence.
@@ -342,6 +344,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Build remediation context only from durable Phase 6F review evidence: original task, reviewed SHA, bounded blockers, bounded security findings, and bounded required tests.
 - Reuse the Phase 6D Codex adapter, Phase 6E automated test runner, and Phase 6F reviewer; do not create parallel implementation, test, or review engines.
 - Extend Phase 6D only enough to consume trusted durable Phase 6F remediation context; do not accept caller-supplied arbitrary remediation prompts.
+- Ensure Phase 6D hardening prompt assembly never drops validated remediation findings or mandatory isolated-workspace, no-push, no-merge, no-deploy, no-credential, and no-destructive-operation boundaries; trim only lower-priority optional task/planning context or fail closed.
 - Require every remediation to produce a new verified descendant implementation SHA and update `run.headSha`.
 - Invalidate all prior test PASS and review approval/findings evidence after any implementation SHA change.
 - Rerun Phase 6E for the new SHA, and rerun Phase 6F review only after exact-SHA tests pass for that new SHA.

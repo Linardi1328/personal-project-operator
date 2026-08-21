@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import {
   mkdtemp,
@@ -31,6 +32,9 @@ import {
   MAX_CODEX_IMPLEMENTATION_ATTEMPTS,
   MAX_CODEX_OUTPUT_BYTES,
   MAX_CODEX_PROMPT_CHARS,
+  PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+  PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID,
+  PHASE_6F_REVIEW_FINDINGS_OUTCOME,
   buildCodexImplementationPrompt,
   executeCodexImplementation,
   formatDevelopmentCodexExecutionAdapterError,
@@ -77,6 +81,22 @@ async function git(args, cwd) {
   })
 
   return String(result.stdout ?? "").trim()
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`
+  }
+
+  return JSON.stringify(value)
+}
+
+function sha256Text(value) {
+  return createHash("sha256").update(value).digest("hex")
 }
 
 async function makeSourceRepo(options = {}) {
@@ -853,6 +873,96 @@ test("implementation prompt is deterministic, bounded, scoped, and secret-exclud
     }),
     ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_CONFIG_INVALID")
+})
+
+test("hardening prompt keeps all remediation items and mandatory safety boundaries at max bounds", async () => {
+  const fixture = await makeImplementationFixture()
+  const reviewedSha = fixture.run.headSha
+  const blockers = Array.from({ length: 5 }, (_, index) => `blocker-${index + 1}-${"b".repeat(145)}`)
+  const securityFindings = Array.from({ length: 5 }, (_, index) => `security-${index + 1}-${"s".repeat(143)}`)
+  const testsRequired = Array.from({ length: 5 }, (_, index) => `test-${index + 1}-${"t".repeat(148)}`)
+  const remediationHash = sha256Text(stableStringify({
+    reviewedSha,
+    decision: "CHANGES_REQUESTED",
+    blockers,
+    securityFindings,
+    testsRequired
+  }))
+  const run = {
+    ...fixture.run,
+    task: `Maximal hardening task ${"x".repeat(976)}`,
+    evidence: {
+      ...fixture.run.evidence,
+      planning: [{
+        kind: "planning",
+        sha: fixture.run.baseSha,
+        source: "test-planner",
+        summary: `Optional planning context ${"p".repeat(430)}`,
+        metadata: {
+          planHash: "a".repeat(64),
+          nextStage: "implementation",
+          sourceCount: 5
+        }
+      }],
+      implementation: [{
+        kind: "implementation",
+        sha: reviewedSha,
+        source: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+        summary: "Hardening started.",
+        metadata: {
+          orchestrator: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+          outcome: "hardening_started",
+          sourceReviewSha: reviewedSha,
+          round: 3,
+          reviewAttempt: 2,
+          blockerCount: blockers.length,
+          securityFindingCount: securityFindings.length,
+          testRequirementCount: testsRequired.length,
+          remediationHash
+        }
+      }],
+      review: [{
+        kind: "review",
+        sha: reviewedSha,
+        source: PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID,
+        summary: "Review findings.",
+        metadata: {
+          reviewer: PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID,
+          outcome: PHASE_6F_REVIEW_FINDINGS_OUTCOME,
+          reviewedSha,
+          attempt: 2,
+          decision: "CHANGES_REQUESTED",
+          mergeAllowed: false,
+          blockers: blockers.length,
+          securityFindings: securityFindings.length,
+          testsRequired: testsRequired.length,
+          blockerItems: blockers,
+          securityItems: securityFindings,
+          testItems: testsRequired,
+          findingHash: remediationHash
+        }
+      }]
+    }
+  }
+  const prompt = buildCodexImplementationPrompt(run, fixture.location)
+
+  assert.equal(prompt.length <= MAX_CODEX_PROMPT_CHARS, true)
+
+  for (const item of [...blockers, ...securityFindings, ...testsRequired]) {
+    assert.match(prompt, new RegExp(item, "u"))
+  }
+
+  for (const requiredBoundary of [
+    "Work only inside the current isolated branch and worktree.",
+    "Do not push to any remote.",
+    "Do not merge, rebase, reset, cherry-pick, or change repository history outside the current isolated branch.",
+    "Do not deploy, restart services, or change production infrastructure.",
+    "Do not modify credentials, tokens, secrets, authentication settings, or confirmation values.",
+    "Do not run unrelated work, destructive cleanup, broad refactors, or changes outside the task scope.",
+    "Leave a local commit on the current isolated branch when the implementation is complete."
+  ]) {
+    assert.match(prompt, new RegExp(requiredBoundary.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"))
+  }
 })
 
 test("successful Codex execution is independently verified and transitions to implementation_ready", async () => {

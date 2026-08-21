@@ -22,6 +22,7 @@ Phase 6D may:
 - set `cwd` only to the verified Phase 6C workspace
 - pass a deterministic bounded prompt to Codex
 - consume Phase 6F durable remediation context only when the run contains trusted exact-SHA hardening-start and review-finding evidence
+- include every validated hardening remediation item and all mandatory safety boundaries in the Codex prompt, trimming only optional task/planning context or failing closed if required content cannot fit
 - capture bounded stdout/stderr for process control only
 - reserve bounded implementation attempts durably in the Phase 6A run record
 - verify resulting local Git state independently

@@ -171,22 +171,51 @@ function shellSingleQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`
 }
 
-function boundedLines(lines, maxChars) {
-  const output = []
-  let size = 0
+function promptCharSize(lines) {
+  return `${lines.join("\n")}\n`.length
+}
 
-  for (const line of lines) {
-    const nextSize = size + line.length + 1
+function assertPromptLinesFit(lines) {
+  if (promptCharSize(lines) > MAX_CODEX_PROMPT_CHARS) {
+    throw adapterError(
+      "CODEX_PROMPT_TOO_LARGE",
+      "Codex prompt exceeds the adapter size limit."
+    )
+  }
+}
 
-    if (nextSize > maxChars) {
-      break
+function optionalLineFits(lines, line, requiredTail) {
+  return promptCharSize([...lines, line, ...requiredTail]) <= MAX_CODEX_PROMPT_CHARS
+}
+
+function appendOptionalLines(lines, optionalLines, requiredTail) {
+  for (const line of optionalLines) {
+    if (!optionalLineFits(lines, line, requiredTail)) {
+      return
     }
 
-    output.push(line)
-    size = nextSize
+    lines.push(line)
+  }
+}
+
+function appendOptionalTextSection(lines, sectionPrefix, text, requiredTail) {
+  if (promptCharSize([...lines, ...sectionPrefix, text, ...requiredTail]) <= MAX_CODEX_PROMPT_CHARS) {
+    lines.push(...sectionPrefix, text)
+    return
   }
 
-  return output
+  if (promptCharSize([...lines, ...sectionPrefix, ...requiredTail]) > MAX_CODEX_PROMPT_CHARS) {
+    return
+  }
+
+  const suffix = " [truncated]"
+  const available = MAX_CODEX_PROMPT_CHARS - promptCharSize([...lines, ...sectionPrefix, ...requiredTail]) - 1
+
+  if (available <= suffix.length + 20) {
+    return
+  }
+
+  lines.push(...sectionPrefix, `${text.slice(0, available - suffix.length)}${suffix}`)
 }
 
 function latestPlanningEvidence(run) {
@@ -366,17 +395,16 @@ function hardeningPromptFacts(context) {
 
   const facts = [
     "",
-    "Phase 6F bounded hardening remediation context:",
-    `Hardening round: ${context.round}.`,
-    `Reviewed SHA requiring remediation: ${context.sourceReviewSha}.`,
-    `Remediation context hash: ${context.remediationHash}.`,
-    "Validated blockers:",
+    "Phase 6F hardening context:",
+    `Round: ${context.round}.`,
+    `Reviewed SHA: ${context.sourceReviewSha}.`,
+    "Blockers:",
     ...context.blockers.map((entry, index) => `${index + 1}. ${entry}`),
-    "Validated security findings:",
+    "Security findings:",
     ...(context.securityFindings.length > 0
       ? context.securityFindings.map((entry, index) => `${index + 1}. ${entry}`)
       : ["None."]),
-    "Validated tests required:",
+    "Tests required:",
     ...(context.testsRequired.length > 0
       ? context.testsRequired.map((entry, index) => `${index + 1}. ${entry}`)
       : ["None."]),
@@ -432,7 +460,7 @@ export function buildCodexImplementationPrompt(run, workspace) {
     return line
   })
   const hardeningContext = deriveHardeningRemediationContext(run)
-  const lines = boundedLines([
+  const requiredHead = [
     "You are executing one bounded Personal Project Operator implementation task.",
     `Project: ${projectId}`,
     `Repository: ${repo}`,
@@ -440,11 +468,8 @@ export function buildCodexImplementationPrompt(run, workspace) {
     `Workspace reference: ${workspaceRef}`,
     `Base SHA: ${baseSha}`,
     `Expected starting HEAD: ${startSha}`,
-    "",
-    "Task:",
-    task,
-    "",
-    ...planningFacts,
+  ]
+  const requiredTail = [
     ...hardeningPromptFacts(hardeningContext),
     "",
     "Required boundaries:",
@@ -457,7 +482,14 @@ export function buildCodexImplementationPrompt(run, workspace) {
     "- Leave a local commit on the current isolated branch when the implementation is complete.",
     "",
     "Return concise completion notes only. The adapter will independently verify Git state and will ignore prose claims of success."
-  ], MAX_CODEX_PROMPT_CHARS)
+  ]
+
+  assertPromptLinesFit([...requiredHead, ...requiredTail])
+
+  const lines = [...requiredHead]
+  appendOptionalTextSection(lines, ["", "Task:"], task, requiredTail)
+  appendOptionalLines(lines, ["", ...planningFacts], requiredTail)
+  lines.push(...requiredTail)
   const prompt = `${lines.join("\n")}\n`
 
   if (prompt.length > MAX_CODEX_PROMPT_CHARS) {
