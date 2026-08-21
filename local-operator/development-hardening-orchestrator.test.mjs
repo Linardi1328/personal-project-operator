@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import {
   mkdtemp,
@@ -37,6 +38,7 @@ import {
 } from "./development-test-runner.mjs"
 import {
   INDEPENDENT_REVIEW_AGENT_ID,
+  REMOTE_PR_REVIEW_AGENT_ID,
   REVIEW_DECISIONS,
   REVIEW_FINDINGS_EVIDENCE_OUTCOME,
   REVIEW_SANDBOX_BACKENDS,
@@ -245,6 +247,100 @@ function changesRequestedDecision(reviewedSha, overrides = {}) {
     summary: "Changes are required before approval.",
     ...overrides
   })
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`
+  }
+
+  return JSON.stringify(value)
+}
+
+function sha256Text(value) {
+  return createHash("sha256").update(value).digest("hex")
+}
+
+function hardeningReviewFindingHash({ reviewedSha, blockers, securityFindings, testsRequired }) {
+  return sha256Text(stableStringify({
+    reviewedSha,
+    decision: REVIEW_DECISIONS.CHANGES_REQUESTED,
+    blockers,
+    securityFindings,
+    testsRequired
+  }))
+}
+
+function reviewFindingEvidence(run, {
+  source,
+  reviewer = source,
+  attempt = 1,
+  blockers = ["Provider validation regression is missing."],
+  securityFindings = [],
+  testsRequired = ["Add focused validation regression coverage."]
+}) {
+  const findingHash = hardeningReviewFindingHash({
+    reviewedSha: run.headSha,
+    blockers,
+    securityFindings,
+    testsRequired
+  })
+
+  return {
+    kind: "review",
+    sha: run.headSha,
+    source,
+    summary: "Synthetic review findings for hardening validation.",
+    metadata: {
+      project: run.project.id,
+      reviewer,
+      attempt,
+      reviewedSha: run.headSha,
+      decision: REVIEW_DECISIONS.CHANGES_REQUESTED,
+      mergeAllowed: false,
+      blockers: blockers.length,
+      securityFindings: securityFindings.length,
+      testsRequired: testsRequired.length,
+      blockerItems: blockers,
+      securityItems: securityFindings,
+      testItems: testsRequired,
+      findingHash,
+      outcome: REVIEW_FINDINGS_EVIDENCE_OUTCOME
+    }
+  }
+}
+
+function reviewDecisionEvidence(run, {
+  source,
+  reviewer = source,
+  attempt = 1,
+  blockers = ["Provider validation regression is missing."],
+  securityFindings = [],
+  testsRequired = ["Add focused validation regression coverage."]
+}) {
+  return {
+    kind: "review",
+    sha: run.headSha,
+    source,
+    summary: "Synthetic review decision for hardening validation.",
+    metadata: {
+      project: run.project.id,
+      reviewer,
+      attempt,
+      reviewedSha: run.headSha,
+      decision: REVIEW_DECISIONS.CHANGES_REQUESTED,
+      mergeAllowed: false,
+      blockers: blockers.length,
+      securityFindings: securityFindings.length,
+      testsRequired: testsRequired.length,
+      summaryHash: "d".repeat(64),
+      outcome: "changes_requested"
+    }
+  }
 }
 
 function sandboxProbeResult(invocation, options = {}) {
@@ -458,6 +554,60 @@ async function makeReviewChangesRequestedFixture(options = {}) {
   }
 }
 
+async function appendReviewEvidence(run, fixture, evidence) {
+  return await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: "review_changes_requested",
+    actor: "test-review-evidence",
+    reason: "test-review-evidence-binding",
+    evidence
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+}
+
+async function assertHardeningStartsFromEvidence(run, fixture, reviewer, expectedText, unexpectedText = null) {
+  await assertRejectsCode(executeBoundedHardening(run.runId, {
+    expectedVersion: run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    now: fixture.now
+  }), "CODEX_CONFIG_REQUIRED")
+
+  const reloaded = await readDevelopmentRun(run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  const started = latestHardeningEvidence(reloaded, "hardening_started")
+
+  assert.equal(reloaded.status, "implementation_in_progress")
+  assert.equal(started.metadata.reviewer, reviewer)
+  const prompt = buildCodexImplementationPrompt(reloaded, fixture.location)
+  assert.match(prompt, new RegExp(expectedText.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"))
+
+  if (unexpectedText) {
+    assert.doesNotMatch(prompt, new RegExp(unexpectedText.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"))
+  }
+
+  return reloaded
+}
+
+async function assertHardeningRejectsBeforeStart(run, fixture, code) {
+  await assertRejectsCode(executeBoundedHardening(run.runId, {
+    expectedVersion: run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    now: fixture.now
+  }), code)
+
+  const reloaded = await readDevelopmentRun(run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(reloaded.status, "review_changes_requested")
+  assert.equal(latestHardeningEvidence(reloaded, "hardening_started"), undefined)
+}
+
 async function makeTestsPassedFixture(options = {}) {
   const fixture = await makePreparedFixture(options)
   const initialImplementation = await executeCodexImplementation(fixture.run.runId, {
@@ -645,6 +795,147 @@ test("latest exact-SHA CHANGES_REQUESTED evidence with validated findings is req
     sandboxRunner: makeCombinedSandboxRunner(),
     reviewRunner: makeReviewRunner()
   }), "HARDENING_REVIEW_FINDINGS_INVALID")
+})
+
+test("hardening binds remote decisions only to remote findings for the same SHA and attempt", async () => {
+  const fixture = await makeReviewChangesRequestedFixture()
+  const localText = "Local reviewer requested provider validation coverage."
+  const remoteText = "Remote reviewer requested exact-head PR coverage."
+  let run = await appendReviewEvidence(fixture.run, fixture, [
+    reviewFindingEvidence(fixture.run, {
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      attempt: 1,
+      blockers: [localText]
+    }),
+    reviewFindingEvidence(fixture.run, {
+      source: REMOTE_PR_REVIEW_AGENT_ID,
+      attempt: 1,
+      blockers: [remoteText]
+    }),
+    reviewDecisionEvidence(fixture.run, {
+      source: REMOTE_PR_REVIEW_AGENT_ID,
+      attempt: 1,
+      blockers: [remoteText]
+    })
+  ])
+
+  run = await assertHardeningStartsFromEvidence(run, fixture, REMOTE_PR_REVIEW_AGENT_ID, remoteText, localText)
+  assert.equal(latestHardeningEvidence(run, "hardening_started").metadata.reviewAttempt, 1)
+})
+
+test("hardening binds local decisions only to local findings for the same SHA and attempt", async () => {
+  const fixture = await makeReviewChangesRequestedFixture()
+  const localText = "Local reviewer requested implementation coverage."
+  const remoteText = "Remote reviewer requested delivery coverage."
+  let run = await appendReviewEvidence(fixture.run, fixture, [
+    reviewFindingEvidence(fixture.run, {
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      attempt: 1,
+      blockers: [localText]
+    }),
+    reviewFindingEvidence(fixture.run, {
+      source: REMOTE_PR_REVIEW_AGENT_ID,
+      attempt: 1,
+      blockers: [remoteText]
+    }),
+    reviewDecisionEvidence(fixture.run, {
+      source: REMOTE_PR_REVIEW_AGENT_ID,
+      attempt: 1,
+      blockers: [remoteText]
+    }),
+    reviewDecisionEvidence(fixture.run, {
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      attempt: 1,
+      blockers: [localText]
+    })
+  ])
+
+  run = await assertHardeningStartsFromEvidence(run, fixture, INDEPENDENT_REVIEW_AGENT_ID, localText, remoteText)
+  assert.equal(latestHardeningEvidence(run, "hardening_started").metadata.reviewAttempt, 1)
+})
+
+test("remote and local decisions cannot consume findings from the other reviewer", async () => {
+  {
+    const fixture = await makeReviewChangesRequestedFixture()
+    const localText = "Only local findings exist for attempt two."
+    const remoteText = "Remote decision must not consume local findings."
+    const run = await appendReviewEvidence(fixture.run, fixture, [
+      reviewFindingEvidence(fixture.run, {
+        source: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [localText]
+      }),
+      reviewDecisionEvidence(fixture.run, {
+        source: REMOTE_PR_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [remoteText]
+      })
+    ])
+
+    await assertHardeningRejectsBeforeStart(run, fixture, "HARDENING_REVIEW_FINDINGS_INVALID")
+  }
+
+  {
+    const fixture = await makeReviewChangesRequestedFixture()
+    const remoteText = "Only remote findings exist for attempt two."
+    const localText = "Local decision must not consume remote findings."
+    const run = await appendReviewEvidence(fixture.run, fixture, [
+      reviewFindingEvidence(fixture.run, {
+        source: REMOTE_PR_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [remoteText]
+      }),
+      reviewDecisionEvidence(fixture.run, {
+        source: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [localText]
+      })
+    ])
+
+    await assertHardeningRejectsBeforeStart(run, fixture, "HARDENING_REVIEW_FINDINGS_INVALID")
+  }
+})
+
+test("review evidence with mismatched source and reviewer identity fails closed", async () => {
+  {
+    const fixture = await makeReviewChangesRequestedFixture()
+    const text = "Mismatched decision identity must fail."
+    const run = await appendReviewEvidence(fixture.run, fixture, [
+      reviewFindingEvidence(fixture.run, {
+        source: REMOTE_PR_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [text]
+      }),
+      reviewDecisionEvidence(fixture.run, {
+        source: REMOTE_PR_REVIEW_AGENT_ID,
+        reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [text]
+      })
+    ])
+
+    await assertHardeningRejectsBeforeStart(run, fixture, "HARDENING_REVIEW_FINDINGS_INVALID")
+  }
+
+  {
+    const fixture = await makeReviewChangesRequestedFixture()
+    const text = "Mismatched findings identity must fail."
+    const run = await appendReviewEvidence(fixture.run, fixture, [
+      reviewFindingEvidence(fixture.run, {
+        source: REMOTE_PR_REVIEW_AGENT_ID,
+        reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [text]
+      }),
+      reviewDecisionEvidence(fixture.run, {
+        source: REMOTE_PR_REVIEW_AGENT_ID,
+        attempt: 2,
+        blockers: [text]
+      })
+    ])
+
+    await assertHardeningRejectsBeforeStart(run, fixture, "HARDENING_REVIEW_FINDINGS_INVALID")
+  }
 })
 
 test("remediation context is derived only from durable review evidence and reruns tests and review for the new SHA", async () => {

@@ -277,15 +277,23 @@ function latestHardeningStartedEvidence(run) {
   return null
 }
 
-function latestReviewFindingsEvidence(run, reviewedSha, attempt) {
+function hasConsistentTrustedReviewerIdentity(entry) {
+  return Boolean(
+    hardeningReviewSources.has(entry?.source) &&
+    entry?.source === entry?.metadata?.reviewer
+  )
+}
+
+function latestReviewFindingsEvidence(run, reviewedSha, attempt, reviewer) {
   const evidence = Array.isArray(run?.evidence?.review) ? run.evidence.review : []
 
   for (let index = evidence.length - 1; index >= 0; index -= 1) {
     const entry = evidence[index]
 
     if (
-      hardeningReviewSources.has(entry?.source) &&
-      hardeningReviewSources.has(entry?.metadata?.reviewer) &&
+      hasConsistentTrustedReviewerIdentity(entry) &&
+      entry.source === reviewer &&
+      entry.metadata.reviewer === reviewer &&
       entry?.metadata?.outcome === PHASE_6F_REVIEW_FINDINGS_OUTCOME &&
       entry?.sha === reviewedSha &&
       entry?.metadata?.reviewedSha === reviewedSha &&
@@ -330,6 +338,7 @@ function deriveHardeningRemediationContext(run) {
   }
 
   const attempt = started.metadata?.reviewAttempt
+  const reviewer = started.metadata?.reviewer
 
   if (!Number.isInteger(attempt) || attempt <= 0) {
     throw adapterError(
@@ -338,7 +347,14 @@ function deriveHardeningRemediationContext(run) {
     )
   }
 
-  const findings = latestReviewFindingsEvidence(run, reviewedSha, attempt)
+  if (!hardeningReviewSources.has(reviewer)) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  const findings = latestReviewFindingsEvidence(run, reviewedSha, attempt, reviewer)
 
   if (!findings || findings.metadata?.decision !== "CHANGES_REQUESTED" || findings.metadata?.mergeAllowed !== false) {
     throw adapterError(

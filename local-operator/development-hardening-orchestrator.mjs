@@ -158,7 +158,6 @@ function latestIndependentReviewDecisionEvidence(run) {
 
     if (
       hardeningReviewSources.has(entry?.source) &&
-      hardeningReviewSources.has(entry?.metadata?.reviewer) &&
       ["approved", "changes_requested", "owner_action_required"].includes(entry?.metadata?.outcome)
     ) {
       return entry
@@ -166,6 +165,13 @@ function latestIndependentReviewDecisionEvidence(run) {
   }
 
   return null
+}
+
+function hasConsistentTrustedReviewerIdentity(entry) {
+  return Boolean(
+    hardeningReviewSources.has(entry?.source) &&
+    entry?.source === entry?.metadata?.reviewer
+  )
 }
 
 function matchingReviewFindingsEvidence(run, decisionEvidence) {
@@ -177,8 +183,9 @@ function matchingReviewFindingsEvidence(run, decisionEvidence) {
     const entry = evidence[index]
 
     if (
-      hardeningReviewSources.has(entry?.source) &&
-      hardeningReviewSources.has(entry?.metadata?.reviewer) &&
+      hasConsistentTrustedReviewerIdentity(entry) &&
+      entry.source === decisionEvidence.source &&
+      entry.metadata.reviewer === decisionEvidence.metadata?.reviewer &&
       entry?.metadata?.outcome === REVIEW_FINDINGS_EVIDENCE_OUTCOME &&
       entry?.sha === reviewedSha &&
       entry?.metadata?.reviewedSha === reviewedSha &&
@@ -233,6 +240,13 @@ function validateChangesRequestedReview(run) {
     throw hardeningError(
       "HARDENING_REVIEW_EVIDENCE_MISMATCH",
       "Latest independent review evidence does not match the run head SHA."
+    )
+  }
+
+  if (!hasConsistentTrustedReviewerIdentity(decisionEvidence)) {
+    throw hardeningError(
+      "HARDENING_REVIEW_FINDINGS_INVALID",
+      "Review findings are missing, malformed, oversized, or unsafe for automated hardening."
     )
   }
 
