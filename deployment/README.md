@@ -357,6 +357,7 @@ It does not restart services, SSH to a server, print environment variables, or e
 Run from the repo root:
 
 ```bash
+node deployment/deploy-exact-sha.test.mjs
 node deployment/vps-health.test.mjs
 bash -n deployment/scripts/bootstrap-ubuntu-24.04.sh
 bash -n deployment/scripts/preflight-openclaw-runtime.sh
