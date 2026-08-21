@@ -181,6 +181,16 @@ The acceptance gate is read-only and model-free. It accepts only an exact-versio
 
 The delivery agent then pushes only `<approved SHA>:refs/heads/<approved Phase 6C branch>` to fixed `origin`, creates or reuses exactly one PR from that branch to `main`, requires the remote PR head to equal the approved SHA, requires exact-head `PPO PR validation`, performs an independent exact-head remote PR review inside the Phase 6F no-network/read-only reviewer sandbox, transitions to `merge_ready` only after every gate passes, and merges only with GitHub expected-head-SHA protection. Ambiguous push, PR creation, and merge writes are reconciled read-only before retry or completion. Metadata-only `merge` evidence stores bounded policy/branch/PR/CI/review/merge facts and excludes credentials, raw logs, raw API bodies, raw stdout/stderr, and arbitrary executable paths. Phase 6G ends at `merged`; it does not deploy, roll back, verify production, add `/ppo continue`, add Telegram/OpenClaw routes, or alter credentials. See [phase-6g-github-delivery.md](phase-6g-github-delivery.md).
 
+Phase 6H adds a local-only exact-SHA deployment agent foundation:
+
+```text
+local-operator/development-deployment-agent.mjs
+```
+
+It accepts only a Phase 6A run in `merged` status, requires exact expected-version checks, and reads the deployment target solely from durable Phase 6G `merged` evidence. The deployment target must be the Phase 6G merge commit SHA, not caller input, latest `main`, branch name, task text, chat, environment variables, repository configuration, or model output. The agent supports only the trusted `personal-project-operator` profile with fixed repository identity, fixed install directory, fixed origin, fixed exact-SHA deployment script, fixed runtime preflight, and fixed `ppo-openclaw.service` restart target.
+
+The agent transitions `merged -> deploy_in_progress` before mutation, invokes only trusted deployment operations with explicit argv, `shell: false`, bounded timeout/output, and metadata-only evidence, and transitions to `deployed` only after the deployed checkout HEAD equals the Phase 6G merge SHA and the approved preflight and fixed restart completed. Definitive failures transition to `deploy_failed`. Ambiguous outcomes remain open and require read-only reconciliation; reconciliation does not mutate the checkout, restart the service, retry deployment, or infer production verification. Phase 6H stops at `deployed` and does not automatically rollback, run health checks, perform production verification, add `/ppo continue`, or add Telegram/OpenClaw routes. See [phase-6h-deployment-agent.md](phase-6h-deployment-agent.md).
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -214,6 +224,8 @@ The delivery agent then pushes only `<approved SHA>:refs/heads/<approved Phase 6
 - `development-acceptance-gate.mjs`: Phase 6G deterministic exact-SHA acceptance gate.
 - `github-delivery-agent.mjs`: Phase 6G trusted GitHub delivery, exact-head remote review, and SHA-pinned merge agent.
 - `phase-6g-github-delivery.md`: Phase 6G local usage and safety boundary.
+- `development-deployment-agent.mjs`: Phase 6H exact-SHA PPO deployment agent.
+- `phase-6h-deployment-agent.md`: Phase 6H local usage and safety boundary.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -232,6 +244,7 @@ The delivery agent then pushes only `<approved SHA>:refs/heads/<approved Phase 6
 - `development-review-agent.test.mjs`: Phase 6F tests for tests-passed gating, exact expected-version checks, workspace/branch/head/clean reconciliation, exact Phase 6D/6E evidence requirements, trusted reviewer config, no-network plus read-only workspace/source sandbox enforcement, explicit argv and `shell: false`, bounded prompt/output, strict review schema validation, approval/blocker/owner-action outcomes, ambiguous reconciliation, SHA-pinned metadata-only evidence, no workspace or source mutation, and route/execution-boundary regressions.
 - `development-hardening-orchestrator.test.mjs`: Phase 6F hardening tests for review-changes gating, exact expected-version checks, validated durable findings, remediation context derivation, fail-safe hardening prompt bounds, Phase 6D/6E/6F reuse, new descendant SHAs, fresh tests and review, three-round cap, owner escalation, ambiguous-stop reconciliation, metadata-only evidence, and route/execution-boundary regressions.
 - `github-delivery-agent.test.mjs`: Phase 6G tests for deterministic acceptance, exact SHA push, origin/repo identity, no-force/idempotent push, ambiguous push reconciliation, PR create/reuse/refusal/recovery, remote head validation, exact-head CI, independent remote review, merge-ready gating, expected-head merge, ambiguous merge reconciliation, metadata-only evidence, optimistic state, and route/deployment/write-surface exclusions.
+- `development-deployment-agent.test.mjs`: Phase 6H tests for merged-run gating, exact Phase 6G evidence, trusted PPO deployment profile, exact merge-SHA checkout, success/failure transitions, ambiguous deployment reconciliation, metadata-only evidence, and route/rollback/verification exclusions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
