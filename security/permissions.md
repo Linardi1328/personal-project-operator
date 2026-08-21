@@ -85,8 +85,8 @@ Allowed in Phase 6D only as bounded local Codex execution:
 
 - read one `implementation_in_progress` Phase 6A run
 - reconcile one verified Phase 6C workspace
-- establish a remote Git write denial policy before Codex starts
-- invoke trusted locally configured Codex with explicit argv, `shell: false`, and `cwd` set to the verified workspace
+- establish and verify a no-outbound-network OS/process sandbox before Codex starts
+- invoke trusted locally configured Codex through that sandbox with explicit argv, `shell: false`, and `cwd` set to the verified workspace
 - pass a deterministic bounded prompt without secrets or confirmation values
 - record bounded implementation attempts in the Phase 6A run record
 - verify a new clean local descendant commit

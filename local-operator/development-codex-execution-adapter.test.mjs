@@ -26,6 +26,7 @@ import {
 } from "./development-workspace-manager.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
+  CODEX_EXECUTION_SANDBOX_ID,
   MAX_CODEX_IMPLEMENTATION_ATTEMPTS,
   MAX_CODEX_OUTPUT_BYTES,
   MAX_CODEX_PROMPT_CHARS,
@@ -37,6 +38,7 @@ import {
 
 const execFileAsync = promisify(execFile)
 const TRUSTED_GIT_EXECUTABLE = process.env.PPO_TEST_GIT_EXECUTABLE || "/usr/bin/git"
+const TRUSTED_SANDBOX_EXECUTABLE = process.env.PPO_TEST_SANDBOX_EXECUTABLE || "/usr/bin/sandbox-exec"
 const PROJECT_IDS = [
   "khlim-assist",
   "ledgerpilot-ai",
@@ -175,7 +177,64 @@ function trustedCodexConfig(overrides = {}) {
       mode: "deny",
       enforcement: "adapter-git-wrapper"
     },
+    executionSandbox: {
+      type: "macos-sandbox-exec",
+      network: "none",
+      enforcement: "os-process",
+      executablePath: TRUSTED_SANDBOX_EXECUTABLE
+    },
     ...overrides
+  }
+}
+
+function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options = {}) {
+  const sandboxCalls = options.sandboxCalls || []
+
+  return async (invocation) => {
+    sandboxCalls.push({ ...invocation })
+    assert.equal(invocation.shell, false)
+    assert.equal(invocation.sandbox.network, "none")
+    assert.equal(invocation.sandbox.enforcement, "os-process")
+
+    if (options.unavailable) {
+      throw new Error("sandbox unavailable")
+    }
+
+    if (options.inactive && invocation.probe === "direct-network") {
+      return { exitCode: 66, stdout: "connected", stderr: "" }
+    }
+
+    if (invocation.kind === "sandbox-probe") {
+      const probeResult = options.probeResults?.[invocation.probe]
+      if (probeResult) {
+        return typeof probeResult === "function" ? await probeResult(invocation) : { ...probeResult }
+      }
+
+      if (invocation.probe === "local-workspace-git") {
+        return { exitCode: 0, stdout: "", stderr: "" }
+      }
+
+      if (invocation.probe === "direct-network") {
+        return { exitCode: 0, sandboxDenied: true, stdout: "", stderr: "" }
+      }
+
+      if (
+        invocation.probe === "absolute-git-sanitized-env-push" ||
+        invocation.probe === "ordinary-git-push"
+      ) {
+        return { exitCode: 1, sandboxDenied: true, stdout: "", stderr: "" }
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "" }
+    }
+
+    return await codexRunner(invocation)
+  }
+}
+
+function sandboxedCodexRunner(codexRunner, options = {}) {
+  return {
+    sandboxRunner: makeSandboxRunner(codexRunner, options)
   }
 }
 
@@ -229,7 +288,7 @@ test("Codex execution requires implementation_in_progress status and exact expec
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: makeCommitRunner(calls)
+    ...sandboxedCodexRunner(makeCommitRunner(calls))
   }), "CODEX_RUN_NOT_IMPLEMENTING")
 
   const implementation = await makeImplementationFixture()
@@ -238,7 +297,7 @@ test("Codex execution requires implementation_in_progress status and exact expec
     writeDataDir: implementation.writeDataDir,
     workspaceRegistry: implementation.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: makeCommitRunner(calls)
+    ...sandboxedCodexRunner(makeCommitRunner(calls))
   }), "CODEX_EXPECTED_VERSION_REQUIRED")
 
   await assertRejectsCode(executeCodexImplementation(implementation.run.runId, {
@@ -246,7 +305,7 @@ test("Codex execution requires implementation_in_progress status and exact expec
     writeDataDir: implementation.writeDataDir,
     workspaceRegistry: implementation.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: makeCommitRunner(calls)
+    ...sandboxedCodexRunner(makeCommitRunner(calls))
   }), "STALE_RUN_VERSION")
 
   assert.equal(calls.length, 0)
@@ -261,7 +320,7 @@ test("Phase 6C workspace reconciliation is required before Codex execution", asy
     writeDataDir: missing.writeDataDir,
     workspaceRegistry: missing.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async () => ({ exitCode: 0 })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_WORKSPACE_NOT_READY")
 
   const detached = await makeImplementationFixture()
@@ -272,7 +331,7 @@ test("Phase 6C workspace reconciliation is required before Codex execution", asy
     writeDataDir: detached.writeDataDir,
     workspaceRegistry: detached.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async () => ({ exitCode: 0 })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_WORKSPACE_NOT_READY")
 
   const linked = await makeImplementationFixture()
@@ -289,7 +348,7 @@ test("Phase 6C workspace reconciliation is required before Codex execution", asy
       }
     },
     codexConfig: trustedCodexConfig(),
-    codexRunner: async () => ({ exitCode: 0 })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "WORKSPACE_PATH_ESCAPE")
 })
 
@@ -310,13 +369,14 @@ test("workspace HEAD must match run state before Codex starts", async () => {
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async () => ({ exitCode: 0 })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_WORKSPACE_NOT_READY")
 })
 
 test("Codex invocation uses trusted config, explicit argv, shell=false, and verified workspace cwd", async () => {
   const fixture = await makeImplementationFixture()
   const calls = []
+  const sandboxCalls = []
   const result = await executeCodexImplementation(fixture.run.runId, {
     expectedVersion: fixture.run.version,
     writeDataDir: fixture.writeDataDir,
@@ -326,7 +386,7 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
       args: ["--eval", "process.exit(0)"],
       timeoutMs: 2000
     }),
-    codexRunner: makeCommitRunner(calls),
+    ...sandboxedCodexRunner(makeCommitRunner(calls), { sandboxCalls }),
     now: fixture.now
   })
 
@@ -341,6 +401,15 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
   assert.equal(calls[0].remoteGitWritePolicy.enforcement, "adapter-git-wrapper")
   assert.match(calls[0].env.PATH, /codex-execution-policy/u)
   assert.equal(calls[0].env.GIT_CONFIG_VALUE_0, "never")
+  assert.equal(calls[0].executionSandbox.sandbox, CODEX_EXECUTION_SANDBOX_ID)
+  assert.equal(calls[0].executionSandbox.network, "none")
+  assert.deepEqual(sandboxCalls.map((call) => call.probe || call.kind), [
+    "local-workspace-git",
+    "direct-network",
+    "absolute-git-sanitized-env-push",
+    "ordinary-git-push",
+    "codex"
+  ])
 
   await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
     expectedVersion: result.run.version,
@@ -350,7 +419,7 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
       executablePath: "codex",
       args: []
     },
-    codexRunner: async () => ({ exitCode: 0 })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_CONFIG_INVALID")
 
   await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
@@ -360,18 +429,143 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
     codexConfig: trustedCodexConfig({
       remoteGitWritePolicy: undefined
     }),
-    codexRunner: async () => ({ exitCode: 0 })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_REMOTE_POLICY_REQUIRED")
 
   await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
     expectedVersion: result.run.version,
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
-    codexRunner: async () => ({ exitCode: 0 })
+    codexConfig: trustedCodexConfig({
+      executionSandbox: undefined
+    }),
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
+  }), "CODEX_SANDBOX_REQUIRED")
+
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: result.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_CONFIG_REQUIRED")
 })
 
-test("remote Git write capability is denied by adapter execution policy", async () => {
+test("no-outbound-network sandbox is verified active before Codex spawn", async () => {
+  const unavailable = await makeImplementationFixture()
+  let unavailableCodexCalls = 0
+  const unavailableReloadedBefore = await readDevelopmentRun(unavailable.run.runId, {
+    writeDataDir: unavailable.writeDataDir
+  })
+
+  await assertRejectsCode(executeCodexImplementation(unavailable.run.runId, {
+    expectedVersion: unavailable.run.version,
+    writeDataDir: unavailable.writeDataDir,
+    workspaceRegistry: unavailable.registry,
+    codexConfig: trustedCodexConfig(),
+    ...sandboxedCodexRunner(async () => {
+      unavailableCodexCalls += 1
+      return { exitCode: 0 }
+    }, { unavailable: true })
+  }), "CODEX_SANDBOX_UNAVAILABLE")
+
+  const unavailableReloadedAfter = await readDevelopmentRun(unavailable.run.runId, {
+    writeDataDir: unavailable.writeDataDir
+  })
+  assert.equal(unavailableCodexCalls, 0)
+  assert.equal(unavailableReloadedAfter.version, unavailableReloadedBefore.version)
+  assert.equal(unavailableReloadedAfter.attempts.implementation, unavailableReloadedBefore.attempts.implementation)
+
+  const inactive = await makeImplementationFixture()
+  let inactiveCodexCalls = 0
+
+  await assertRejectsCode(executeCodexImplementation(inactive.run.runId, {
+    expectedVersion: inactive.run.version,
+    writeDataDir: inactive.writeDataDir,
+    workspaceRegistry: inactive.registry,
+    codexConfig: trustedCodexConfig(),
+    ...sandboxedCodexRunner(async () => {
+      inactiveCodexCalls += 1
+      return { exitCode: 0 }
+    }, { inactive: true })
+  }), "CODEX_SANDBOX_UNAVAILABLE")
+
+  const inactiveReloaded = await readDevelopmentRun(inactive.run.runId, {
+    writeDataDir: inactive.writeDataDir
+  })
+  assert.equal(inactiveCodexCalls, 0)
+  assert.equal(inactiveReloaded.version, inactive.run.version)
+  assert.equal(inactiveReloaded.attempts.implementation, inactive.run.attempts.implementation)
+})
+
+test("sandbox denies remote-write bypass probes before Codex spawn", async () => {
+  const fixture = await makeImplementationFixture()
+  const calls = []
+  const sandboxCalls = []
+
+  await executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedCodexConfig(),
+    ...sandboxedCodexRunner(makeCommitRunner(calls), { sandboxCalls }),
+    now: fixture.now
+  })
+
+  const absoluteGit = sandboxCalls.find((call) => call.probe === "absolute-git-sanitized-env-push")
+  const directNetwork = sandboxCalls.find((call) => call.probe === "direct-network")
+  const ordinaryPush = sandboxCalls.find((call) => call.probe === "ordinary-git-push")
+
+  assert.ok(absoluteGit)
+  assert.equal(absoluteGit.executablePath, TRUSTED_GIT_EXECUTABLE)
+  assert.deepEqual(absoluteGit.args, ["push", "origin", "HEAD"])
+  assert.equal(Object.hasOwn(absoluteGit.env, "GIT_CONFIG_COUNT"), false)
+  assert.equal(Object.hasOwn(absoluteGit.env, "GIT_SSH_COMMAND"), false)
+
+  assert.ok(directNetwork)
+  assert.equal(directNetwork.executablePath, process.execPath)
+  assert.deepEqual(directNetwork.args.slice(0, 1), ["--eval"])
+
+  assert.ok(ordinaryPush)
+  assert.equal(ordinaryPush.executablePath, "/usr/bin/env")
+  assert.deepEqual(ordinaryPush.args, ["git", "push", "origin", "HEAD"])
+  assert.match(ordinaryPush.env.PATH, /codex-execution-policy/u)
+  assert.equal(calls.length, 1)
+})
+
+test("sandbox bypass probe success fails closed before Codex spawn", async () => {
+  for (const [probe, probeResult] of [
+    ["direct-network", { exitCode: 66, stdout: "connected", stderr: "" }],
+    ["absolute-git-sanitized-env-push", { exitCode: 0, stdout: "pushed", stderr: "" }],
+    ["ordinary-git-push", { exitCode: 0, stdout: "pushed", stderr: "" }]
+  ]) {
+    const fixture = await makeImplementationFixture()
+    let codexCalls = 0
+
+    await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+      expectedVersion: fixture.run.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      codexConfig: trustedCodexConfig(),
+      ...sandboxedCodexRunner(async () => {
+        codexCalls += 1
+        return { exitCode: 0 }
+      }, {
+        probeResults: {
+          [probe]: probeResult
+        }
+      })
+    }), "CODEX_SANDBOX_UNAVAILABLE")
+
+    const reloaded = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    assert.equal(codexCalls, 0, probe)
+    assert.equal(reloaded.version, fixture.run.version, probe)
+    assert.equal(reloaded.attempts.implementation, fixture.run.attempts.implementation, probe)
+  }
+})
+
+test("ordinary git push remains denied by defense-in-depth policy env", async () => {
   const fixture = await makeImplementationFixture()
   let pushDenied = false
   const result = await executeCodexImplementation(fixture.run.runId, {
@@ -379,11 +573,13 @@ test("remote Git write capability is denied by adapter execution policy", async 
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async (invocation) => {
+    ...sandboxedCodexRunner(async (invocation) => {
       assert.equal(invocation.cwd, fixture.location.workspacePath)
       assert.equal(invocation.shell, false)
       assert.equal(invocation.remoteGitWritePolicy.mode, "deny")
       assert.equal(invocation.remoteGitWritePolicy.enforcement, "adapter-git-wrapper")
+      assert.equal(invocation.executionSandbox.sandbox, CODEX_EXECUTION_SANDBOX_ID)
+      assert.equal(invocation.executionSandbox.network, "none")
 
       await assert.rejects(
         execFileAsync("git", ["push", "origin", "HEAD"], {
@@ -414,7 +610,7 @@ test("remote Git write capability is denied by adapter execution policy", async 
       })
 
       return { exitCode: 0, stdout: "done", stderr: "" }
-    },
+    }),
     now: fixture.now
   })
 
@@ -450,7 +646,7 @@ test("implementation prompt is deterministic, bounded, scoped, and secret-exclud
         GITHUB_TOKEN: "gho_fake_token"
       }
     }),
-    codexRunner: async () => ({ exitCode: 0 })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_CONFIG_INVALID")
 })
 
@@ -463,7 +659,7 @@ test("successful Codex execution is independently verified and transitions to im
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: makeCommitRunner(calls),
+    ...sandboxedCodexRunner(makeCommitRunner(calls)),
     now: fixture.now
   })
 
@@ -491,6 +687,8 @@ test("successful Codex execution is independently verified and transitions to im
   assert.equal(result.implementation.attempt, evidence.metadata.attempt)
   assert.equal(evidence.metadata.outcome, "implementation_ready")
   assert.equal(evidence.metadata.remotePolicy, "deny")
+  assert.equal(evidence.metadata.sandbox, CODEX_EXECUTION_SANDBOX_ID)
+  assert.equal(evidence.metadata.network, "none")
   assert.doesNotMatch(JSON.stringify(result.run), /SENSITIVE_TEST_SENTINEL|gho_fake_token|raw stderr ignored/u)
 
   const reloaded = await readDevelopmentRun(fixture.run.runId, {
@@ -508,7 +706,7 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
     writeDataDir: noop.writeDataDir,
     workspaceRegistry: noop.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async () => ({ exitCode: 0, stdout: "claimed success" })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 0, stdout: "claimed success" }))
   }), "CODEX_NO_IMPLEMENTATION")
   const noopReloaded = await readDevelopmentRun(noop.run.runId, { writeDataDir: noop.writeDataDir })
   assert.equal(noopReloaded.status, "implementation_in_progress")
@@ -521,7 +719,7 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
     writeDataDir: nonzero.writeDataDir,
     workspaceRegistry: nonzero.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async () => ({ exitCode: 1, stdout: "failed" })
+    ...sandboxedCodexRunner(async () => ({ exitCode: 1, stdout: "failed" }))
   }), "CODEX_EXECUTION_FAILED")
   const nonzeroReloaded = await readDevelopmentRun(nonzero.run.runId, { writeDataDir: nonzero.writeDataDir })
   assert.equal(nonzeroReloaded.status, "implementation_in_progress")
@@ -534,10 +732,10 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
     writeDataDir: dirty.writeDataDir,
     workspaceRegistry: dirty.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async (invocation) => {
+    ...sandboxedCodexRunner(async (invocation) => {
       await writeFile(join(invocation.cwd, "dirty.txt"), "uncommitted\n", "utf8")
       return { exitCode: 0 }
-    }
+    })
   }), "CODEX_IMPLEMENTATION_INVALID")
   const dirtyReloaded = await readDevelopmentRun(dirty.run.runId, { writeDataDir: dirty.writeDataDir })
   assert.equal(dirtyReloaded.status, "implementation_in_progress")
@@ -550,9 +748,9 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
     writeDataDir: sourceChanged.writeDataDir,
     workspaceRegistry: sourceChanged.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: makeCommitRunner([], {
+    ...sandboxedCodexRunner(makeCommitRunner([], {
       sourceRepoPath: sourceChanged.sourceRepoPath
-    })
+    }))
   }), "CODEX_SOURCE_CHANGED")
   const sourceChangedReloaded = await readDevelopmentRun(sourceChanged.run.runId, { writeDataDir: sourceChanged.writeDataDir })
   assert.equal(sourceChangedReloaded.status, "implementation_in_progress")
@@ -571,10 +769,10 @@ test("definitive implementation retries persist attempt counters, survive reload
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry,
       codexConfig: trustedCodexConfig(),
-      codexRunner: async () => {
+      ...sandboxedCodexRunner(async () => {
         calls += 1
         return { exitCode: 1, stdout: "definitive failure" }
-      }
+      })
     }), "CODEX_EXECUTION_FAILED")
 
     const reloaded = await readDevelopmentRun(current.runId, {
@@ -591,10 +789,10 @@ test("definitive implementation retries persist attempt counters, survive reload
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
     codexConfig: trustedCodexConfig(),
-    codexRunner: async () => {
+    ...sandboxedCodexRunner(async () => {
       calls += 1
       return { exitCode: 1 }
-    }
+    })
   }), "CODEX_ATTEMPT_LIMIT_REACHED")
 
   assert.equal(calls, MAX_CODEX_IMPLEMENTATION_ATTEMPTS - fixture.run.attempts.implementation)
@@ -609,22 +807,22 @@ test("concurrent Codex execution attempts use optimistic concurrency before spaw
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry,
       codexConfig: trustedCodexConfig(),
-      codexRunner: makeCommitRunner(calls, {
+      ...sandboxedCodexRunner(makeCommitRunner(calls, {
         fileName: "concurrent-a.txt",
         content: "a\n",
         message: "codex implementation a"
-      })
+      }))
     }),
     executeCodexImplementation(fixture.run.runId, {
       expectedVersion: fixture.run.version,
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry,
       codexConfig: trustedCodexConfig(),
-      codexRunner: makeCommitRunner(calls, {
+      ...sandboxedCodexRunner(makeCommitRunner(calls, {
         fileName: "concurrent-b.txt",
         content: "b\n",
         message: "codex implementation b"
-      })
+      }))
     })
   ])
 
@@ -652,10 +850,10 @@ test("ambiguous Codex timeout, signal, interruption, and output overflow require
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry,
       codexConfig: trustedCodexConfig(),
-      codexRunner: async () => {
+      ...sandboxedCodexRunner(async () => {
         calls += 1
         return outcome
-      }
+      })
     }), "CODEX_EXECUTION_AMBIGUOUS")
 
     const reloaded = await readDevelopmentRun(fixture.run.runId, {
@@ -672,10 +870,10 @@ test("ambiguous Codex timeout, signal, interruption, and output overflow require
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry,
       codexConfig: trustedCodexConfig(),
-      codexRunner: async () => {
+      ...sandboxedCodexRunner(async () => {
         calls += 1
         return { exitCode: 0 }
-      }
+      })
     }), "CODEX_RECONCILIATION_REQUIRED")
 
     assert.equal(calls, 1)
@@ -719,9 +917,9 @@ test("safe error formatting excludes raw execution output", async () => {
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry,
       codexConfig: trustedCodexConfig(),
-      codexRunner: async () => {
+      ...sandboxedCodexRunner(async () => {
         throw new Error("SENSITIVE_TEST_SENTINEL gho_fake_token raw failure")
-      }
+      })
     })
   } catch (error) {
     formatted = formatDevelopmentCodexExecutionAdapterError(error)

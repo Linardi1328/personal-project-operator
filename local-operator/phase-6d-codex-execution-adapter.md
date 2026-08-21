@@ -16,10 +16,11 @@ Codex execution requires:
 - exact expected run-state version
 - a trusted Phase 6C project workspace registry
 - trusted local Codex executable/configuration
-- trusted local remote Git write denial policy configuration
+- trusted local no-outbound-network OS/process sandbox configuration
+- trusted local Git wrapper/env remote-write denial configuration for defense in depth
 - a verified Phase 6C workspace for the run
 
-Codex executable paths, Git executable paths, argv, timeouts, environment values, and remote-write policy settings come from trusted local configuration only. They do not come from user text, task text, planner output, project Markdown, GitHub facts, or chat.
+Codex executable paths, sandbox executable paths, Git executable paths, argv, timeouts, environment values, and defense-in-depth remote-write policy settings come from trusted local configuration only. They do not come from user text, task text, planner output, project Markdown, GitHub facts, or chat.
 
 ## Behavior
 
@@ -32,8 +33,10 @@ The adapter:
 - requires workspace HEAD to equal `run.headSha` or `run.baseSha` before Codex starts
 - builds a deterministic bounded prompt from run task and planning evidence metadata
 - includes explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation boundaries in the prompt
-- establishes a remote Git write denial policy before Codex starts and fails closed if the policy cannot be verified
-- invokes Codex with explicit argv, `shell: false`, bounded timeout, bounded output capture, policy-controlled environment, and `cwd` set to the verified isolated workspace
+- establishes and verifies a no-outbound-network OS/process sandbox before Codex starts and fails closed if the sandbox is unavailable or inactive
+- verifies sandboxed local Git operations still work before Codex starts
+- verifies sandboxed outbound network probes are denied, including absolute Git with sanitized Git policy env and ordinary `git push`
+- invokes Codex through the sandbox with explicit argv, `shell: false`, bounded timeout, bounded output capture, policy-controlled environment, and `cwd` set to the verified isolated workspace
 - records each definitive implementation attempt durably in the Phase 6A run record with exact expected-version checks and a small explicit maximum
 - does not store prompt contents or raw Codex stdout/stderr
 - treats timeout, signal, killed, interrupted, overflow, or uncertain completion as ambiguous
@@ -46,7 +49,7 @@ The adapter:
 - updates `run.headSha` to the verified implementation SHA
 - records metadata-only SHA-pinned implementation evidence
 
-The adapter contract requires a local commit. Codex prose claiming success is ignored. Unchanged local refs or remote-tracking refs are not used as proof that no remote push happened; the remote-write boundary is established before Codex is spawned.
+The adapter contract requires a local commit. Codex prose claiming success is ignored. PATH wrappers, prompt compliance, local refs, remote-tracking refs, and inherited Git environment are not the primary no-push proof; the primary boundary is the OS/process sandbox that removes outbound network capability before Codex is spawned.
 
 ## Recovery
 

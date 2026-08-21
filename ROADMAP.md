@@ -274,9 +274,10 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Require exact expected-version checks before transitioning run state.
 - Reconcile the Phase 6C workspace before execution and refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces.
 - Require workspace HEAD to match the run head/base state before Codex starts.
-- Read Codex executable path, argv, timeout, and environment only from trusted local configuration.
-- Require an adapter-established remote Git write denial policy before spawning Codex; fail closed if it cannot be established.
-- Invoke Codex with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified isolated workspace.
+- Read Codex executable path, sandbox executable path, Git executable path, argv, timeout, and environment only from trusted local configuration.
+- Require an active no-outbound-network OS/process sandbox before spawning Codex; fail closed if it cannot be established or verified.
+- Keep Git wrapper/env remote-write denial only as defense in depth, not as the primary boundary.
+- Invoke Codex through the sandbox with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified isolated workspace.
 - Generate a deterministic bounded prompt from the run task and planning evidence metadata, including explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries.
 - Durably record bounded implementation execution attempts in the Phase 6A run record using exact expected-version checks.
 - Treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous and require reconciliation before retry.

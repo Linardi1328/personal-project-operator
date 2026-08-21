@@ -15,8 +15,9 @@ Phase 6D may:
 - read one Phase 6A run from `${PPO_WRITE_DATA_DIR}/development-runs`
 - require exact expected-version optimistic concurrency
 - reuse Phase 6C workspace reconciliation and trusted workspace registry
-- establish a trusted remote Git write denial policy before spawning Codex
-- invoke a trusted locally configured Codex executable with explicit argv and `shell: false`
+- establish and verify a trusted no-outbound-network OS/process sandbox before spawning Codex
+- keep Git wrapper/env remote-write denial only as defense in depth
+- invoke a trusted locally configured Codex executable through the sandbox with explicit argv and `shell: false`
 - set `cwd` only to the verified Phase 6C workspace
 - pass a deterministic bounded prompt to Codex
 - capture bounded stdout/stderr for process control only
@@ -32,8 +33,9 @@ Phase 6D may:
 Phase 6D must not:
 
 - accept Codex executable/config from user text, task text, planner output, project Markdown, GitHub facts, or chat
-- spawn Codex if remote Git write denial cannot be established
+- spawn Codex if the no-outbound-network sandbox cannot be established and verified active
 - execute Codex outside the verified Phase 6C workspace
+- rely on prompt compliance, PATH wrappers, local refs, remote-tracking refs, or inherited Git environment as the primary no-push boundary
 - trust Codex prose as implementation evidence
 - store prompt contents, raw Codex stdout/stderr, raw failures, credentials, tokens, terminal confirmation values, arbitrary paths, or unbounded logs
 - run automated tests beyond adapter-specific Git verification
@@ -45,4 +47,4 @@ Phase 6D must not:
 - add `/ppo continue`
 - add Telegram/OpenClaw routes or new OpenClaw tools
 
-Timeouts, signals, killed/interrupted processes, output overflow, and uncertain completion must fail closed as ambiguous and require reconciliation before retry. Unchanged local refs or remote-tracking refs are not accepted as proof that no remote push occurred; the prevention boundary is the pre-spawn execution policy.
+Timeouts, signals, killed/interrupted processes, output overflow, and uncertain completion must fail closed as ambiguous and require reconciliation before retry. Unchanged local refs or remote-tracking refs are not accepted as proof that no remote push occurred; the prevention boundary is the pre-spawn OS/process sandbox with no outbound network capability.

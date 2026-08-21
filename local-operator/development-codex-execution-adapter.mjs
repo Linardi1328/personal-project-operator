@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
 import { chmod, mkdir, realpath, stat, writeFile } from "node:fs/promises"
+import { createServer } from "node:net"
 import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
 import { promisify } from "node:util"
 import {
@@ -31,6 +32,7 @@ export const MAX_CODEX_TIMEOUT_MS = 10 * 60 * 1000
 export const MIN_CODEX_TIMEOUT_MS = 1000
 export const MAX_CODEX_IMPLEMENTATION_ATTEMPTS = 5
 export const CODEX_EXECUTION_POLICY_STORE_DIR = "codex-execution-policy"
+export const CODEX_EXECUTION_SANDBOX_ID = "phase-6d-no-outbound-network-sandbox"
 
 const shaPattern = /^[a-f0-9]{40}$/u
 const envKeyPattern = /^[A-Z_][A-Z0-9_]{0,39}$/u
@@ -39,6 +41,10 @@ const unsafePromptControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -
 const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
 const forbiddenEnvKeyPattern = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|CONFIRM|ASKPASS|GIT_CONFIG|GIT_SSH|SSH_AUTH_SOCK)/u
 const defaultExecutionPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+const noOutboundNetworkSandboxProfile = `(version 1)
+(allow default)
+(deny network*)
+`
 
 export class DevelopmentCodexExecutionAdapterError extends DevelopmentRunStateError {
   constructor(code, safeMessage) {
@@ -410,6 +416,45 @@ function normalizeRemoteGitWritePolicy(policy) {
   }
 }
 
+function normalizeExecutionSandbox(sandbox) {
+  if (!sandbox || typeof sandbox !== "object" || Array.isArray(sandbox)) {
+    throw adapterError(
+      "CODEX_SANDBOX_REQUIRED",
+      "Codex execution requires a trusted no-outbound-network process sandbox."
+    )
+  }
+
+  const type = normalizeSafeText(sandbox.type, {
+    code: "CODEX_SANDBOX_REQUIRED",
+    safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
+    maxChars: 80
+  })
+  const network = normalizeSafeText(sandbox.network, {
+    code: "CODEX_SANDBOX_REQUIRED",
+    safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
+    maxChars: 40
+  })
+  const enforcement = normalizeSafeText(sandbox.enforcement, {
+    code: "CODEX_SANDBOX_REQUIRED",
+    safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
+    maxChars: 80
+  })
+
+  if (type !== "macos-sandbox-exec" || network !== "none" || enforcement !== "os-process") {
+    throw adapterError(
+      "CODEX_SANDBOX_REQUIRED",
+      "Codex execution requires a trusted no-outbound-network process sandbox."
+    )
+  }
+
+  return {
+    type,
+    network,
+    enforcement,
+    executablePath: normalizeExecutablePath(sandbox.executablePath)
+  }
+}
+
 function normalizeCodexConfig(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw adapterError(
@@ -424,8 +469,16 @@ function normalizeCodexConfig(config) {
     args: normalizeCodexArgs(config.args || []),
     env: normalizeCodexEnv(config.env || {}),
     timeoutMs: normalizeTimeoutMs(config.timeoutMs),
-    remoteGitWritePolicy: normalizeRemoteGitWritePolicy(config.remoteGitWritePolicy)
+    remoteGitWritePolicy: normalizeRemoteGitWritePolicy(config.remoteGitWritePolicy),
+    executionSandbox: normalizeExecutionSandbox(config.executionSandbox)
   }
+}
+
+function sandboxError() {
+  return adapterError(
+    "CODEX_SANDBOX_UNAVAILABLE",
+    "Codex no-outbound-network process sandbox could not be established."
+  )
 }
 
 function codexPolicyError() {
@@ -553,34 +606,12 @@ async function writeCodexPolicyWrapper(paths, config) {
   await chmod(paths.gitWrapperPath, 0o700)
 }
 
-async function assertCodexPolicyDeniesRemoteGitWrites(paths, env, location) {
-  try {
-    await execFileAsync(paths.gitWrapperPath, ["push"], {
-      cwd: location.workspacePath,
-      env,
-      encoding: "utf8",
-      maxBuffer: 1024,
-      timeout: 5000,
-      shell: false
-    })
-  } catch (error) {
-    if (error?.code === 126 || error?.status === 126) {
-      return
-    }
-
-    throw codexPolicyError()
-  }
-
-  throw codexPolicyError()
-}
-
-async function establishCodexExecutionPolicy(config, run, location, attempt, options = {}) {
+async function establishCodexExecutionPolicy(config, run, attempt, options = {}) {
   const paths = codexPolicyPaths(run, attempt, options)
   const env = codexPolicyEnv(config, paths)
 
   try {
     await writeCodexPolicyWrapper(paths, config)
-    await assertCodexPolicyDeniesRemoteGitWrites(paths, env, location)
   } catch (error) {
     if (error instanceof DevelopmentRunStateError) {
       throw error
@@ -590,10 +621,271 @@ async function establishCodexExecutionPolicy(config, run, location, attempt, opt
   }
 
   return {
+    paths,
     env,
     metadata: {
       mode: config.remoteGitWritePolicy.mode,
       enforcement: config.remoteGitWritePolicy.enforcement
+    }
+  }
+}
+
+async function withLoopbackProbeServer(callback, options = {}) {
+  if (options.sandboxRunner) {
+    return await callback({
+      port: 1,
+      connectionCount: () => 0
+    })
+  }
+
+  let connections = 0
+  const server = createServer((socket) => {
+    connections += 1
+    socket.destroy()
+  })
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject)
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", reject)
+        resolve()
+      })
+    })
+  } catch {
+    throw sandboxError()
+  }
+
+  try {
+    const address = server.address()
+    const port = typeof address === "object" && address ? address.port : null
+
+    if (!Number.isInteger(port)) {
+      throw sandboxError()
+    }
+
+    return await callback({
+      port,
+      connectionCount: () => connections
+    })
+  } finally {
+    await new Promise((resolve) => {
+      server.close(() => resolve())
+    })
+  }
+}
+
+async function runTrustedGit(config, cwd, args) {
+  try {
+    await execFileAsync(config.gitExecutablePath, args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: MAX_CODEX_OUTPUT_BYTES,
+      timeout: 15000,
+      shell: false
+    })
+  } catch {
+    throw sandboxError()
+  }
+}
+
+async function prepareSandboxProbeRepo(config, paths) {
+  const probeRepoPath = join(
+    paths.attemptDir,
+    `sandbox-probe-repo-${process.pid}-${process.hrtime.bigint().toString(36)}`
+  )
+
+  try {
+    await mkdir(probeRepoPath, { recursive: true, mode: 0o700 })
+    await chmod(probeRepoPath, 0o700)
+    await runTrustedGit(config, probeRepoPath, ["init"])
+    await runTrustedGit(config, probeRepoPath, ["config", "user.email", "ppo-sandbox-probe@example.invalid"])
+    await runTrustedGit(config, probeRepoPath, ["config", "user.name", "PPO Sandbox Probe"])
+    await runTrustedGit(config, probeRepoPath, ["commit", "--allow-empty", "-m", "sandbox probe"])
+  } catch (error) {
+    if (error instanceof DevelopmentRunStateError) {
+      throw error
+    }
+
+    throw sandboxError()
+  }
+
+  return probeRepoPath
+}
+
+async function configureSandboxProbeRemote(config, probeRepoPath, remoteUrl) {
+  try {
+    await execFileAsync(config.gitExecutablePath, ["remote", "remove", "origin"], {
+      cwd: probeRepoPath,
+      encoding: "utf8",
+      maxBuffer: MAX_CODEX_OUTPUT_BYTES,
+      timeout: 15000,
+      shell: false
+    }).catch(() => null)
+    await runTrustedGit(config, probeRepoPath, ["remote", "add", "origin", remoteUrl])
+  } catch (error) {
+    if (error instanceof DevelopmentRunStateError) {
+      throw error
+    }
+
+    throw sandboxError()
+  }
+}
+
+function sanitizedProbeEnv() {
+  return {
+    PATH: defaultExecutionPath,
+    TERM: "dumb",
+    NO_COLOR: "1",
+    GIT_TERMINAL_PROMPT: "0"
+  }
+}
+
+function assertSandboxProbeResult(result, code = "CODEX_SANDBOX_UNAVAILABLE") {
+  if (isUncertainExecutionOutcome(result) || result?.exitCode === 71) {
+    throw adapterError(
+      code,
+      "Codex no-outbound-network process sandbox could not be established."
+    )
+  }
+}
+
+async function assertSandboxLocalGitAllowed(config, location, policy, options) {
+  const result = await runSandboxedCommand({
+    kind: "sandbox-probe",
+    probe: "local-workspace-git",
+    sandbox: config.executionSandbox,
+    executablePath: config.gitExecutablePath,
+    args: ["status", "--porcelain=v1", "--untracked-files=all"],
+    cwd: location.workspacePath,
+    stdin: "",
+    timeoutMs: 15000,
+    maxOutputBytes: MAX_CODEX_OUTPUT_BYTES,
+    env: policy.env
+  }, options)
+
+  assertSandboxProbeResult(result)
+
+  if (result?.exitCode !== 0) {
+    throw sandboxError()
+  }
+}
+
+async function assertSandboxDirectNetworkDenied(config, location, policy, options) {
+  const probeCode = [
+    "const net = require('node:net')",
+    "const port = Number(process.env.PPO_CODEX_SANDBOX_PROBE_PORT)",
+    "const socket = net.createConnection({ host: '127.0.0.1', port })",
+    "const done = (code) => { try { socket.destroy() } catch {} process.exit(code) }",
+    "const timer = setTimeout(() => done(68), 1500)",
+    "socket.on('connect', () => { clearTimeout(timer); done(66) })",
+    "socket.on('error', (error) => { clearTimeout(timer); done(error && (error.code === 'EPERM' || error.code === 'EACCES') ? 0 : 67) })"
+  ].join(";")
+
+  await withLoopbackProbeServer(async ({ port, connectionCount }) => {
+    const result = await runSandboxedCommand({
+      kind: "sandbox-probe",
+      probe: "direct-network",
+      sandbox: config.executionSandbox,
+      executablePath: process.execPath,
+      args: ["--eval", probeCode],
+      cwd: location.workspacePath,
+      stdin: "",
+      timeoutMs: 5000,
+      maxOutputBytes: 1024,
+      env: {
+        ...policy.env,
+        PPO_CODEX_SANDBOX_PROBE_PORT: String(port)
+      }
+    }, options)
+
+    assertSandboxProbeResult(result)
+
+    if (result?.sandboxDenied === true) {
+      return
+    }
+
+    if (result?.exitCode !== 0 || connectionCount() !== 0) {
+      throw sandboxError()
+    }
+  }, options)
+}
+
+async function assertSandboxRemoteGitDenied({
+  config,
+  probeRepoPath,
+  executablePath,
+  args,
+  env,
+  probe,
+  options
+}) {
+  await withLoopbackProbeServer(async ({ port, connectionCount }) => {
+    await configureSandboxProbeRemote(config, probeRepoPath, `ssh://127.0.0.1:${port}/ppo-sandbox-probe.git`)
+
+    const result = await runSandboxedCommand({
+      kind: "sandbox-probe",
+      probe,
+      sandbox: config.executionSandbox,
+      executablePath,
+      args,
+      cwd: probeRepoPath,
+      stdin: "",
+      timeoutMs: 5000,
+      maxOutputBytes: 4096,
+      env
+    }, options)
+
+    assertSandboxProbeResult(result)
+
+    if (result?.sandboxDenied === true) {
+      return
+    }
+
+    if (result?.exitCode === 0 || connectionCount() !== 0) {
+      throw sandboxError()
+    }
+  }, options)
+}
+
+async function assertCodexSandboxActive(config, location, policy, options) {
+  await assertSandboxLocalGitAllowed(config, location, policy, options)
+  await assertSandboxDirectNetworkDenied(config, location, policy, options)
+
+  const probeRepoPath = await prepareSandboxProbeRepo(config, policy.paths)
+
+  await assertSandboxRemoteGitDenied({
+    config,
+    probeRepoPath,
+    executablePath: config.gitExecutablePath,
+    args: ["push", "origin", "HEAD"],
+    env: sanitizedProbeEnv(),
+    probe: "absolute-git-sanitized-env-push",
+    options
+  })
+  await assertSandboxRemoteGitDenied({
+    config,
+    probeRepoPath,
+    executablePath: "/usr/bin/env",
+    args: ["git", "push", "origin", "HEAD"],
+    env: policy.env,
+    probe: "ordinary-git-push",
+    options
+  })
+}
+
+async function establishCodexExecutionSandbox(config, run, location, attempt, options = {}) {
+  const policy = await establishCodexExecutionPolicy(config, run, attempt, options)
+
+  await assertCodexSandboxActive(config, location, policy, options)
+
+  return {
+    ...policy,
+    sandbox: config.executionSandbox,
+    metadata: {
+      ...policy.metadata,
+      sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      network: "none"
     }
   }
 }
@@ -631,9 +923,24 @@ function assertBoundedCodexOutput(result) {
   }
 }
 
-async function runCodexProcess(invocation) {
+function sandboxedArgv(sandbox, executablePath, args) {
+  if (sandbox.type !== "macos-sandbox-exec") {
+    throw sandboxError()
+  }
+
+  return [
+    "-p",
+    noOutboundNetworkSandboxProfile,
+    executablePath,
+    ...args
+  ]
+}
+
+async function runSandboxedProcess(invocation) {
+  const argv = sandboxedArgv(invocation.sandbox, invocation.executablePath, invocation.args)
+
   return await new Promise((resolve, reject) => {
-    const child = spawn(invocation.executablePath, invocation.args, {
+    const child = spawn(invocation.sandbox.executablePath, argv, {
       cwd: invocation.cwd,
       env: invocation.env,
       shell: false,
@@ -701,16 +1008,39 @@ async function runCodexProcess(invocation) {
       })
     })
 
-    child.stdin.end(invocation.prompt, "utf8")
+    child.stdin.end(invocation.stdin || "", "utf8")
   })
 }
 
+async function runSandboxedCommand(invocation, options = {}) {
+  const runner = options.sandboxRunner || runSandboxedProcess
+
+  try {
+    return await runner({
+      ...invocation,
+      shell: false
+    })
+  } catch (error) {
+    if (isUncertainExecutionOutcome(error)) {
+      throw ambiguousExecutionError()
+    }
+
+    if (invocation.kind === "codex") {
+      throw error
+    }
+
+    throw sandboxError()
+  }
+}
+
 async function invokeCodex(config, invocation, options = {}) {
-  const runner = options.codexRunner || runCodexProcess
   const boundedInvocation = {
+    kind: "codex",
+    sandbox: config.executionSandbox,
     executablePath: config.executablePath,
     args: [...config.args],
     cwd: invocation.cwd,
+    stdin: invocation.prompt,
     prompt: invocation.prompt,
     promptHash: invocation.promptHash,
     timeoutMs: config.timeoutMs,
@@ -719,14 +1049,21 @@ async function invokeCodex(config, invocation, options = {}) {
     shell: false,
     remoteGitWritePolicy: {
       ...invocation.remoteGitWritePolicy
+    },
+    executionSandbox: {
+      ...invocation.executionSandbox
     }
   }
 
   let result
 
   try {
-    result = await runner(boundedInvocation)
+    result = await runSandboxedCommand(boundedInvocation, options)
   } catch (error) {
+    if (error instanceof DevelopmentRunStateError) {
+      throw error
+    }
+
     if (isUncertainExecutionOutcome(error)) {
       throw ambiguousExecutionError()
     }
@@ -1011,6 +1348,8 @@ function buildImplementationEvidence(run, location, verified, execution) {
       endedAt: execution.endedAt,
       outcome: "implementation_ready",
       remotePolicy: "deny",
+      sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      network: "none",
       changedFiles: verified.changedFileCount
     }
   }
@@ -1033,7 +1372,9 @@ function buildExecutionAttemptEvidence(run, location, execution) {
       promptHash: execution.promptHash,
       startedAt: execution.startedAt,
       outcome: "execution_started",
-      remotePolicy: "deny"
+      remotePolicy: "deny",
+      sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      network: "none"
     }
   }
 }
@@ -1056,7 +1397,9 @@ function buildExecutionFailureEvidence(run, location, execution) {
       startedAt: execution.startedAt,
       endedAt: execution.endedAt,
       outcome: "execution_failed",
-      remotePolicy: "deny"
+      remotePolicy: "deny",
+      sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      network: "none"
     }
   }
 }
@@ -1205,7 +1548,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
   const promptHash = sha256Text(prompt)
   const startedAt = timestamp(nowDate(options))
   const nextAttempt = run.attempts.implementation + 1
-  const executionPolicy = await establishCodexExecutionPolicy(config, run, location, nextAttempt, options)
+  const executionSandbox = await establishCodexExecutionSandbox(config, run, location, nextAttempt, options)
   const attemptRun = await reserveCodexExecutionAttempt(run, location, {
     attempt: nextAttempt,
     expectedStartSha,
@@ -1227,8 +1570,9 @@ async function executeCodexImplementationInternal(runId, options = {}) {
       cwd: postReservation.location.workspacePath,
       prompt,
       promptHash,
-      env: executionPolicy.env,
-      remoteGitWritePolicy: executionPolicy.metadata
+      env: executionSandbox.env,
+      remoteGitWritePolicy: executionSandbox.metadata,
+      executionSandbox: executionSandbox.metadata
     }, options)
   } catch (error) {
     if (error?.ambiguous === true || error?.code === "CODEX_EXECUTION_AMBIGUOUS") {
