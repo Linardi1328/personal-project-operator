@@ -918,7 +918,8 @@ test("hardening prompt keeps all remediation items and mandatory safety boundari
           blockerCount: blockers.length,
           securityFindingCount: securityFindings.length,
           testRequirementCount: testsRequired.length,
-          remediationHash
+          remediationHash,
+          reviewer: PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID
         }
       }],
       review: [{

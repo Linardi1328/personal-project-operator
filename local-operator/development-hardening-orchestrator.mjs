@@ -16,6 +16,7 @@ import {
 } from "./development-test-runner.mjs"
 import {
   INDEPENDENT_REVIEW_AGENT_ID,
+  REMOTE_PR_REVIEW_AGENT_ID,
   REVIEW_DECISIONS,
   REVIEW_FINDINGS_EVIDENCE_OUTCOME,
   executeIndependentReview
@@ -27,6 +28,10 @@ export const MAX_HARDENING_ROUNDS = 3
 const shaPattern = /^[a-f0-9]{40}$/u
 const unsafeControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u001F\u007F-\u009F])/u
 const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
+const hardeningReviewSources = new Set([
+  INDEPENDENT_REVIEW_AGENT_ID,
+  REMOTE_PR_REVIEW_AGENT_ID
+])
 
 export class DevelopmentHardeningOrchestratorError extends DevelopmentRunStateError {
   constructor(code, safeMessage) {
@@ -152,8 +157,7 @@ function latestIndependentReviewDecisionEvidence(run) {
     const entry = evidence[index]
 
     if (
-      entry?.source === INDEPENDENT_REVIEW_AGENT_ID &&
-      entry?.metadata?.reviewer === INDEPENDENT_REVIEW_AGENT_ID &&
+      hardeningReviewSources.has(entry?.source) &&
       ["approved", "changes_requested", "owner_action_required"].includes(entry?.metadata?.outcome)
     ) {
       return entry
@@ -161,6 +165,13 @@ function latestIndependentReviewDecisionEvidence(run) {
   }
 
   return null
+}
+
+function hasConsistentTrustedReviewerIdentity(entry) {
+  return Boolean(
+    hardeningReviewSources.has(entry?.source) &&
+    entry?.source === entry?.metadata?.reviewer
+  )
 }
 
 function matchingReviewFindingsEvidence(run, decisionEvidence) {
@@ -172,8 +183,9 @@ function matchingReviewFindingsEvidence(run, decisionEvidence) {
     const entry = evidence[index]
 
     if (
-      entry?.source === INDEPENDENT_REVIEW_AGENT_ID &&
-      entry?.metadata?.reviewer === INDEPENDENT_REVIEW_AGENT_ID &&
+      hasConsistentTrustedReviewerIdentity(entry) &&
+      entry.source === decisionEvidence.source &&
+      entry.metadata.reviewer === decisionEvidence.metadata?.reviewer &&
       entry?.metadata?.outcome === REVIEW_FINDINGS_EVIDENCE_OUTCOME &&
       entry?.sha === reviewedSha &&
       entry?.metadata?.reviewedSha === reviewedSha &&
@@ -231,6 +243,13 @@ function validateChangesRequestedReview(run) {
     )
   }
 
+  if (!hasConsistentTrustedReviewerIdentity(decisionEvidence)) {
+    throw hardeningError(
+      "HARDENING_REVIEW_FINDINGS_INVALID",
+      "Review findings are missing, malformed, oversized, or unsafe for automated hardening."
+    )
+  }
+
   if (decisionEvidence.metadata?.decision !== REVIEW_DECISIONS.CHANGES_REQUESTED) {
     throw hardeningError(
       "HARDENING_REVIEW_NOT_REMEDIABLE",
@@ -245,6 +264,13 @@ function validateChangesRequestedReview(run) {
     )
   }
 
+  if (!Number.isInteger(decisionEvidence.metadata?.attempt) || decisionEvidence.metadata.attempt <= 0) {
+    throw hardeningError(
+      "HARDENING_REVIEW_FINDINGS_INVALID",
+      "Review findings are missing, malformed, oversized, or unsafe for automated hardening."
+    )
+  }
+
   const findingsEvidence = matchingReviewFindingsEvidence(run, decisionEvidence)
 
   if (!findingsEvidence || findingsEvidence.metadata?.decision !== REVIEW_DECISIONS.CHANGES_REQUESTED || findingsEvidence.metadata?.mergeAllowed !== false) {
@@ -256,6 +282,7 @@ function validateChangesRequestedReview(run) {
 
   const context = {
     reviewedSha,
+    reviewer: decisionEvidence.metadata.reviewer,
     reviewAttempt: decisionEvidence.metadata.attempt,
     blockers: normalizeFindingList(findingsEvidence.metadata?.blockerItems),
     securityFindings: normalizeFindingList(findingsEvidence.metadata?.securityItems),
@@ -314,7 +341,7 @@ function buildHardeningStartedEvidence(run, context, round, startedAt) {
       outcome: "hardening_started",
       codex: CODEX_EXECUTION_ADAPTER_ID,
       tests: AUTOMATED_TEST_RUNNER_ID,
-      reviewer: INDEPENDENT_REVIEW_AGENT_ID
+      reviewer: context.reviewer
     }
   }
 }
@@ -340,7 +367,7 @@ function buildHardeningOwnerActionEvidence(run, context, round, recordedAt) {
       maxRounds: MAX_HARDENING_ROUNDS,
       codex: CODEX_EXECUTION_ADAPTER_ID,
       tests: AUTOMATED_TEST_RUNNER_ID,
-      reviewer: INDEPENDENT_REVIEW_AGENT_ID
+      reviewer: context.reviewer
     }
   }
 }

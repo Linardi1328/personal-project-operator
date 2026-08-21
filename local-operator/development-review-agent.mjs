@@ -17,6 +17,7 @@ import {
 const execFileAsync = promisify(execFile)
 
 export const INDEPENDENT_REVIEW_AGENT_ID = "phase-6f-independent-review-agent"
+export const REMOTE_PR_REVIEW_AGENT_ID = "phase-6g-remote-pr-review-agent"
 export const INDEPENDENT_REVIEW_SANDBOX_ID = "phase-6f-no-outbound-network-review-sandbox"
 export const PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE = "phase-6d-codex-execution-adapter"
 export const PHASE_6E_TEST_EVIDENCE_SOURCE = "phase-6e-automated-test-runner"
@@ -1881,6 +1882,7 @@ async function invokeReviewer(config, invocation, options = {}) {
     stdin: invocation.prompt,
     prompt: invocation.prompt,
     promptHash: invocation.promptHash,
+    reviewedSha: invocation.reviewedSha,
     timeoutMs: config.timeoutMs,
     maxOutputBytes: config.maxOutputBytes,
     env: config.env,
@@ -1888,6 +1890,30 @@ async function invokeReviewer(config, invocation, options = {}) {
   }, options)
 
   return parseReviewerDecision(result, invocation.reviewedSha, config.maxOutputBytes)
+}
+
+export function normalizeTrustedReviewConfig(config) {
+  return normalizeReviewConfig(config)
+}
+
+export async function reconcileTrustedReviewWorkspace(run, options = {}) {
+  return await reconcileWorkspaceForReview(run, options)
+}
+
+export async function collectTrustedReviewDiffFacts(run, location, reviewedSha, options = {}) {
+  return await collectDiffFacts(run, location, reviewedSha, options)
+}
+
+export function trustedReviewReadOnlyPaths(location, facts) {
+  return readOnlyPathsForReview(location, facts)
+}
+
+export async function assertTrustedReviewSandboxActive(config, location, facts, options = {}) {
+  await assertReviewSandboxActive(config, location, facts, options)
+}
+
+export async function invokeTrustedReviewForPrompt(config, invocation, options = {}) {
+  return await invokeReviewer(config, invocation, options)
 }
 
 async function transitionReviewDecision(run, config, execution, decision, options) {

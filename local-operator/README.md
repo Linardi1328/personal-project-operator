@@ -170,6 +170,17 @@ It accepts a Phase 6A run after Phase 6E has transitioned it to `tests_passed`, 
 
 The bounded hardening orchestrator starts only from valid `review_changes_requested` evidence for `run.headSha`, derives remediation context only from durable validated Phase 6F blocker/security/test findings, and coordinates the existing Phase 6D Codex adapter, Phase 6E test runner, and Phase 6F reviewer. Phase 6D hardening prompts must include every validated remediation item and all mandatory isolated-workspace, no-push, no-merge, no-deploy, no-credential, and no-destructive-operation boundaries; only optional task/planning context may be trimmed. Each implementation change must produce a new descendant SHA, rerun Phase 6E tests for that SHA, and rerun independent review for that SHA. Automatic hardening is capped at three durable rounds; non-convergence records owner-action-required evidence and stops. Phase 6F adds no terminal command, `/ppo` route, OpenClaw tool, unbounded hardening loop, GitHub write, PR automation, push, merge, deployment, rollback, production verification, or `/ppo continue`. See [phase-6f-independent-review-agent.md](phase-6f-independent-review-agent.md).
 
+Phase 6G adds deterministic acceptance gates and trusted GitHub delivery libraries:
+
+```text
+local-operator/development-acceptance-gate.mjs
+local-operator/github-delivery-agent.mjs
+```
+
+The acceptance gate is read-only and model-free. It accepts only an exact-version `review_passed` run whose Phase 6D implementation evidence, Phase 6E PASS evidence, Phase 6F APPROVED evidence, and canonical clean Phase 6C workspace all point at the same `run.headSha`. It refuses stale versions, non-allowlisted projects, default branches, dirty or moved workspaces, stale approvals, open ambiguous Codex/test/review/hardening attempts, unresolved blockers/security findings/tests required, owner-action hardening, and non-convergence.
+
+The delivery agent then pushes only `<approved SHA>:refs/heads/<approved Phase 6C branch>` to fixed `origin`, creates or reuses exactly one PR from that branch to `main`, requires the remote PR head to equal the approved SHA, requires exact-head `PPO PR validation`, performs an independent exact-head remote PR review inside the Phase 6F no-network/read-only reviewer sandbox, transitions to `merge_ready` only after every gate passes, and merges only with GitHub expected-head-SHA protection. Ambiguous push, PR creation, and merge writes are reconciled read-only before retry or completion. Metadata-only `merge` evidence stores bounded policy/branch/PR/CI/review/merge facts and excludes credentials, raw logs, raw API bodies, raw stdout/stderr, and arbitrary executable paths. Phase 6G ends at `merged`; it does not deploy, roll back, verify production, add `/ppo continue`, add Telegram/OpenClaw routes, or alter credentials. See [phase-6g-github-delivery.md](phase-6g-github-delivery.md).
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -200,6 +211,9 @@ The bounded hardening orchestrator starts only from valid `review_changes_reques
 - `development-review-agent.mjs`: Phase 6F independent exact-SHA review agent.
 - `development-hardening-orchestrator.mjs`: Phase 6F bounded hardening coordinator that reuses Phase 6D, 6E, and 6F engines.
 - `phase-6f-independent-review-agent.md`: Phase 6F local usage and safety boundary.
+- `development-acceptance-gate.mjs`: Phase 6G deterministic exact-SHA acceptance gate.
+- `github-delivery-agent.mjs`: Phase 6G trusted GitHub delivery, exact-head remote review, and SHA-pinned merge agent.
+- `phase-6g-github-delivery.md`: Phase 6G local usage and safety boundary.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -217,6 +231,7 @@ The bounded hardening orchestrator starts only from valid `review_changes_reques
 - `development-test-runner.test.mjs`: Phase 6E tests for implementation-ready gating, exact expected-version checks, workspace/branch/head reconciliation, Phase 6D implementation evidence matching, trusted test policy enforcement, explicit argv and `shell: false`, sanitized env, no-network sandbox enforcement, bounded attempts, pass/failure/ambiguous outcomes, dirty/changed workspace refusal, reconciliation, SHA-pinned metadata-only evidence, and route/execution-boundary regressions.
 - `development-review-agent.test.mjs`: Phase 6F tests for tests-passed gating, exact expected-version checks, workspace/branch/head/clean reconciliation, exact Phase 6D/6E evidence requirements, trusted reviewer config, no-network plus read-only workspace/source sandbox enforcement, explicit argv and `shell: false`, bounded prompt/output, strict review schema validation, approval/blocker/owner-action outcomes, ambiguous reconciliation, SHA-pinned metadata-only evidence, no workspace or source mutation, and route/execution-boundary regressions.
 - `development-hardening-orchestrator.test.mjs`: Phase 6F hardening tests for review-changes gating, exact expected-version checks, validated durable findings, remediation context derivation, fail-safe hardening prompt bounds, Phase 6D/6E/6F reuse, new descendant SHAs, fresh tests and review, three-round cap, owner escalation, ambiguous-stop reconciliation, metadata-only evidence, and route/execution-boundary regressions.
+- `github-delivery-agent.test.mjs`: Phase 6G tests for deterministic acceptance, exact SHA push, origin/repo identity, no-force/idempotent push, ambiguous push reconciliation, PR create/reuse/refusal/recovery, remote head validation, exact-head CI, independent remote review, merge-ready gating, expected-head merge, ambiguous merge reconciliation, metadata-only evidence, optimistic state, and route/deployment/write-surface exclusions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.

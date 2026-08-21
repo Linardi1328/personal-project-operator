@@ -354,9 +354,33 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Add read-only hardening reconciliation that reports current round, current SHA, latest review decision, remediation pending/in progress, test/review evidence validity, and non-convergence.
 - Keep Phase 6F as a library foundation only. Do not add Phase 6G acceptance gates, PR automation, GitHub writes, push, merge, deployment, rollback, production verification, `/ppo continue`, or Telegram/OpenClaw routes.
 
+### Phase 6G - Acceptance + GitHub Delivery + Exact-Head Remote Review + SHA-Pinned Auto-Merge
+
+- Add deterministic local acceptance gates for a Phase 6A run that has reached `review_passed` through Phase 6F.
+- Require exact expected-version checks and refuse any stale run-state mutation.
+- Allow delivery only when Phase 6D implementation evidence, Phase 6E PASS evidence, Phase 6F APPROVED evidence, the Phase 6C workspace HEAD, and the reviewed/tested implementation SHA all equal `run.headSha`.
+- Reconcile the canonical Phase 6C workspace before delivery and refuse missing, non-canonical, dirty, wrong-branch, wrong-repo, default-branch, detached, or moved-head state.
+- Keep acceptance deterministic. No model call may grant acceptance, and any SHA change invalidates the gate.
+- Add a trusted GitHub delivery agent that operates only on the fixed five-project registry, exact Phase 6C branch, fixed `origin`, and fixed `main` PR base.
+- Push only `<approved implementation SHA>:refs/heads/<approved Phase 6C branch>` with trusted executable argv, `shell: false`, no force push, no arbitrary remotes/URLs, and no caller-supplied command strings.
+- Before and after push, reconcile the remote branch read-only. If a push outcome is ambiguous, do not blindly retry: recover success only when the remote branch is already the expected SHA; allow a bounded safe retry only when the branch is absent; fail closed on unexpected remote SHA.
+- Create or reuse exactly one PR from the approved Phase 6C branch to `main`. Re-query after ambiguous PR creation and recover only a unique exact matching PR; never create duplicates blindly.
+- Require the remote PR repo, base, source branch, open/non-draft state, and head SHA to match the approved implementation SHA before CI or final review.
+- Require the existing `PPO PR validation` workflow for exactly the remote PR head SHA, including successful Node syntax checks, shell syntax checks, full regression suite, and diff whitespace checks. Older-SHA CI, pending CI, missing CI, and failed CI must not merge.
+- Add exact-head remote PR review that reuses Phase 6F reviewer sandbox primitives: read-only workspace/source/Git state, no outbound network, explicit argv, `shell: false`, sanitized env, bounded prompt/output, and strict structured output.
+- Remote review approval must have `reviewedSha` equal to the current PR head SHA, `mergeAllowed=true`, empty blockers/security findings/tests required, exact-head CI PASS, and a still-valid original acceptance gate.
+- Remote `CHANGES_REQUESTED` or `OWNER_ACTION_REQUIRED` must not merge. Technical changes may re-enter the existing Phase 6F hardening lifecycle through explicit `review_changes_requested` evidence; every resulting implementation SHA requires fresh Phase 6E tests, Phase 6F local review, remote branch update, exact-head CI, and remote PR review.
+- Transition `review_passed -> merge_ready` only after acceptance PASS, exact SHA push, PR reconciliation, remote head exactness, exact-head CI PASS, remote review APPROVED, `mergeAllowed=true`, and no unresolved findings.
+- From `merge_ready`, re-fetch PR state, head SHA, base, mergeability, exact-head CI, and remote approval evidence immediately before merging.
+- Merge only with a fixed approved method and GitHub expected-head-SHA protection. Never merge by branch name alone, never merge "latest", and refuse head movement.
+- On ambiguous merge, do not blindly merge again. Re-fetch PR, merged state, merge commit SHA, and `main`; recover only when GitHub proves the expected PR/exact head was merged.
+- Preserve metadata-only `merge` evidence for policy id/hash, implementation SHA, pushed SHA, remote branch SHA, PR number, PR head SHA, CI identity/result, remote reviewed SHA/decision, merge method, merge commit SHA, timestamps, and bounded outcomes.
+- Never persist tokens, authorization headers, credentials, SSH material, raw API bodies, raw CI logs, raw stdout/stderr, arbitrary executable paths, or unbounded errors.
+- Phase 6G ends at `merged`. It must not deploy, restart services, roll back production, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials/authentication, or merge an unreviewed SHA.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add merge, deploy, rollback, and verification agents one boundary at a time.
+- Add deploy, rollback, and verification agents one boundary at a time.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.

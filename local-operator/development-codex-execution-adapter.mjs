@@ -35,6 +35,7 @@ export const CODEX_EXECUTION_POLICY_STORE_DIR = "codex-execution-policy"
 export const CODEX_EXECUTION_SANDBOX_ID = "phase-6d-no-outbound-network-sandbox"
 export const PHASE_6F_HARDENING_ORCHESTRATOR_ID = "phase-6f-bounded-hardening-orchestrator"
 export const PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID = "phase-6f-independent-review-agent"
+export const PHASE_6G_REMOTE_PR_REVIEW_AGENT_ID = "phase-6g-remote-pr-review-agent"
 export const PHASE_6F_REVIEW_FINDINGS_OUTCOME = "review_findings"
 export const CODEX_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
@@ -49,6 +50,10 @@ const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]
 const forbiddenEnvKeyPattern = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|CONFIRM|ASKPASS|GIT_CONFIG|GIT_SSH|SSH_AUTH_SOCK)/u
 const defaultExecutionPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 const linuxDirectSshExecutablePath = "/usr/bin/ssh"
+const hardeningReviewSources = new Set([
+  PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID,
+  PHASE_6G_REMOTE_PR_REVIEW_AGENT_ID
+])
 const noOutboundNetworkSandboxProfile = `(version 1)
 (allow default)
 (deny network*)
@@ -272,15 +277,23 @@ function latestHardeningStartedEvidence(run) {
   return null
 }
 
-function latestReviewFindingsEvidence(run, reviewedSha, attempt) {
+function hasConsistentTrustedReviewerIdentity(entry) {
+  return Boolean(
+    hardeningReviewSources.has(entry?.source) &&
+    entry?.source === entry?.metadata?.reviewer
+  )
+}
+
+function latestReviewFindingsEvidence(run, reviewedSha, attempt, reviewer) {
   const evidence = Array.isArray(run?.evidence?.review) ? run.evidence.review : []
 
   for (let index = evidence.length - 1; index >= 0; index -= 1) {
     const entry = evidence[index]
 
     if (
-      entry?.source === PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID &&
-      entry?.metadata?.reviewer === PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID &&
+      hasConsistentTrustedReviewerIdentity(entry) &&
+      entry.source === reviewer &&
+      entry.metadata.reviewer === reviewer &&
       entry?.metadata?.outcome === PHASE_6F_REVIEW_FINDINGS_OUTCOME &&
       entry?.sha === reviewedSha &&
       entry?.metadata?.reviewedSha === reviewedSha &&
@@ -325,6 +338,7 @@ function deriveHardeningRemediationContext(run) {
   }
 
   const attempt = started.metadata?.reviewAttempt
+  const reviewer = started.metadata?.reviewer
 
   if (!Number.isInteger(attempt) || attempt <= 0) {
     throw adapterError(
@@ -333,7 +347,14 @@ function deriveHardeningRemediationContext(run) {
     )
   }
 
-  const findings = latestReviewFindingsEvidence(run, reviewedSha, attempt)
+  if (!hardeningReviewSources.has(reviewer)) {
+    throw adapterError(
+      "CODEX_PROMPT_UNSAFE",
+      "Codex prompt source is unsafe; execution refused."
+    )
+  }
+
+  const findings = latestReviewFindingsEvidence(run, reviewedSha, attempt, reviewer)
 
   if (!findings || findings.metadata?.decision !== "CHANGES_REQUESTED" || findings.metadata?.mergeAllowed !== false) {
     throw adapterError(

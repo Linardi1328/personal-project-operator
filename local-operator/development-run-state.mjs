@@ -74,6 +74,7 @@ export const DEVELOPMENT_RUN_EVIDENCE_KINDS = Object.freeze([
   "implementation",
   "review",
   "test",
+  "merge",
   "deploy",
   "verification"
 ])
@@ -99,7 +100,7 @@ export const ALLOWED_DEVELOPMENT_RUN_TRANSITIONS = Object.freeze({
   tests_passed: Object.freeze(["review_in_progress", "cancelled", "failed"]),
   review_in_progress: Object.freeze(["review_changes_requested", "review_passed", "cancelled", "failed"]),
   review_changes_requested: Object.freeze(["implementation_in_progress", "cancelled", "failed"]),
-  review_passed: Object.freeze(["merge_ready", "cancelled", "failed"]),
+  review_passed: Object.freeze(["review_changes_requested", "merge_ready", "cancelled", "failed"]),
   merge_ready: Object.freeze(["merged", "cancelled", "failed"]),
   merged: Object.freeze(["deploy_in_progress", "cancelled", "failed"]),
   deploy_in_progress: Object.freeze(["deploy_failed", "deployed", "cancelled", "failed"]),
@@ -114,7 +115,22 @@ export const ALLOWED_DEVELOPMENT_RUN_TRANSITIONS = Object.freeze({
 
 const statusSet = new Set(DEVELOPMENT_RUN_STATUSES)
 const evidenceKindSet = new Set(DEVELOPMENT_RUN_EVIDENCE_KINDS)
-const legacyEvidenceKindKeys = DEVELOPMENT_RUN_EVIDENCE_KINDS.filter((kind) => kind !== "planning")
+const phase6ALegacyEvidenceKindKeys = Object.freeze([
+  "implementation",
+  "review",
+  "test",
+  "deploy",
+  "verification"
+])
+const prePhase6GEvidenceKindKeys = Object.freeze([
+  "planning",
+  "implementation",
+  "review",
+  "test",
+  "deploy",
+  "verification"
+])
+const phase6GLegacyPlanningEvidenceKindKeys = DEVELOPMENT_RUN_EVIDENCE_KINDS.filter((kind) => kind !== "planning")
 const stageSet = new Set(DEVELOPMENT_RUN_STAGES)
 const shaPattern = /^[a-f0-9]{40}$/iu
 const actorPattern = /^[A-Za-z0-9_.:-]{1,80}$/u
@@ -161,7 +177,9 @@ const attemptKeyByEnteringStatus = Object.freeze({
 const sameStatusAttemptStatuses = new Set([
   "implementation_in_progress",
   "tests_in_progress",
-  "review_changes_requested"
+  "review_changes_requested",
+  "review_passed",
+  "merge_ready"
 ])
 
 export class DevelopmentRunStateError extends Error {
@@ -1176,7 +1194,9 @@ function validateAttemptShape(attempts) {
 function validateEvidenceShape(evidence) {
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || !(
     hasOnlyKeys(evidence, DEVELOPMENT_RUN_EVIDENCE_KINDS) ||
-    hasOnlyKeys(evidence, legacyEvidenceKindKeys)
+    hasOnlyKeys(evidence, phase6GLegacyPlanningEvidenceKindKeys) ||
+    hasOnlyKeys(evidence, prePhase6GEvidenceKindKeys) ||
+    hasOnlyKeys(evidence, phase6ALegacyEvidenceKindKeys)
   )) {
     throw runStateError(
       "RUN_RECORD_INVALID",
@@ -1184,8 +1204,10 @@ function validateEvidenceShape(evidence) {
     )
   }
 
-  if (!Object.hasOwn(evidence, "planning")) {
-    evidence.planning = []
+  for (const kind of DEVELOPMENT_RUN_EVIDENCE_KINDS) {
+    if (!Object.hasOwn(evidence, kind)) {
+      evidence[kind] = []
+    }
   }
 
   for (const kind of DEVELOPMENT_RUN_EVIDENCE_KINDS) {
