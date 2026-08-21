@@ -81,6 +81,17 @@ Allowed in Phase 6C only as deterministic local workspace preparation:
 - transition the run only through `planned -> implementation_in_progress`
 - store metadata-only SHA-pinned implementation workspace evidence
 
+Allowed in Phase 6D only as bounded local Codex execution:
+
+- read one `implementation_in_progress` Phase 6A run
+- reconcile one verified Phase 6C workspace
+- invoke trusted locally configured Codex with explicit argv, `shell: false`, and `cwd` set to the verified workspace
+- pass a deterministic bounded prompt without secrets or confirmation values
+- verify a new clean local descendant commit
+- transition the run only through `implementation_in_progress -> implementation_ready`
+- store metadata-only SHA-pinned implementation evidence
+- inspect interrupted Codex execution state read-only
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code
@@ -96,8 +107,9 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - merge PRs
 - change repo settings
 - execute planner behavior beyond Phase 6B deterministic next-stage planning
-- execute Codex, test, review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
-- mutate files inside Phase 6C workspaces
+- execute Codex outside the Phase 6D bounded execution adapter
+- execute test, review, merge, deployment, rollback, or verification agents from Phase 6A run-state records
+- mutate files inside Phase 6C workspaces outside the Phase 6D bounded execution adapter
 
 ## Chat platform permissions
 

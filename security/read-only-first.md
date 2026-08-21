@@ -158,6 +158,16 @@ The manager may read one `planned` Phase 6A run, verify one configured allowlist
 
 This exception does not execute implementation. It does not invoke Codex or models, edit workspace files, run tests, review changes, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
+## Phase 6D Codex execution exception
+
+Phase 6D allows bounded local Codex execution for an implementation run:
+
+- `local-operator/development-codex-execution-adapter.mjs`
+
+The adapter may read one `implementation_in_progress` Phase 6A run, reconcile one verified Phase 6C workspace, invoke trusted locally configured Codex with `cwd` set to that workspace, verify a new clean local descendant commit, and transition only `implementation_in_progress -> implementation_ready`.
+
+This exception does not run automated tests, review changes, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -169,7 +179,8 @@ Examples requiring explicit approval:
 - creating project notes outside the Phase 5C terminal path or Phase 5D approval-gated chat path
 - executing planner behavior beyond Phase 6B deterministic next-stage planning
 - creating or managing workspaces outside the Phase 6C isolated workspace manager
-- executing Codex/test/review/merge/deploy/rollback/verification agents from Phase 6A run-state records
+- executing Codex outside the Phase 6D bounded execution adapter
+- executing test/review/merge/deploy/rollback/verification agents from Phase 6A run-state records
 - restarting services
 - publishing content
 - sending messages

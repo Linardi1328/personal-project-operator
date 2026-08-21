@@ -1000,6 +1000,20 @@ function workspaceMetadata(run, branchName, paths) {
   }
 }
 
+async function resolveImplementationWorkspaceLocationInternal(run, options = {}) {
+  const project = verifyRunProject(run)
+  const branchName = run.branch || makeDevelopmentWorkspaceBranchName(run)
+  const registryEntry = resolveRegistryEntry(project.id, options)
+  const paths = await resolveWorkspacePaths(registryEntry, run, { allowExistingWorkspace: true })
+
+  return {
+    ...workspaceMetadata(run, branchName, paths),
+    sourceRepoPath: paths.sourceRepoPath,
+    workspaceRoot: paths.workspaceRoot,
+    workspacePath: paths.workspacePath
+  }
+}
+
 async function prepareImplementationWorkspaceInternal(runId, options = {}) {
   const expectedVersion = options.expectedVersion
 
@@ -1175,6 +1189,14 @@ export async function prepareImplementationWorkspace(runId, options = {}) {
 export async function inspectImplementationWorkspace(runId, options = {}) {
   try {
     return await inspectImplementationWorkspaceInternal(runId, options)
+  } catch (error) {
+    throw safeWorkspaceFailure(error)
+  }
+}
+
+export async function resolveImplementationWorkspaceLocation(run, options = {}) {
+  try {
+    return await resolveImplementationWorkspaceLocationInternal(run, options)
   } catch (error) {
     throw safeWorkspaceFailure(error)
   }

@@ -67,6 +67,8 @@ Phase 6B planner evidence uses the Phase 6A run-state store. It may store plan h
 
 Phase 6C workspace evidence uses the Phase 6A run-state store. It may store project id, approved repo identity, base SHA, deterministic branch name, workspace id, bounded workspace reference, manager id, and verification timestamp. It must not store credentials, access tokens, passwords, authorization headers, raw Git stdout/stderr, raw Git failures, arbitrary user-controlled paths, source repository paths, task text, terminal confirmation values, stack traces, or unbounded logs.
 
+Phase 6D Codex execution uses a deterministic bounded prompt generated from the Phase 6A run task and metadata-only planning evidence. The prompt must not include credentials, tokens, terminal confirmation values, environment dumps, raw logs, raw errors, arbitrary paths, or secrets. Phase 6D implementation evidence may store project id, approved repo identity, branch, workspace id/reference, resulting implementation SHA, adapter id, attempt number, prompt hash, timestamps, and bounded outcome counts. It must not store prompt contents, raw Codex stdout/stderr, raw Codex failures, credentials, tokens, source repository paths, workspace absolute paths, or unbounded logs.
+
 ## Documentation examples
 
 Allowed:

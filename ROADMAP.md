@@ -266,10 +266,28 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Fail closed on ambiguous branch/worktree creation outcomes; clean up only when the partial outcome is definite.
 - Keep Phase 6C as a library foundation only. Do not add Codex execution, implementation-file edits, test execution, automated review/hardening, PR automation, GitHub writes, push, merge, deployment, rollback, `/ppo continue`, or Telegram/OpenClaw routes.
 
+### Phase 6D - Bounded Codex execution adapter foundation
+
+- Add a local-only `local-operator/development-codex-execution-adapter.mjs` Codex execution adapter.
+- Reuse the Phase 6A run-state store and Phase 6C workspace manager; do not create a second orchestration store.
+- Accept only runs already in `implementation_in_progress`.
+- Require exact expected-version checks before transitioning run state.
+- Reconcile the Phase 6C workspace before execution and refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces.
+- Require workspace HEAD to match the run head/base state before Codex starts.
+- Read Codex executable path, argv, timeout, and environment only from trusted local configuration.
+- Invoke Codex with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified isolated workspace.
+- Generate a deterministic bounded prompt from the run task and planning evidence metadata, including explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries.
+- Treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous and require reconciliation before retry.
+- Do not store prompt contents, raw Codex stdout/stderr, raw failures, credentials, tokens, confirmation values, arbitrary paths, or unbounded logs in run state.
+- Verify Git state independently after a successful Codex exit: same managed worktree, same isolated branch, source/default worktree unchanged, remote-tracking state unchanged locally, full resulting SHA, descendant of run base SHA, clean worktree, and at least one local implementation commit.
+- Transition only `implementation_in_progress -> implementation_ready` after verification and update `run.headSha` to the verified implementation SHA.
+- Attach metadata-only SHA-pinned `implementation` evidence with adapter id, attempt number, branch, workspace id/reference, prompt hash, timestamps, and bounded outcome metadata.
+- Add read-only reconciliation helpers for interrupted Codex execution.
+- Keep Phase 6D as a library foundation only. Do not add automated test execution, independent review, hardening loops, PR automation, GitHub writes, push, merge, deployment, rollback, production verification, `/ppo continue`, or Telegram/OpenClaw routes.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add Codex implementation execution with strict project/repo and budget gates.
 - Add test, review, merge, deploy, rollback, and verification agents one boundary at a time.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.
