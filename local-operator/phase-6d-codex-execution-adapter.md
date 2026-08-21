@@ -16,9 +16,10 @@ Codex execution requires:
 - exact expected run-state version
 - a trusted Phase 6C project workspace registry
 - trusted local Codex executable/configuration
+- trusted local remote Git write denial policy configuration
 - a verified Phase 6C workspace for the run
 
-Codex executable paths, argv, timeouts, and environment values come from trusted local configuration only. They do not come from user text, task text, planner output, project Markdown, GitHub facts, or chat.
+Codex executable paths, Git executable paths, argv, timeouts, environment values, and remote-write policy settings come from trusted local configuration only. They do not come from user text, task text, planner output, project Markdown, GitHub facts, or chat.
 
 ## Behavior
 
@@ -31,25 +32,27 @@ The adapter:
 - requires workspace HEAD to equal `run.headSha` or `run.baseSha` before Codex starts
 - builds a deterministic bounded prompt from run task and planning evidence metadata
 - includes explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation boundaries in the prompt
-- invokes Codex with explicit argv, `shell: false`, bounded timeout, bounded output capture, and `cwd` set to the verified isolated workspace
+- establishes a remote Git write denial policy before Codex starts and fails closed if the policy cannot be verified
+- invokes Codex with explicit argv, `shell: false`, bounded timeout, bounded output capture, policy-controlled environment, and `cwd` set to the verified isolated workspace
+- records each definitive implementation attempt durably in the Phase 6A run record with exact expected-version checks and a small explicit maximum
 - does not store prompt contents or raw Codex stdout/stderr
 - treats timeout, signal, killed, interrupted, overflow, or uncertain completion as ambiguous
 - independently verifies Git state after a successful Codex exit
 - requires a clean worktree and a new local implementation commit
 - requires final HEAD to be a full SHA descended from the run base SHA
 - requires the isolated branch to remain unchanged by name
-- verifies the source/default worktree and remote-tracking state are unchanged locally
+- verifies the source/default worktree is unchanged locally
 - transitions `implementation_in_progress -> implementation_ready` only after verification
 - updates `run.headSha` to the verified implementation SHA
 - records metadata-only SHA-pinned implementation evidence
 
-The adapter contract requires a local commit. Codex prose claiming success is ignored.
+The adapter contract requires a local commit. Codex prose claiming success is ignored. Unchanged local refs or remote-tracking refs are not used as proof that no remote push happened; the remote-write boundary is established before Codex is spawned.
 
 ## Recovery
 
 `reconcileCodexExecution()` is read-only. It reports whether the workspace is still at the expected run head, has advanced to a descendant implementation commit, or is mismatched.
 
-If execution is ambiguous, the run state is left unchanged and owner reconciliation is required before retry.
+If execution is ambiguous, the run remains in `implementation_in_progress` with the reserved attempt recorded as open, and owner reconciliation is required before retry. Definitive failures record bounded metadata-only failure evidence so a later retry must use the new expected version and increments the persistent implementation attempt counter.
 
 ## Boundary
 

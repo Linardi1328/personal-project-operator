@@ -26,6 +26,7 @@ import {
 } from "./development-workspace-manager.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
+  MAX_CODEX_IMPLEMENTATION_ATTEMPTS,
   MAX_CODEX_OUTPUT_BYTES,
   MAX_CODEX_PROMPT_CHARS,
   buildCodexImplementationPrompt,
@@ -35,6 +36,7 @@ import {
 } from "./development-codex-execution-adapter.mjs"
 
 const execFileAsync = promisify(execFile)
+const TRUSTED_GIT_EXECUTABLE = process.env.PPO_TEST_GIT_EXECUTABLE || "/usr/bin/git"
 const PROJECT_IDS = [
   "khlim-assist",
   "ledgerpilot-ai",
@@ -165,9 +167,14 @@ async function makeImplementationFixture(options = {}) {
 function trustedCodexConfig(overrides = {}) {
   return {
     executablePath: process.execPath,
+    gitExecutablePath: TRUSTED_GIT_EXECUTABLE,
     args: ["--version"],
     timeoutMs: 1000,
     env: {},
+    remoteGitWritePolicy: {
+      mode: "deny",
+      enforcement: "adapter-git-wrapper"
+    },
     ...overrides
   }
 }
@@ -330,6 +337,10 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
   assert.deepEqual(calls[0].args, ["--eval", "process.exit(0)"])
   assert.equal(calls[0].executablePath, process.execPath)
   assert.match(calls[0].promptHash, /^[a-f0-9]{64}$/u)
+  assert.equal(calls[0].remoteGitWritePolicy.mode, "deny")
+  assert.equal(calls[0].remoteGitWritePolicy.enforcement, "adapter-git-wrapper")
+  assert.match(calls[0].env.PATH, /codex-execution-policy/u)
+  assert.equal(calls[0].env.GIT_CONFIG_VALUE_0, "never")
 
   await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
     expectedVersion: result.run.version,
@@ -346,8 +357,70 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
     expectedVersion: result.run.version,
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
+    codexConfig: trustedCodexConfig({
+      remoteGitWritePolicy: undefined
+    }),
+    codexRunner: async () => ({ exitCode: 0 })
+  }), "CODEX_REMOTE_POLICY_REQUIRED")
+
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: result.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
     codexRunner: async () => ({ exitCode: 0 })
   }), "CODEX_CONFIG_REQUIRED")
+})
+
+test("remote Git write capability is denied by adapter execution policy", async () => {
+  const fixture = await makeImplementationFixture()
+  let pushDenied = false
+  const result = await executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedCodexConfig(),
+    codexRunner: async (invocation) => {
+      assert.equal(invocation.cwd, fixture.location.workspacePath)
+      assert.equal(invocation.shell, false)
+      assert.equal(invocation.remoteGitWritePolicy.mode, "deny")
+      assert.equal(invocation.remoteGitWritePolicy.enforcement, "adapter-git-wrapper")
+
+      await assert.rejects(
+        execFileAsync("git", ["push", "origin", "HEAD"], {
+          cwd: invocation.cwd,
+          env: invocation.env,
+          encoding: "utf8",
+          maxBuffer: 1024,
+          shell: false
+        }),
+        (error) => error.code === 126
+      )
+      pushDenied = true
+
+      await writeFile(join(invocation.cwd, "policy-local-change.txt"), "local only\n", "utf8")
+      await execFileAsync("git", ["add", "policy-local-change.txt"], {
+        cwd: invocation.cwd,
+        env: invocation.env,
+        encoding: "utf8",
+        maxBuffer: 128 * 1024,
+        shell: false
+      })
+      await execFileAsync("git", ["commit", "-m", "codex local policy implementation"], {
+        cwd: invocation.cwd,
+        env: invocation.env,
+        encoding: "utf8",
+        maxBuffer: 128 * 1024,
+        shell: false
+      })
+
+      return { exitCode: 0, stdout: "done", stderr: "" }
+    },
+    now: fixture.now
+  })
+
+  assert.equal(pushDenied, true)
+  assert.equal(result.run.status, "implementation_ready")
+  assert.equal(result.run.evidence.implementation.at(-1).metadata.remotePolicy, "deny")
 })
 
 test("implementation prompt is deterministic, bounded, scoped, and secret-excluding", async () => {
@@ -414,8 +487,10 @@ test("successful Codex execution is independently verified and transitions to im
   assert.equal(evidence.metadata.workspaceId, fixture.location.workspaceId)
   assert.equal(evidence.metadata.workspaceRef, fixture.location.workspaceRef)
   assert.equal(evidence.metadata.branch, fixture.run.branch)
-  assert.equal(evidence.metadata.attempt, fixture.run.attempts.implementation)
+  assert.equal(evidence.metadata.attempt, fixture.run.attempts.implementation + 1)
+  assert.equal(result.implementation.attempt, evidence.metadata.attempt)
   assert.equal(evidence.metadata.outcome, "implementation_ready")
+  assert.equal(evidence.metadata.remotePolicy, "deny")
   assert.doesNotMatch(JSON.stringify(result.run), /SENSITIVE_TEST_SENTINEL|gho_fake_token|raw stderr ignored/u)
 
   const reloaded = await readDevelopmentRun(fixture.run.runId, {
@@ -423,9 +498,10 @@ test("successful Codex execution is independently verified and transitions to im
   })
   assert.equal(reloaded.status, "implementation_ready")
   assert.equal(reloaded.headSha, finalHead)
+  assert.equal(reloaded.attempts.implementation, fixture.run.attempts.implementation + 1)
 })
 
-test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run state unchanged", async () => {
+test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run in progress with failed-attempt evidence", async () => {
   const noop = await makeImplementationFixture()
   await assertRejectsCode(executeCodexImplementation(noop.run.runId, {
     expectedVersion: noop.run.version,
@@ -434,7 +510,10 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
     codexConfig: trustedCodexConfig(),
     codexRunner: async () => ({ exitCode: 0, stdout: "claimed success" })
   }), "CODEX_NO_IMPLEMENTATION")
-  assert.equal((await readDevelopmentRun(noop.run.runId, { writeDataDir: noop.writeDataDir })).status, "implementation_in_progress")
+  const noopReloaded = await readDevelopmentRun(noop.run.runId, { writeDataDir: noop.writeDataDir })
+  assert.equal(noopReloaded.status, "implementation_in_progress")
+  assert.equal(noopReloaded.attempts.implementation, noop.run.attempts.implementation + 1)
+  assert.equal(noopReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
 
   const nonzero = await makeImplementationFixture()
   await assertRejectsCode(executeCodexImplementation(nonzero.run.runId, {
@@ -444,7 +523,10 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
     codexConfig: trustedCodexConfig(),
     codexRunner: async () => ({ exitCode: 1, stdout: "failed" })
   }), "CODEX_EXECUTION_FAILED")
-  assert.equal((await readDevelopmentRun(nonzero.run.runId, { writeDataDir: nonzero.writeDataDir })).status, "implementation_in_progress")
+  const nonzeroReloaded = await readDevelopmentRun(nonzero.run.runId, { writeDataDir: nonzero.writeDataDir })
+  assert.equal(nonzeroReloaded.status, "implementation_in_progress")
+  assert.equal(nonzeroReloaded.attempts.implementation, nonzero.run.attempts.implementation + 1)
+  assert.equal(nonzeroReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
 
   const dirty = await makeImplementationFixture()
   await assertRejectsCode(executeCodexImplementation(dirty.run.runId, {
@@ -457,7 +539,10 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
       return { exitCode: 0 }
     }
   }), "CODEX_IMPLEMENTATION_INVALID")
-  assert.equal((await readDevelopmentRun(dirty.run.runId, { writeDataDir: dirty.writeDataDir })).status, "implementation_in_progress")
+  const dirtyReloaded = await readDevelopmentRun(dirty.run.runId, { writeDataDir: dirty.writeDataDir })
+  assert.equal(dirtyReloaded.status, "implementation_in_progress")
+  assert.equal(dirtyReloaded.attempts.implementation, dirty.run.attempts.implementation + 1)
+  assert.equal(dirtyReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
 
   const sourceChanged = await makeImplementationFixture()
   await assertRejectsCode(executeCodexImplementation(sourceChanged.run.runId, {
@@ -469,10 +554,90 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
       sourceRepoPath: sourceChanged.sourceRepoPath
     })
   }), "CODEX_SOURCE_CHANGED")
-  assert.equal((await readDevelopmentRun(sourceChanged.run.runId, { writeDataDir: sourceChanged.writeDataDir })).status, "implementation_in_progress")
+  const sourceChangedReloaded = await readDevelopmentRun(sourceChanged.run.runId, { writeDataDir: sourceChanged.writeDataDir })
+  assert.equal(sourceChangedReloaded.status, "implementation_in_progress")
+  assert.equal(sourceChangedReloaded.attempts.implementation, sourceChanged.run.attempts.implementation + 1)
+  assert.equal(sourceChangedReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
 })
 
-test("ambiguous Codex timeout, signal, interruption, and output overflow leave state unchanged", async () => {
+test("definitive implementation retries persist attempt counters, survive reload, and enforce max", async () => {
+  const fixture = await makeImplementationFixture()
+  let current = fixture.run
+  let calls = 0
+
+  while (current.attempts.implementation < MAX_CODEX_IMPLEMENTATION_ATTEMPTS) {
+    await assertRejectsCode(executeCodexImplementation(current.runId, {
+      expectedVersion: current.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      codexConfig: trustedCodexConfig(),
+      codexRunner: async () => {
+        calls += 1
+        return { exitCode: 1, stdout: "definitive failure" }
+      }
+    }), "CODEX_EXECUTION_FAILED")
+
+    const reloaded = await readDevelopmentRun(current.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    assert.equal(reloaded.status, "implementation_in_progress")
+    assert.equal(reloaded.attempts.implementation, current.attempts.implementation + 1)
+    assert.equal(reloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
+    current = reloaded
+  }
+
+  await assertRejectsCode(executeCodexImplementation(current.runId, {
+    expectedVersion: current.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedCodexConfig(),
+    codexRunner: async () => {
+      calls += 1
+      return { exitCode: 1 }
+    }
+  }), "CODEX_ATTEMPT_LIMIT_REACHED")
+
+  assert.equal(calls, MAX_CODEX_IMPLEMENTATION_ATTEMPTS - fixture.run.attempts.implementation)
+})
+
+test("concurrent Codex execution attempts use optimistic concurrency before spawn", async () => {
+  const fixture = await makeImplementationFixture()
+  const calls = []
+  const results = await Promise.allSettled([
+    executeCodexImplementation(fixture.run.runId, {
+      expectedVersion: fixture.run.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      codexConfig: trustedCodexConfig(),
+      codexRunner: makeCommitRunner(calls, {
+        fileName: "concurrent-a.txt",
+        content: "a\n",
+        message: "codex implementation a"
+      })
+    }),
+    executeCodexImplementation(fixture.run.runId, {
+      expectedVersion: fixture.run.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      codexConfig: trustedCodexConfig(),
+      codexRunner: makeCommitRunner(calls, {
+        fileName: "concurrent-b.txt",
+        content: "b\n",
+        message: "codex implementation b"
+      })
+    })
+  ])
+
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1)
+  assert.equal(results.filter((result) => (
+    result.status === "rejected" &&
+    result.reason instanceof DevelopmentRunStateError &&
+    result.reason.code === "STALE_RUN_VERSION"
+  )).length, 1)
+  assert.equal(calls.length, 1)
+})
+
+test("ambiguous Codex timeout, signal, interruption, and output overflow require reconciliation before retry", async () => {
   for (const outcome of [
     { killed: true },
     { signal: "SIGTERM" },
@@ -480,13 +645,17 @@ test("ambiguous Codex timeout, signal, interruption, and output overflow leave s
     { stdout: "x".repeat(MAX_CODEX_OUTPUT_BYTES + 1) }
   ]) {
     const fixture = await makeImplementationFixture()
+    let calls = 0
 
     await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
       expectedVersion: fixture.run.version,
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry,
       codexConfig: trustedCodexConfig(),
-      codexRunner: async () => outcome
+      codexRunner: async () => {
+        calls += 1
+        return outcome
+      }
     }), "CODEX_EXECUTION_AMBIGUOUS")
 
     const reloaded = await readDevelopmentRun(fixture.run.runId, {
@@ -495,6 +664,21 @@ test("ambiguous Codex timeout, signal, interruption, and output overflow leave s
 
     assert.equal(reloaded.status, "implementation_in_progress")
     assert.equal(reloaded.headSha, fixture.run.headSha)
+    assert.equal(reloaded.attempts.implementation, fixture.run.attempts.implementation + 1)
+    assert.equal(reloaded.evidence.implementation.at(-1).metadata.outcome, "execution_started")
+
+    await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+      expectedVersion: reloaded.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      codexConfig: trustedCodexConfig(),
+      codexRunner: async () => {
+        calls += 1
+        return { exitCode: 0 }
+      }
+    }), "CODEX_RECONCILIATION_REQUIRED")
+
+    assert.equal(calls, 1)
   }
 })
 
@@ -561,6 +745,8 @@ test("Phase 6D adds no GitHub write, deployment, PR automation, or OpenClaw rout
   assert.equal(moduleSource.includes("systemctl"), false)
   assert.equal(moduleSource.includes("/ppo continue"), false)
   assert.equal(moduleSource.includes("workflow_dispatch"), false)
+  assert.equal(moduleSource.includes("remoteRefsHash"), false)
+  assert.equal(moduleSource.includes("for-each-ref"), false)
 
   const fixture = await makeImplementationFixture()
   assert.equal((await stat(fixture.location.workspacePath)).isDirectory(), true)

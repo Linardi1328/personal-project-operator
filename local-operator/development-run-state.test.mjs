@@ -14,6 +14,7 @@ import {
   createDevelopmentRun,
   formatDevelopmentRunStateError,
   makeDevelopmentRunId,
+  recordDevelopmentRunProgress,
   readDevelopmentRun,
   resolveDevelopmentRunProject,
   transitionDevelopmentRun
@@ -307,6 +308,55 @@ test("stale and concurrent optimistic updates are refused", async () => {
     result.reason instanceof DevelopmentRunStateError &&
     result.reason.code === "STALE_RUN_VERSION"
   )).length, 1)
+})
+
+test("same-status implementation progress updates are bounded and optimistic", async () => {
+  const fixture = await runToStatus("implementation_in_progress")
+  const next = await recordDevelopmentRunProgress(fixture.record.runId, {
+    expectedVersion: fixture.record.version,
+    status: "implementation_in_progress",
+    actor: "implementation-agent",
+    reason: "implementation-attempt-reserved",
+    incrementAttempt: true,
+    evidence: {
+      kind: "implementation",
+      sha: fixture.record.baseSha,
+      source: "implementation-agent",
+      summary: "Implementation attempt metadata.",
+      metadata: {
+        outcome: "started",
+        attempt: fixture.record.attempts.implementation + 1
+      }
+    }
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+
+  assert.equal(next.status, "implementation_in_progress")
+  assert.equal(next.version, fixture.record.version + 1)
+  assert.equal(next.history.at(-1).fromStatus, "implementation_in_progress")
+  assert.equal(next.history.at(-1).toStatus, "implementation_in_progress")
+  assert.equal(next.attempts.implementation, fixture.record.attempts.implementation + 1)
+
+  await assertRejectsCode(recordDevelopmentRunProgress(fixture.record.runId, {
+    expectedVersion: fixture.record.version,
+    status: "implementation_in_progress",
+    actor: "stale-agent"
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  }), "STALE_RUN_VERSION")
+
+  const planned = await runToStatus("planned")
+  await assertRejectsCode(recordDevelopmentRunProgress(planned.record.runId, {
+    expectedVersion: planned.record.version,
+    status: "planned",
+    actor: "wrong-stage"
+  }, {
+    writeDataDir: planned.writeDataDir,
+    now: planned.now
+  }), "INVALID_RUN_TRANSITION")
 })
 
 test("atomic durable records leave canonical JSON and version markers without temp files", async () => {

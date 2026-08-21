@@ -232,8 +232,10 @@ The adapter must:
 - refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces
 - require workspace HEAD to match the run head/base state before Codex starts
 - read Codex executable path, argv, timeout, and environment only from trusted local configuration
+- establish and verify a remote Git write denial policy before spawning Codex
 - invoke Codex with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified workspace
 - generate a deterministic bounded prompt with no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries
+- record bounded implementation attempts durably in the Phase 6A run record
 - treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous
 - verify resulting Git state independently rather than trusting Codex prose
 - require a clean workspace and a new local descendant implementation commit

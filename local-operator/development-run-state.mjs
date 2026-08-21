@@ -157,6 +157,9 @@ const attemptKeyByEnteringStatus = Object.freeze({
   deploy_in_progress: "deploy",
   verification_in_progress: "verification"
 })
+const sameStatusAttemptStatuses = new Set([
+  "implementation_in_progress"
+])
 
 export class DevelopmentRunStateError extends Error {
   constructor(code, safeMessage) {
@@ -515,13 +518,17 @@ function emptyEvidence() {
 }
 
 function incrementAttempts(attempts, toStatus) {
-  const next = { ...attempts }
   const key = attemptKeyByEnteringStatus[toStatus]
 
   if (!key) {
-    return next
+    return { ...attempts }
   }
 
+  return incrementAttemptKey(attempts, key)
+}
+
+function incrementAttemptKey(attempts, key) {
+  const next = { ...attempts }
   next[key] += 1
 
   if (next[key] > MAX_DEVELOPMENT_RUN_STAGE_ATTEMPTS) {
@@ -532,6 +539,26 @@ function incrementAttempts(attempts, toStatus) {
   }
 
   return next
+}
+
+function incrementSameStatusAttempt(attempts, status) {
+  if (!sameStatusAttemptStatuses.has(status)) {
+    throw runStateError(
+      "INVALID_RUN_TRANSITION",
+      "Development run progress update is not allowed for this lifecycle status."
+    )
+  }
+
+  const key = attemptKeyByEnteringStatus[status]
+
+  if (!key) {
+    throw runStateError(
+      "INVALID_RUN_TRANSITION",
+      "Development run progress update is not allowed for this lifecycle status."
+    )
+  }
+
+  return incrementAttemptKey(attempts, key)
 }
 
 function normalizeMetadataValue(value) {
@@ -1002,6 +1029,73 @@ function applyTransition(record, {
   }
 }
 
+function applyProgressUpdate(record, {
+  branch,
+  headSha,
+  evidence,
+  actor,
+  reason,
+  now,
+  incrementAttempt = false
+}) {
+  if (!sameStatusAttemptStatuses.has(record.status)) {
+    throw runStateError(
+      "INVALID_RUN_TRANSITION",
+      "Development run progress update is not allowed for this lifecycle status."
+    )
+  }
+
+  if (record.history.length >= MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES) {
+    throw runStateError(
+      "RUN_HISTORY_LIMIT_REACHED",
+      "Development run history limit was reached; no run-state write was attempted."
+    )
+  }
+
+  const nextVersion = record.version + 1
+  const nextAttempts = incrementAttempt
+    ? incrementSameStatusAttempt(record.attempts, record.status)
+    : { ...record.attempts }
+  const nextBranch = branch === undefined ? record.branch : normalizeBranch(branch)
+  const nextHeadSha = headSha === undefined ? record.headSha : normalizeOptionalSha(headSha, "Head SHA")
+  const nextEvidence = appendEvidence(record.evidence, evidence)
+  const updatedAt = timestamp(now)
+  const event = buildHistoryEvent({
+    version: nextVersion,
+    timestamp: updatedAt,
+    actor,
+    reason,
+    project: record.project,
+    task: record.task,
+    baseSha: record.baseSha,
+    fromStatus: record.status,
+    toStatus: record.status,
+    fromStage: record.stage,
+    toStage: record.stage,
+    branch: nextBranch,
+    headSha: nextHeadSha,
+    evidence,
+    attempts: nextAttempts,
+    previousHistoryHash: record.historyHash
+  })
+
+  return {
+    ...record,
+    version: nextVersion,
+    branch: nextBranch,
+    headSha: nextHeadSha,
+    attempts: nextAttempts,
+    timestamps: {
+      ...record.timestamps,
+      updatedAt,
+      statusChangedAt: updatedAt
+    },
+    evidence: nextEvidence,
+    historyHash: event.eventHash,
+    history: [...record.history, event]
+  }
+}
+
 function normalizeExpectedVersion(value) {
   if (!Number.isInteger(value) || value < 0 || value > MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES) {
     throw runStateError(
@@ -1241,9 +1335,36 @@ function validateHistory(record) {
       )
     }
 
-    if (index > 0) {
+    if (index > 0 && event.fromStatus !== event.toStatus) {
       assertAllowedTransition(event.fromStatus, event.toStatus)
       attempts = incrementAttempts(attempts, event.toStatus)
+    } else if (index > 0) {
+      if (!sameStatusAttemptStatuses.has(event.toStatus)) {
+        throw runStateError(
+          "RUN_HISTORY_INVALID",
+          "Stored development run transition history is invalid."
+        )
+      }
+
+      const sameStatusAttempts = { ...attempts }
+      let incrementedAttempts = null
+
+      try {
+        incrementedAttempts = incrementSameStatusAttempt(attempts, event.toStatus)
+      } catch {
+        incrementedAttempts = null
+      }
+
+      if (stableStringify(event.attempts) === stableStringify(sameStatusAttempts)) {
+        attempts = sameStatusAttempts
+      } else if (incrementedAttempts && stableStringify(event.attempts) === stableStringify(incrementedAttempts)) {
+        attempts = incrementedAttempts
+      } else {
+        throw runStateError(
+          "RUN_HISTORY_INVALID",
+          "Stored development run transition history is invalid."
+        )
+      }
     }
 
     if (stableStringify(attempts) !== stableStringify(event.attempts)) {
@@ -1622,6 +1743,50 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {})
   return cloneJson(next)
 }
 
+async function recordDevelopmentRunProgressInternal(runId, progress, options = {}) {
+  const normalizedRunId = normalizeDevelopmentRunId(runId)
+  const expectedVersion = normalizeExpectedVersion(progress?.expectedVersion)
+  const expectedStatus = Object.hasOwn(progress || {}, "status")
+    ? normalizeDevelopmentRunStatus(progress.status)
+    : null
+  const actor = normalizeActor(progress?.actor)
+  const reason = normalizeSafeText(progress?.reason, {
+    fieldName: "Progress reason",
+    maxChars: 500,
+    required: false,
+    code: "INVALID_REASON",
+    safeMessage: "Development run progress reason is invalid; no run-state write was attempted."
+  })
+  const now = nowDate(options)
+  const evidence = normalizeEvidenceList(progress?.evidence || [], {
+    ...options,
+    now: () => now
+  })
+  const incrementAttempt = progress?.incrementAttempt === true
+  const current = await readDevelopmentRunInternal(normalizedRunId, options)
+
+  if (current.version !== expectedVersion || (expectedStatus !== null && current.status !== expectedStatus)) {
+    throw runStateError(
+      "STALE_RUN_VERSION",
+      "Development run state changed; reload before retrying."
+    )
+  }
+
+  const next = applyProgressUpdate(current, {
+    branch: Object.hasOwn(progress || {}, "branch") ? progress.branch : undefined,
+    headSha: Object.hasOwn(progress || {}, "headSha") ? progress.headSha : undefined,
+    evidence,
+    actor,
+    reason,
+    now,
+    incrementAttempt
+  })
+  const paths = storePaths(normalizedRunId, options)
+
+  await commitRecord(paths, next)
+  return cloneJson(next)
+}
+
 export async function createDevelopmentRun(input, options = {}) {
   try {
     return await createDevelopmentRunInternal(input, options)
@@ -1641,6 +1806,14 @@ export async function readDevelopmentRun(runId, options = {}) {
 export async function transitionDevelopmentRun(runId, transition, options = {}) {
   try {
     return await transitionDevelopmentRunInternal(runId, transition, options)
+  } catch (error) {
+    throw safeRunStateFailure(error)
+  }
+}
+
+export async function recordDevelopmentRunProgress(runId, progress, options = {}) {
+  try {
+    return await recordDevelopmentRunProgressInternal(runId, progress, options)
   } catch (error) {
     throw safeRunStateFailure(error)
   }

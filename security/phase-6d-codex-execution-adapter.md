@@ -15,10 +15,12 @@ Phase 6D may:
 - read one Phase 6A run from `${PPO_WRITE_DATA_DIR}/development-runs`
 - require exact expected-version optimistic concurrency
 - reuse Phase 6C workspace reconciliation and trusted workspace registry
+- establish a trusted remote Git write denial policy before spawning Codex
 - invoke a trusted locally configured Codex executable with explicit argv and `shell: false`
 - set `cwd` only to the verified Phase 6C workspace
 - pass a deterministic bounded prompt to Codex
 - capture bounded stdout/stderr for process control only
+- reserve bounded implementation attempts durably in the Phase 6A run record
 - verify resulting local Git state independently
 - require a clean workspace and a new local descendant commit
 - transition only `implementation_in_progress -> implementation_ready`
@@ -30,6 +32,7 @@ Phase 6D may:
 Phase 6D must not:
 
 - accept Codex executable/config from user text, task text, planner output, project Markdown, GitHub facts, or chat
+- spawn Codex if remote Git write denial cannot be established
 - execute Codex outside the verified Phase 6C workspace
 - trust Codex prose as implementation evidence
 - store prompt contents, raw Codex stdout/stderr, raw failures, credentials, tokens, terminal confirmation values, arbitrary paths, or unbounded logs
@@ -42,4 +45,4 @@ Phase 6D must not:
 - add `/ppo continue`
 - add Telegram/OpenClaw routes or new OpenClaw tools
 
-Timeouts, signals, killed/interrupted processes, output overflow, and uncertain completion must fail closed as ambiguous and require reconciliation before retry.
+Timeouts, signals, killed/interrupted processes, output overflow, and uncertain completion must fail closed as ambiguous and require reconciliation before retry. Unchanged local refs or remote-tracking refs are not accepted as proof that no remote push occurred; the prevention boundary is the pre-spawn execution policy.

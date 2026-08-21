@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
-import { realpath, stat } from "node:fs/promises"
-import { isAbsolute, relative, resolve as resolvePath, sep } from "node:path"
+import { chmod, mkdir, realpath, stat, writeFile } from "node:fs/promises"
+import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
 import { promisify } from "node:util"
 import {
   DevelopmentRunStateError,
+  recordDevelopmentRunProgress,
   readDevelopmentRun,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
@@ -12,6 +13,10 @@ import {
   inspectImplementationWorkspace,
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
+import {
+  DEFAULT_PPO_WRITE_DATA_DIR,
+  PPO_WRITE_DATA_DIR_ENV
+} from "./project-note-add.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -24,13 +29,16 @@ export const MAX_CODEX_ENV_VALUE_CHARS = 1000
 export const MAX_CODEX_OUTPUT_BYTES = 32 * 1024
 export const MAX_CODEX_TIMEOUT_MS = 10 * 60 * 1000
 export const MIN_CODEX_TIMEOUT_MS = 1000
+export const MAX_CODEX_IMPLEMENTATION_ATTEMPTS = 5
+export const CODEX_EXECUTION_POLICY_STORE_DIR = "codex-execution-policy"
 
 const shaPattern = /^[a-f0-9]{40}$/u
 const envKeyPattern = /^[A-Z_][A-Z0-9_]{0,39}$/u
 const unsafeControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u001F\u007F-\u009F])/u
 const unsafePromptControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u0008\u000B-\u001F\u007F-\u009F])/u
 const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
-const forbiddenEnvKeyPattern = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|CONFIRM)/u
+const forbiddenEnvKeyPattern = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|CONFIRM|ASKPASS|GIT_CONFIG|GIT_SSH|SSH_AUTH_SOCK)/u
+const defaultExecutionPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 export class DevelopmentCodexExecutionAdapterError extends DevelopmentRunStateError {
   constructor(code, safeMessage) {
@@ -133,6 +141,20 @@ function stableStringify(value) {
 
 function sha256Text(value) {
   return createHash("sha256").update(value).digest("hex")
+}
+
+function configuredWriteDataDir(options = {}) {
+  const configured = options.writeDataDir || process.env[PPO_WRITE_DATA_DIR_ENV]
+
+  if (typeof configured === "string" && configured.trim()) {
+    return configured
+  }
+
+  return DEFAULT_PPO_WRITE_DATA_DIR
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`
 }
 
 function boundedLines(lines, maxChars) {
@@ -281,6 +303,10 @@ function normalizeExecutablePath(value) {
   return executablePath
 }
 
+function normalizeGitExecutablePath(value) {
+  return normalizeExecutablePath(value)
+}
+
 function normalizeCodexArgs(args = []) {
   if (!Array.isArray(args) || args.length > MAX_CODEX_ARG_COUNT) {
     throw adapterError(
@@ -352,6 +378,38 @@ function normalizeTimeoutMs(value) {
   return timeoutMs
 }
 
+function normalizeRemoteGitWritePolicy(policy) {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    throw adapterError(
+      "CODEX_REMOTE_POLICY_REQUIRED",
+      "Codex remote Git write denial policy is required."
+    )
+  }
+
+  const mode = normalizeSafeText(policy.mode, {
+    code: "CODEX_REMOTE_POLICY_REQUIRED",
+    safeMessage: "Codex remote Git write denial policy is required.",
+    maxChars: 40
+  })
+  const enforcement = normalizeSafeText(policy.enforcement, {
+    code: "CODEX_REMOTE_POLICY_REQUIRED",
+    safeMessage: "Codex remote Git write denial policy is required.",
+    maxChars: 80
+  })
+
+  if (mode !== "deny" || enforcement !== "adapter-git-wrapper") {
+    throw adapterError(
+      "CODEX_REMOTE_POLICY_REQUIRED",
+      "Codex remote Git write denial policy is required."
+    )
+  }
+
+  return {
+    mode,
+    enforcement
+  }
+}
+
 function normalizeCodexConfig(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw adapterError(
@@ -362,9 +420,181 @@ function normalizeCodexConfig(config) {
 
   return {
     executablePath: normalizeExecutablePath(config.executablePath),
+    gitExecutablePath: normalizeGitExecutablePath(config.gitExecutablePath),
     args: normalizeCodexArgs(config.args || []),
     env: normalizeCodexEnv(config.env || {}),
-    timeoutMs: normalizeTimeoutMs(config.timeoutMs)
+    timeoutMs: normalizeTimeoutMs(config.timeoutMs),
+    remoteGitWritePolicy: normalizeRemoteGitWritePolicy(config.remoteGitWritePolicy)
+  }
+}
+
+function codexPolicyError() {
+  return adapterError(
+    "CODEX_REMOTE_POLICY_UNAVAILABLE",
+    "Codex remote Git write denial policy could not be established."
+  )
+}
+
+function codexPolicyPaths(run, attempt, options = {}) {
+  const writeDataDir = resolvePath(configuredWriteDataDir(options))
+
+  if (!isAbsolute(writeDataDir) || writeDataDir.includes("\0")) {
+    throw codexPolicyError()
+  }
+
+  const attemptSegment = `attempt-${String(attempt).padStart(2, "0")}`
+
+  return {
+    policyRoot: join(writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR),
+    runPolicyDir: join(writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR, run.runId),
+    attemptDir: join(writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR, run.runId, attemptSegment),
+    binDir: join(writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR, run.runId, attemptSegment, "bin"),
+    gitWrapperPath: join(writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR, run.runId, attemptSegment, "bin", "git")
+  }
+}
+
+function gitPolicyWrapperSource(gitExecutablePath) {
+  const quotedGit = shellSingleQuote(gitExecutablePath)
+
+  return `#!/bin/sh
+cmd=""
+skip_next=0
+for arg in "$@"; do
+  if [ "$skip_next" = "1" ]; then
+    skip_next=0
+    continue
+  fi
+  case "$arg" in
+    -C|-c|--git-dir|--work-tree|--namespace|--exec-path)
+      skip_next=1
+      continue
+      ;;
+    --git-dir=*|--work-tree=*|--namespace=*|--exec-path=*)
+      continue
+      ;;
+    --*)
+      continue
+      ;;
+    -*)
+      continue
+      ;;
+    *)
+      cmd="$arg"
+      break
+      ;;
+  esac
+done
+
+case "$cmd" in
+  push|send-pack|receive-pack|fetch|pull|clone|ls-remote|remote|remote-http|remote-https|remote-ssh|remote-ext|remote-fd|remote-ftps|remote-ftp|remote-git)
+    echo "PPO Codex policy: remote Git operations are disabled." >&2
+    exit 126
+    ;;
+esac
+
+exec ${quotedGit} "$@"
+`
+}
+
+function codexPolicyGitConfigEnv() {
+  const entries = [
+    ["protocol.file.allow", "never"],
+    ["protocol.git.allow", "never"],
+    ["protocol.ssh.allow", "never"],
+    ["protocol.http.allow", "never"],
+    ["protocol.https.allow", "never"],
+    ["protocol.ext.allow", "never"]
+  ]
+  const env = {
+    GIT_CONFIG_COUNT: String(entries.length)
+  }
+
+  for (const [index, [key, value]] of entries.entries()) {
+    env[`GIT_CONFIG_KEY_${index}`] = key
+    env[`GIT_CONFIG_VALUE_${index}`] = value
+  }
+
+  return env
+}
+
+function codexPolicyEnv(config, paths) {
+  const basePath = config.env.PATH || defaultExecutionPath
+
+  return {
+    ...config.env,
+    ...codexPolicyGitConfigEnv(),
+    PATH: `${paths.binDir}:${basePath}`,
+    GIT_EXEC_PATH: paths.binDir,
+    GIT_ALLOW_PROTOCOL: "",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "false",
+    SSH_ASKPASS: "false",
+    GIT_SSH_COMMAND: "false",
+    PPO_CODEX_REMOTE_GIT_WRITE_POLICY: "deny",
+    PPO_CODEX_REMOTE_GIT_WRITE_POLICY_ENFORCEMENT: "adapter-git-wrapper"
+  }
+}
+
+async function writeCodexPolicyWrapper(paths, config) {
+  await mkdir(paths.policyRoot, { recursive: true, mode: 0o700 })
+  await chmod(paths.policyRoot, 0o700)
+  await mkdir(paths.runPolicyDir, { recursive: true, mode: 0o700 })
+  await chmod(paths.runPolicyDir, 0o700)
+  await mkdir(paths.attemptDir, { recursive: true, mode: 0o700 })
+  await chmod(paths.attemptDir, 0o700)
+  await mkdir(paths.binDir, { recursive: true, mode: 0o700 })
+  await chmod(paths.binDir, 0o700)
+  await writeFile(paths.gitWrapperPath, gitPolicyWrapperSource(config.gitExecutablePath), {
+    encoding: "utf8",
+    mode: 0o700
+  })
+  await chmod(paths.gitWrapperPath, 0o700)
+}
+
+async function assertCodexPolicyDeniesRemoteGitWrites(paths, env, location) {
+  try {
+    await execFileAsync(paths.gitWrapperPath, ["push"], {
+      cwd: location.workspacePath,
+      env,
+      encoding: "utf8",
+      maxBuffer: 1024,
+      timeout: 5000,
+      shell: false
+    })
+  } catch (error) {
+    if (error?.code === 126 || error?.status === 126) {
+      return
+    }
+
+    throw codexPolicyError()
+  }
+
+  throw codexPolicyError()
+}
+
+async function establishCodexExecutionPolicy(config, run, location, attempt, options = {}) {
+  const paths = codexPolicyPaths(run, attempt, options)
+  const env = codexPolicyEnv(config, paths)
+
+  try {
+    await writeCodexPolicyWrapper(paths, config)
+    await assertCodexPolicyDeniesRemoteGitWrites(paths, env, location)
+  } catch (error) {
+    if (error instanceof DevelopmentRunStateError) {
+      throw error
+    }
+
+    throw codexPolicyError()
+  }
+
+  return {
+    env,
+    metadata: {
+      mode: config.remoteGitWritePolicy.mode,
+      enforcement: config.remoteGitWritePolicy.enforcement
+    }
   }
 }
 
@@ -485,8 +715,11 @@ async function invokeCodex(config, invocation, options = {}) {
     promptHash: invocation.promptHash,
     timeoutMs: config.timeoutMs,
     maxOutputBytes: MAX_CODEX_OUTPUT_BYTES,
-    env: config.env,
-    shell: false
+    env: invocation.env,
+    shell: false,
+    remoteGitWritePolicy: {
+      ...invocation.remoteGitWritePolicy
+    }
   }
 
   let result
@@ -543,8 +776,6 @@ function assertGitArgs(args) {
         branchRef(subcommand)
       )) ||
       (command === "symbolic-ref" && args.length === 5 && subcommand === "--short" && args[4] === "HEAD") ||
-      (command === "remote" && args.length === 5 && subcommand === "get-url" && args[4] === "origin") ||
-      (command === "for-each-ref" && args.length === 5 && subcommand === "refs/remotes" && args[4] === "--format=%(refname):%(objectname)") ||
       (command === "rev-list" && args.length === 6 && subcommand === "--ancestry-path" && args[4] === "--count" && /^[a-f0-9]{40}\.\.HEAD$/u.test(args[5])) ||
       (command === "diff" && args.length === 5 && subcommand === "--name-only" && /^[a-f0-9]{40}\.\.HEAD$/u.test(args[4])) ||
       (command === "status" && args.length === 5 && subcommand === "--porcelain=v1" && args[4] === "--untracked-files=all")
@@ -626,17 +857,11 @@ async function gitText(cwd, args, options) {
   return output.trim()
 }
 
-function hashRemoteRefs(output) {
-  return sha256Text(output.split(/\r?\n/u).filter(Boolean).sort().join("\n"))
-}
-
 async function sourceFacts(location, options) {
   return {
     topLevel: await gitLine(location.sourceRepoPath, ["rev-parse", "--show-toplevel"], options, "CODEX_SOURCE_CHANGED", "Source repository state could not be verified."),
     branch: await gitLine(location.sourceRepoPath, ["symbolic-ref", "--short", "HEAD"], options, "CODEX_SOURCE_CHANGED", "Source repository branch could not be verified."),
-    headSha: normalizeSha(await gitLine(location.sourceRepoPath, ["rev-parse", "HEAD"], options, "CODEX_SOURCE_CHANGED", "Source repository head could not be verified."), "Source repository HEAD"),
-    remoteUrl: await gitLine(location.sourceRepoPath, ["remote", "get-url", "origin"], options, "CODEX_SOURCE_CHANGED", "Source repository remote could not be verified."),
-    remoteRefsHash: hashRemoteRefs(await gitText(location.sourceRepoPath, ["for-each-ref", "refs/remotes", "--format=%(refname):%(objectname)"], options))
+    headSha: normalizeSha(await gitLine(location.sourceRepoPath, ["rev-parse", "HEAD"], options, "CODEX_SOURCE_CHANGED", "Source repository head could not be verified."), "Source repository HEAD")
   }
 }
 
@@ -689,13 +914,11 @@ function assertSourceUnchanged(before, after) {
   if (
     before.topLevel !== after.topLevel ||
     before.branch !== after.branch ||
-    before.headSha !== after.headSha ||
-    before.remoteUrl !== after.remoteUrl ||
-    before.remoteRefsHash !== after.remoteRefsHash
+    before.headSha !== after.headSha
   ) {
     throw adapterError(
       "CODEX_SOURCE_CHANGED",
-      "Source repository or remote-tracking state changed during Codex execution."
+      "Source repository state changed during Codex execution."
     )
   }
 }
@@ -787,9 +1010,114 @@ function buildImplementationEvidence(run, location, verified, execution) {
       startedAt: execution.startedAt,
       endedAt: execution.endedAt,
       outcome: "implementation_ready",
+      remotePolicy: "deny",
       changedFiles: verified.changedFileCount
     }
   }
+}
+
+function buildExecutionAttemptEvidence(run, location, execution) {
+  return {
+    kind: "implementation",
+    sha: execution.expectedStartSha,
+    source: CODEX_EXECUTION_ADAPTER_ID,
+    summary: "Codex execution attempt reserved.",
+    metadata: {
+      project: run.project.id,
+      repo: run.project.fullName,
+      branch: location.branch,
+      workspaceId: location.workspaceId,
+      workspaceRef: location.workspaceRef,
+      adapter: CODEX_EXECUTION_ADAPTER_ID,
+      attempt: execution.attempt,
+      promptHash: execution.promptHash,
+      startedAt: execution.startedAt,
+      outcome: "execution_started",
+      remotePolicy: "deny"
+    }
+  }
+}
+
+function buildExecutionFailureEvidence(run, location, execution) {
+  return {
+    kind: "implementation",
+    sha: execution.expectedStartSha,
+    source: CODEX_EXECUTION_ADAPTER_ID,
+    summary: "Codex execution attempt ended without a verified implementation.",
+    metadata: {
+      project: run.project.id,
+      repo: run.project.fullName,
+      branch: location.branch,
+      workspaceId: location.workspaceId,
+      workspaceRef: location.workspaceRef,
+      adapter: CODEX_EXECUTION_ADAPTER_ID,
+      attempt: execution.attempt,
+      promptHash: execution.promptHash,
+      startedAt: execution.startedAt,
+      endedAt: execution.endedAt,
+      outcome: "execution_failed",
+      remotePolicy: "deny"
+    }
+  }
+}
+
+function latestCodexImplementationEvidence(run) {
+  const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+
+    if (entry?.source === CODEX_EXECUTION_ADAPTER_ID && entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function assertNoOpenCodexAttempt(run) {
+  const latest = latestCodexImplementationEvidence(run)
+
+  if (latest?.metadata?.outcome === "execution_started") {
+    throw adapterError(
+      "CODEX_RECONCILIATION_REQUIRED",
+      "Previous Codex execution attempt requires reconciliation before retrying."
+    )
+  }
+}
+
+function assertCodexAttemptAvailable(run) {
+  if (run.attempts.implementation >= MAX_CODEX_IMPLEMENTATION_ATTEMPTS) {
+    throw adapterError(
+      "CODEX_ATTEMPT_LIMIT_REACHED",
+      "Codex implementation attempt limit was reached; owner action is required."
+    )
+  }
+}
+
+async function reserveCodexExecutionAttempt(run, location, execution, options) {
+  return await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: "implementation_in_progress",
+    actor: CODEX_EXECUTION_ADAPTER_ID,
+    reason: "phase-6d-codex-execution-attempt",
+    incrementAttempt: true,
+    evidence: [
+      buildExecutionAttemptEvidence(run, location, execution)
+    ]
+  }, options)
+}
+
+async function recordDefinitiveCodexFailure(run, location, execution, options) {
+  return await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: "implementation_in_progress",
+    actor: CODEX_EXECUTION_ADAPTER_ID,
+    reason: "phase-6d-codex-execution-definitive-failure",
+    evidence: [
+      buildExecutionFailureEvidence(run, location, execution)
+    ]
+  }, options)
 }
 
 async function reconcileBeforeExecution(runId, run, options) {
@@ -869,29 +1197,69 @@ async function executeCodexImplementationInternal(runId, options = {}) {
     )
   }
 
+  assertNoOpenCodexAttempt(run)
+  assertCodexAttemptAvailable(run)
+
   const { location, expectedStartSha } = await reconcileBeforeExecution(runId, run, options)
-  const sourceBefore = await sourceFacts(location, options)
   const prompt = buildCodexImplementationPrompt(run, location)
   const promptHash = sha256Text(prompt)
   const startedAt = timestamp(nowDate(options))
-
-  await invokeCodex(config, {
-    cwd: location.workspacePath,
-    prompt,
-    promptHash
+  const nextAttempt = run.attempts.implementation + 1
+  const executionPolicy = await establishCodexExecutionPolicy(config, run, location, nextAttempt, options)
+  const attemptRun = await reserveCodexExecutionAttempt(run, location, {
+    attempt: nextAttempt,
+    expectedStartSha,
+    promptHash,
+    startedAt
   }, options)
+  const postReservation = await reconcileBeforeExecution(runId, attemptRun, options)
+  const sourceBefore = await sourceFacts(postReservation.location, options)
+  const execution = {
+    attempt: attemptRun.attempts.implementation,
+    expectedStartSha: postReservation.expectedStartSha,
+    promptHash,
+    startedAt,
+    endedAt: null
+  }
+
+  try {
+    await invokeCodex(config, {
+      cwd: postReservation.location.workspacePath,
+      prompt,
+      promptHash,
+      env: executionPolicy.env,
+      remoteGitWritePolicy: executionPolicy.metadata
+    }, options)
+  } catch (error) {
+    if (error?.ambiguous === true || error?.code === "CODEX_EXECUTION_AMBIGUOUS") {
+      throw error
+    }
+
+    execution.endedAt = timestamp(nowDate(options))
+    await recordDefinitiveCodexFailure(attemptRun, postReservation.location, execution, options)
+    throw error
+  }
 
   const endedAt = timestamp(nowDate(options))
-  const verified = await verifyImplementationResult(run, location, sourceBefore, expectedStartSha, options)
-  const evidence = buildImplementationEvidence(run, location, verified, {
+  execution.endedAt = endedAt
+  let verified
+
+  try {
+    verified = await verifyImplementationResult(attemptRun, postReservation.location, sourceBefore, postReservation.expectedStartSha, options)
+  } catch (error) {
+    await recordDefinitiveCodexFailure(attemptRun, postReservation.location, execution, options)
+    throw error
+  }
+
+  const evidence = buildImplementationEvidence(attemptRun, postReservation.location, verified, {
     promptHash,
     startedAt,
     endedAt
   })
-  const transitioned = await transitionDevelopmentRun(run.runId, {
-    expectedVersion,
+  const transitioned = await transitionDevelopmentRun(attemptRun.runId, {
+    expectedVersion: attemptRun.version,
     status: "implementation_ready",
-    branch: location.branch,
+    branch: postReservation.location.branch,
     headSha: verified.headSha,
     actor: CODEX_EXECUTION_ADAPTER_ID,
     reason: "phase-6d-codex-implementation-ready",
@@ -903,13 +1271,14 @@ async function executeCodexImplementationInternal(runId, options = {}) {
     outcome: "implementation_ready",
     run: transitioned,
     implementation: {
-      project: run.project.id,
-      repo: run.project.fullName,
-      branch: location.branch,
-      workspaceId: location.workspaceId,
-      workspaceRef: location.workspaceRef,
+      project: attemptRun.project.id,
+      repo: attemptRun.project.fullName,
+      branch: postReservation.location.branch,
+      workspaceId: postReservation.location.workspaceId,
+      workspaceRef: postReservation.location.workspaceRef,
       headSha: verified.headSha,
       promptHash,
+      attempt: attemptRun.attempts.implementation,
       changedFileCount: verified.changedFileCount
     }
   }

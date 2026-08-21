@@ -275,11 +275,13 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Reconcile the Phase 6C workspace before execution and refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces.
 - Require workspace HEAD to match the run head/base state before Codex starts.
 - Read Codex executable path, argv, timeout, and environment only from trusted local configuration.
+- Require an adapter-established remote Git write denial policy before spawning Codex; fail closed if it cannot be established.
 - Invoke Codex with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified isolated workspace.
 - Generate a deterministic bounded prompt from the run task and planning evidence metadata, including explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries.
+- Durably record bounded implementation execution attempts in the Phase 6A run record using exact expected-version checks.
 - Treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous and require reconciliation before retry.
 - Do not store prompt contents, raw Codex stdout/stderr, raw failures, credentials, tokens, confirmation values, arbitrary paths, or unbounded logs in run state.
-- Verify Git state independently after a successful Codex exit: same managed worktree, same isolated branch, source/default worktree unchanged, remote-tracking state unchanged locally, full resulting SHA, descendant of run base SHA, clean worktree, and at least one local implementation commit.
+- Verify Git state independently after a successful Codex exit: same managed worktree, same isolated branch, source/default worktree unchanged locally, full resulting SHA, descendant of run base SHA, clean worktree, and at least one local implementation commit.
 - Transition only `implementation_in_progress -> implementation_ready` after verification and update `run.headSha` to the verified implementation SHA.
 - Attach metadata-only SHA-pinned `implementation` evidence with adapter id, attempt number, branch, workspace id/reference, prompt hash, timestamps, and bounded outcome metadata.
 - Add read-only reconciliation helpers for interrupted Codex execution.
