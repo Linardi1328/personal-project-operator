@@ -275,12 +275,13 @@ The runner must:
 
 Phase 6E must not invoke Codex or models, automate review, harden in loops, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
 
-## Phase 6F independent review agent boundary
+## Phase 6F independent review and bounded hardening boundary
 
-Phase 6F allows one local-only independent exact-SHA review foundation:
+Phase 6F allows one local-only independent exact-SHA review and bounded hardening foundation:
 
 ```text
 local-operator/development-review-agent.mjs
+local-operator/development-hardening-orchestrator.mjs
 ```
 
 The agent must:
@@ -293,7 +294,7 @@ The agent must:
 - refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, outside-managed-root, dirty, or head-mismatched workspaces
 - require workspace branch, HEAD, and clean tree to match `run.headSha` before and after review
 - invoke only a trusted locally configured reviewer executable
-- refuse arbitrary command strings, shell interpolation, package-manager scripts, untrusted executables, implementation adapters, GitHub write tools, push/merge/deploy tooling, OpenClaw, and secret-bearing env values
+- refuse arbitrary reviewer command strings, shell interpolation, package-manager scripts, untrusted reviewer executables, implementation adapters as reviewer commands, GitHub write tools, push/merge/deploy tooling, OpenClaw, and secret-bearing env values
 - invoke the reviewer through explicit argv, `shell: false`, bounded timeout/output capture, sanitized env, and `cwd` set only to the verified workspace
 - establish and verify an explicit no-outbound-network OS/process sandbox before executing review
 - generate a deterministic bounded prompt from bounded task text, metadata-only evidence, bounded local diff/file facts, and approved security/scope requirements
@@ -304,8 +305,16 @@ The agent must:
 - transition to `review_changes_requested` for valid blockers or owner/product/security ambiguity
 - attach metadata-only SHA-pinned review evidence
 - provide read-only reconciliation for interrupted review and exact-SHA approval validity
+- start hardening only from valid `review_changes_requested` evidence for exactly `run.headSha`
+- derive remediation context only from durable validated review evidence, never chat, user input, model prose, repository commands, or shell strings
+- reuse Phase 6D implementation, Phase 6E testing, and Phase 6F review engines without parallel engines
+- require each remediation to produce a new verified descendant implementation SHA
+- invalidate prior test and review evidence after every implementation SHA change
+- rerun tests and independent review for the new exact SHA
+- cap automatic hardening at three durable rounds and record owner-action-required evidence on non-convergence
+- stop on ambiguous Codex, test, or review outcomes until reconciliation
 
-Phase 6F must not edit implementation files, invoke the implementation adapter, harden in loops, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
+Phase 6F must not create parallel implementation/test/review engines, accept arbitrary remediation text, harden beyond the three-round cap, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
 
 ## Financial and trading boundary
 

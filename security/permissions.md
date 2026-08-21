@@ -107,7 +107,7 @@ Allowed in Phase 6E only as deterministic local automated testing:
 - store metadata-only SHA-pinned test evidence
 - inspect interrupted automated testing state read-only
 
-Allowed in Phase 6F only as independent exact-SHA review:
+Allowed in Phase 6F only as independent exact-SHA review and bounded hardening:
 
 - read one Phase 6A run after Phase 6E PASS evidence is present
 - reconcile one verified Phase 6C workspace
@@ -122,6 +122,13 @@ Allowed in Phase 6F only as independent exact-SHA review:
 - transition the run only through `tests_passed -> review_in_progress -> review_passed` or `review_changes_requested`
 - store metadata-only SHA-pinned review evidence
 - inspect interrupted independent review state and exact-SHA approval validity read-only
+- start hardening only from valid `review_changes_requested` evidence for exactly `run.headSha`
+- derive remediation context only from durable validated review evidence
+- reuse Phase 6D implementation, Phase 6E testing, and Phase 6F review engines
+- run at most three durable hardening rounds per development run
+- require fresh test PASS and fresh independent review after every new implementation SHA
+- record owner-action-required evidence and stop on non-convergence
+- inspect hardening status read-only
 
 Blocked unless explicitly approved in a later write-enabled phase:
 
@@ -141,6 +148,7 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - execute Codex outside the Phase 6D bounded execution adapter
 - execute automated tests outside the Phase 6E trusted test runner
 - execute automated review outside the Phase 6F trusted independent review agent
+- execute automated hardening outside the Phase 6F bounded hardening orchestrator
 - execute merge, deployment, rollback, or verification agents from Phase 6A run-state records
 - mutate files inside Phase 6C workspaces outside the Phase 6D bounded execution adapter
 

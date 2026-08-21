@@ -21,6 +21,7 @@ Phase 6D may:
 - invoke a trusted locally configured Codex executable through the sandbox with explicit argv and `shell: false`
 - set `cwd` only to the verified Phase 6C workspace
 - pass a deterministic bounded prompt to Codex
+- consume Phase 6F durable remediation context only when the run contains trusted exact-SHA hardening-start and review-finding evidence
 - capture bounded stdout/stderr for process control only
 - reserve bounded implementation attempts durably in the Phase 6A run record
 - verify resulting local Git state independently
@@ -41,7 +42,7 @@ Phase 6D must not:
 - trust Codex prose as implementation evidence
 - store prompt contents, raw Codex stdout/stderr, raw failures, credentials, tokens, terminal confirmation values, arbitrary paths, or unbounded logs
 - run automated tests beyond adapter-specific Git verification
-- perform automated review or hardening loops
+- perform automated review or hardening loops outside Phase 6F orchestration
 - call GitHub writes
 - create PRs
 - push, merge, rebase, reset, cherry-pick, or mutate remotes

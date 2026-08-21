@@ -178,15 +178,18 @@ The runner may read one Phase 6A run after Phase 6D implementation evidence exis
 
 This exception does not invoke Codex or models, run automated review, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
-## Phase 6F independent review exception
+## Phase 6F independent review and hardening exception
 
-Phase 6F allows bounded local independent review for a tests-passed run:
+Phase 6F allows bounded local independent review and hardening for a tests-passed run:
 
 - `local-operator/development-review-agent.mjs`
+- `local-operator/development-hardening-orchestrator.mjs`
 
 The agent may read one Phase 6A run after Phase 6E PASS evidence exists, reconcile one verified Phase 6C workspace, require workspace branch, HEAD, and clean tree to equal `run.headSha`, verify Phase 6D implementation evidence and Phase 6E PASS evidence for that exact SHA, verify a no-outbound-network process sandbox, invoke only a trusted locally configured reviewer executable with explicit argv and `shell: false`, record bounded metadata-only review attempts, and transition only to `review_passed` after valid exact-SHA approval.
 
-This exception does not edit implementation files, invoke the implementation adapter, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
+The hardening orchestrator may start only from valid exact-SHA `CHANGES_REQUESTED` review evidence, derive remediation context only from durable validated review findings, reuse Phase 6D/6E/6F engines, require a new implementation SHA followed by fresh tests and fresh review, and stop after at most three durable rounds with owner-action-required evidence.
+
+This exception does not accept arbitrary remediation text, create parallel implementation/test/review engines, harden beyond three rounds, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
 ## Future write actions
 
@@ -202,6 +205,7 @@ Examples requiring explicit approval:
 - executing Codex outside the Phase 6D bounded execution adapter
 - executing automated tests outside the Phase 6E trusted test runner
 - executing automated review outside the Phase 6F trusted independent review agent
+- executing automated hardening outside the Phase 6F bounded hardening orchestrator
 - executing merge/deploy/rollback/verification agents from Phase 6A run-state records
 - restarting services
 - publishing content

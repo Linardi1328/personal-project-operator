@@ -1,12 +1,15 @@
-# Phase 6F Independent Review Agent
+# Phase 6F Independent Review and Bounded Hardening Pipeline
 
-Phase 6F adds a deterministic local independent review agent foundation:
+Phase 6F adds a deterministic local independent review agent and bounded hardening foundation:
 
 ```text
 local-operator/development-review-agent.mjs
+local-operator/development-hardening-orchestrator.mjs
 ```
 
 The agent accepts a Phase 6A run only after Phase 6E has transitioned it to `tests_passed` with exact-SHA PASS evidence. It uses the existing Phase 6C workspace registry to find the isolated workspace and invokes only a trusted locally configured review executable.
+
+The hardening orchestrator accepts a run only after the reviewer has transitioned it to `review_changes_requested` with valid durable `CHANGES_REQUESTED` findings for exactly `run.headSha`. It coordinates the existing Phase 6D Codex adapter, Phase 6E test runner, and Phase 6F reviewer; it does not implement parallel execution engines.
 
 ## Inputs
 
@@ -106,15 +109,58 @@ Review evidence is stored under Phase 6A `review` evidence and is pinned to the 
 - attempt number
 - aggregate outcome
 - sandbox id and no-network status
+- bounded validated blocker, security finding, and required-test items for remediation
 
 It must not include prompt contents, reviewer raw stdout/stderr, raw failures, credentials, tokens, terminal confirmation values, environment dumps, arbitrary absolute paths, executable paths, argv, sandbox executable paths, Linux namespace paths, or unbounded logs.
+
+## Hardening
+
+`executeBoundedHardening()` starts only from `review_changes_requested` and requires exact expected-version optimistic concurrency. The latest independent review decision evidence must:
+
+- belong to `run.headSha`
+- have `decision=CHANGES_REQUESTED`
+- have `mergeAllowed=false`
+- include matching bounded durable findings evidence
+- include at least one validated blocker or security finding
+
+Remediation context is deterministic and derived only from durable review evidence:
+
+- original task from the run record
+- reviewed SHA
+- validated blockers
+- validated security findings
+- validated tests required
+
+Caller-supplied remediation text, chat text, task updates, model prose, repository commands, and shell strings are ignored. Oversized, malformed, contradictory, control-character, or secret-like findings are refused.
+
+Each hardening round performs the full lifecycle:
+
+```text
+review_changes_requested
+-> implementation_in_progress
+-> implementation_ready
+-> tests_in_progress
+-> tests_passed
+-> review_in_progress
+-> review_passed OR review_changes_requested
+```
+
+The implementation step reuses the Phase 6D Codex adapter. Phase 6D consumes only trusted durable remediation context, preserves the no-outbound-network sandbox, and must produce a new verified local descendant commit. The new implementation SHA becomes `run.headSha`.
+
+Every implementation SHA change invalidates prior test PASS and review evidence. Phase 6E must run again for the new SHA, and Phase 6F review may run only after the new SHA has exact PASS evidence.
+
+Automatic hardening is capped at three durable rounds per development run. If the cap is exhausted without exact-SHA approval, PPO records metadata-only `owner_action_required` evidence and stops. It does not continue implementation, testing, review, merge, deployment, rollback, or verification.
+
+Timeout, signal, killed/interrupted process, output overflow, or uncertain Codex/test/review outcomes stop the loop and leave the run in the appropriate in-progress state. The existing read-only reconciliation path must be used before any later continuation.
 
 ## Recovery
 
 `reconcileIndependentReview()` is read-only. It reports whether an attempt is open, whether implementation/test evidence still matches `run.headSha`, whether the workspace still matches `run.headSha`, whether dirty or changed workspace state invalidates approval, and whether prior approval evidence is still valid for the exact current workspace HEAD.
 
+`reconcileBoundedHardening()` is read-only. It reports current round, current SHA, latest review decision, whether remediation is pending or in progress, test evidence validity, review evidence validity, and owner-action/non-convergence state. It performs no mutation.
+
 If workspace HEAD changes after approval, the old review evidence is invalid for the changed workspace and reconciliation reports approval as not valid.
 
 ## Boundary
 
-Phase 6F does not add a terminal command, `/ppo` route, OpenClaw route, Telegram route, implementation-file edit, Codex implementation call, automated hardening/remediation loop, GitHub write, PR automation, push, merge, deployment, rollback, production verification, service control, or `/ppo continue`.
+Phase 6F does not add a terminal command, `/ppo` route, OpenClaw route, Telegram route, parallel implementation/test/review engines, unbounded hardening/remediation loop, GitHub write, PR automation, push, merge, deployment, rollback, production verification, service control, or `/ppo continue`.

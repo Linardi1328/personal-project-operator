@@ -20,6 +20,7 @@ export const INDEPENDENT_REVIEW_AGENT_ID = "phase-6f-independent-review-agent"
 export const INDEPENDENT_REVIEW_SANDBOX_ID = "phase-6f-no-outbound-network-review-sandbox"
 export const PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE = "phase-6d-codex-execution-adapter"
 export const PHASE_6E_TEST_EVIDENCE_SOURCE = "phase-6e-automated-test-runner"
+export const REVIEW_FINDINGS_EVIDENCE_OUTCOME = "review_findings"
 export const MAX_INDEPENDENT_REVIEW_ATTEMPTS = 5
 export const MAX_REVIEW_ARG_COUNT = 16
 export const MAX_REVIEW_ARG_CHARS = 160
@@ -1338,6 +1339,41 @@ function reviewOutcomeForDecision(decision) {
   return "owner_action_required"
 }
 
+function reviewFindingHash(decision, reviewedSha) {
+  return stableHash({
+    reviewedSha,
+    decision: decision.decision,
+    blockers: decision.blockers,
+    securityFindings: decision.securityFindings,
+    testsRequired: decision.testsRequired
+  })
+}
+
+function buildReviewFindingsEvidence(run, execution, decision) {
+  return {
+    kind: "review",
+    sha: execution.reviewedSha,
+    source: INDEPENDENT_REVIEW_AGENT_ID,
+    summary: "Independent review validated bounded findings for remediation.",
+    metadata: {
+      project: run.project.id,
+      reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+      attempt: execution.attempt,
+      reviewedSha: execution.reviewedSha,
+      decision: decision.decision,
+      mergeAllowed: decision.mergeAllowed,
+      blockers: decision.blockers.length,
+      securityFindings: decision.securityFindings.length,
+      testsRequired: decision.testsRequired.length,
+      blockerItems: decision.blockers,
+      securityItems: decision.securityFindings,
+      testItems: decision.testsRequired,
+      findingHash: reviewFindingHash(decision, execution.reviewedSha),
+      outcome: REVIEW_FINDINGS_EVIDENCE_OUTCOME
+    }
+  }
+}
+
 function buildReviewDecisionEvidence(run, execution, config, decision, endedAt) {
   const outcome = reviewOutcomeForDecision(decision)
 
@@ -1541,7 +1577,12 @@ async function invokeReviewer(config, invocation, options = {}) {
 
 async function transitionReviewDecision(run, config, execution, decision, options) {
   const endedAt = timestamp(nowDate(options))
-  const evidence = buildReviewDecisionEvidence(run, execution, config, decision, endedAt)
+  const evidence = [
+    ...(decision.decision === REVIEW_DECISIONS.APPROVED ? [] : [
+      buildReviewFindingsEvidence(run, execution, decision)
+    ]),
+    buildReviewDecisionEvidence(run, execution, config, decision, endedAt)
+  ]
   const status = decision.decision === REVIEW_DECISIONS.APPROVED
     ? "review_passed"
     : "review_changes_requested"
@@ -1550,7 +1591,7 @@ async function transitionReviewDecision(run, config, execution, decision, option
     status,
     actor: INDEPENDENT_REVIEW_AGENT_ID,
     reason: `phase-6f-independent-review-${reviewOutcomeForDecision(decision)}`,
-    evidence: [evidence]
+    evidence
   }, options)
 
   return {
