@@ -169,6 +169,7 @@ async function assertModeLockClean(repoPath, script) {
     "preflight-openclaw-runtime.sh",
     "install-or-update-repo.sh",
     "deploy-exact-sha.sh",
+    "verify-production-readonly.sh",
     "service-control.sh",
     "firewall-ssh-hardening.sh",
     "rollback-repo.sh"

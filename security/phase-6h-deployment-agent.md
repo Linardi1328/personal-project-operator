@@ -1,6 +1,6 @@
 # Phase 6H Security Boundary
 
-Phase 6H covers exact-SHA deployment for the Personal Project Operator service after Phase 6G has merged an approved PR. It deliberately stops at `deployed`; verification and rollback belong to later phases.
+Phase 6H covers exact-SHA deployment for the Personal Project Operator service after Phase 6G has merged an approved PR. It deliberately stops at `deployed`; read-only production verification belongs to Phase 6I, and rollback remains separately deferred.
 
 ## Trusted Inputs
 

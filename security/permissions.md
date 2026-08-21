@@ -158,6 +158,17 @@ Allowed in Phase 6H only as exact-SHA PPO deployment:
 - inspect ambiguous deployment state read-only without retrying, mutating, restarting, or verifying production
 - store metadata-only deployment evidence
 
+Allowed in Phase 6I only as read-only PPO production verification:
+
+- accept only exact-version `deployed` Personal Project Operator self-development runs
+- require valid Phase 6H deployed evidence for the exact deployed SHA
+- require the deployed SHA to equal the Phase 6G merge commit SHA
+- use only the fixed Phase 6H `personal-project-operator` production profile
+- transition only through `deployed -> verification_in_progress -> verified` or `verification_failed`
+- inspect fixed production repository, checkout, runtime, systemd, unit, permission, and bridge facts read-only
+- reconcile ambiguous verification state read-only without retrying mutation or inferring success from partial checks
+- store metadata-only verification evidence
+
 Blocked unless explicitly approved in a later write-enabled phase:
 
 - push code outside the Phase 6G approved-branch exact-SHA push boundary
@@ -178,7 +189,8 @@ Blocked unless explicitly approved in a later write-enabled phase:
 - execute automated review outside the Phase 6F trusted independent review agent
 - execute automated hardening outside the Phase 6F bounded hardening orchestrator
 - execute deployment agents outside the Phase 6H exact-SHA PPO deployment boundary
-- execute rollback or verification agents from Phase 6A run-state records
+- execute production verification agents outside the Phase 6I read-only PPO verification boundary
+- execute rollback agents from Phase 6A run-state records
 - mutate files inside Phase 6C workspaces outside the Phase 6D bounded execution adapter
 
 ## Chat platform permissions

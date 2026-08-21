@@ -216,6 +216,18 @@ Phase 6H allows exact-SHA PPO deployment for a `merged` Phase 6A run:
 
 This exception does not deploy arbitrary projects, deploy latest `main`, use branch names as deployment targets, automatically rollback, perform production verification, run health validation, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 
+## Phase 6I read-only production verification exception
+
+Phase 6I allows read-only PPO production verification for a `deployed` Phase 6A run:
+
+- read the verification target only from valid Phase 6H deployed evidence
+- require the target to equal the Phase 6G merge commit SHA
+- transition `deployed -> verification_in_progress -> verified` or `verification_failed`
+- inspect only fixed repository, checkout, runtime, systemd, unit, permission, and bridge facts
+- reconcile ambiguous verification state read-only
+
+This exception does not deploy, redeploy, rollback, refresh Git refs, mutate files, restart services, route `/ppo continue`, add Telegram/OpenClaw autonomous-development commands, or expand project registry support.
+
 ## Future write actions
 
 Write actions must be treated as separate features, not automatic extensions of read-only commands.
@@ -233,7 +245,8 @@ Examples requiring explicit approval:
 - executing automated hardening outside the Phase 6F bounded hardening orchestrator
 - executing merge agents outside the Phase 6G GitHub delivery boundary
 - executing deployment agents outside the Phase 6H exact-SHA PPO deployment boundary
-- executing rollback/verification agents from Phase 6A run-state records
+- executing production verification agents outside the Phase 6I read-only PPO verification boundary
+- executing rollback agents from Phase 6A run-state records
 - restarting services outside the fixed Phase 6H PPO service restart
 - publishing content
 - sending messages

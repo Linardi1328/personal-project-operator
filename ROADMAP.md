@@ -398,9 +398,26 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Never persist tokens, authorization headers, credentials, SSH material, environment dumps, raw stdout/stderr, raw process failures, arbitrary absolute paths, shell command strings, or unbounded errors.
 - Phase 6H stops at `deployed`. It must not automatically rollback, perform production verification, run health validation, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials/authentication, or modify production except through the fixed exact-SHA deployment operation.
 
+### Phase 6I - Read-Only Production Verification Agent Foundation
+
+- Add a trusted local production verification agent for a Phase 6A PPO self-development run that has reached exactly `deployed` through Phase 6H.
+- Require an exact expected version before any state transition and reject stale writers.
+- Reuse the fixed Phase 6H PPO deployment profile. Do not accept caller-selected repositories, install paths, services, commands, executables, policies, refs, branches, or target SHAs.
+- Read the verification target SHA only from durable valid Phase 6H `deployed` evidence. The target must equal the Phase 6G merge commit SHA and must not come from latest `main`, caller input, task text, chat, environment variables, project Markdown, repository-controlled configuration, or model output.
+- Transition `deployed -> verification_in_progress` before executing verification and reserve durable metadata-only verification attempt evidence.
+- Use a fixed read-only production verification primitive with explicit argv, `shell: false`, bounded timeout/output, sanitized environment, and strict bounded result schema validation.
+- Verify at minimum fixed repository origin, exact detached checkout SHA, clean worktree, previous revision marker when recorded, runtime preflight, OpenClaw executable version, fixed systemd service enabled/active/running state and identity, reviewed unit match, permission contract, and read-only `ppo_local help` bridge execution.
+- On complete deterministic success, re-read the run, require the same deployed SHA, and transition `verification_in_progress -> verified` with metadata-only evidence.
+- On definitive verification failure, transition `verification_in_progress -> verification_failed` with only a bounded safe failure classification. Do not rollback, redeploy, or restart services.
+- Treat timeout, signal, interruption, killed process, output overflow, uncertain child completion, or malformed verification output as ambiguous. Preserve the open verification attempt and require read-only reconciliation before another coordinated attempt.
+- Add read-only verification reconciliation that reports current run status, expected deployed SHA, recorded attempt, current checkout SHA, fixed service state, evidence completeness, and owner-action requirement. Reconciliation must not mutate production or transition to `verified` merely because a subset of checks passes.
+- Store only bounded metadata such as project, verification agent id, policy id/hash, attempt, deployment SHA, observed checkout SHA, service identity, service active/running booleans, result classes, timestamps, and aggregate outcome.
+- Never persist tokens, authorization headers, credentials, SSH material, environment dumps, journal contents, OpenClaw output, raw stdout/stderr, raw process failures, arbitrary absolute paths, shell command strings, or unbounded errors.
+- Phase 6I stops at `verified` or `verification_failed`. It must not automatically rollback, deploy, restart services, refresh Git refs, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials/authentication, or broaden GitHub write permissions.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add rollback and verification agents one boundary at a time.
+- Add rollback as a separate reviewed boundary.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.
