@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { readFile } from "node:fs/promises"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
 import {
   DEVELOPMENT_DEPLOYMENT_AGENT_ID,
   PHASE_6H_DEPLOYMENT_POLICY_HASH,
@@ -34,6 +36,7 @@ const IMPLEMENTATION_SHA = "a".repeat(40)
 const MERGE_SHA = "b".repeat(40)
 const OLD_SHA = "c".repeat(40)
 const WRONG_SHA = "d".repeat(40)
+const VERIFY_PRODUCTION_READONLY_SCRIPT_PATH = fileURLToPath(new URL("../deployment/scripts/verify-production-readonly.sh", import.meta.url))
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -299,6 +302,86 @@ function verificationResult(overrides = {}) {
     routeInvoked: false,
     ...overrides
   }
+}
+
+function verificationContract(overrides = {}) {
+  const result = verificationResult(overrides)
+
+  return [
+    `repository:${result.repository}`,
+    `checkout:${result.checkout}`,
+    `clean:${result.clean}`,
+    `previousRevision:${result.previousRevision}`,
+    `runtimePreflight:${result.runtimePreflight}`,
+    `openclawVersion:${result.openclawVersion}`,
+    `serviceEnabled:${result.serviceEnabled === true ? "true" : "false"}`,
+    `serviceActive:${result.serviceActive === true ? "true" : "false"}`,
+    `serviceRunning:${result.serviceRunning === true && result.serviceMainPidNonZero === true ? "true" : "false"}`,
+    `serviceIdentity:${result.serviceIdentity}`,
+    `unitContract:${result.unitContract}`,
+    `permissionContract:${result.permissionContract}`,
+    `bridge:${result.bridge}`
+  ]
+}
+
+function verificationStartedEvidence({ attempt = 1 } = {}) {
+  return {
+    kind: "verification",
+    sha: MERGE_SHA,
+    source: DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID,
+    summary: "Verification started.",
+    metadata: {
+      project: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
+      agent: DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID,
+      policyId: PHASE_6I_PRODUCTION_VERIFICATION_POLICY_ID,
+      policyHash: PHASE_6I_PRODUCTION_VERIFICATION_POLICY_HASH,
+      deploymentSha: MERGE_SHA,
+      outcome: "verification_started",
+      attempt,
+      service: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName
+    }
+  }
+}
+
+function verifiedEvidence({
+  attempt = 1,
+  deploymentSha = MERGE_SHA,
+  checkoutSha = MERGE_SHA,
+  policyId = PHASE_6I_PRODUCTION_VERIFICATION_POLICY_ID,
+  policyHash = PHASE_6I_PRODUCTION_VERIFICATION_POLICY_HASH,
+  contract = verificationContract()
+} = {}) {
+  return {
+    kind: "verification",
+    sha: deploymentSha,
+    source: DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID,
+    summary: "Phase 6I production verification completed.",
+    metadata: {
+      project: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
+      agent: DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID,
+      policyId,
+      policyHash,
+      deploymentSha,
+      outcome: "verified",
+      attempt,
+      checkoutSha,
+      service: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName,
+      contract
+    }
+  }
+}
+
+function makeVerifiedRun(verificationOverrides = {}) {
+  const run = makeDeployedRun({
+    status: "verified",
+    stage: "closed",
+    verificationAttempts: 1
+  })
+
+  run.timestamps.terminalAt = "2026-08-22T00:00:01.000Z"
+  run.evidence.verification.push(verificationStartedEvidence({ attempt: verificationOverrides.startedAttempt || 1 }))
+  run.evidence.verification.push(verifiedEvidence(verificationOverrides))
+  return run
 }
 
 function makeVerificationRunner(options = {}) {
@@ -567,12 +650,7 @@ test("full success transitions to verified with exact-SHA metadata-only evidence
   assert.equal(evidence.metadata.deploymentSha, MERGE_SHA)
   assert.equal(evidence.metadata.checkoutSha, MERGE_SHA)
   assert.equal(evidence.metadata.service, PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName)
-  assert.equal(evidence.metadata.active, true)
-  assert.equal(evidence.metadata.running, true)
-  assert.equal(evidence.metadata.runtimePreflight, "passed")
-  assert.equal(evidence.metadata.bridge, "passed")
-  assert.equal(evidence.metadata.permissionContract, "passed")
-  assert.equal(evidence.metadata.unitContract, "passed")
+  assert.deepEqual(evidence.metadata.contract, verificationContract())
   assert.doesNotMatch(serializedEvidence, /SENSITIVE_TEST_SENTINEL|stdout|stderr|stack|raw|token|secret|credential|authorization|\/opt\/|\/var\/|\/etc\//i)
 })
 
@@ -647,22 +725,7 @@ test("malformed verification output is ambiguous and does not persist raw output
 test("reconciliation reports observed production state but never transitions to verified", async () => {
   const fixture = makeStateAdapter(makeDeployedRun({ status: "verification_in_progress", stage: "verification", verificationAttempts: 1 }))
 
-  fixture.state.run.evidence.verification.push({
-    kind: "verification",
-    sha: MERGE_SHA,
-    source: DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID,
-    summary: "Verification started.",
-    metadata: {
-      project: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
-      agent: DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID,
-      policyId: PHASE_6I_PRODUCTION_VERIFICATION_POLICY_ID,
-      policyHash: PHASE_6I_PRODUCTION_VERIFICATION_POLICY_HASH,
-      deploymentSha: MERGE_SHA,
-      outcome: "verification_started",
-      attempt: 1,
-      service: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName
-    }
-  })
+  fixture.state.run.evidence.verification.push(verificationStartedEvidence())
 
   const runner = makeVerificationRunner()
   const beforeTransitions = fixture.state.transitions.length
@@ -672,6 +735,8 @@ test("reconciliation reports observed production state but never transitions to 
   })
 
   assert.equal(fixture.state.transitions.length, beforeTransitions)
+  assert.equal(runner.state.verifyCalls.length, 0)
+  assert.equal(runner.state.inspectCalls.length, 1)
   assert.equal(fixture.state.run.status, "verification_in_progress")
   assert.equal(reconciled.verification.currentCheckoutSha, MERGE_SHA)
   assert.equal(reconciled.verification.service.name, PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName)
@@ -680,6 +745,112 @@ test("reconciliation reports observed production state but never transitions to 
   assert.equal(reconciled.verification.service.running, true)
   assert.equal(reconciled.verification.completionProven, false)
   assert.equal(reconciled.verification.ownerActionRequired, true)
+})
+
+test("reconciliation completion proof requires verified status and current full passing inspection", async () => {
+  for (const [name, inspectResult] of [
+    ["inactive current service", { ok: false, serviceActive: false, failureClass: "inactive_service" }],
+    ["failed current permission contract", { ok: false, permissionContract: "failed", failureClass: "permission_contract_failed" }],
+    ["failed current unit contract", { ok: false, unitContract: "failed", failureClass: "unit_contract_failed" }],
+    ["failed current runtime preflight", { ok: false, runtimePreflight: "failed", failureClass: "runtime_preflight_failed" }],
+    ["failed current bridge check", { ok: false, bridge: "failed", failureClass: "bridge_help_failed" }]
+  ]) {
+    const fixture = makeStateAdapter(makeVerifiedRun())
+    const runner = makeVerificationRunner({ inspectResult })
+    const beforeTransitions = fixture.state.transitions.length
+    const reconciled = await reconcileDevelopmentProductionVerification(RUN_ID, {
+      ...fixture.api,
+      verificationRunner: runner
+    })
+
+    assert.equal(fixture.state.transitions.length, beforeTransitions, name)
+    assert.equal(runner.state.verifyCalls.length, 0, name)
+    assert.equal(runner.state.inspectCalls.length, 1, name)
+    assert.equal(reconciled.run.status, "verified", name)
+    assert.equal(reconciled.verification.completionProven, false, name)
+    assert.equal(reconciled.verification.verificationEvidenceComplete, false, name)
+  }
+})
+
+test("reconciliation rejects stale or partial verified evidence as completion proof", async () => {
+  for (const [name, evidenceOverrides] of [
+    ["wrong Phase 6I policy id", { policyId: "phase-6i-stale-policy" }],
+    ["wrong Phase 6I policy hash", { policyHash: "0".repeat(64) }],
+    ["wrong deployment SHA", { deploymentSha: WRONG_SHA }],
+    ["wrong checkout SHA", { checkoutSha: WRONG_SHA }],
+    ["partial contract", { contract: verificationContract().slice(0, 8) }],
+    ["stale attempt", { attempt: 2 }]
+  ]) {
+    const fixture = makeStateAdapter(makeVerifiedRun(evidenceOverrides))
+    const runner = makeVerificationRunner()
+    const beforeTransitions = fixture.state.transitions.length
+    const reconciled = await reconcileDevelopmentProductionVerification(RUN_ID, {
+      ...fixture.api,
+      verificationRunner: runner
+    })
+
+    assert.equal(fixture.state.transitions.length, beforeTransitions, name)
+    assert.equal(runner.state.verifyCalls.length, 0, name)
+    assert.equal(runner.state.inspectCalls.length, 1, name)
+    assert.equal(reconciled.verification.completionProven, false, name)
+    assert.equal(reconciled.verification.verificationEvidenceComplete, false, name)
+  }
+})
+
+test("reconciliation can prove completion only with full exact evidence and current passing inspection", async () => {
+  const fixture = makeStateAdapter(makeVerifiedRun())
+  const runner = makeVerificationRunner()
+  const beforeTransitions = fixture.state.transitions.length
+  const reconciled = await reconcileDevelopmentProductionVerification(RUN_ID, {
+    ...fixture.api,
+    verificationRunner: runner
+  })
+
+  assert.equal(fixture.state.transitions.length, beforeTransitions)
+  assert.equal(runner.state.verifyCalls.length, 0)
+  assert.equal(runner.state.inspectCalls.length, 1)
+  assert.equal(reconciled.run.status, "verified")
+  assert.equal(reconciled.verification.currentCheckoutSha, MERGE_SHA)
+  assert.equal(reconciled.verification.verificationEvidenceComplete, true)
+  assert.equal(reconciled.verification.completionProven, true)
+  assert.equal(reconciled.verification.ownerActionRequired, false)
+})
+
+function shellPredicate(functionName, value) {
+  const result = spawnSync("bash", [
+    "-c",
+    'source "$1"; "$2" "$3"',
+    "bash",
+    VERIFY_PRODUCTION_READONLY_SCRIPT_PATH,
+    functionName,
+    value
+  ], {
+    encoding: "utf8"
+  })
+
+  return result.status === 0
+}
+
+test("systemd ExecStart validation accepts only the exact OpenClaw gateway command", () => {
+  const exactCommand = "/home/ppo/.local/openclaw/bin/openclaw gateway run"
+  const systemdExecStart = `{ path=/home/ppo/.local/openclaw/bin/openclaw ; argv[]=${exactCommand} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }`
+
+  assert.equal(shellPredicate("exec_start_matches_fixed_openclaw_gateway", exactCommand), true)
+  assert.equal(shellPredicate("exec_start_matches_fixed_openclaw_gateway", systemdExecStart), true)
+
+  for (const value of [
+    `${exactCommand} --debug`,
+    "/tmp/openclaw gateway run",
+    `/usr/bin/env ${exactCommand}`,
+    `/bin/sh -c '${exactCommand}'`,
+    `${exactCommand} suffix`,
+    `{ path=/home/ppo/.local/openclaw/bin/openclaw ; argv[]=${exactCommand} --debug ; ignore_errors=no ; }`,
+    `{ path=/tmp/openclaw ; argv[]=/tmp/openclaw gateway run ; ignore_errors=no ; }`,
+    `{ path=/home/ppo/.local/openclaw/bin/openclaw ; argv[]=${exactCommand} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 } { path=/bin/echo ; argv[]=/bin/echo suffix ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }`,
+    `prefix ${exactCommand}`
+  ]) {
+    assert.equal(shellPredicate("exec_start_matches_fixed_openclaw_gateway", value), false, value)
+  }
 })
 
 test("Phase 6I scope excludes rollback, deploy, restart, GitHub write, model, routes, and continue command", async () => {
@@ -717,12 +888,18 @@ test("production verification shell primitive has only read-only command shapes"
   assert.match(scriptSource, /git -C "\$INSTALL_DIR" remote get-url "\$REMOTE_NAME"/)
   assert.match(scriptSource, /git -C "\$INSTALL_DIR" rev-parse --verify HEAD/)
   assert.match(scriptSource, /git -C "\$INSTALL_DIR" symbolic-ref -q HEAD/)
-  assert.match(scriptSource, /git -C "\$INSTALL_DIR" status --porcelain=v1/)
+  assert.match(scriptSource, /git --no-optional-locks -C "\$INSTALL_DIR" -c core\.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames/)
+  assert.doesNotMatch(scriptSource, /git -C "\$INSTALL_DIR" status --porcelain=v1/)
   assert.match(scriptSource, /sudo -u "\$SERVICE_USER" "\$PREFLIGHT_SCRIPT"/)
   assert.match(scriptSource, /systemctl is-enabled --quiet "\$SERVICE_NAME"/)
   assert.match(scriptSource, /systemctl is-active --quiet "\$SERVICE_NAME"/)
   assert.match(scriptSource, /systemctl show "\$SERVICE_NAME"/)
+  assert.match(scriptSource, /--property=DropInPaths --value/)
+  assert.match(scriptSource, /\[\[ -z "\$drop_in_paths" \]\] \|\| fail_result "unit_contract_failed"/)
+  assert.match(scriptSource, /exec_start_matches_fixed_openclaw_gateway "\$exec_start"/)
   assert.match(scriptSource, /cmp -s "\$SYSTEMD_UNIT" "\$REVIEWED_UNIT"/)
+  assert.match(scriptSource, /WRITE_DATA_DIR="\$\{STATE_DIR\}\/write-data"/)
+  assert.match(scriptSource, /path_contract "\$WRITE_DATA_DIR" "\$SERVICE_USER" "\$SERVICE_GROUP" 700/)
   assert.match(scriptSource, /"\$NODE_BIN" "\$BRIDGE_HELP_CHECK"/)
   assert.doesNotMatch(scriptSource, /\beval\b|git fetch|git pull|git checkout|git switch|git reset|git update-ref|git branch|git push/)
   assert.doesNotMatch(scriptSource, /\b(?:chmod|chown|install|apt|apt-get|npm|curl|ssh|scp|rsync)\b/)

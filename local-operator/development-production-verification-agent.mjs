@@ -75,6 +75,7 @@ const resultClassKeys = Object.freeze([
   "permissionContract",
   "bridge"
 ])
+const verificationContractEntryCount = 13
 const callerTargetOptionKeys = Object.freeze([
   "deploymentSha",
   "checkoutSha",
@@ -112,14 +113,15 @@ const productionVerificationPolicyContract = Object.freeze({
     "fixed_repository_origin",
     "exact_deployed_head",
     "detached_checkout",
-    "clean_worktree",
+    "readonly_git_cleanliness_no_optional_locks_no_fsmonitor",
     "previous_revision_marker",
     "runtime_preflight",
     "openclaw_version",
     "systemd_enabled_active_running",
-    "systemd_identity",
+    "systemd_effective_execstart_exact",
+    "systemd_dropins_absent",
     "reviewed_unit_match",
-    "permission_contract",
+    "private_write_data_permission_contract",
     "ppo_local_help_bridge"
   ])
 })
@@ -570,6 +572,76 @@ function firstFailedContractClass(result) {
   return "operation_failed"
 }
 
+function booleanContractEntry(key, value) {
+  return `${key}:${value === true ? "true" : "false"}`
+}
+
+function resultClassContractEntry(result, key) {
+  return `${key}:${result?.[key] || "not_run"}`
+}
+
+function verificationContractMetadata(result) {
+  return [
+    resultClassContractEntry(result, "repository"),
+    resultClassContractEntry(result, "checkout"),
+    resultClassContractEntry(result, "clean"),
+    resultClassContractEntry(result, "previousRevision"),
+    resultClassContractEntry(result, "runtimePreflight"),
+    resultClassContractEntry(result, "openclawVersion"),
+    booleanContractEntry("serviceEnabled", result?.serviceEnabled),
+    booleanContractEntry("serviceActive", result?.serviceActive),
+    booleanContractEntry("serviceRunning", result?.serviceRunning === true && result?.serviceMainPidNonZero === true),
+    resultClassContractEntry(result, "serviceIdentity"),
+    resultClassContractEntry(result, "unitContract"),
+    resultClassContractEntry(result, "permissionContract"),
+    resultClassContractEntry(result, "bridge")
+  ]
+}
+
+function contractEntryIsSafe(entry) {
+  return (
+    typeof entry === "string" &&
+    entry.length <= 80 &&
+    !unsafeControlPattern.test(entry) &&
+    !sensitiveTextPattern.test(entry)
+  )
+}
+
+function verificationContractProvesFullSuccess(contract) {
+  if (!Array.isArray(contract) || contract.length !== verificationContractEntryCount || contract.some((entry) => !contractEntryIsSafe(entry))) {
+    return false
+  }
+
+  const entries = new Set(contract)
+
+  return (
+    entries.size === verificationContractEntryCount &&
+    entries.has("repository:passed") &&
+    entries.has("checkout:passed") &&
+    entries.has("clean:passed") &&
+    (entries.has("previousRevision:passed") || entries.has("previousRevision:not_applicable")) &&
+    entries.has("runtimePreflight:passed") &&
+    entries.has("openclawVersion:passed") &&
+    entries.has("serviceEnabled:true") &&
+    entries.has("serviceActive:true") &&
+    entries.has("serviceRunning:true") &&
+    entries.has("serviceIdentity:passed") &&
+    entries.has("unitContract:passed") &&
+    entries.has("permissionContract:passed") &&
+    entries.has("bridge:passed")
+  )
+}
+
+function verificationContractMatchesInspection(contract, inspection) {
+  const expected = verificationContractMetadata(inspection)
+
+  return (
+    Array.isArray(contract) &&
+    contract.length === expected.length &&
+    expected.every((entry, index) => contract[index] === entry)
+  )
+}
+
 function validateProductionVerificationResult(result, profile, expectedSha) {
   if (isUncertainOutcome(result)) {
     throw ambiguousProductionVerificationError()
@@ -699,7 +771,13 @@ async function performProductionVerification(profile, facts, options = {}) {
       serviceActive: false,
       serviceRunning: false,
       serviceMainPidNonZero: false,
+      repository: "not_run",
+      checkout: "not_run",
+      clean: "not_run",
+      previousRevision: "not_run",
       runtimePreflight: "not_run",
+      openclawVersion: "not_run",
+      serviceIdentity: "not_run",
       bridge: "not_run",
       permissionContract: "not_run",
       unitContract: "not_run"
@@ -729,12 +807,7 @@ function verificationResultMetadata(result) {
   return {
     checkoutSha: result.observedCheckoutSha || "",
     service: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName,
-    active: result.serviceActive === true,
-    running: result.serviceRunning === true && result.serviceMainPidNonZero === true,
-    runtimePreflight: result.runtimePreflight || "not_run",
-    bridge: result.bridge || "not_run",
-    permissionContract: result.permissionContract || "not_run",
-    unitContract: result.unitContract || "not_run"
+    contract: verificationContractMetadata(result)
   }
 }
 
@@ -872,25 +945,42 @@ export async function executeDevelopmentProductionVerification(runId, options = 
 function verificationAttempt(run) {
   const started = latestProductionVerificationEvidence(run, "verification_started")
 
-  if (started?.metadata?.attempt && Number.isInteger(started.metadata.attempt)) {
+  if (
+    started?.metadata?.policyId === PHASE_6I_PRODUCTION_VERIFICATION_POLICY_ID &&
+    started?.metadata?.policyHash === PHASE_6I_PRODUCTION_VERIFICATION_POLICY_HASH &&
+    Number.isInteger(started?.metadata?.attempt) &&
+    started.metadata.attempt > 0
+  ) {
     return started.metadata.attempt
   }
 
   return null
 }
 
-function verificationEvidenceComplete(run, deploymentSha, checkoutSha) {
+function verificationEvidenceComplete(run, facts, inspection) {
   const verified = latestProductionVerificationEvidence(run, "verified")
+  const metadata = verified?.metadata || {}
+  const attempt = verificationAttempt(run)
 
   return Boolean(
+    run.status === "verified" &&
     verified &&
-    verified.sha === deploymentSha &&
-    verified.metadata?.deploymentSha === deploymentSha &&
-    verified.metadata?.checkoutSha === checkoutSha &&
-    verified.metadata?.runtimePreflight === "passed" &&
-    verified.metadata?.bridge === "passed" &&
-    verified.metadata?.permissionContract === "passed" &&
-    verified.metadata?.unitContract === "passed"
+    inspection?.ok === true &&
+    inspection.observedCheckoutSha === facts.deploymentSha &&
+    verified.source === DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID &&
+    verified.sha === facts.deploymentSha &&
+    metadata.agent === DEVELOPMENT_PRODUCTION_VERIFICATION_AGENT_ID &&
+    metadata.policyId === PHASE_6I_PRODUCTION_VERIFICATION_POLICY_ID &&
+    metadata.policyHash === PHASE_6I_PRODUCTION_VERIFICATION_POLICY_HASH &&
+    metadata.outcome === "verified" &&
+    metadata.deploymentSha === facts.deploymentSha &&
+    metadata.checkoutSha === facts.deploymentSha &&
+    metadata.service === PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName &&
+    Number.isInteger(metadata.attempt) &&
+    metadata.attempt > 0 &&
+    attempt === metadata.attempt &&
+    verificationContractProvesFullSuccess(metadata.contract) &&
+    verificationContractMatchesInspection(metadata.contract, inspection)
   )
 }
 
@@ -910,7 +1000,7 @@ async function reconcileDevelopmentProductionVerificationInternal(runId, options
     facts = deployedEvidenceFacts(run, profile)
     expectedDeploymentSha = facts.deploymentSha
     inspection = await inspectProduction(profile, facts, options)
-    evidenceComplete = verificationEvidenceComplete(run, facts.deploymentSha, inspection.observedCheckoutSha)
+    evidenceComplete = verificationEvidenceComplete(run, facts, inspection)
     ownerActionRequired = run.status === "verification_in_progress" && !evidenceComplete
   } catch {
     ownerActionRequired = ["verification_in_progress", "verification_failed"].includes(run.status)

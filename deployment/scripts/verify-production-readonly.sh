@@ -5,6 +5,7 @@ SERVICE_USER="ppo"
 SERVICE_GROUP="ppo"
 INSTALL_DIR="/opt/personal-project-operator"
 STATE_DIR="/var/lib/personal-project-operator"
+WRITE_DATA_DIR="${STATE_DIR}/write-data"
 CONFIG_DIR="/etc/personal-project-operator"
 OPENCLAW_PREFIX="/home/ppo/.local/openclaw"
 NODE_BIN="${OPENCLAW_PREFIX}/tools/node/bin/node"
@@ -88,6 +89,18 @@ path_contract() {
   [[ "$actual_user" == "$expected_user" && "$actual_group" == "$expected_group" && "$actual_mode" == "$expected_mode" ]]
 }
 
+exec_start_matches_fixed_openclaw_gateway() {
+  local value="$1"
+  local expected_command="${OPENCLAW_BIN} gateway run"
+  local systemd_exec_start_pattern='^\{ path=/home/ppo/\.local/openclaw/bin/openclaw ; argv\[\]=/home/ppo/\.local/openclaw/bin/openclaw gateway run ; ignore_errors=(yes|no) ; start_time=\[[^][]*\] ; stop_time=\[[^][]*\] ; pid=[0-9]+ ; code=[^;{}]+ ; status=[^;{}]+ \}$'
+
+  [[ "$value" != *$'\n'* ]] || return 1
+  [[ "$value" == "$expected_command" ]] && return 0
+  [[ "$value" =~ $systemd_exec_start_pattern ]] && return 0
+
+  return 1
+}
+
 require_exact_inputs() {
   valid_sha "$EXPECTED_SHA" || fail_result "malformed_expected_sha"
 
@@ -114,7 +127,7 @@ check_repository_and_checkout() {
   fi
   checkout="passed"
 
-  [[ -z "$(git -C "$INSTALL_DIR" status --porcelain=v1 2>/dev/null)" ]] ||
+  [[ -z "$(git --no-optional-locks -C "$INSTALL_DIR" -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>/dev/null)" ]] ||
     fail_result "dirty_checkout"
   clean="passed"
 }
@@ -145,7 +158,7 @@ check_runtime() {
 }
 
 check_service_state() {
-  local sub_state main_pid service_user service_group work_dir exec_start fragment_path
+  local sub_state main_pid service_user service_group work_dir exec_start fragment_path drop_in_paths
 
   if systemctl is-enabled --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
     service_enabled=true
@@ -181,13 +194,15 @@ check_service_state() {
   [[ "$service_user" == "$SERVICE_USER" ]] || fail_result "service_identity_mismatch"
   [[ "$service_group" == "$SERVICE_GROUP" ]] || fail_result "service_identity_mismatch"
   [[ "$work_dir" == "$INSTALL_DIR" ]] || fail_result "service_identity_mismatch"
-  [[ "$exec_start" == *"${OPENCLAW_BIN}"* && "$exec_start" == *"gateway run"* ]] ||
-    fail_result "service_identity_mismatch"
+  exec_start_matches_fixed_openclaw_gateway "$exec_start" || fail_result "service_identity_mismatch"
   service_identity="passed"
 
   fragment_path="$(systemctl show "$SERVICE_NAME" --property=FragmentPath --value 2>/dev/null)" ||
     fail_result "unit_contract_failed"
+  drop_in_paths="$(systemctl show "$SERVICE_NAME" --property=DropInPaths --value 2>/dev/null)" ||
+    fail_result "unit_contract_failed"
   [[ "$fragment_path" == "$SYSTEMD_UNIT" ]] || fail_result "unit_contract_failed"
+  [[ -z "$drop_in_paths" ]] || fail_result "unit_contract_failed"
   [[ -f "$SYSTEMD_UNIT" && -f "$REVIEWED_UNIT" ]] || fail_result "unit_contract_failed"
   cmp -s "$SYSTEMD_UNIT" "$REVIEWED_UNIT" || fail_result "unit_contract_failed"
   unit_contract="passed"
@@ -197,6 +212,8 @@ check_permissions() {
   path_contract "$INSTALL_DIR" root "$SERVICE_GROUP" 755 ||
     fail_result "permission_contract_failed"
   path_contract "$STATE_DIR" root "$SERVICE_GROUP" 750 ||
+    fail_result "permission_contract_failed"
+  path_contract "$WRITE_DATA_DIR" "$SERVICE_USER" "$SERVICE_GROUP" 700 ||
     fail_result "permission_contract_failed"
   path_contract "$CONFIG_DIR" root root 750 ||
     fail_result "permission_contract_failed"
@@ -226,4 +243,6 @@ main() {
   emit_result true "none"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
