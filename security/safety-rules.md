@@ -231,8 +231,9 @@ The adapter must:
 - require exact expected-version checks before run-state transition
 - refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces
 - require workspace HEAD to match the run head/base state before Codex starts
-- read Codex executable path, sandbox executable path, Git executable path, argv, timeout, and environment only from trusted local configuration
-- establish and verify a no-outbound-network OS/process sandbox before spawning Codex
+- read Codex executable path, explicit sandbox backend configuration, Git executable path, argv, timeout, and environment only from trusted local configuration
+- establish and verify an explicit no-outbound-network OS/process sandbox before spawning Codex
+- use the Linux network-namespace backend for Ubuntu 24.04 production only when a sandboxed preflight proves non-root execution, zero effective capabilities, and `NoNewPrivs: 1`
 - keep Git wrapper/env remote-write denial only as defense in depth
 - invoke Codex through the sandbox with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified workspace
 - generate a deterministic bounded prompt with no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries

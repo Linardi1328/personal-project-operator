@@ -27,6 +27,7 @@ import {
 import {
   CODEX_EXECUTION_ADAPTER_ID,
   CODEX_EXECUTION_SANDBOX_ID,
+  CODEX_SANDBOX_BACKENDS,
   MAX_CODEX_IMPLEMENTATION_ATTEMPTS,
   MAX_CODEX_OUTPUT_BYTES,
   MAX_CODEX_PROMPT_CHARS,
@@ -38,7 +39,12 @@ import {
 
 const execFileAsync = promisify(execFile)
 const TRUSTED_GIT_EXECUTABLE = process.env.PPO_TEST_GIT_EXECUTABLE || "/usr/bin/git"
-const TRUSTED_SANDBOX_EXECUTABLE = process.env.PPO_TEST_SANDBOX_EXECUTABLE || "/usr/bin/sandbox-exec"
+const TRUSTED_MACOS_SANDBOX_EXECUTABLE = process.env.PPO_TEST_SANDBOX_EXECUTABLE || "/usr/bin/sandbox-exec"
+const TRUSTED_LINUX_SANDBOX_EXECUTABLE = process.env.PPO_TEST_LINUX_SANDBOX_EXECUTABLE || "/usr/bin/nsenter"
+const TRUSTED_LINUX_SETPRIV_EXECUTABLE = process.env.PPO_TEST_LINUX_SETPRIV_EXECUTABLE || "/usr/bin/setpriv"
+const TRUSTED_LINUX_NAMESPACE_PATH = process.env.PPO_TEST_LINUX_NAMESPACE_PATH || "/run/netns/ppo-codex-no-network"
+const TRUSTED_LINUX_RUN_AS_UID = 1000
+const TRUSTED_LINUX_RUN_AS_GID = 1000
 const PROJECT_IDS = [
   "khlim-assist",
   "ledgerpilot-ai",
@@ -178,13 +184,33 @@ function trustedCodexConfig(overrides = {}) {
       enforcement: "adapter-git-wrapper"
     },
     executionSandbox: {
-      type: "macos-sandbox-exec",
+      type: CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC,
+      platform: "darwin",
       network: "none",
       enforcement: "os-process",
-      executablePath: TRUSTED_SANDBOX_EXECUTABLE
+      executablePath: TRUSTED_MACOS_SANDBOX_EXECUTABLE
     },
     ...overrides
   }
+}
+
+function trustedLinuxCodexConfig(overrides = {}) {
+  return trustedCodexConfig({
+    executionSandbox: {
+      type: CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+      platform: "linux",
+      network: "none",
+      enforcement: "os-network-namespace",
+      executablePath: TRUSTED_LINUX_SANDBOX_EXECUTABLE,
+      namespacePath: TRUSTED_LINUX_NAMESPACE_PATH,
+      setprivPath: TRUSTED_LINUX_SETPRIV_EXECUTABLE,
+      runAsUid: TRUSTED_LINUX_RUN_AS_UID,
+      runAsGid: TRUSTED_LINUX_RUN_AS_GID,
+      requireNoNewPrivileges: true,
+      dropCapabilities: true
+    },
+    ...overrides
+  })
 }
 
 function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options = {}) {
@@ -194,7 +220,10 @@ function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options 
     sandboxCalls.push({ ...invocation })
     assert.equal(invocation.shell, false)
     assert.equal(invocation.sandbox.network, "none")
-    assert.equal(invocation.sandbox.enforcement, "os-process")
+    assert.ok(new Set(["os-process", "os-network-namespace"]).has(invocation.sandbox.enforcement))
+    assert.ok(invocation.sandboxCommand)
+    assert.equal(invocation.sandboxExecutablePath, invocation.sandboxCommand.executablePath)
+    assert.deepEqual(invocation.sandboxArgs, invocation.sandboxCommand.args)
 
     if (options.unavailable) {
       throw new Error("sandbox unavailable")
@@ -210,6 +239,10 @@ function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options 
         return typeof probeResult === "function" ? await probeResult(invocation) : { ...probeResult }
       }
 
+      if (invocation.probe === "linux-privilege-boundary") {
+        return { exitCode: 0, stdout: "", stderr: "" }
+      }
+
       if (invocation.probe === "local-workspace-git") {
         return { exitCode: 0, stdout: "", stderr: "" }
       }
@@ -219,6 +252,7 @@ function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options 
       }
 
       if (
+        invocation.probe === "direct-ssh-transport" ||
         invocation.probe === "absolute-git-sanitized-env-push" ||
         invocation.probe === "ordinary-git-push"
       ) {
@@ -402,10 +436,13 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
   assert.match(calls[0].env.PATH, /codex-execution-policy/u)
   assert.equal(calls[0].env.GIT_CONFIG_VALUE_0, "never")
   assert.equal(calls[0].executionSandbox.sandbox, CODEX_EXECUTION_SANDBOX_ID)
+  assert.equal(calls[0].executionSandbox.backend, CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC)
+  assert.equal(calls[0].executionSandbox.platform, "darwin")
   assert.equal(calls[0].executionSandbox.network, "none")
   assert.deepEqual(sandboxCalls.map((call) => call.probe || call.kind), [
     "local-workspace-git",
     "direct-network",
+    "direct-ssh-transport",
     "absolute-git-sanitized-env-push",
     "ordinary-git-push",
     "codex"
@@ -448,6 +485,167 @@ test("Codex invocation uses trusted config, explicit argv, shell=false, and veri
     workspaceRegistry: fixture.registry,
     ...sandboxedCodexRunner(async () => ({ exitCode: 0 }))
   }), "CODEX_CONFIG_REQUIRED")
+})
+
+test("Linux no-outbound-network sandbox backend uses namespace and drops privileges", async () => {
+  const fixture = await makeImplementationFixture()
+  const calls = []
+  const sandboxCalls = []
+  const result = await executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedLinuxCodexConfig(),
+    ...sandboxedCodexRunner(makeCommitRunner(calls), { sandboxCalls }),
+    now: fixture.now
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(sandboxCalls.map((call) => call.probe || call.kind), [
+    "linux-privilege-boundary",
+    "local-workspace-git",
+    "direct-network",
+    "direct-ssh-transport",
+    "absolute-git-sanitized-env-push",
+    "ordinary-git-push",
+    "codex"
+  ])
+
+  for (const call of sandboxCalls) {
+    assert.equal(call.sandbox.type, CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE)
+    assert.equal(call.sandbox.platform, "linux")
+    assert.equal(call.sandbox.enforcement, "os-network-namespace")
+    assert.equal(call.sandboxCommand.backend, CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE)
+    assert.equal(call.sandboxCommand.executablePath, TRUSTED_LINUX_SANDBOX_EXECUTABLE)
+    assert.deepEqual(call.sandboxArgs.slice(0, 11), [
+      `--net=${TRUSTED_LINUX_NAMESPACE_PATH}`,
+      TRUSTED_LINUX_SETPRIV_EXECUTABLE,
+      "--no-new-privs",
+      `--reuid=${TRUSTED_LINUX_RUN_AS_UID}`,
+      `--regid=${TRUSTED_LINUX_RUN_AS_GID}`,
+      "--clear-groups",
+      "--bounding-set=-all",
+      "--inh-caps=-all",
+      "--ambient-caps=-all",
+      "--",
+      call.executablePath
+    ])
+  }
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].executionSandbox.backend, CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE)
+  assert.equal(calls[0].executionSandbox.platform, "linux")
+
+  const evidence = result.run.evidence.implementation.at(-1)
+  assert.equal(evidence.metadata.sandbox, CODEX_EXECUTION_SANDBOX_ID)
+  assert.equal(evidence.metadata.backend, CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE)
+  assert.equal(evidence.metadata.platform, "linux")
+  assert.equal(evidence.metadata.network, "none")
+  assert.doesNotMatch(JSON.stringify(evidence.metadata), /\/run\/netns|\/usr\/bin\/nsenter|\/usr\/bin\/setpriv/u)
+})
+
+test("Linux sandbox backend requires explicit namespace and privilege-drop contract", async () => {
+  for (const executionSandbox of [
+    {
+      type: CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+      platform: "linux",
+      network: "none",
+      enforcement: "os-network-namespace",
+      executablePath: TRUSTED_LINUX_SANDBOX_EXECUTABLE,
+      setprivPath: TRUSTED_LINUX_SETPRIV_EXECUTABLE,
+      runAsUid: TRUSTED_LINUX_RUN_AS_UID,
+      runAsGid: TRUSTED_LINUX_RUN_AS_GID,
+      requireNoNewPrivileges: true,
+      dropCapabilities: true
+    },
+    {
+      type: CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+      platform: "linux",
+      network: "none",
+      enforcement: "os-network-namespace",
+      executablePath: TRUSTED_LINUX_SANDBOX_EXECUTABLE,
+      namespacePath: TRUSTED_LINUX_NAMESPACE_PATH,
+      setprivPath: TRUSTED_LINUX_SETPRIV_EXECUTABLE,
+      runAsUid: 0,
+      runAsGid: TRUSTED_LINUX_RUN_AS_GID,
+      requireNoNewPrivileges: true,
+      dropCapabilities: true
+    },
+    {
+      type: CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+      platform: "linux",
+      network: "none",
+      enforcement: "os-network-namespace",
+      executablePath: TRUSTED_LINUX_SANDBOX_EXECUTABLE,
+      namespacePath: TRUSTED_LINUX_NAMESPACE_PATH,
+      setprivPath: TRUSTED_LINUX_SETPRIV_EXECUTABLE,
+      runAsUid: TRUSTED_LINUX_RUN_AS_UID,
+      runAsGid: TRUSTED_LINUX_RUN_AS_GID,
+      requireNoNewPrivileges: false,
+      dropCapabilities: true
+    },
+    {
+      type: CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+      platform: "darwin",
+      network: "none",
+      enforcement: "os-network-namespace",
+      executablePath: TRUSTED_LINUX_SANDBOX_EXECUTABLE,
+      namespacePath: TRUSTED_LINUX_NAMESPACE_PATH,
+      setprivPath: TRUSTED_LINUX_SETPRIV_EXECUTABLE,
+      runAsUid: TRUSTED_LINUX_RUN_AS_UID,
+      runAsGid: TRUSTED_LINUX_RUN_AS_GID,
+      requireNoNewPrivileges: true,
+      dropCapabilities: true
+    }
+  ]) {
+    const fixture = await makeImplementationFixture()
+    let codexCalls = 0
+
+    await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+      expectedVersion: fixture.run.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      codexConfig: trustedCodexConfig({ executionSandbox }),
+      ...sandboxedCodexRunner(async () => {
+        codexCalls += 1
+        return { exitCode: 0 }
+      })
+    }), "CODEX_SANDBOX_REQUIRED")
+
+    const reloaded = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    assert.equal(codexCalls, 0)
+    assert.equal(reloaded.version, fixture.run.version)
+    assert.equal(reloaded.attempts.implementation, fixture.run.attempts.implementation)
+  }
+})
+
+test("Linux sandbox availability preflight failure fails closed before attempt reservation", async () => {
+  const fixture = await makeImplementationFixture()
+  let codexCalls = 0
+
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedLinuxCodexConfig(),
+    ...sandboxedCodexRunner(async () => {
+      codexCalls += 1
+      return { exitCode: 0 }
+    }, {
+      probeResults: {
+        "linux-privilege-boundary": { exitCode: 69, stdout: "capability present", stderr: "" }
+      }
+    })
+  }), "CODEX_SANDBOX_UNAVAILABLE")
+
+  const reloaded = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  assert.equal(codexCalls, 0)
+  assert.equal(reloaded.version, fixture.run.version)
+  assert.equal(reloaded.attempts.implementation, fixture.run.attempts.implementation)
 })
 
 test("no-outbound-network sandbox is verified active before Codex spawn", async () => {
@@ -513,6 +711,7 @@ test("sandbox denies remote-write bypass probes before Codex spawn", async () =>
 
   const absoluteGit = sandboxCalls.find((call) => call.probe === "absolute-git-sanitized-env-push")
   const directNetwork = sandboxCalls.find((call) => call.probe === "direct-network")
+  const directSsh = sandboxCalls.find((call) => call.probe === "direct-ssh-transport")
   const ordinaryPush = sandboxCalls.find((call) => call.probe === "ordinary-git-push")
 
   assert.ok(absoluteGit)
@@ -525,6 +724,11 @@ test("sandbox denies remote-write bypass probes before Codex spawn", async () =>
   assert.equal(directNetwork.executablePath, process.execPath)
   assert.deepEqual(directNetwork.args.slice(0, 1), ["--eval"])
 
+  assert.ok(directSsh)
+  assert.equal(directSsh.executablePath, "/usr/bin/ssh")
+  assert.deepEqual(directSsh.args.slice(0, 2), ["-o", "BatchMode=yes"])
+  assert.equal(directSsh.args.includes("127.0.0.1"), true)
+
   assert.ok(ordinaryPush)
   assert.equal(ordinaryPush.executablePath, "/usr/bin/env")
   assert.deepEqual(ordinaryPush.args, ["git", "push", "origin", "HEAD"])
@@ -535,6 +739,7 @@ test("sandbox denies remote-write bypass probes before Codex spawn", async () =>
 test("sandbox bypass probe success fails closed before Codex spawn", async () => {
   for (const [probe, probeResult] of [
     ["direct-network", { exitCode: 66, stdout: "connected", stderr: "" }],
+    ["direct-ssh-transport", { exitCode: 0, stdout: "connected", stderr: "" }],
     ["absolute-git-sanitized-env-push", { exitCode: 0, stdout: "pushed", stderr: "" }],
     ["ordinary-git-push", { exitCode: 0, stdout: "pushed", stderr: "" }]
   ]) {
@@ -688,6 +893,8 @@ test("successful Codex execution is independently verified and transitions to im
   assert.equal(evidence.metadata.outcome, "implementation_ready")
   assert.equal(evidence.metadata.remotePolicy, "deny")
   assert.equal(evidence.metadata.sandbox, CODEX_EXECUTION_SANDBOX_ID)
+  assert.equal(evidence.metadata.backend, CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC)
+  assert.equal(evidence.metadata.platform, "darwin")
   assert.equal(evidence.metadata.network, "none")
   assert.doesNotMatch(JSON.stringify(result.run), /SENSITIVE_TEST_SENTINEL|gho_fake_token|raw stderr ignored/u)
 

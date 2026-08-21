@@ -33,6 +33,10 @@ export const MIN_CODEX_TIMEOUT_MS = 1000
 export const MAX_CODEX_IMPLEMENTATION_ATTEMPTS = 5
 export const CODEX_EXECUTION_POLICY_STORE_DIR = "codex-execution-policy"
 export const CODEX_EXECUTION_SANDBOX_ID = "phase-6d-no-outbound-network-sandbox"
+export const CODEX_SANDBOX_BACKENDS = Object.freeze({
+  MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
+  LINUX_NETWORK_NAMESPACE: "linux-network-namespace"
+})
 
 const shaPattern = /^[a-f0-9]{40}$/u
 const envKeyPattern = /^[A-Z_][A-Z0-9_]{0,39}$/u
@@ -41,6 +45,7 @@ const unsafePromptControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -
 const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
 const forbiddenEnvKeyPattern = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|CONFIRM|ASKPASS|GIT_CONFIG|GIT_SSH|SSH_AUTH_SOCK)/u
 const defaultExecutionPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+const linuxDirectSshExecutablePath = "/usr/bin/ssh"
 const noOutboundNetworkSandboxProfile = `(version 1)
 (allow default)
 (deny network*)
@@ -313,6 +318,45 @@ function normalizeGitExecutablePath(value) {
   return normalizeExecutablePath(value)
 }
 
+function normalizeSandboxPath(value) {
+  const sandboxPath = normalizeSafeText(value, {
+    code: "CODEX_SANDBOX_REQUIRED",
+    safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
+    maxChars: 240
+  })
+
+  if (!isAbsolute(sandboxPath) || sandboxPath !== resolvePath(sandboxPath)) {
+    throw adapterError(
+      "CODEX_SANDBOX_REQUIRED",
+      "Codex execution requires a trusted no-outbound-network process sandbox."
+    )
+  }
+
+  return sandboxPath
+}
+
+function normalizeSandboxPositiveInteger(value) {
+  if (!Number.isInteger(value) || value <= 0 || value > 2147483647) {
+    throw adapterError(
+      "CODEX_SANDBOX_REQUIRED",
+      "Codex execution requires a trusted no-outbound-network process sandbox."
+    )
+  }
+
+  return value
+}
+
+function requireSandboxTrue(value) {
+  if (value !== true) {
+    throw adapterError(
+      "CODEX_SANDBOX_REQUIRED",
+      "Codex execution requires a trusted no-outbound-network process sandbox."
+    )
+  }
+
+  return true
+}
+
 function normalizeCodexArgs(args = []) {
   if (!Array.isArray(args) || args.length > MAX_CODEX_ARG_COUNT) {
     throw adapterError(
@@ -439,20 +483,65 @@ function normalizeExecutionSandbox(sandbox) {
     safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
     maxChars: 80
   })
+  const platform = normalizeSafeText(sandbox.platform, {
+    code: "CODEX_SANDBOX_REQUIRED",
+    safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
+    maxChars: 20
+  })
 
-  if (type !== "macos-sandbox-exec" || network !== "none" || enforcement !== "os-process") {
+  if (network !== "none") {
     throw adapterError(
       "CODEX_SANDBOX_REQUIRED",
       "Codex execution requires a trusted no-outbound-network process sandbox."
     )
   }
 
-  return {
-    type,
-    network,
-    enforcement,
-    executablePath: normalizeExecutablePath(sandbox.executablePath)
+  if (type === CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC) {
+    if (platform !== "darwin" || enforcement !== "os-process") {
+      throw adapterError(
+        "CODEX_SANDBOX_REQUIRED",
+        "Codex execution requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    return {
+      type,
+      backend: CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC,
+      platform,
+      network,
+      enforcement,
+      executablePath: normalizeSandboxPath(sandbox.executablePath)
+    }
   }
+
+  if (type === CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE) {
+    if (platform !== "linux" || enforcement !== "os-network-namespace") {
+      throw adapterError(
+        "CODEX_SANDBOX_REQUIRED",
+        "Codex execution requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    return {
+      type,
+      backend: CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+      platform,
+      network,
+      enforcement,
+      executablePath: normalizeSandboxPath(sandbox.executablePath),
+      namespacePath: normalizeSandboxPath(sandbox.namespacePath),
+      setprivPath: normalizeSandboxPath(sandbox.setprivPath),
+      runAsUid: normalizeSandboxPositiveInteger(sandbox.runAsUid),
+      runAsGid: normalizeSandboxPositiveInteger(sandbox.runAsGid),
+      requireNoNewPrivileges: requireSandboxTrue(sandbox.requireNoNewPrivileges),
+      dropCapabilities: requireSandboxTrue(sandbox.dropCapabilities)
+    }
+  }
+
+  throw adapterError(
+    "CODEX_SANDBOX_REQUIRED",
+    "Codex execution requires a trusted no-outbound-network process sandbox."
+  )
 }
 
 function normalizeCodexConfig(config) {
@@ -750,6 +839,47 @@ function assertSandboxProbeResult(result, code = "CODEX_SANDBOX_UNAVAILABLE") {
   }
 }
 
+function linuxNetworkNamespaceSandbox(sandbox) {
+  return sandbox.type === CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE
+}
+
+async function assertSandboxLinuxPrivilegeBoundary(config, location, policy, options) {
+  if (!linuxNetworkNamespaceSandbox(config.executionSandbox)) {
+    return
+  }
+
+  const probeCode = [
+    "const fs = require('node:fs')",
+    "const status = fs.readFileSync('/proc/self/status', 'utf8')",
+    "const uid = typeof process.getuid === 'function' ? process.getuid() : 0",
+    "const cap = status.match(/^CapEff:\\s*([0-9a-fA-F]+)$/m)",
+    "const nnp = status.match(/^NoNewPrivs:\\s*(\\d+)$/m)",
+    "if (uid === 0) process.exit(70)",
+    "if (!cap || !/^0+$/u.test(cap[1])) process.exit(69)",
+    "if (!nnp || nnp[1] !== '1') process.exit(68)",
+    "process.exit(0)"
+  ].join(";")
+
+  const result = await runSandboxedCommand({
+    kind: "sandbox-probe",
+    probe: "linux-privilege-boundary",
+    sandbox: config.executionSandbox,
+    executablePath: process.execPath,
+    args: ["--eval", probeCode],
+    cwd: location.workspacePath,
+    stdin: "",
+    timeoutMs: 5000,
+    maxOutputBytes: 1024,
+    env: policy.env
+  }, options)
+
+  assertSandboxProbeResult(result)
+
+  if (result?.exitCode !== 0) {
+    throw sandboxError()
+  }
+}
+
 async function assertSandboxLocalGitAllowed(config, location, policy, options) {
   const result = await runSandboxedCommand({
     kind: "sandbox-probe",
@@ -769,6 +899,25 @@ async function assertSandboxLocalGitAllowed(config, location, policy, options) {
   if (result?.exitCode !== 0) {
     throw sandboxError()
   }
+}
+
+function isDirectNetworkDenied(config, result, connectionCount) {
+  if (result?.sandboxDenied === true) {
+    return true
+  }
+
+  if (connectionCount !== 0) {
+    return false
+  }
+
+  if (result?.exitCode === 0) {
+    return true
+  }
+
+  return linuxNetworkNamespaceSandbox(config.executionSandbox) && (
+    result?.exitCode === 67 ||
+    result?.exitCode === 68
+  )
 }
 
 async function assertSandboxDirectNetworkDenied(config, location, policy, options) {
@@ -801,11 +950,51 @@ async function assertSandboxDirectNetworkDenied(config, location, policy, option
 
     assertSandboxProbeResult(result)
 
+    if (!isDirectNetworkDenied(config, result, connectionCount())) {
+      throw sandboxError()
+    }
+  }, options)
+}
+
+async function assertSandboxDirectSshDenied(config, location, options) {
+  await withLoopbackProbeServer(async ({ port, connectionCount }) => {
+    const result = await runSandboxedCommand({
+      kind: "sandbox-probe",
+      probe: "direct-ssh-transport",
+      sandbox: config.executionSandbox,
+      executablePath: linuxDirectSshExecutablePath,
+      args: [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "PasswordAuthentication=no",
+        "-o",
+        "KbdInteractiveAuthentication=no",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=2",
+        "-p",
+        String(port),
+        "127.0.0.1",
+        "true"
+      ],
+      cwd: location.workspacePath,
+      stdin: "",
+      timeoutMs: 5000,
+      maxOutputBytes: 4096,
+      env: sanitizedProbeEnv()
+    }, options)
+
+    assertSandboxProbeResult(result)
+
     if (result?.sandboxDenied === true) {
       return
     }
 
-    if (result?.exitCode !== 0 || connectionCount() !== 0) {
+    if (result?.exitCode === 0 || connectionCount() !== 0) {
       throw sandboxError()
     }
   }, options)
@@ -849,8 +1038,10 @@ async function assertSandboxRemoteGitDenied({
 }
 
 async function assertCodexSandboxActive(config, location, policy, options) {
+  await assertSandboxLinuxPrivilegeBoundary(config, location, policy, options)
   await assertSandboxLocalGitAllowed(config, location, policy, options)
   await assertSandboxDirectNetworkDenied(config, location, policy, options)
+  await assertSandboxDirectSshDenied(config, location, options)
 
   const probeRepoPath = await prepareSandboxProbeRepo(config, policy.paths)
 
@@ -885,6 +1076,8 @@ async function establishCodexExecutionSandbox(config, run, location, attempt, op
     metadata: {
       ...policy.metadata,
       sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      backend: config.executionSandbox.backend,
+      platform: config.executionSandbox.platform,
       network: "none"
     }
   }
@@ -923,24 +1116,67 @@ function assertBoundedCodexOutput(result) {
   }
 }
 
-function sandboxedArgv(sandbox, executablePath, args) {
-  if (sandbox.type !== "macos-sandbox-exec") {
-    throw sandboxError()
+function assertSandboxRuntimePlatform(sandbox, options = {}) {
+  if (options.sandboxRunner) {
+    return
   }
 
-  return [
-    "-p",
-    noOutboundNetworkSandboxProfile,
-    executablePath,
-    ...args
-  ]
+  const currentPlatform = options.platform || process.platform
+
+  if (sandbox.platform !== currentPlatform) {
+    throw sandboxError()
+  }
+}
+
+function sandboxedCommand(sandbox, executablePath, args, options = {}) {
+  assertSandboxRuntimePlatform(sandbox, options)
+
+  if (sandbox.type === CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC) {
+    return {
+      backend: sandbox.backend,
+      executablePath: sandbox.executablePath,
+      args: [
+        "-p",
+        noOutboundNetworkSandboxProfile,
+        executablePath,
+        ...args
+      ]
+    }
+  }
+
+  if (sandbox.type === CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE) {
+    return {
+      backend: sandbox.backend,
+      executablePath: sandbox.executablePath,
+      args: [
+        `--net=${sandbox.namespacePath}`,
+        sandbox.setprivPath,
+        "--no-new-privs",
+        `--reuid=${sandbox.runAsUid}`,
+        `--regid=${sandbox.runAsGid}`,
+        "--clear-groups",
+        "--bounding-set=-all",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+        "--",
+        executablePath,
+        ...args
+      ]
+    }
+  }
+
+  throw sandboxError()
 }
 
 async function runSandboxedProcess(invocation) {
-  const argv = sandboxedArgv(invocation.sandbox, invocation.executablePath, invocation.args)
+  const command = invocation.sandboxCommand || sandboxedCommand(
+    invocation.sandbox,
+    invocation.executablePath,
+    invocation.args
+  )
 
   return await new Promise((resolve, reject) => {
-    const child = spawn(invocation.sandbox.executablePath, argv, {
+    const child = spawn(command.executablePath, command.args, {
       cwd: invocation.cwd,
       env: invocation.env,
       shell: false,
@@ -1016,13 +1252,22 @@ async function runSandboxedCommand(invocation, options = {}) {
   const runner = options.sandboxRunner || runSandboxedProcess
 
   try {
+    const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, options)
+
     return await runner({
       ...invocation,
+      sandboxCommand: command,
+      sandboxExecutablePath: command.executablePath,
+      sandboxArgs: [...command.args],
       shell: false
     })
   } catch (error) {
     if (isUncertainExecutionOutcome(error)) {
       throw ambiguousExecutionError()
+    }
+
+    if (error instanceof DevelopmentRunStateError) {
+      throw error
     }
 
     if (invocation.kind === "codex") {
@@ -1337,7 +1582,6 @@ function buildImplementationEvidence(run, location, verified, execution) {
     summary: "Codex implementation completed and verified locally.",
     metadata: {
       project: run.project.id,
-      repo: run.project.fullName,
       branch: location.branch,
       workspaceId: location.workspaceId,
       workspaceRef: location.workspaceRef,
@@ -1349,6 +1593,8 @@ function buildImplementationEvidence(run, location, verified, execution) {
       outcome: "implementation_ready",
       remotePolicy: "deny",
       sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      backend: execution.executionSandbox.backend,
+      platform: execution.executionSandbox.platform,
       network: "none",
       changedFiles: verified.changedFileCount
     }
@@ -1363,7 +1609,6 @@ function buildExecutionAttemptEvidence(run, location, execution) {
     summary: "Codex execution attempt reserved.",
     metadata: {
       project: run.project.id,
-      repo: run.project.fullName,
       branch: location.branch,
       workspaceId: location.workspaceId,
       workspaceRef: location.workspaceRef,
@@ -1374,6 +1619,8 @@ function buildExecutionAttemptEvidence(run, location, execution) {
       outcome: "execution_started",
       remotePolicy: "deny",
       sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      backend: execution.executionSandbox.backend,
+      platform: execution.executionSandbox.platform,
       network: "none"
     }
   }
@@ -1387,7 +1634,6 @@ function buildExecutionFailureEvidence(run, location, execution) {
     summary: "Codex execution attempt ended without a verified implementation.",
     metadata: {
       project: run.project.id,
-      repo: run.project.fullName,
       branch: location.branch,
       workspaceId: location.workspaceId,
       workspaceRef: location.workspaceRef,
@@ -1399,6 +1645,8 @@ function buildExecutionFailureEvidence(run, location, execution) {
       outcome: "execution_failed",
       remotePolicy: "deny",
       sandbox: CODEX_EXECUTION_SANDBOX_ID,
+      backend: execution.executionSandbox.backend,
+      platform: execution.executionSandbox.platform,
       network: "none"
     }
   }
@@ -1553,7 +1801,8 @@ async function executeCodexImplementationInternal(runId, options = {}) {
     attempt: nextAttempt,
     expectedStartSha,
     promptHash,
-    startedAt
+    startedAt,
+    executionSandbox: executionSandbox.metadata
   }, options)
   const postReservation = await reconcileBeforeExecution(runId, attemptRun, options)
   const sourceBefore = await sourceFacts(postReservation.location, options)
@@ -1562,7 +1811,8 @@ async function executeCodexImplementationInternal(runId, options = {}) {
     expectedStartSha: postReservation.expectedStartSha,
     promptHash,
     startedAt,
-    endedAt: null
+    endedAt: null,
+    executionSandbox: executionSandbox.metadata
   }
 
   try {
@@ -1598,7 +1848,8 @@ async function executeCodexImplementationInternal(runId, options = {}) {
   const evidence = buildImplementationEvidence(attemptRun, postReservation.location, verified, {
     promptHash,
     startedAt,
-    endedAt
+    endedAt,
+    executionSandbox: executionSandbox.metadata
   })
   const transitioned = await transitionDevelopmentRun(attemptRun.runId, {
     expectedVersion: attemptRun.version,

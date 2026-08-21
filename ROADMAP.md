@@ -274,8 +274,11 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Require exact expected-version checks before transitioning run state.
 - Reconcile the Phase 6C workspace before execution and refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces.
 - Require workspace HEAD to match the run head/base state before Codex starts.
-- Read Codex executable path, sandbox executable path, Git executable path, argv, timeout, and environment only from trusted local configuration.
+- Read Codex executable path, explicit sandbox backend configuration, Git executable path, argv, timeout, and environment only from trusted local configuration.
 - Require an active no-outbound-network OS/process sandbox before spawning Codex; fail closed if it cannot be established or verified.
+- Support explicit platform-capable sandbox backends: macOS `sandbox-exec` for local validation and Linux network namespace execution for the Ubuntu 24.04 VPS runtime.
+- For the Linux backend, enter a root-provisioned/preconfigured no-network namespace, then drop to a configured non-root uid/gid with `no_new_privs` and no effective capabilities before launching Codex.
+- Verify before attempt reservation that sandboxed local Git works and that direct network, direct SSH transport, absolute Git with sanitized env, and ordinary `git push` cannot reach the host listener.
 - Keep Git wrapper/env remote-write denial only as defense in depth, not as the primary boundary.
 - Invoke Codex through the sandbox with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified isolated workspace.
 - Generate a deterministic bounded prompt from the run task and planning evidence metadata, including explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries.

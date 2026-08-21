@@ -15,7 +15,8 @@ Phase 6D may:
 - read one Phase 6A run from `${PPO_WRITE_DATA_DIR}/development-runs`
 - require exact expected-version optimistic concurrency
 - reuse Phase 6C workspace reconciliation and trusted workspace registry
-- establish and verify a trusted no-outbound-network OS/process sandbox before spawning Codex
+- establish and verify a trusted explicit no-outbound-network OS/process sandbox before spawning Codex
+- use the Ubuntu 24.04 Linux backend only through a trusted no-network namespace plus privilege-drop contract
 - keep Git wrapper/env remote-write denial only as defense in depth
 - invoke a trusted locally configured Codex executable through the sandbox with explicit argv and `shell: false`
 - set `cwd` only to the verified Phase 6C workspace
@@ -34,6 +35,7 @@ Phase 6D must not:
 
 - accept Codex executable/config from user text, task text, planner output, project Markdown, GitHub facts, or chat
 - spawn Codex if the no-outbound-network sandbox cannot be established and verified active
+- spawn Codex through a Linux backend unless the child preflight proves non-root execution, zero effective capabilities, and `NoNewPrivs: 1`
 - execute Codex outside the verified Phase 6C workspace
 - rely on prompt compliance, PATH wrappers, local refs, remote-tracking refs, or inherited Git environment as the primary no-push boundary
 - trust Codex prose as implementation evidence
@@ -47,4 +49,4 @@ Phase 6D must not:
 - add `/ppo continue`
 - add Telegram/OpenClaw routes or new OpenClaw tools
 
-Timeouts, signals, killed/interrupted processes, output overflow, and uncertain completion must fail closed as ambiguous and require reconciliation before retry. Unchanged local refs or remote-tracking refs are not accepted as proof that no remote push occurred; the prevention boundary is the pre-spawn OS/process sandbox with no outbound network capability.
+Timeouts, signals, killed/interrupted processes, output overflow, and uncertain completion must fail closed as ambiguous and require reconciliation before retry. Unchanged local refs or remote-tracking refs are not accepted as proof that no remote push occurred; the prevention boundary is the pre-spawn OS/process sandbox with no outbound network capability. The preflight must prove sandboxed local Git still works and direct network, direct SSH transport, absolute Git with sanitized env, and ordinary `git push` cannot reach the host listener before any Codex attempt is reserved.

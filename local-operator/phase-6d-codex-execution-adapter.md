@@ -16,11 +16,18 @@ Codex execution requires:
 - exact expected run-state version
 - a trusted Phase 6C project workspace registry
 - trusted local Codex executable/configuration
-- trusted local no-outbound-network OS/process sandbox configuration
+- trusted local explicit no-outbound-network OS/process sandbox configuration
 - trusted local Git wrapper/env remote-write denial configuration for defense in depth
 - a verified Phase 6C workspace for the run
 
 Codex executable paths, sandbox executable paths, Git executable paths, argv, timeouts, environment values, and defense-in-depth remote-write policy settings come from trusted local configuration only. They do not come from user text, task text, planner output, project Markdown, GitHub facts, or chat.
+
+Supported sandbox backends are explicit and platform-capable:
+
+- `macos-sandbox-exec` for local macOS validation.
+- `linux-network-namespace` for the supported Ubuntu 24.04 VPS runtime.
+
+The Linux backend contract uses a trusted `nsenter` executable to enter a root-provisioned/preconfigured no-network namespace, then runs a trusted `setpriv` executable with a configured non-root uid/gid, `no_new_privs`, cleared groups, and no effective capabilities before launching Codex. Codex itself must not run with privilege that can reconfigure or escape the namespace.
 
 ## Behavior
 
@@ -33,9 +40,10 @@ The adapter:
 - requires workspace HEAD to equal `run.headSha` or `run.baseSha` before Codex starts
 - builds a deterministic bounded prompt from run task and planning evidence metadata
 - includes explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation boundaries in the prompt
-- establishes and verifies a no-outbound-network OS/process sandbox before Codex starts and fails closed if the sandbox is unavailable or inactive
+- establishes and verifies a no-outbound-network OS/process sandbox before Codex starts and fails closed if the sandbox is unavailable, inactive, or platform-incompatible
+- for Linux, verifies the sandboxed process is non-root, has zero effective capabilities, and has `NoNewPrivs: 1`
 - verifies sandboxed local Git operations still work before Codex starts
-- verifies sandboxed outbound network probes are denied, including absolute Git with sanitized Git policy env and ordinary `git push`
+- verifies sandboxed outbound network probes are denied, including direct network, direct SSH transport, absolute Git with sanitized Git policy env, and ordinary `git push`
 - invokes Codex through the sandbox with explicit argv, `shell: false`, bounded timeout, bounded output capture, policy-controlled environment, and `cwd` set to the verified isolated workspace
 - records each definitive implementation attempt durably in the Phase 6A run record with exact expected-version checks and a small explicit maximum
 - does not store prompt contents or raw Codex stdout/stderr
@@ -49,7 +57,7 @@ The adapter:
 - updates `run.headSha` to the verified implementation SHA
 - records metadata-only SHA-pinned implementation evidence
 
-The adapter contract requires a local commit. Codex prose claiming success is ignored. PATH wrappers, prompt compliance, local refs, remote-tracking refs, and inherited Git environment are not the primary no-push proof; the primary boundary is the OS/process sandbox that removes outbound network capability before Codex is spawned.
+The adapter contract requires a local commit. Codex prose claiming success is ignored. PATH wrappers, prompt compliance, local refs, remote-tracking refs, and inherited Git environment are not the primary no-push proof; the primary boundary is the explicit OS/process sandbox that removes outbound network capability before Codex is spawned. Git wrapper/env controls remain defense in depth only.
 
 ## Recovery
 
