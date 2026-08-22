@@ -11,6 +11,7 @@ It should help the user:
 - summarize repos and PRs in future read-only phases
 - stage and confirm tightly scoped GitHub issue creation after approval
 - keep project note creation terminal-only until a later reviewed chat workflow exists
+- continue one existing ordinary development run through one reviewed boundary
 - generate compact Codex prompts
 - track Codex usage manually
 - understand safe and blocked actions
@@ -28,6 +29,7 @@ Project Control:
 - `/ppo pr <project>`
 - `/ppo issue-create <project> <title> [--body <body>]`
 - `/ppo issue-confirm <request-id>`
+- `/ppo continue <run-id>`
 - `/ppo handoff <project>`
 
 Codex Workflow:
@@ -97,6 +99,8 @@ Write actions must remain disabled unless:
 Phase 5B permits only the listed `/ppo issue-create` staging command and `/ppo issue-confirm` single-use confirmation command.
 
 Phase 5D permits only the listed `/ppo note-add` staging command and `/ppo note-confirm` single-use confirmation command through the same existing `ppo_local` tool. It does not add comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployments, or new OpenClaw tools. Stored notes must not mutate project-state files automatically.
+
+Phase 6K permits only `/ppo continue <run-id>` for existing ordinary five-project Phase 6 development runs. It advances at most one reviewed Phase 6B-6G boundary per invocation and does not route PPO production deployment, verification, rollback, rollback reconciliation, services, or owner confirmations through OpenClaw.
 
 ## Expected future tool integrations
 

@@ -1783,7 +1783,7 @@ test("rollback read-only permission contract classifies recursive runtime checko
   assertPermissionHelperFail("permission_entry_matches root ppo 750 755", "directory mode drift fails")
 })
 
-test("Phase 6J scope excludes automatic rollback, GitHub writes, model execution, routes, and continue command", async () => {
+test("Phase 6J scope excludes automatic rollback, GitHub writes, model execution, and production routes", async () => {
   const rollbackSource = await readFile(new URL("./development-rollback-agent.mjs", import.meta.url), "utf8")
   const verificationSource = await readFile(new URL("./development-production-verification-agent.mjs", import.meta.url), "utf8")
   const deploymentSource = await readFile(new URL("./development-deployment-agent.mjs", import.meta.url), "utf8")
@@ -1831,7 +1831,7 @@ test("Phase 6J scope excludes automatic rollback, GitHub writes, model execution
   assert.doesNotMatch(rollbackSource, /gh api|workflow dispatch|codex --|openclaw gateway run|curl|wget|ssh/)
   assert.doesNotMatch(verificationSource, /development-rollback-agent|executeDevelopmentRollback|rollback-exact-sha/)
   assert.doesNotMatch(deploymentSource, /development-rollback-agent|executeDevelopmentRollback|rollback-exact-sha/)
-  assert.doesNotMatch(commandSource, /development-rollback-agent|rollback_in_progress|rolled_back|\bcontinue\b/)
+  assert.doesNotMatch(commandSource, /development-rollback-agent|executeDevelopmentRollback|rollback-exact-sha|rollback_in_progress|rolled_back/)
   assert.doesNotMatch(bridgeSource, /development-rollback-agent|rollback_in_progress|rolled_back/)
 })
 

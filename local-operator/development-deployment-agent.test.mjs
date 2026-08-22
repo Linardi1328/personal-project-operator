@@ -947,7 +947,7 @@ test("service restart is restricted to the fixed PPO service", async () => {
   assert.equal(runner.state.deployCalls.at(0).serviceName, PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName)
 })
 
-test("Phase 6H scope excludes rollback, production verification, routes, and continue command", async () => {
+test("Phase 6H scope excludes rollback, production verification, and production routes", async () => {
   const deploymentSource = await readFile(new URL("./development-deployment-agent.mjs", import.meta.url), "utf8")
   const commandSource = await readFile(new URL("./ppo-command.mjs", import.meta.url), "utf8")
   const bridgeSource = await readFile(new URL("../openclaw/plugins/ppo-local/test-bridge.mjs", import.meta.url), "utf8")
@@ -960,6 +960,6 @@ test("Phase 6H scope excludes rollback, production verification, routes, and con
   assert.equal(phase6HDeploymentSecurityBoundary.telegramOrOpenClawRouting, false)
   assert.doesNotMatch(deploymentSource, /rollback-repo|vps-health|git pull|gh api|workflow dispatch|labels|comments/)
   assert.doesNotMatch(scriptSource, /\beval\b|git pull|rollback-repo|vps-health|gh api|git push|workflow dispatch/)
-  assert.doesNotMatch(commandSource, /\bcontinue\b/)
+  assert.doesNotMatch(commandSource, /development-deployment-agent|executeDevelopmentDeployment|deploy-exact-sha/)
   assert.doesNotMatch(bridgeSource, /development-deployment-agent|deploy_in_progress|deployed/)
 })

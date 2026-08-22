@@ -16,7 +16,7 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts the approved PPO command surface through Phase 5D
+- accepts the approved PPO command surface through Phase 6K
 - accepts the Phase 5B approval commands `issue-create` and `issue-confirm`
 - accepts the Phase 5D approval commands `note-add` and `note-confirm`
 - invokes only `local-operator/ppo-command.mjs`
@@ -27,6 +27,7 @@ The plugin:
 - routes `/ppo issue-confirm` to atomically claim one unexpired local request before invoking the Phase 5A issue writer
 - routes `/ppo note-add` to local pending-request staging only; staging never appends a note
 - routes `/ppo note-confirm` to atomically claim one unexpired local request before invoking the Phase 5C note writer
+- routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary five-project runs only
 - does not call Telegram APIs
 - does not use secrets
 - mutates only the private local pending stores for Phase 5B issue and Phase 5D note approval requests, plus the approved local note store after `/ppo note-confirm`
@@ -35,6 +36,7 @@ The plugin:
 - parses only the command envelope; task, draft, title, body, and note text is inert data
 - does not accept or expose terminal write confirmation environment values through chat
 - does not mutate `projects/*.md` or update project-state files
+- does not route PPO production deployment, production verification, rollback, rollback reconciliation, service control, or VPS mutation
 
 ## Supported Raw Inputs
 
@@ -72,6 +74,7 @@ issue-create khlim-assist Add provider validation issue --body Include failing f
 issue-confirm <request-id>
 note-add khlim-assist Record owner-visible project context
 note-confirm <request-id>
+continue <run-id>
 ```
 
 The bridge also accepts full `/ppo ...` payloads for local validation, but OpenClaw `command-arg-mode: raw` normally forwards only the text after `/ppo`.
@@ -96,6 +99,10 @@ Pending directories are created with `0700`, pending files with `0600`, and requ
 ## Phase 5C/5D notes
 
 Phase 5C adds `node local-operator/ppo-command.mjs note-add <project> <note...>` for trusted terminal note appends. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` approval through this plugin. Pending note requests use `${PPO_WRITE_DATA_DIR}/pending-project-notes`; confirmed notes use `${PPO_WRITE_DATA_DIR}/project-notes`.
+
+## Phase 6K development continue
+
+Phase 6K adds `/ppo continue <run-id>` through this same plugin. The bridge accepts only the exact opaque run id and maps to wrapper argv `["continue", "<run-id>"]`. The wrapper reads the durable Phase 6A run and delegates to at most one existing Phase 6B-6G child operation. It does not accept project, status, SHA, action, workspace, service, deployment, rollback, or confirmation input from chat.
 
 ## Local Tests
 

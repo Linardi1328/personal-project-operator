@@ -8,6 +8,8 @@ import {
   handlePromptSizeCommand,
   handleSplitTaskCommand
 } from "./codex-planning-tools.mjs";
+import { handlePpoDevelopmentContinueCommand } from "./development-continue-orchestrator.mjs";
+import { loadDevelopmentContinueRuntimeProfile } from "./development-continue-runtime-profile.mjs";
 import {
   handlePpoIssueConfirmCommand,
   handlePpoIssueCreateApprovalCommand
@@ -21,6 +23,7 @@ import {
   handlePpoNoteConfirmCommand
 } from "./project-note-approval.mjs";
 import { handleProjectStatePromoteCommand } from "./project-state-promote.mjs";
+import { DEVELOPMENT_RUN_ID_PATTERN } from "./development-run-id.mjs";
 
 const execFileAsync = promisify(execFile);
 const simulatorPath = fileURLToPath(new URL("simulate-command.mjs", import.meta.url));
@@ -35,6 +38,50 @@ function normalizeArgs(rawArgs) {
   }
 
   return args;
+}
+
+function parseStrictContinueArgs(rawArgs) {
+  const args = rawArgs.map((arg) => String(arg));
+  const unsafe = args.some((arg) => arg !== arg.trim() || /[\r\n\t]/u.test(arg));
+  const lower0 = args[0]?.toLowerCase();
+  const lower1 = args[1]?.toLowerCase();
+  const firstLooksLikeContinue = lower0 === "continue" || lower0?.startsWith("continue ");
+  const envelopeLooksLikeContinue = (
+    (lower0 === "/ppo" || lower0 === "ppo") &&
+    (lower1 === "continue" || lower1?.startsWith("continue "))
+  );
+  const combinedEnvelopeLooksLikeContinue = (
+    (lower0?.startsWith("/ppo") || lower0?.startsWith("ppo")) &&
+    /(?:^|[\s\r\n\t])continue(?:$|[\s\r\n\t])/iu.test(args[0])
+  );
+  const attempted = (
+    firstLooksLikeContinue ||
+    envelopeLooksLikeContinue ||
+    combinedEnvelopeLooksLikeContinue
+  );
+
+  if (!attempted) {
+    return null;
+  }
+
+  if (unsafe) {
+    return { ok: false, attempted: true };
+  }
+
+  if (args.length === 2 && args[0] === "continue" && DEVELOPMENT_RUN_ID_PATTERN.test(args[1])) {
+    return { ok: true, attempted: true, runId: args[1] };
+  }
+
+  if (
+    args.length === 3 &&
+    (args[0] === "/ppo" || args[0] === "ppo") &&
+    args[1] === "continue" &&
+    DEVELOPMENT_RUN_ID_PATTERN.test(args[2])
+  ) {
+    return { ok: true, attempted: true, runId: args[2] };
+  }
+
+  return { ok: false, attempted: true };
 }
 
 function terminalArgsAfterCommand(rawArgs, command) {
@@ -218,6 +265,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs issue-create khlim-assist \"issue title\" \"optional body\"",
     "  node local-operator/ppo-command.mjs note-add khlim-assist \"project note text\"",
     "  node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase",
+    "  node local-operator/ppo-command.mjs continue <run-id>",
     "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
     "  node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai \"add invoice import workflow\"",
     "  node local-operator/ppo-command.mjs prompt-size \"Goal: build one focused feature\"",
@@ -233,6 +281,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo issue-confirm <request-id>\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-add khlim-assist project note text\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-confirm <request-id>\"",
+    "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
     "",
     "Supported Telegram messages:",
     "  /ppo status",
@@ -251,12 +300,14 @@ function usage() {
     "  /ppo issue-confirm <request-id>",
     "  /ppo note-add <project> <note...>",
     "  /ppo note-confirm <request-id>",
+    "  /ppo continue <run-id>",
     "",
     "Phase 5A boundary: terminal issue-create requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>.",
     "Phase 5B boundary: /ppo issue-create only stages a pending request; /ppo issue-confirm performs the approved single-use write.",
     "Phase 5C boundary: terminal note-add requires PPO_NOTE_WRITE_CONFIRM=add-note:<project>.",
     "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append.",
-    "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported."
+    "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported.",
+    "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only."
   ].join("\n");
 }
 
@@ -282,6 +333,7 @@ function unsupported(command) {
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
     "- /ppo note-confirm <request-id>",
+    "- /ppo continue <run-id>",
     "",
     "Terminal-only additions:",
     "- issue-create <project> <title> [body...]",
@@ -361,7 +413,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B PPO-routed commands are marked [local] or [github read-only]. Terminal Codex prompt/planning commands are local-only.",
-      "Phase 5D PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, and approval-gated project note creation."
+      "Phase 6K PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, and one-boundary ordinary development continue."
     )
     .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
@@ -393,7 +445,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal Codex prompt/planning commands are local-only; no writes.",
-      "Phase 5D boundary: /ppo issue-create and /ppo note-add stage only; confirm commands consume one request before the approved write."
+      "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id, invokes at most one reviewed Phase 6B-6G boundary, and never routes production deployment, verification, or rollback."
     )
     .replace(
       [
@@ -406,7 +458,7 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 5D:",
+        "Supported through /ppo in Phase 6K:",
         "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
@@ -422,12 +474,13 @@ function applyPpoNamespace(output) {
         "- /ppo issue-create <project> <title> [approval stage]",
         "- /ppo issue-confirm <request-id> [approved write]",
         "- /ppo note-add <project> <note...> [approval stage]",
-        "- /ppo note-confirm <request-id> [approved write]"
+        "- /ppo note-confirm <request-id> [approved write]",
+        "- /ppo continue <run-id> [development]"
       ].join("\n")
     )
     .replace(
       "Supported through /ppo in Phase 3B:",
-      "Supported through /ppo in Phase 5D:"
+      "Supported through /ppo in Phase 6K:"
     )
     .replace(
       "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt. [future]",
@@ -464,7 +517,8 @@ function applyPpoNamespace(output) {
         "- No Codex usage scraping",
         "- No VPS deployment",
         "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation",
-        "- /ppo note-add stages locally; /ppo note-confirm can append one approved local project note after single-use confirmation"
+        "- /ppo note-add stages locally; /ppo note-confirm can append one approved local project note after single-use confirmation",
+        "- /ppo continue advances one existing ordinary development run through at most one reviewed Phase 6B-6G boundary"
       ].join("\n")
     );
 }
@@ -483,6 +537,23 @@ async function runSimulator(args) {
 
 async function main() {
   const rawProcessArgs = process.argv.slice(2);
+  const strictContinue = parseStrictContinueArgs(rawProcessArgs);
+
+  if (strictContinue?.ok === true) {
+    const result = await handlePpoDevelopmentContinueCommand(strictContinue.runId, {
+      trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
+    });
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictContinue?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "continue"));
+    process.exitCode = 1;
+    return;
+  }
+
   const [rawCommand, ...args] = normalizeArgs(rawProcessArgs);
 
   if (!rawCommand) {

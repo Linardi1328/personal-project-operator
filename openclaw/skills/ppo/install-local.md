@@ -157,9 +157,11 @@ OpenClaw forwards the raw `/ppo` argument string to `ppo_local` as:
 }
 ```
 
-The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` confirmation through the same existing tool.
+The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` confirmation through the same existing tool. Phase 6K adds `/ppo continue <run-id>` for one existing ordinary Phase 6 development run.
 
 Phase 5C bare terminal `note-add` remains terminal-only. Do not configure `PPO_NOTE_WRITE_CONFIRM` in Telegram/OpenClaw chat; `/ppo note-confirm <request-id>` supplies the Phase 5C confirmation internally after atomically claiming a pending request.
+
+Phase 6K continue accepts only the existing opaque run id from chat. Do not configure or paste expected versions, projects, actions, SHAs, repositories, workspaces, deployment targets, services, rollback targets, or rollback confirmations into Telegram/OpenClaw.
 
 ## Local Phase 5B/5C/5D write-data paths
 
@@ -304,6 +306,7 @@ Manual Telegram/OpenClaw mapping:
 /ppo menu project -> ppo_local raw "menu project" -> local-operator/ppo-command.mjs menu project
 /ppo menu codex   -> ppo_local raw "menu codex"   -> local-operator/ppo-command.mjs menu codex
 /ppo menu system  -> ppo_local raw "menu system"  -> local-operator/ppo-command.mjs menu system
+/ppo continue <run-id> -> ppo_local raw "continue <run-id>" -> local-operator/ppo-command.mjs continue <run-id>
 ```
 
 There must be no model-generated interpretation between `/ppo` and the wrapper output.
@@ -401,6 +404,7 @@ If those pass, test:
 /ppo codex khlim-assist add provider validation tests
 /ppo issue-create khlim-assist owner review test issue --body created only after confirmation
 /ppo note-add khlim-assist owner review staged note
+/ppo continue <run-id>
 ```
 
 Only confirm a staged issue with `/ppo issue-confirm <request-id>` when the owner intends to create that GitHub issue.
@@ -420,3 +424,4 @@ Do not add:
 - OpenClaw tools beyond `ppo_local`
 - GitHub writes beyond Phase 5B `/ppo issue-create` staging plus `/ppo issue-confirm` single-use issue creation
 - project note writes beyond Phase 5D `/ppo note-add` staging plus `/ppo note-confirm` single-use note creation
+- PPO production deployment, production verification, rollback, rollback reconciliation, service control, or owner rollback confirmation through `/ppo continue`

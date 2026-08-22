@@ -853,7 +853,7 @@ test("systemd ExecStart validation accepts only the exact OpenClaw gateway comma
   }
 })
 
-test("Phase 6I scope excludes rollback, deploy, restart, GitHub write, model, routes, and continue command", async () => {
+test("Phase 6I scope excludes rollback, deploy, restart, GitHub write, model, and production routes", async () => {
   const verificationSource = await readFile(new URL("./development-production-verification-agent.mjs", import.meta.url), "utf8")
   const deploymentSource = await readFile(new URL("./development-deployment-agent.mjs", import.meta.url), "utf8")
   const commandSource = await readFile(new URL("./ppo-command.mjs", import.meta.url), "utf8")
@@ -873,7 +873,7 @@ test("Phase 6I scope excludes rollback, deploy, restart, GitHub write, model, ro
   assert.match(verificationSource, /shell: false/)
   assert.doesNotMatch(verificationSource, /rollback-repo|deploy-exact-sha|git push|gh api|workflow dispatch|labels|comments|codex --|openclaw gateway run/)
   assert.doesNotMatch(deploymentSource, /development-production-verification-agent/)
-  assert.doesNotMatch(commandSource, /\bcontinue\b|development-production-verification-agent|verification_in_progress|verified/)
+  assert.doesNotMatch(commandSource, /development-production-verification-agent|executeDevelopmentProductionVerification|verify-production-readonly|verification_in_progress|verified/)
   assert.doesNotMatch(bridgeSource, /development-production-verification-agent|verification_in_progress|verified/)
 })
 

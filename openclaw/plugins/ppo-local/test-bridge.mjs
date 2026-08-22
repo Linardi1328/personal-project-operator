@@ -33,6 +33,7 @@ const phase3cTask = "; rm -rf / $(whoami) `whoami` ../../etc/passwd café 東京
 const multilineDraft = "Goal: keep line structure\nRequirements:\n- preserve newline one\n- preserve newline two\nExit Criteria: reviewed";
 const validIssueRequestId = "A".repeat(43);
 const validNoteRequestId = "B".repeat(43);
+const validDevelopmentRunId = "C".repeat(43);
 
 for (const projectId of currentProjectIds) {
   expectedMappings.set(
@@ -52,6 +53,7 @@ expectedMappings.set("issue-create khlim-assist Add issue title --body Body text
 expectedMappings.set(`issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]);
 expectedMappings.set("note-add khlim-assist Add project note", ["/ppo", "note-add", "khlim-assist", "Add project note"]);
 expectedMappings.set(`note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]);
+expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
 
 for (const [input, expected] of expectedMappings) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} maps to approved wrapper argv`);
@@ -95,6 +97,38 @@ assert.equal(fullPayload.ok, true, "full /ppo payload succeeds");
 assert.deepEqual(fullPayload.wrapperArgs, ["menu", "project"]);
 assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo payload returns exact wrapper output");
 
+{
+  const safeContinueOutput = [
+    "PPO Development Continue",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Before: implementation_in_progress",
+    "Action: phase-6d-codex-implementation",
+    "Outcome: owner_action_required",
+    "After: implementation_in_progress",
+    "Head: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "Reason: codex_reconciliation_required",
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo continue ${validDevelopmentRunId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["continue", validDevelopmentRunId]);
+        return {
+          stdout: safeContinueOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw continue stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "continue output with reason succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["continue", validDevelopmentRunId]);
+  assert.match(result.stdout, /Reason: codex_reconciliation_required/);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw continue stderr|token|secret|stack/i);
+}
+
 for (const [input, expected] of [
   ["/ppo status", ["status"]],
   ["/ppo repo khlim-assist", ["repo", "khlim-assist"]],
@@ -108,7 +142,8 @@ for (const [input, expected] of [
   ["/ppo issue-create khlim-assist Full payload title --body Full payload body", ["/ppo", "issue-create", "khlim-assist", "Full payload title", "--body", "Full payload body"]],
   [`/ppo issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]],
   ["/ppo note-add khlim-assist Full payload project note", ["/ppo", "note-add", "khlim-assist", "Full payload project note"]],
-  [`/ppo note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]]
+  [`/ppo note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]],
+  [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]]
 ]) {
   const result = await runPpoLocalTool(
     { command: input },
@@ -129,7 +164,8 @@ for (const [input, expected] of [
   [`ppo codex portfolio ${phase3cTask}`, ["codex", "portfolio", phase3cTask]],
   [`ppo codex-budget rbl-content-engine ${phase3cTask}`, ["codex-budget", "rbl-content-engine", phase3cTask]],
   [`ppo prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]],
-  [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]]
+  [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]],
+  [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]]
 ]) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} raw ppo envelope maps correctly`);
 }
@@ -331,6 +367,22 @@ const rejectedInputs = [
   "note-confirm",
   "note-confirm short-id",
   `note-confirm ${validNoteRequestId} extra`,
+  "continue",
+  "/ppo continue",
+  "continue malformed",
+  "/ppo continue malformed",
+  `continue\n${validDevelopmentRunId}`,
+  `/ppo continue\n${validDevelopmentRunId}`,
+  `ppo continue\n${validDevelopmentRunId}`,
+  `continue ${validDevelopmentRunId}\n`,
+  `/ppo continue ${validDevelopmentRunId}\r\n`,
+  `/ppo\ncontinue ${validDevelopmentRunId}`,
+  "continue ../...",
+  "/ppo continue khlim-assist",
+  `/ppo continue ${validDevelopmentRunId} extra`,
+  `/ppo continue ${validDevelopmentRunId}\nanything`,
+  `/ppo continue ${validDevelopmentRunId} --action merge`,
+  `/ppo continue ${validDevelopmentRunId} ${"d".repeat(40)}`,
   "$(whoami)",
   "`whoami`",
   "../../something"
