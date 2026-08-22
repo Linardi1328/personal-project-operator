@@ -343,7 +343,8 @@ function rollbackFailedEvidence({
   rollbackSha = ROLLBACK_SHA,
   policyId = PHASE_6J_ROLLBACK_POLICY_ID,
   policyHash = PHASE_6J_ROLLBACK_POLICY_HASH,
-  failureClass = "dirty_checkout"
+  failureClass = "dirty_checkout",
+  rollbackInvoked = false
 } = {}) {
   return {
     kind: "rollback",
@@ -361,6 +362,7 @@ function rollbackFailedEvidence({
       attempt,
       failureClass,
       observedCheckoutSha: deploymentSha,
+      rollbackInvoked,
       service: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName,
       contract: rollbackContract({
         ok: false,
@@ -636,6 +638,50 @@ function makeRecoveryArtifactBoundary(options = {}) {
   return { state, validator, runner }
 }
 
+function makePreMutationRetryInspectionRunner(options = {}) {
+  const inspection = rollbackInspectionResult(options.inspectResult || notStartedInspection())
+  const state = {
+    calls: []
+  }
+
+  const runner = async (invocation) => {
+    assert.equal(invocation.kind, "inspect-premutation-rollback-retry")
+    assert.equal(invocation.shell, false)
+    assert.equal(invocation.deploymentSha, DEPLOYMENT_SHA)
+    assert.equal(invocation.rollbackSha, ROLLBACK_SHA)
+    assert.equal(invocation.serviceName, FIXED_SERVICE_NAME)
+    assert.equal(invocation.timeoutMs, 180000)
+    assert.equal(invocation.maxOutputBytes, 32768)
+    assert.doesNotMatch(JSON.stringify(invocation), /rollback-exact-sha\.sh|inspect-rollback-readonly\.sh|preflight-openclaw-runtime\.sh|service-control\.sh/u)
+    state.calls.push(clone(invocation))
+
+    if (options.ambiguousMode) {
+      const error = new Error("ambiguous pre-mutation retry inspection")
+
+      if (options.ambiguousMode === "timeout") {
+        error.timedOut = true
+      } else if (options.ambiguousMode === "signal") {
+        error.signal = "SIGTERM"
+      } else if (options.ambiguousMode === "overflow") {
+        error.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+      } else {
+        error.ambiguous = true
+      }
+
+      throw error
+    }
+
+    if (options.malformedResult) {
+      return { ...inspection, observedCheckoutSha: "not-a-sha" }
+    }
+
+    return inspection
+  }
+
+  runner.state = state
+  return runner
+}
+
 async function executeWithFixture(fixture, runner, options = {}) {
   return await executeDevelopmentRollback(RUN_ID, {
     ...fixture.api,
@@ -686,6 +732,17 @@ async function writeExecutable(path, source) {
 
 async function writeFakeRecoveryCommands(commandDir, paths) {
   await mkdir(commandDir, { recursive: true })
+  const statusExit = paths.gitStatusFails ? "exit 1" : "exit 0"
+  const directoryFindBody = paths.directoryFindFails
+    ? "exit 1"
+    : paths.partialDirectoryFindFails
+      ? `printf '%s\\0' "${paths.installDir}"\n  exit 1`
+      : `printf '%s\\0%s\\0' "${paths.installDir}" "${paths.installDir}/.git"\n  exit 0`
+  const fileFindBody = paths.fileFindFails
+    ? "exit 1"
+    : paths.partialFileFindFails
+      ? `printf '%s\\0' "${paths.installDir}/README.md"\n  exit 1`
+      : `printf '%s\\0' "${paths.installDir}/README.md"\n  exit 0`
 
   await writeExecutable(join(commandDir, "git"), `#!/usr/bin/env bash
 set -Eeuo pipefail
@@ -701,7 +758,7 @@ if [[ "\${1:-}" == "--no-optional-locks" && "\${2:-}" == "-C" && "\${3:-}" == "$
   exit 1
 fi
 if [[ "\${1:-}" == "--no-optional-locks" && "\${2:-}" == "-C" && "\${3:-}" == "${paths.installDir}" && "\${4:-}" == "-c" && "\${5:-}" == "core.fsmonitor=false" && "\${6:-}" == "status" ]]; then
-  exit 0
+  ${statusExit}
 fi
 if [[ "\${1:-}" == "--no-optional-locks" && "\${2:-}" == "-C" && "\${3:-}" == "${paths.installDir}" && "\${4:-}" == "rev-parse" && "\${5:-}" == "--verify" && "\${6:-}" == "--quiet" && "\${7:-}" == "${ROLLBACK_SHA}^{commit}" ]]; then
   exit 0
@@ -734,12 +791,10 @@ esac
   await writeExecutable(join(commandDir, "find"), `#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ "\${1:-}" == "${paths.installDir}" && "\${2:-}" == "-type" && "\${3:-}" == "d" && "\${4:-}" == "-print0" ]]; then
-  printf '%s\\0%s\\0' "${paths.installDir}" "${paths.installDir}/.git"
-  exit 0
+  ${directoryFindBody}
 fi
 if [[ "\${1:-}" == "${paths.installDir}" && "\${2:-}" == "-type" && "\${3:-}" == "f" && "\${4:-}" == "-print0" ]]; then
-  printf '%s\\0' "${paths.installDir}/README.md"
-  exit 0
+  ${fileFindBody}
 fi
 printf 'unexpected find invocation\\n' >&2
 exit 64
@@ -788,6 +843,71 @@ fi
 printf 'unexpected systemctl invocation\\n' >&2
 exit 64
 `)
+}
+
+async function runStandaloneRecoveryArtifact(options = {}) {
+  const tempRoot = await mkdtemp(join(tmpdir(), "ppo-phase6j-recovery-"))
+
+  try {
+    const installDir = join(tempRoot, "opt", "personal-project-operator")
+    const stateDir = join(tempRoot, "var", "lib", "personal-project-operator")
+    const controlDir = join(stateDir, "phase6j-control")
+    const configDir = join(tempRoot, "etc", "personal-project-operator")
+    const commandDir = join(tempRoot, "bin")
+    const runtimeDir = join(tempRoot, "home", "ppo", ".local", "openclaw")
+    const nodeBin = join(runtimeDir, "tools", "node", "bin", "node")
+    const openclawBin = join(runtimeDir, "bin", "openclaw")
+    const artifactPath = join(controlDir, "phase6j-recovery-inspect-readonly.sh")
+    const recoverySource = await readFile(new URL("../deployment/scripts/phase6j-recovery-inspect-readonly.sh", import.meta.url), "utf8")
+    const patchedRecovery = [
+      ["INSTALL_DIR", installDir],
+      ["STATE_DIR", stateDir],
+      ["CONFIG_DIR", configDir],
+      ["NODE_BIN", nodeBin],
+      ["OPENCLAW_BIN", openclawBin],
+      ["GIT_BIN", join(commandDir, "git")],
+      ["SYSTEMCTL_BIN", join(commandDir, "systemctl")],
+      ["STAT_BIN", join(commandDir, "stat")],
+      ["FIND_BIN", join(commandDir, "find")],
+      ["CAT_BIN", join(commandDir, "cat")],
+      ["SUDO_BIN", join(commandDir, "sudo")]
+    ].reduce((source, [name, value]) => replaceShellAssignment(source, name, value), recoverySource)
+
+    await mkdir(controlDir, { recursive: true })
+    await writeExecutable(artifactPath, patchedRecovery)
+    await mkdir(join(installDir, ".git"), { recursive: true })
+    await writeFile(join(installDir, "README.md"), "rollback target without Phase 6J source\n")
+    await writeExecutable(join(installDir, "deployment-helper-that-must-not-run.sh"), "exit 99\n")
+    await mkdir(configDir, { recursive: true })
+    await mkdir(join(runtimeDir, "tools", "node", "bin"), { recursive: true })
+    await mkdir(join(runtimeDir, "bin"), { recursive: true })
+    await writeExecutable(nodeBin, "exit 0\n")
+    await writeExecutable(openclawBin, "exit 0\n")
+    await writeFile(join(stateDir, "last-deploy-previous-revision"), `${ROLLBACK_SHA}\n`)
+    await writeFakeRecoveryCommands(commandDir, {
+      installDir,
+      stateDir,
+      nodeBin,
+      openclawBin,
+      ...options
+    })
+
+    const result = spawnSync(artifactPath, [DEPLOYMENT_SHA, ROLLBACK_SHA], {
+      cwd: "/",
+      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+      encoding: "utf8",
+      maxBuffer: 64 * 1024,
+      shell: false
+    })
+
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.signal, null)
+    assert.equal(result.stderr, "")
+
+    return JSON.parse(result.stdout)
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
 }
 
 test("verification_failed run with valid Phase 6H and Phase 6I evidence reserves rollback before ambiguity", async () => {
@@ -861,6 +981,88 @@ test("rollback_failed retry is explicit and allowed only after read-only not-sta
   assert.equal(inspectionRunner.state.calls.length > 0, true)
   assert.equal(runner.state.inspectCalls.length, 0)
   assert.equal(runner.state.executeCalls.length, 1)
+})
+
+test("recovery artifact staging failures can retry only after fixed pre-mutation inspection proves no checkout switch", async () => {
+  for (const failureClass of ["recovery_artifact_stage_failed", "recovery_artifact_integrity_failed"]) {
+    const fixture = makeStateAdapter(makeRollbackFailedRun({ failureClass }))
+    const runner = async (invocation) => {
+      runner.state.executeCalls.push(clone(invocation))
+      assert.equal(invocation.kind, "execute-rollback")
+      assert.equal(fixture.state.run.status, "rollback_in_progress")
+      assert.equal(fixture.state.run.evidence.rollback.at(-1).metadata.outcome, "rollback_started")
+      assert.equal(fixture.state.run.evidence.rollback.at(-1).metadata.attempt, 2)
+      return rollbackResult()
+    }
+    runner.state = { executeCalls: [] }
+    const preMutationInspection = makePreMutationRetryInspectionRunner()
+    const recoveryArtifact = makeRecoveryArtifactBoundary({ validationErrorCode: "ROLLBACK_RECOVERY_ARTIFACT_INVALID" })
+    const response = await executeWithFixture(fixture, runner, {
+      preMutationRetryInspectionRunner: preMutationInspection,
+      recoveryArtifactValidator: recoveryArtifact.validator,
+      recoveryArtifactRunner: recoveryArtifact.runner
+    })
+
+    assert.equal(response.ok, true, failureClass)
+    assert.equal(response.outcome, "rolled_back", failureClass)
+    assert.equal(fixture.state.transitions.at(0).status, "rollback_in_progress", failureClass)
+    assert.equal(fixture.state.transitions.at(1).status, "rolled_back", failureClass)
+    assert.equal(fixture.state.run.attempts.rollback, 2, failureClass)
+    assert.equal(preMutationInspection.state.calls.length, 1, failureClass)
+    assert.equal(recoveryArtifact.state.validations.length, 0, failureClass)
+    assert.equal(recoveryArtifact.state.calls.length, 0, failureClass)
+    assert.equal(runner.state.executeCalls.length, 1, failureClass)
+  }
+})
+
+test("recovery artifact staging failure retry still requires owner confirmation and exact expectedVersion", async () => {
+  for (const [name, options, expectedCode] of [
+    ["missing owner confirmation", { ownerConfirmation: undefined }, "ROLLBACK_OWNER_CONFIRMATION_REQUIRED"],
+    ["mismatched owner confirmation", { ownerConfirmation: "wrong-confirmation" }, "ROLLBACK_OWNER_CONFIRMATION_REQUIRED"],
+    ["stale expectedVersion", { expectedVersion: 15 }, "STALE_RUN_VERSION"]
+  ]) {
+    const fixture = makeStateAdapter(makeRollbackFailedRun({ failureClass: "recovery_artifact_stage_failed" }))
+    const runner = makeRollbackRunner()
+    const preMutationInspection = makePreMutationRetryInspectionRunner()
+
+    await assertRejectsCode(executeDevelopmentRollback(RUN_ID, {
+      ...fixture.api,
+      rollbackRunner: runner,
+      preMutationRetryInspectionRunner: preMutationInspection,
+      expectedVersion: fixture.state.run.version,
+      ownerConfirmation: PHASE_6J_OWNER_ROLLBACK_CONFIRMATION,
+      ...options
+    }), expectedCode)
+
+    assert.equal(fixture.state.run.status, "rollback_failed", name)
+    assert.equal(fixture.state.transitions.length, 0, name)
+    assert.equal(preMutationInspection.state.calls.length, 0, name)
+    assert.equal(runner.state.executeCalls.length, 0, name)
+  }
+})
+
+test("recovery artifact staging failure retry refuses unsafe or ambiguous pre-mutation observations", async () => {
+  for (const [name, inspectionOptions, expectedCode] of [
+    ["wrong deployment SHA", { inspectResult: notStartedInspection({ observedCheckoutSha: WRONG_SHA, currentCheckout: "failed", failureClass: "rollback_incomplete" }) }, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["dirty checkout", { inspectResult: notStartedInspection({ clean: "failed", failureClass: "dirty_checkout" }) }, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["branch-attached checkout", { inspectResult: notStartedInspection({ detached: "failed", failureClass: "checkout_not_detached" }) }, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["third SHA", { inspectResult: notStartedInspection({ observedCheckoutSha: WRONG_SHA, currentCheckout: "failed", postrollbackCheckout: "failed", failureClass: "rollback_incomplete" }) }, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["ambiguous observation", { ambiguousMode: "timeout" }, "ROLLBACK_AMBIGUOUS"],
+    ["malformed observation", { malformedResult: true }, "ROLLBACK_AMBIGUOUS"]
+  ]) {
+    const fixture = makeStateAdapter(makeRollbackFailedRun({ failureClass: "recovery_artifact_stage_failed" }))
+    const runner = makeRollbackRunner()
+    const preMutationInspection = makePreMutationRetryInspectionRunner(inspectionOptions)
+
+    await assertRejectsCode(executeWithFixture(fixture, runner, {
+      preMutationRetryInspectionRunner: preMutationInspection
+    }), expectedCode)
+
+    assert.equal(fixture.state.run.status, "rollback_failed", name)
+    assert.equal(fixture.state.transitions.length, 0, name)
+    assert.equal(preMutationInspection.state.calls.length, 1, name)
+    assert.equal(runner.state.executeCalls.length, 0, name)
+  }
 })
 
 test("rollback_failed retry still requires fresh owner confirmation and exact expectedVersion", async () => {
@@ -1432,6 +1634,118 @@ test("staged recovery artifact survives checkout replacement and supports post-c
   }
 })
 
+test("recovery artifact fails closed when git status exits nonzero with no stdout", async () => {
+  const parsed = await runStandaloneRecoveryArtifact({ gitStatusFails: true })
+
+  assert.equal(parsed.ok, false)
+  assert.equal(parsed.clean, "failed")
+  assert.equal(parsed.failureClass, "rollback_incomplete")
+  assert.equal(parsed.rollbackInvoked, false)
+  assert.equal(parsed.serviceActive, true)
+
+  const fixture = makeStateAdapter(makeRolledBackRun())
+  const inspectionRunner = makeRecoveryArtifactBoundary({
+    inspectResult: {
+      clean: "failed",
+      failureClass: "dirty_checkout"
+    }
+  })
+  const reconciled = await reconcileDevelopmentRollback(RUN_ID, {
+    ...fixture.api,
+    recoveryArtifactValidator: inspectionRunner.validator,
+    recoveryArtifactRunner: inspectionRunner.runner
+  })
+
+  assert.equal(reconciled.rollback.completionProven, false)
+  assert.equal(reconciled.rollback.rollbackEvidenceComplete, false)
+  assert.equal(reconciled.rollback.ownerActionRequired, true)
+  assert.equal(fixture.state.transitions.length, 0)
+})
+
+test("recovery artifact permission enumeration failures cannot pass the contract", async () => {
+  for (const [name, options] of [
+    ["directory enumeration failure", { directoryFindFails: true }],
+    ["file enumeration failure", { fileFindFails: true }],
+    ["partial directory enumeration failure", { partialDirectoryFindFails: true }],
+    ["partial file enumeration failure", { partialFileFindFails: true }]
+  ]) {
+    const parsed = await runStandaloneRecoveryArtifact(options)
+
+    assert.equal(parsed.ok, false, name)
+    assert.equal(parsed.permissionContract, "failed", name)
+    assert.equal(parsed.rollbackInvoked, false, name)
+    assert.equal(parsed.deploymentInvoked, false, name)
+    assert.equal(parsed.networkRefreshInvoked, false, name)
+  }
+
+  const success = await runStandaloneRecoveryArtifact()
+
+  assert.equal(success.ok, true, "exact successful enumeration still passes")
+  assert.equal(success.permissionContract, "passed")
+})
+
+test("rollback primitive fails closed before mutation when git status exits nonzero with no stdout", () => {
+  const scriptPath = fileURLToPath(new URL("../deployment/scripts/rollback-exact-sha.sh", import.meta.url))
+  const result = spawnSync("bash", ["-c", `
+    source "$1"
+    EXPECTED_DEPLOYMENT_SHA="$DEPLOY_SHA"
+    ROLLBACK_SHA="$ROLL_SHA"
+    temp_root="$(mktemp -d)"
+    trap 'rm -rf "$temp_root"' EXIT
+    INSTALL_DIR="$temp_root/install"
+    mkdir -p "$INSTALL_DIR/.git"
+    require_root() { :; }
+    require_service_identity() { :; }
+    stage_recovery_artifact() { printf 'STAGE_SHOULD_NOT_RUN\\n'; }
+    switch_to_rollback() { printf 'SWITCH_SHOULD_NOT_RUN\\n'; }
+    restore_permissions() { printf 'PERMISSION_SHOULD_NOT_RUN\\n'; }
+    run_runtime_preflight() { printf 'PREFLIGHT_SHOULD_NOT_RUN\\n'; }
+    restart_fixed_service() { printf 'RESTART_SHOULD_NOT_RUN\\n'; }
+    verify_postrollback_checkout() { printf 'POSTCHECK_SHOULD_NOT_RUN\\n'; }
+    verify_service_running() { printf 'SERVICECHECK_SHOULD_NOT_RUN\\n'; }
+    git() {
+      if [[ "$*" == "-C $INSTALL_DIR remote get-url $REMOTE_NAME" ]]; then
+        printf '%s\\n' "$REPO_URL"
+        return 0
+      fi
+      if [[ "$*" == "-C $INSTALL_DIR rev-parse --verify HEAD" ]]; then
+        printf '%s\\n' "$EXPECTED_DEPLOYMENT_SHA"
+        return 0
+      fi
+      if [[ "$*" == "-C $INSTALL_DIR symbolic-ref -q HEAD" ]]; then
+        return 1
+      fi
+      if [[ "$*" == "--no-optional-locks -C $INSTALL_DIR -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames" ]]; then
+        return 1
+      fi
+      printf 'unexpected git invocation: %s\\n' "$*" >&2
+      return 64
+    }
+    main "$DEPLOY_SHA" "$ROLL_SHA"
+  `, "bash", scriptPath], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      DEPLOY_SHA: DEPLOYMENT_SHA,
+      ROLL_SHA: ROLLBACK_SHA
+    }
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.doesNotMatch(result.stdout, /STAGE_SHOULD_NOT_RUN|SWITCH_SHOULD_NOT_RUN|PERMISSION_SHOULD_NOT_RUN|PREFLIGHT_SHOULD_NOT_RUN|RESTART_SHOULD_NOT_RUN|POSTCHECK_SHOULD_NOT_RUN|SERVICECHECK_SHOULD_NOT_RUN/)
+
+  const parsed = JSON.parse(result.stdout)
+
+  assert.equal(parsed.ok, false)
+  assert.equal(parsed.failureClass, "dirty_checkout")
+  assert.equal(parsed.observedCheckoutSha, DEPLOYMENT_SHA)
+  assert.equal(parsed.rollbackInvoked, false)
+  assert.equal(parsed.checkoutSwitch, "not_run")
+  assert.equal(parsed.permissionContract, "not_run")
+  assert.equal(parsed.runtimePreflight, "not_run")
+  assert.equal(parsed.serviceRestart, "not_run")
+})
+
 function runInspectPermissionHelper(command) {
   const scriptPath = fileURLToPath(new URL("../deployment/scripts/inspect-rollback-readonly.sh", import.meta.url))
 
@@ -1500,7 +1814,9 @@ test("Phase 6J scope excludes automatic rollback, GitHub writes, model execution
   assert.match(rollbackSource, /PHASE_6J_ROLLBACK_RECOVERY_ARTIFACT_SHA256/)
   assert.match(rollbackSource, /validateHostRecoveryArtifact/)
   assert.match(rollbackSource, /runHostRecoveryArtifact/)
+  assert.match(rollbackSource, /inspectPreMutationRollbackRetry/)
   assert.match(rollbackSource, /fixedRecoveryArtifactContract/)
+  assert.match(rollbackSource, /fixedPreMutationRetryInspectionPaths/)
   assert.match(rollbackSource, /path: PHASE_6J_ROLLBACK_RECOVERY_ARTIFACT/)
   assert.match(rollbackSource, /stat: "\/usr\/bin\/stat"/)
   assert.match(rollbackSource, /sha256sum: "\/usr\/bin\/sha256sum"/)
@@ -1544,6 +1860,7 @@ test("Phase 6J rollback shell primitives use fixed identities and avoid forbidde
   assert.match(rollbackScript, /REMOTE_NAME="origin"/)
   assert.match(rollbackScript, /REPO_URL="https:\/\/github\.com\/Linardi1328\/personal-project-operator\.git"/)
   assert.match(rollbackScript, /git --no-optional-locks -C "\$INSTALL_DIR" -c core\.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames/)
+  assert.match(rollbackScript, /status_output="\$\(git --no-optional-locks -C "\$INSTALL_DIR" -c core\.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>\/dev\/null\)" \|\|/)
   assert.match(rollbackScript, /git -C "\$INSTALL_DIR" switch --detach "\$ROLLBACK_SHA"/)
   assert.match(rollbackScript, /stage_recovery_artifact/)
   assert.ok(mainBody.indexOf("stage_recovery_artifact") > mainBody.indexOf("validate_rollback_commit"))
@@ -1556,10 +1873,14 @@ test("Phase 6J rollback shell primitives use fixed identities and avoid forbidde
     ['"$SYSTEMCTL_BIN" restart "$SERVICE_NAME" >/dev/null 2>&1 ||']
   )
   assert.doesNotMatch(rollbackScript, /PREFLIGHT_SCRIPT|SERVICE_CONTROL_SCRIPT|preflight-openclaw-runtime\.sh|service-control\.sh/)
+  assert.doesNotMatch(rollbackScript, /\[\[ -z "\$\(git [^)]*status --porcelain/u)
   assert.doesNotMatch(rollbackScript, /last-good-revision|git fetch|git pull|git reset --hard|git checkout|git branch|git update-ref|curl|wget|gh\s|ssh|scp|rsync/)
   assert.doesNotMatch(rollbackScript, /systemctl\s+(?:start|stop|restart|reload|enable|disable)\s+\$/)
 
   assert.match(inspectScript, /git --no-optional-locks -C "\$INSTALL_DIR" -c core\.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames/)
+  assert.doesNotMatch(inspectScript, /\[\[ -z "\$\(git [^)]*status --porcelain/u)
+  assert.match(inspectScript, /__PPO_PHASE6J_FIND_DIRS_COMPLETE__/)
+  assert.match(inspectScript, /__PPO_PHASE6J_FIND_FILES_COMPLETE__/)
   assert.match(inspectScript, /check_runtime_checkout_permission_contract/)
   assert.match(inspectScript, /find "\$INSTALL_DIR" -type d -print0/)
   assert.match(inspectScript, /find "\$INSTALL_DIR" -type f -print0/)
@@ -1584,6 +1905,9 @@ test("Phase 6J rollback shell primitives use fixed identities and avoid forbidde
   assert.match(recoveryScript, /SUDO_BIN="\/usr\/bin\/sudo"/)
   assert.match(recoveryScript, /AWK_BIN="\/usr\/bin\/awk"/)
   assert.match(recoveryScript, /"\$GIT_BIN" --no-optional-locks -C "\$INSTALL_DIR" -c core\.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames/)
+  assert.doesNotMatch(recoveryScript, /\[\[ -z "\$\("\$GIT_BIN" [^)]*status --porcelain/u)
+  assert.match(recoveryScript, /__PPO_PHASE6J_FIND_DIRS_COMPLETE__/)
+  assert.match(recoveryScript, /__PPO_PHASE6J_FIND_FILES_COMPLETE__/)
   assert.match(recoveryScript, /"\$SUDO_BIN" -n -u "\$SERVICE_USER" "\$NODE_BIN" --version/)
   assert.match(recoveryScript, /"\$SUDO_BIN" -n -u "\$SERVICE_USER" "\$OPENCLAW_BIN" --version/)
   assert.match(recoveryScript, /"\$SYSTEMCTL_BIN" is-enabled --quiet "\$SERVICE_NAME"/)

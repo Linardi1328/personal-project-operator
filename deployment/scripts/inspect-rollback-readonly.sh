@@ -17,6 +17,7 @@ REMOTE_NAME="origin"
 REPO_URL="https://github.com/Linardi1328/personal-project-operator.git"
 SERVICE_NAME="ppo-openclaw.service"
 SYSTEMCTL_BIN="/usr/bin/systemctl"
+AWK_BIN="/usr/bin/awk"
 EXPECTED_DEPLOYMENT_SHA="${1:-}"
 ROLLBACK_SHA="${2:-}"
 
@@ -157,6 +158,8 @@ check_repository() {
 }
 
 check_checkout() {
+  local status_output
+
   observed_checkout_sha="$(git -C "$INSTALL_DIR" rev-parse --verify HEAD 2>/dev/null || true)"
   valid_sha "$observed_checkout_sha" || return 0
 
@@ -178,7 +181,8 @@ check_checkout() {
     detached="passed"
   fi
 
-  if [[ -z "$(git --no-optional-locks -C "$INSTALL_DIR" -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>/dev/null)" ]]; then
+  if status_output="$(git --no-optional-locks -C "$INSTALL_DIR" -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>/dev/null)" &&
+      [[ -z "$status_output" ]]; then
     clean="passed"
   else
     clean="failed"
@@ -217,25 +221,37 @@ file_expected_mode() {
   local relative_path="$1"
   local tracked_mode
 
-  tracked_mode="$(git -C "$INSTALL_DIR" ls-files -s -- "$relative_path" 2>/dev/null | awk 'NR == 1 {print $1}')" ||
+  tracked_mode="$(git -C "$INSTALL_DIR" ls-files -s -- "$relative_path" 2>/dev/null | "$AWK_BIN" 'NR == 1 {print $1}')" ||
     return 1
   tracked_file_expected_mode "$tracked_mode"
 }
 
 check_runtime_checkout_permission_contract() {
-  local path relative_path expected_mode
+  local path relative_path expected_mode found_end
 
   path_contract "$INSTALL_DIR" root "$SERVICE_GROUP" 755 || return 1
 
+  found_end=false
   while IFS= read -r -d '' path; do
+    if [[ "$path" == "__PPO_PHASE6J_FIND_DIRS_COMPLETE__" ]]; then
+      found_end=true
+      continue
+    fi
     path_contract "$path" root "$SERVICE_GROUP" 755 || return 1
-  done < <(find "$INSTALL_DIR" -type d -print0)
+  done < <(find "$INSTALL_DIR" -type d -print0 && printf '%s\0' "__PPO_PHASE6J_FIND_DIRS_COMPLETE__")
+  [[ "$found_end" == true ]] || return 1
 
+  found_end=false
   while IFS= read -r -d '' path; do
+    if [[ "$path" == "__PPO_PHASE6J_FIND_FILES_COMPLETE__" ]]; then
+      found_end=true
+      continue
+    fi
     relative_path="${path#"$INSTALL_DIR"/}"
     expected_mode="$(file_expected_mode "$relative_path")" || return 1
     path_contract "$path" root "$SERVICE_GROUP" "$expected_mode" || return 1
-  done < <(find "$INSTALL_DIR" -type f -print0)
+  done < <(find "$INSTALL_DIR" -type f -print0 && printf '%s\0' "__PPO_PHASE6J_FIND_FILES_COMPLETE__")
+  [[ "$found_end" == true ]] || return 1
 }
 
 check_runtime() {

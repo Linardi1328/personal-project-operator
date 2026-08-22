@@ -47,7 +47,7 @@ export const PHASE_6J_ROLLBACK_CONTROL_DIR =
 export const PHASE_6J_ROLLBACK_RECOVERY_ARTIFACT =
   `${PHASE_6J_ROLLBACK_CONTROL_DIR}/phase6j-recovery-inspect-readonly.sh`
 export const PHASE_6J_ROLLBACK_RECOVERY_ARTIFACT_SHA256 =
-  "b3700ffe8381d30ceffde3b981519dcca392b39b6ee307555bbf26301ffaf993"
+  "7e374a8de73c44261888fef6282844b30de30e8fd6fc55c67de08a7ed32dbc3f"
 
 const shaPattern = /^[a-f0-9]{40}$/u
 const safeResultClassPattern = /^[a-z][a-z0-9_-]{0,79}$/u
@@ -106,6 +106,20 @@ const fixedRecoveryArtifactContract = Object.freeze({
   stat: "/usr/bin/stat",
   sha256sum: "/usr/bin/sha256sum"
 })
+const fixedPreMutationRetryInspectionPaths = Object.freeze({
+  git: "/usr/bin/git",
+  systemctl: "/usr/bin/systemctl",
+  cat: "/usr/bin/cat",
+  installDir: PHASE_6H_PPO_DEPLOYMENT_PROFILE.installDir,
+  stateDir: PHASE_6H_PPO_DEPLOYMENT_PROFILE.stateDir,
+  remoteName: PHASE_6H_PPO_DEPLOYMENT_PROFILE.remoteName,
+  repositoryUrl: "https://github.com/Linardi1328/personal-project-operator.git",
+  serviceName: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName
+})
+const preCheckoutRecoveryArtifactFailureClasses = new Set([
+  "recovery_artifact_stage_failed",
+  "recovery_artifact_integrity_failed"
+])
 const callerRollbackTargetOptionKeys = Object.freeze([
   "rollbackSha",
   "targetSha",
@@ -569,6 +583,240 @@ async function runHostRecoveryArtifact(invocation) {
   ])
 }
 
+function preMutationRetryInspectionCommandRunner(options = {}) {
+  return options.preMutationRetryInspectionCommandRunner || defaultPreMutationRetryInspectionCommandRunner
+}
+
+async function defaultPreMutationRetryInspectionCommandRunner(invocation) {
+  try {
+    const result = await execFileAsync(invocation.executablePath, invocation.args, {
+      cwd: "/",
+      env: {
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      encoding: "utf8",
+      maxBuffer: invocation.maxOutputBytes,
+      timeout: invocation.timeoutMs,
+      shell: false
+    })
+
+    return {
+      exitCode: 0,
+      stdout: result.stdout
+    }
+  } catch (error) {
+    if (isUncertainOutcome(error)) {
+      throw ambiguousRollbackError()
+    }
+
+    return {
+      exitCode: Number.isInteger(error?.code) ? error.code : 1,
+      stdout: typeof error?.stdout === "string" ? error.stdout : ""
+    }
+  }
+}
+
+async function runPreMutationRetryInspectionCommand(executablePath, args, options = {}) {
+  const invocation = {
+    executablePath,
+    args: [...args],
+    cwd: "/",
+    env: {
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin"
+    },
+    shell: false,
+    timeoutMs: MAX_ROLLBACK_TIMEOUT_MS,
+    maxOutputBytes: MAX_ROLLBACK_OUTPUT_BYTES
+  }
+  const result = await preMutationRetryInspectionCommandRunner(options)(invocation)
+
+  if (isUncertainOutcome(result)) {
+    throw ambiguousRollbackError()
+  }
+
+  if (!result || !Number.isInteger(result.exitCode)) {
+    throw ambiguousRollbackError("pre-mutation rollback retry inspection returned malformed status")
+  }
+
+  const stdout = String(result.stdout ?? "")
+
+  if (Buffer.byteLength(stdout, "utf8") > MAX_ROLLBACK_OUTPUT_BYTES) {
+    throw ambiguousRollbackError("pre-mutation rollback retry inspection output exceeded bound")
+  }
+
+  return {
+    exitCode: result.exitCode,
+    stdout
+  }
+}
+
+function preMutationRetryInspectionBaseResult(profile) {
+  return {
+    schemaVersion: 1,
+    ok: false,
+    failureClass: "rollback_incomplete",
+    observedCheckoutSha: "",
+    serviceName: profile.serviceName,
+    serviceEnabled: false,
+    serviceActive: false,
+    serviceRunning: false,
+    serviceMainPidNonZero: false,
+    repository: "failed",
+    currentCheckout: "failed",
+    detached: "failed",
+    clean: "failed",
+    previousRevision: "failed",
+    rollbackCommit: "failed",
+    checkoutSwitch: "not_applicable",
+    permissionContract: "not_applicable",
+    runtimePreflight: "not_applicable",
+    serviceRestart: "not_applicable",
+    postrollbackCheckout: "failed",
+    rollbackInvoked: false,
+    deploymentInvoked: false,
+    githubWriteInvoked: false,
+    modelInvoked: false,
+    routeInvoked: false,
+    networkRefreshInvoked: false,
+    legacyRollbackInvoked: false
+  }
+}
+
+async function inspectPreMutationRollbackRetry(profile, facts, options = {}) {
+  if (options.preMutationRetryInspectionRunner) {
+    return validateRollbackResult(
+      await options.preMutationRetryInspectionRunner({
+        kind: "inspect-premutation-rollback-retry",
+        deploymentSha: facts.deploymentSha,
+        rollbackSha: facts.rollbackSha,
+        serviceName: profile.serviceName,
+        shell: false,
+        timeoutMs: MAX_ROLLBACK_TIMEOUT_MS,
+        maxOutputBytes: MAX_ROLLBACK_OUTPUT_BYTES
+      }),
+      profile,
+      facts,
+      "inspect"
+    )
+  }
+
+  const paths = fixedPreMutationRetryInspectionPaths
+  const result = preMutationRetryInspectionBaseResult(profile)
+  let command
+
+  command = await runPreMutationRetryInspectionCommand(paths.git, [
+    "--no-optional-locks",
+    "-C",
+    paths.installDir,
+    "remote",
+    "get-url",
+    paths.remoteName
+  ], options)
+  if (command.exitCode === 0 && firstOutputLine(command.stdout) === paths.repositoryUrl) {
+    result.repository = "passed"
+  }
+
+  command = await runPreMutationRetryInspectionCommand(paths.git, [
+    "--no-optional-locks",
+    "-C",
+    paths.installDir,
+    "rev-parse",
+    "--verify",
+    "HEAD"
+  ], options)
+  if (command.exitCode === 0) {
+    const observed = firstOutputLine(command.stdout).toLowerCase()
+
+    if (shaPattern.test(observed)) {
+      result.observedCheckoutSha = observed
+      if (observed === facts.deploymentSha) {
+        result.currentCheckout = "passed"
+      }
+      if (observed === facts.rollbackSha) {
+        result.postrollbackCheckout = "passed"
+      }
+    }
+  }
+
+  command = await runPreMutationRetryInspectionCommand(paths.git, [
+    "--no-optional-locks",
+    "-C",
+    paths.installDir,
+    "symbolic-ref",
+    "-q",
+    "HEAD"
+  ], options)
+  result.detached = command.exitCode === 0 ? "failed" : "passed"
+
+  command = await runPreMutationRetryInspectionCommand(paths.git, [
+    "--no-optional-locks",
+    "-C",
+    paths.installDir,
+    "-c",
+    "core.fsmonitor=false",
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--no-renames"
+  ], options)
+  if (command.exitCode === 0 && command.stdout === "") {
+    result.clean = "passed"
+  }
+
+  command = await runPreMutationRetryInspectionCommand(paths.cat, [
+    `${paths.stateDir}/last-deploy-previous-revision`
+  ], options)
+  if (command.exitCode === 0 && firstOutputLine(command.stdout).toLowerCase() === facts.rollbackSha) {
+    result.previousRevision = "passed"
+  }
+
+  command = await runPreMutationRetryInspectionCommand(paths.git, [
+    "--no-optional-locks",
+    "-C",
+    paths.installDir,
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `${facts.rollbackSha}^{commit}`
+  ], options)
+  if (command.exitCode === 0) {
+    result.rollbackCommit = "passed"
+  }
+
+  command = await runPreMutationRetryInspectionCommand(paths.systemctl, [
+    "is-enabled",
+    "--quiet",
+    paths.serviceName
+  ], options)
+  result.serviceEnabled = command.exitCode === 0
+
+  command = await runPreMutationRetryInspectionCommand(paths.systemctl, [
+    "is-active",
+    "--quiet",
+    paths.serviceName
+  ], options)
+  result.serviceActive = command.exitCode === 0
+
+  command = await runPreMutationRetryInspectionCommand(paths.systemctl, [
+    "show",
+    paths.serviceName,
+    "--property=SubState",
+    "--value"
+  ], options)
+  result.serviceRunning = command.exitCode === 0 && firstOutputLine(command.stdout) === "running"
+
+  command = await runPreMutationRetryInspectionCommand(paths.systemctl, [
+    "show",
+    paths.serviceName,
+    "--property=MainPID",
+    "--value"
+  ], options)
+  result.serviceMainPidNonZero = command.exitCode === 0 && /^[0-9]+$/u.test(firstOutputLine(command.stdout)) && firstOutputLine(command.stdout) !== "0"
+
+  result.failureClass = result.observedCheckoutSha === facts.deploymentSha ? "rollback_not_started" : "rollback_incomplete"
+  return validateRollbackResult(result, profile, facts, "inspect")
+}
+
 async function defaultRollbackRunner(invocation, options = {}) {
   if (invocation.kind === "execute-rollback") {
     const result = await runTrustedProcess(PHASE_6J_ROLLBACK_SCRIPT, [
@@ -1000,13 +1248,43 @@ function retryInspectionProvesRollbackNeverStarted(inspection, facts) {
   )
 }
 
+function contractIncludes(contract, entry) {
+  return Array.isArray(contract) && contract.includes(entry)
+}
+
+function latestFailureProvesRecoveryArtifactPreCheckoutFailure(run, facts) {
+  const failed = latestRollbackEvidence(run, "rollback_failed")
+  const metadata = failed?.metadata || {}
+
+  return Boolean(
+    failed &&
+    failed === latestRollbackEvidence(run) &&
+    failed.source === DEVELOPMENT_ROLLBACK_AGENT_ID &&
+    failed.sha === facts.rollbackSha &&
+    metadata.agent === DEVELOPMENT_ROLLBACK_AGENT_ID &&
+    metadata.policyId === PHASE_6J_ROLLBACK_POLICY_ID &&
+    metadata.policyHash === PHASE_6J_ROLLBACK_POLICY_HASH &&
+    metadata.outcome === "rollback_failed" &&
+    metadata.deploymentSha === facts.deploymentSha &&
+    metadata.rollbackSha === facts.rollbackSha &&
+    metadata.observedCheckoutSha === facts.deploymentSha &&
+    preCheckoutRecoveryArtifactFailureClasses.has(metadata.failureClass) &&
+    metadata.rollbackInvoked === false &&
+    contractIncludes(metadata.contract, "checkoutSwitch:not_run") &&
+    !contractIncludes(metadata.contract, "checkoutSwitch:passed") &&
+    !contractIncludes(metadata.contract, "postrollbackCheckout:passed")
+  )
+}
+
 async function assertRollbackFailedRetrySafe(run, profile, facts, options = {}) {
   rollbackFailedEvidenceProvesRetryIdentity(run, facts)
 
   let inspection
 
   try {
-    inspection = await inspectRollback(profile, facts, options)
+    inspection = latestFailureProvesRecoveryArtifactPreCheckoutFailure(run, facts)
+      ? await inspectPreMutationRollbackRetry(profile, facts, options)
+      : await inspectRollback(profile, facts, options)
   } catch (error) {
     if (isUncertainOutcome(error) || error?.code === "ROLLBACK_AMBIGUOUS") {
       throw ambiguousRollbackError()
@@ -1045,6 +1323,7 @@ function rollbackEvidence(run, facts, outcome, metadata, summary) {
 function rollbackResultMetadata(result) {
   return {
     observedCheckoutSha: result.observedCheckoutSha || "",
+    rollbackInvoked: result.rollbackInvoked === true,
     service: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName,
     contract: rollbackContractMetadata(result)
   }

@@ -8,7 +8,7 @@ STATE_DIR="/var/lib/personal-project-operator"
 CONTROL_DIR="${STATE_DIR}/phase6j-control"
 RECOVERY_SOURCE="${INSTALL_DIR}/deployment/scripts/phase6j-recovery-inspect-readonly.sh"
 RECOVERY_ARTIFACT="${CONTROL_DIR}/phase6j-recovery-inspect-readonly.sh"
-RECOVERY_ARTIFACT_SHA256="b3700ffe8381d30ceffde3b981519dcca392b39b6ee307555bbf26301ffaf993"
+RECOVERY_ARTIFACT_SHA256="7e374a8de73c44261888fef6282844b30de30e8fd6fc55c67de08a7ed32dbc3f"
 CONFIG_DIR="/etc/personal-project-operator"
 OPENCLAW_PREFIX="/home/ppo/.local/openclaw"
 NODE_BIN="${OPENCLAW_PREFIX}/tools/node/bin/node"
@@ -181,7 +181,7 @@ lock_runtime_checkout_permissions() {
 }
 
 validate_repository_and_current_checkout() {
-  local remote_url
+  local remote_url status_output
 
   [[ -d "${INSTALL_DIR}/.git" ]] || fail_result "repository_identity_failed"
   remote_url="$(git -C "$INSTALL_DIR" remote get-url "$REMOTE_NAME" 2>/dev/null)" ||
@@ -201,7 +201,9 @@ validate_repository_and_current_checkout() {
   fi
   detached="passed"
 
-  [[ -z "$(git --no-optional-locks -C "$INSTALL_DIR" -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>/dev/null)" ]] ||
+  status_output="$(git --no-optional-locks -C "$INSTALL_DIR" -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>/dev/null)" ||
+    fail_result "dirty_checkout"
+  [[ -z "$status_output" ]] ||
     fail_result "dirty_checkout"
   clean="passed"
 }
