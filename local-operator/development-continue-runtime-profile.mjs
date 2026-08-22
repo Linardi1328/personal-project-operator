@@ -675,3 +675,45 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
     }
   }
 }
+
+export async function loadDevelopmentRecoveryRuntimeProfile(request = {}, options = {}) {
+  assertReviewedPolicyCoverage()
+
+  const run = request.run
+  const projectId = typeof run?.project?.id === "string" ? run.project.id : null
+
+  if (!ordinaryProjectIds.has(projectId)) {
+    throw runtimeError()
+  }
+
+  const platform = options.platform || process.platform
+  const paths = fixedPathsForPlatform(platform)
+  const sourceRepoPath = paths.sourceRepoPaths[projectId]
+
+  if (!sourceRepoPath) {
+    throw runtimeError()
+  }
+
+  const profile = {
+    workspaceRegistry: {
+      [projectId]: {
+        sourceRepoPath,
+        workspaceRoot: paths.workspaceRoot
+      }
+    }
+  }
+
+  if (options.includeTestPolicy === true) {
+    let linuxIdentity = null
+
+    if (platform === "linux") {
+      linuxIdentity = await lookupLinuxPpoIdentity(paths, options)
+    }
+
+    profile.testPolicyRegistry = {
+      [projectId]: testPolicyForProject(projectId, paths, buildTestSandbox(paths, platform, linuxIdentity))
+    }
+  }
+
+  return profile
+}

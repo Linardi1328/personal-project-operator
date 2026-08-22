@@ -446,9 +446,21 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Keep routing deterministic: the bridge parses only `/ppo continue <run-id>` and invokes the fixed wrapper argv `["continue", "<run-id>"]` with `shell: false`, bounded output, and no model interpretation.
 - Do not add background execution, polling, queues, recursive continue, new OpenClaw tools, GitHub delivery reimplementation, production routes, `/ppo start`, `/ppo develop`, run listing, run search, or broader recovery workflows.
 
+### Phase 6L - Unified Read-Only Development Recovery
+
+- Add a local-only `development-recovery-coordinator.mjs` for ambiguous or interrupted ordinary five-project Phase 6 development runs.
+- Accept exactly one logical caller-controlled value: the existing opaque 43-character Phase 6A development run id. Reject caller-selected projects, statuses, actions, versions, SHAs, repositories, workspaces, commands, policies, services, deployment targets, rollback targets, confirmations, and environment overrides.
+- Reuse the existing Phase 6A run-state store and existing reviewed read-only Phase 6C-6G recovery APIs: workspace inspection, Codex execution reconciliation, automated testing reconciliation, independent review reconciliation, and GitHub delivery reconciliation.
+- Dispatch strictly by durable run status and invoke at most one read-only reconciliation boundary per call. Do not build a loop, retry work, infer completion from observations, or mutate state.
+- Keep recovery possible without the full Phase 6K mutation-runtime readiness gate. Reuse the fixed Phase 6K workspace and Phase 6E policy definitions through a recovery-only helper that does not run Codex/test/reviewer/sandbox readiness probes.
+- Re-read the run after child reconciliation and fail closed if the durable run changed during observation.
+- Return only bounded metadata for owner diagnosis. Do not expose raw child output, evidence objects, transition history, GitHub responses, prompts, logs, paths, credentials, tokens, or secrets.
+- Do not add `/ppo recover`, `/ppo recovery`, `/ppo reconcile`, `/ppo resume`, `/ppo repair`, `/ppo retry`, a new OpenClaw tool, or automatic Phase 6K recovery calls in this phase.
+- Do not execute Codex, tests, reviewers, pushes, PR writes, merges, deployments, production verification, rollback, service control, model calls, or production inspection.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add broader recovery workflows only after separate review.
+- Add a controlled `/ppo recover <run-id>` route only after Phase 6L receives independent review.
 - Add broader `/ppo` recovery and run-management workflows only after separate review.

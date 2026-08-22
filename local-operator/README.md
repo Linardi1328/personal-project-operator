@@ -210,6 +210,14 @@ local-operator/development-continue-orchestrator.mjs
 
 It accepts only an existing opaque Phase 6A run id for one of the ordinary five projects, reads the durable run state, captures the current version, re-reads immediately before dispatch, and passes that version internally to the existing reviewed Phase 6B-6G child API for the current status. It advances at most one outer boundary per invocation and stops at `merged`. It refuses PPO self-development runs, caller-selected versions/projects/actions/SHAs/workspaces/policies, ambiguous open attempts, production statuses, and all Phase 6H/6I/6J deployment, verification, and rollback operations.
 
+Phase 6L adds a unified read-only development recovery coordinator:
+
+```text
+local-operator/development-recovery-coordinator.mjs
+```
+
+It accepts only an existing opaque Phase 6A run id for one of the ordinary five projects, dispatches at most one existing read-only Phase 6C-6G inspection/reconciliation boundary for the current durable status, and returns bounded owner-diagnostic metadata. It does not retry work, mutate run state, create/remove workspaces, execute Codex/tests/reviewers, push, create or modify PRs, merge, deploy, verify production, rollback, or add a `/ppo` route. A future `/ppo recover <run-id>` route remains separately reviewed.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -248,6 +256,7 @@ It accepts only an existing opaque Phase 6A run id for one of the ordinary five 
 - `development-production-verification-agent.mjs`: Phase 6I read-only PPO production verification agent.
 - `phase-6i-production-verification-agent.md`: Phase 6I local usage and safety boundary.
 - `development-continue-orchestrator.mjs`: Phase 6K controlled `/ppo continue <run-id>` orchestrator for ordinary five-project runs.
+- `development-recovery-coordinator.mjs`: Phase 6L local-only read-only development recovery coordinator for ordinary five-project runs.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -269,6 +278,7 @@ It accepts only an existing opaque Phase 6A run id for one of the ordinary five 
 - `development-deployment-agent.test.mjs`: Phase 6H tests for merged-run gating, exact Phase 6G evidence, trusted PPO deployment profile, exact merge-SHA checkout, success/failure transitions, ambiguous deployment reconciliation, metadata-only evidence, and route/rollback/verification exclusions.
 - `development-production-verification-agent.test.mjs`: Phase 6I tests for deployed-run gating, exact Phase 6H evidence, fixed PPO profile reuse, read-only verification result validation, success/failure transitions, ambiguous reconciliation, metadata-only evidence, and route/rollback/deployment/model exclusions.
 - `development-continue-orchestrator.test.mjs`: Phase 6K tests for one-boundary dispatch, run-id parsing, caller-option refusal, stale-state handling, open-attempt refusal, production cutoff, bounded output, concurrency, and static production exclusions.
+- `development-recovery-coordinator.test.mjs`: Phase 6L tests for status recovery dispatch, read-only child composition, policy identity reuse, durable-state change detection, bounded output, and static mutation/production exclusions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -426,7 +436,7 @@ Requirements:
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
-Do not add `/ppo start`, `/ppo develop`, run listing, run search, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
+Phase 6L read-only development recovery remains local-only and has no OpenClaw/Telegram route. Do not add `/ppo recover`, `/ppo start`, `/ppo develop`, run listing, run search, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
 
 ## OpenClaw handoff shape
 
