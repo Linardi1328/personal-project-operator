@@ -439,6 +439,131 @@ function latestDeliveryEvidence(run, outcome = null) {
   return null
 }
 
+function phase6GDeliveryEvidenceEntries(run) {
+  const evidence = Array.isArray(run?.evidence?.merge) ? run.evidence.merge : []
+
+  return evidence.filter((entry) => (
+    entry?.source === GITHUB_DELIVERY_AGENT_ID ||
+    entry?.metadata?.agent === GITHUB_DELIVERY_AGENT_ID
+  ))
+}
+
+function trustedCurrentDeliveryEvidenceEntries(run, approvedSha) {
+  const entries = phase6GDeliveryEvidenceEntries(run)
+  const branch = run?.branch ? normalizeBranch(run.branch) : null
+
+  for (const entry of entries) {
+    const metadata = entry?.metadata || {}
+
+    if (
+      entry?.kind !== "merge" ||
+      entry?.source !== GITHUB_DELIVERY_AGENT_ID ||
+      entry?.sha !== approvedSha ||
+      metadata.agent !== GITHUB_DELIVERY_AGENT_ID ||
+      metadata.project !== run?.project?.id ||
+      metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
+      metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH ||
+      metadata.implementationSha !== approvedSha ||
+      typeof metadata.outcome !== "string"
+    ) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery evidence does not match the current exact-head policy."
+      )
+    }
+
+    if (metadata.branch !== undefined && (!branch || normalizeBranch(metadata.branch) !== branch)) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery branch evidence does not match the current approved branch."
+      )
+    }
+
+    if (metadata.base !== undefined && metadata.base !== PHASE_6G_DEFAULT_BASE_BRANCH) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery base evidence does not match the approved main branch."
+      )
+    }
+
+    if (metadata.prNumber !== undefined) {
+      normalizePrNumber(metadata.prNumber)
+    }
+
+    if (metadata.pushedSha !== undefined && metadata.pushedSha !== approvedSha) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery pushed SHA evidence does not match the current approved SHA."
+      )
+    }
+
+    if (metadata.remoteBranchSha !== undefined && metadata.remoteBranchSha !== approvedSha) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery remote branch evidence does not match the current approved SHA."
+      )
+    }
+
+    if (metadata.prHeadSha !== undefined && metadata.prHeadSha !== approvedSha) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery PR head evidence does not match the current approved SHA."
+      )
+    }
+
+    if (metadata.expectedHeadSha !== undefined && metadata.expectedHeadSha !== approvedSha) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery expected head evidence does not match the current approved SHA."
+      )
+    }
+
+    if (metadata.remoteReviewedSha !== undefined && metadata.remoteReviewedSha !== approvedSha) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery remote review SHA evidence does not match the current approved SHA."
+      )
+    }
+
+    if (metadata.mergeMethod !== undefined && metadata.mergeMethod !== PHASE_6G_APPROVED_MERGE_METHOD) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery merge method evidence does not match the approved method."
+      )
+    }
+
+    if (metadata.workflowRunId !== undefined && (!Number.isInteger(metadata.workflowRunId) || metadata.workflowRunId <= 0)) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery CI evidence is invalid."
+      )
+    }
+
+    if (metadata.requiredSteps !== undefined && metadata.requiredSteps !== REQUIRED_PPO_PR_VALIDATION_STEPS.length) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
+        "GitHub delivery CI evidence does not match the approved validation contract."
+      )
+    }
+  }
+
+  return entries
+}
+
+function latestTrustedDeliveryEvidence(entries, outcomes) {
+  const allowed = new Set(Array.isArray(outcomes) ? outcomes : [outcomes])
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+
+    if (allowed.has(entry?.metadata?.outcome)) {
+      return entry
+    }
+  }
+
+  return null
+}
+
 function latestRemoteReviewEvidence(run, outcome = null) {
   const evidence = Array.isArray(run?.evidence?.review) ? run.evidence.review : []
 
@@ -450,6 +575,74 @@ function latestRemoteReviewEvidence(run, outcome = null) {
       entry?.metadata?.reviewer === REMOTE_PR_REVIEW_AGENT_ID &&
       (outcome === null || entry?.metadata?.outcome === outcome)
     ) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function trustedCurrentRemoteReviewEvidenceEntries(run, approvedSha) {
+  const evidence = Array.isArray(run?.evidence?.review) ? run.evidence.review : []
+  const branch = run?.branch ? normalizeBranch(run.branch) : null
+  const entries = evidence.filter((entry) => (
+    entry?.source === REMOTE_PR_REVIEW_AGENT_ID ||
+    entry?.metadata?.reviewer === REMOTE_PR_REVIEW_AGENT_ID
+  ))
+
+  for (const entry of entries) {
+    const metadata = entry?.metadata || {}
+
+    if (
+      entry?.kind !== "review" ||
+      entry?.source !== REMOTE_PR_REVIEW_AGENT_ID ||
+      entry?.sha !== approvedSha ||
+      metadata.reviewer !== REMOTE_PR_REVIEW_AGENT_ID ||
+      metadata.project !== run?.project?.id ||
+      metadata.reviewedSha !== approvedSha ||
+      !Number.isInteger(metadata.attempt) ||
+      metadata.attempt <= 0
+    ) {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_REVIEW_EVIDENCE_INVALID",
+        "Remote review evidence does not match the current exact-head policy."
+      )
+    }
+
+    if (metadata.outcome !== REVIEW_FINDINGS_EVIDENCE_OUTCOME) {
+      if (
+        metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
+        metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH
+      ) {
+        throw deliveryError(
+          "GITHUB_DELIVERY_RECONCILE_REVIEW_EVIDENCE_INVALID",
+          "Remote review evidence does not match the current delivery policy."
+        )
+      }
+
+      if (metadata.branch !== undefined && (!branch || normalizeBranch(metadata.branch) !== branch)) {
+        throw deliveryError(
+          "GITHUB_DELIVERY_RECONCILE_REVIEW_EVIDENCE_INVALID",
+          "Remote review branch evidence does not match the current approved branch."
+        )
+      }
+    }
+
+    if (metadata.prNumber !== undefined) {
+      normalizePrNumber(metadata.prNumber)
+    }
+  }
+
+  return entries
+}
+
+function latestTrustedRemoteReviewEvidence(entries, outcomes) {
+  const allowed = new Set(Array.isArray(outcomes) ? outcomes : [outcomes])
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+
+    if (allowed.has(entry?.metadata?.outcome)) {
       return entry
     }
   }
@@ -1835,64 +2028,148 @@ export async function reconcileGitHubDelivery(runId, options = {}) {
   try {
     const run = await readDevelopmentRun(runId, options)
     const approvedSha = run.headSha ? normalizeSha(run.headSha, "Run head SHA") : null
-    const latestPush = latestDeliveryEvidence(run)
-    const latestReady = latestMergeReadyEvidence(run)
-    const latestReview = latestRemoteReviewEvidence(run)
+    const branch = run.branch ? normalizeBranch(run.branch) : null
+    const deliveryEntries = approvedSha ? trustedCurrentDeliveryEvidenceEntries(run, approvedSha) : []
+    const reviewEntries = approvedSha ? trustedCurrentRemoteReviewEvidenceEntries(run, approvedSha) : []
+    const latestProgress = deliveryEntries.at(-1) || null
+    const latestBranch = latestTrustedDeliveryEvidence(deliveryEntries, [
+      "branch_already_exact",
+      "branch_pushed",
+      "branch_push_recovered",
+      "branch_push_safe_retry"
+    ])
+    const latestPr = latestTrustedDeliveryEvidence(deliveryEntries, [
+      "pr_reused",
+      "pr_created",
+      "pr_create_recovered"
+    ])
+    const latestCi = latestTrustedDeliveryEvidence(deliveryEntries, "ci_passed")
+    const latestReady = latestTrustedDeliveryEvidence(deliveryEntries, "merge_ready")
+    const latestReview = latestTrustedRemoteReviewEvidence(reviewEntries, [
+      "approved",
+      "changes_requested",
+      "owner_action_required"
+    ])
     let remoteBranchSha = null
     let pr = null
     let ciStatus = "unknown"
     let mergeStatus = run.status
+    let prNumber = latestReady?.metadata?.prNumber ||
+      latestPr?.metadata?.prNumber ||
+      latestCi?.metadata?.prNumber ||
+      latestReview?.metadata?.prNumber ||
+      null
+    const acceptanceLike = approvedSha && branch
+      ? {
+        project: run.project,
+        approvedSha,
+        branch,
+        base: PHASE_6G_DEFAULT_BASE_BRANCH
+      }
+      : null
 
-    if (run.branch && approvedSha) {
-      try {
-        const acceptance = run.status === "review_passed"
-          ? await assertDevelopmentAcceptanceGate(runId, {
-            ...options,
-            expectedVersion: run.version
-          })
-          : null
-        const location = acceptance?.workspace?.location
+    if (run.status === "review_passed" && approvedSha && branch) {
+      const acceptance = await assertDevelopmentAcceptanceGate(runId, {
+        ...options,
+        expectedVersion: run.version
+      })
+      const location = acceptance?.workspace?.location
 
-        if (location) {
-          remoteBranchSha = await readRemoteBranchSha(location, run.branch, options)
+      if (location) {
+        remoteBranchSha = await readRemoteBranchSha(location, branch, options)
+
+        if (remoteBranchSha && remoteBranchSha !== approvedSha) {
+          throw deliveryError(
+            "GITHUB_DELIVERY_RECONCILE_BRANCH_CONFLICT",
+            "Remote branch state conflicts with the current approved SHA."
+          )
         }
-      } catch {
-        remoteBranchSha = null
+      }
+
+      if (latestBranch && remoteBranchSha !== approvedSha) {
+        throw deliveryError(
+          "GITHUB_DELIVERY_RECONCILE_BRANCH_CONFLICT",
+          "Recorded delivery branch progress no longer matches the remote branch."
+        )
+      }
+
+      const pullRequests = await githubClient(options).listPullRequests(run.project, {
+        branch,
+        base: PHASE_6G_DEFAULT_BASE_BRANCH
+      })
+
+      if (pullRequests.length > 1) {
+        throw deliveryError(
+          "GITHUB_DELIVERY_PR_AMBIGUOUS",
+          "Multiple matching pull requests exist; owner action is required."
+        )
+      }
+
+      if (pullRequests.length === 1) {
+        pr = validateExactPullRequest(pullRequests[0], acceptanceLike)
+        prNumber = prNumber || pr.number
       }
     }
 
-    if (latestReady?.metadata?.prNumber) {
-      try {
-        pr = await githubClient(options).getPullRequest(run.project, latestReady.metadata.prNumber)
+    if (run.status === "review_passed" && latestReview && latestReview.metadata?.outcome !== "approved") {
+      throw deliveryError(
+        "GITHUB_DELIVERY_RECONCILE_REVIEW_CONFLICT",
+        "Remote review evidence conflicts with the current review-passed state."
+      )
+    }
 
-        if (approvedSha && pr.headSha === approvedSha) {
-          try {
-            await requireExactHeadCi({
-              project: run.project,
-              approvedSha,
-              branch: pr.headRef
-            }, pr, options)
-            ciStatus = "passed"
-          } catch (error) {
-            ciStatus = error?.code === "GITHUB_DELIVERY_CI_PENDING" ? "pending" : "failed"
-          }
-        }
-      } catch {
-        pr = null
+    if (run.status === "review_passed" && prNumber && acceptanceLike) {
+      pr = validateExactPullRequest(
+        await githubClient(options).getPullRequest(run.project, normalizePrNumber(prNumber)),
+        acceptanceLike,
+        normalizePrNumber(prNumber)
+      )
+    }
+
+    if (run.status === "review_passed" && latestCi) {
+      if (!pr) {
+        throw deliveryError(
+          "GITHUB_DELIVERY_RECONCILE_PR_REQUIRED",
+          "Exact-head PR evidence is required before CI can be reconciled."
+        )
+      }
+
+      try {
+        await requireExactHeadCi(acceptanceLike, pr, options)
+        ciStatus = "passed"
+      } catch (error) {
+        ciStatus = error?.code === "GITHUB_DELIVERY_CI_PENDING" ? "pending" : "failed"
       }
     }
 
     if (run.status === "merge_ready" && latestReady?.metadata?.prNumber) {
       try {
         const mergeStarted = latestMergeStartedEvidence(run)
+        const readyFacts = mergeReadyEvidenceFacts(run)
         const facts = mergeStarted?.sha === approvedSha
           ? await mergeStartedReconciliationFacts(run)
-          : await mergeReadyFacts(run, options)
+          : {
+            ready: readyFacts.ready,
+            pr: {
+              number: readyFacts.prNumber,
+              headRef: readyFacts.branch
+            },
+            approvedSha: readyFacts.approvedSha
+          }
         const completed = await reconcileMergeCompletion(run, facts, options)
         mergeStatus = completed.mergeCommitSha ? "merged_remote" : "merge_ready"
       } catch {
+        try {
+          await mergeReadyFacts(run, options)
+        } catch {
+          // Keep the read-only reconciliation bounded; mutation recovery remains Phase 6G-owned.
+        }
         mergeStatus = "merge_ready"
       }
+    }
+
+    if (run.status === "review_passed" && !latestProgress && !remoteBranchSha && !pr) {
+      mergeStatus = "not_started"
     }
 
     return {
@@ -1908,10 +2185,10 @@ export async function reconcileGitHubDelivery(runId, options = {}) {
       delivery: {
         policyId: PHASE_6G_DELIVERY_POLICY_ID,
         policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
-        branch: run.branch,
+        branch,
         remoteBranchSha,
-        latestOutcome: latestPush?.metadata?.outcome || null,
-        prNumber: latestReady?.metadata?.prNumber || null,
+        latestOutcome: latestProgress?.metadata?.outcome || null,
+        prNumber,
         prHeadSha: pr?.headSha || null,
         ciStatus,
         remoteReviewOutcome: latestReview?.metadata?.outcome || null,

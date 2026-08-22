@@ -1920,6 +1920,135 @@ function latestCodexImplementationEvidence(run) {
   return null
 }
 
+const sha256Pattern = /^[a-f0-9]{64}$/u
+
+function safeEvidenceSha(value) {
+  const normalized = typeof value === "string" ? value.toLowerCase() : null
+
+  return normalized && shaPattern.test(normalized) ? normalized : null
+}
+
+function currentRunImplementationSha(run) {
+  return safeEvidenceSha(run?.headSha) || safeEvidenceSha(run?.baseSha)
+}
+
+function boundedEvidenceText(value, maxChars = 160) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxChars &&
+    !unsafeControlPattern.test(value) &&
+    !sensitiveTextPattern.test(value)
+  )
+}
+
+function codexEvidenceLooksRelevant(entry) {
+  const outcome = entry?.metadata?.outcome
+
+  return (
+    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
+    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID ||
+    outcome === "execution_started" ||
+    outcome === "execution_failed"
+  )
+}
+
+function codexEvidenceClaimsCurrentAttempt(run, entry) {
+  if (!codexEvidenceLooksRelevant(entry)) {
+    return false
+  }
+
+  const attempt = entry?.metadata?.attempt
+
+  if (attempt === run?.attempts?.implementation) {
+    return true
+  }
+
+  if (
+    attempt !== undefined &&
+    !Number.isInteger(attempt) &&
+    (
+      entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
+      entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID
+    )
+  ) {
+    return true
+  }
+
+  return attempt === undefined && (
+    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
+    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID
+  )
+}
+
+function latestCurrentCodexAttemptEvidence(run) {
+  const entries = run?.evidence?.implementation
+
+  if (!Array.isArray(entries)) {
+    return { malformed: true, entry: null }
+  }
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+
+    if (codexEvidenceClaimsCurrentAttempt(run, entry)) {
+      return { malformed: false, entry }
+    }
+  }
+
+  return { malformed: false, entry: null }
+}
+
+export function classifyCodexExecutionAttemptEvidence(run) {
+  const latest = latestCurrentCodexAttemptEvidence(run)
+
+  if (latest.malformed) {
+    return "invalid"
+  }
+
+  if (!latest.entry) {
+    return "none"
+  }
+
+  const entry = latest.entry
+  const metadata = entry?.metadata || {}
+  const expectedSha = currentRunImplementationSha(run)
+
+  if (
+    !expectedSha ||
+    !Number.isInteger(run?.attempts?.implementation) ||
+    run.attempts.implementation <= 0 ||
+    entry?.kind !== "implementation" ||
+    entry?.source !== CODEX_EXECUTION_ADAPTER_ID ||
+    safeEvidenceSha(entry?.sha) !== expectedSha ||
+    metadata.adapter !== CODEX_EXECUTION_ADAPTER_ID ||
+    metadata.project !== run?.project?.id ||
+    metadata.attempt !== run.attempts.implementation ||
+    metadata.sandbox !== CODEX_EXECUTION_SANDBOX_ID ||
+    metadata.network !== "none" ||
+    metadata.remotePolicy !== "deny" ||
+    (run.branch && metadata.branch !== undefined && metadata.branch !== run.branch) ||
+    !sha256Pattern.test(String(metadata.promptHash || "")) ||
+    !boundedEvidenceText(metadata.startedAt, 80) ||
+    !boundedEvidenceText(metadata.workspaceId, 120) ||
+    !boundedEvidenceText(metadata.workspaceRef, 160) ||
+    (metadata.backend !== undefined && !boundedEvidenceText(metadata.backend, 80)) ||
+    (metadata.platform !== undefined && !boundedEvidenceText(metadata.platform, 40))
+  ) {
+    return "invalid"
+  }
+
+  if (metadata.outcome === "execution_started" && metadata.endedAt === undefined) {
+    return "open"
+  }
+
+  if (metadata.outcome === "execution_failed" && boundedEvidenceText(metadata.endedAt, 80)) {
+    return "definitive_failed"
+  }
+
+  return "invalid"
+}
+
 function assertNoOpenCodexAttempt(run) {
   const latest = latestCodexImplementationEvidence(run)
 

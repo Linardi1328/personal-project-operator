@@ -7,20 +7,30 @@ import {
   readDevelopmentRun,
   readPersonalProjectOperatorSelfDevelopmentRun
 } from "./development-run-state.mjs"
-import { inspectImplementationWorkspace } from "./development-workspace-manager.mjs"
+import {
+  DEVELOPMENT_WORKSPACE_MANAGER_ID,
+  inspectImplementationWorkspace
+} from "./development-workspace-manager.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
-  CODEX_EXECUTION_SANDBOX_ID,
+  classifyCodexExecutionAttemptEvidence,
   reconcileCodexExecution
 } from "./development-codex-execution-adapter.mjs"
 import {
   AUTOMATED_TEST_RUNNER_ID,
-  AUTOMATED_TEST_SANDBOX_ID,
+  classifyAutomatedTestAttemptEvidence,
   reconcileAutomatedTesting,
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
-import { reconcileIndependentReview } from "./development-review-agent.mjs"
-import { reconcileGitHubDelivery } from "./github-delivery-agent.mjs"
+import {
+  INDEPENDENT_REVIEW_AGENT_ID,
+  REMOTE_PR_REVIEW_AGENT_ID,
+  reconcileIndependentReview
+} from "./development-review-agent.mjs"
+import {
+  GITHUB_DELIVERY_AGENT_ID,
+  reconcileGitHubDelivery
+} from "./github-delivery-agent.mjs"
 import { loadDevelopmentRecoveryRuntimeProfile } from "./development-continue-runtime-profile.mjs"
 import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
 
@@ -128,9 +138,17 @@ const defaultReconcilers = Object.freeze({
   reconcileGitHubDelivery
 })
 
+const readOnlyRecoveryChildActors = new Set([
+  DEVELOPMENT_WORKSPACE_MANAGER_ID,
+  CODEX_EXECUTION_ADAPTER_ID,
+  AUTOMATED_TEST_RUNNER_ID,
+  INDEPENDENT_REVIEW_AGENT_ID,
+  REMOTE_PR_REVIEW_AGENT_ID,
+  GITHUB_DELIVERY_AGENT_ID
+])
+
 const safeIdPattern = /^[a-z][a-z0-9_-]{0,79}$/u
 const shaPattern = /^[a-f0-9]{40}$/u
-const sha256Pattern = /^[a-f0-9]{64}$/u
 
 const allowedOutcomes = new Set([
   "recovery_not_required",
@@ -174,8 +192,10 @@ const allowedObservations = new Set([
   "delivery_branch_observed",
   "delivery_pr_observed",
   "delivery_ci_observed",
+  "delivery_remote_review_observed",
   "delivery_merge_ready",
   "delivery_remote_merged",
+  "delivery_not_started",
   "delivery_state_unavailable",
   "project_out_of_scope",
   "project_identity_invalid",
@@ -238,10 +258,6 @@ function safeHeadSha(value) {
   return normalized && shaPattern.test(normalized) ? normalized : null
 }
 
-function currentRunSha(run) {
-  return safeHeadSha(run?.headSha) || safeHeadSha(run?.baseSha)
-}
-
 function safeOperation(value) {
   return safeIdPattern.test(value) ? value : "none"
 }
@@ -256,28 +272,6 @@ function sanitizeOutcome(value) {
 
 function sanitizeObservation(value) {
   return allowedObservations.has(value) ? value : "malformed_child_result"
-}
-
-function isPositiveInteger(value) {
-  return Number.isInteger(value) && value > 0
-}
-
-function isNonNegativeInteger(value) {
-  return Number.isInteger(value) && value >= 0
-}
-
-function isBoundedSafeText(value, maxChars = 160) {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= maxChars &&
-    !/[\u0000-\u001F\u007F-\u009F]/u.test(value) &&
-    !/(?:SENSITIVE_TEST_SENTINEL|github_pat_|gh[opusr]_|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:])/iu.test(value)
-  )
-}
-
-function branchMatches(run, metadata) {
-  return !run.branch || metadata.branch === undefined || metadata.branch === run.branch
 }
 
 function resultRunSummary(run) {
@@ -352,6 +346,35 @@ function childRunClaimsStateChange(before, childResult) {
     typeof childRun === "object" &&
     (childRun.version !== before.version || childRun.status !== before.status)
   )
+}
+
+function latestHistoryActor(run) {
+  if (!Array.isArray(run?.history) || run.history.length === 0) {
+    return null
+  }
+
+  const latest = run.history.at(-1)
+
+  return typeof latest?.actor === "string" ? latest.actor : null
+}
+
+function classifyDurableChangeAfterChild(before, after) {
+  if (stateFingerprint(after) === stateFingerprint(before)) {
+    return "unchanged"
+  }
+
+  const beforeHistoryLength = Array.isArray(before?.history) ? before.history.length : -1
+  const afterHistoryLength = Array.isArray(after?.history) ? after.history.length : -1
+  const actor = latestHistoryActor(after)
+
+  if (
+    afterHistoryLength > beforeHistoryLength &&
+    readOnlyRecoveryChildActors.has(actor)
+  ) {
+    return "child_state_changed"
+  }
+
+  return "stale_observation"
 }
 
 function validateRunProject(run) {
@@ -490,171 +513,6 @@ function childOptions(options, profile, includeGithub = false) {
   return forwarded
 }
 
-function latestMatchingEvidence(run, kind, predicate) {
-  const entries = run?.evidence?.[kind]
-
-  if (!Array.isArray(entries)) {
-    return { malformed: true, entry: null }
-  }
-
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]
-
-    if (predicate(entry)) {
-      return { malformed: false, entry }
-    }
-  }
-
-  return { malformed: false, entry: null }
-}
-
-function isCodexAttemptLooking(entry) {
-  const outcome = entry?.metadata?.outcome
-
-  return (
-    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
-    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID ||
-    outcome === "execution_started" ||
-    outcome === "execution_failed"
-  )
-}
-
-function claimsCurrentCodexAttempt(run, entry) {
-  if (!isCodexAttemptLooking(entry)) {
-    return false
-  }
-
-  const attempt = entry?.metadata?.attempt
-
-  return attempt === run?.attempts?.implementation
-}
-
-function trustedCodexAttemptState(run) {
-  const latest = latestMatchingEvidence(run, "implementation", (entry) => claimsCurrentCodexAttempt(run, entry))
-
-  if (latest.malformed) {
-    return "invalid"
-  }
-
-  if (!latest.entry) {
-    return "none"
-  }
-
-  const entry = latest.entry
-  const metadata = entry?.metadata || {}
-  const expectedSha = currentRunSha(run)
-
-  if (
-    !expectedSha ||
-    !isPositiveInteger(run?.attempts?.implementation) ||
-    entry?.kind !== "implementation" ||
-    entry?.source !== CODEX_EXECUTION_ADAPTER_ID ||
-    safeHeadSha(entry?.sha) !== expectedSha ||
-    metadata.adapter !== CODEX_EXECUTION_ADAPTER_ID ||
-    metadata.project !== projectIdFor(run) ||
-    metadata.attempt !== run.attempts.implementation ||
-    metadata.sandbox !== CODEX_EXECUTION_SANDBOX_ID ||
-    metadata.network !== "none" ||
-    metadata.remotePolicy !== "deny" ||
-    !branchMatches(run, metadata) ||
-    !sha256Pattern.test(String(metadata.promptHash || "")) ||
-    !isBoundedSafeText(metadata.startedAt, 80)
-  ) {
-    return "invalid"
-  }
-
-  if (metadata.outcome === "execution_started" && metadata.endedAt === undefined) {
-    return "open"
-  }
-
-  if (metadata.outcome === "execution_failed" && isBoundedSafeText(metadata.endedAt, 80)) {
-    return "failed"
-  }
-
-  return "invalid"
-}
-
-function isAutomatedTestAttemptLooking(entry) {
-  const outcome = entry?.metadata?.outcome
-
-  return (
-    entry?.source === AUTOMATED_TEST_RUNNER_ID ||
-    entry?.metadata?.runner === AUTOMATED_TEST_RUNNER_ID ||
-    outcome === "testing_started" ||
-    outcome === "failed" ||
-    outcome === "passed"
-  )
-}
-
-function hasTrustedTestEvidenceBase(run, entry, policyIdentity) {
-  const metadata = entry?.metadata || {}
-  const expectedSha = safeHeadSha(run?.headSha)
-
-  return (
-    Boolean(expectedSha) &&
-    isPositiveInteger(run?.attempts?.test) &&
-    entry?.kind === "test" &&
-    entry?.source === AUTOMATED_TEST_RUNNER_ID &&
-    safeHeadSha(entry?.sha) === expectedSha &&
-    metadata.runner === AUTOMATED_TEST_RUNNER_ID &&
-    metadata.project === projectIdFor(run) &&
-    metadata.attempt === run.attempts.test &&
-    safeHeadSha(metadata.implSha) === expectedSha &&
-    metadata.sandbox === AUTOMATED_TEST_SANDBOX_ID &&
-    metadata.network === "none" &&
-    metadata.policyId === policyIdentity?.policyId &&
-    metadata.policyHash === policyIdentity?.policyHash &&
-    branchMatches(run, metadata) &&
-    isBoundedSafeText(metadata.startedAt, 80)
-  )
-}
-
-function trustedTestEvidenceObservation(run, policyIdentity) {
-  const latest = latestMatchingEvidence(run, "test", isAutomatedTestAttemptLooking)
-
-  if (latest.malformed) {
-    return "test_evidence_untrusted"
-  }
-
-  if (!latest.entry) {
-    return null
-  }
-
-  const entry = latest.entry
-  const metadata = entry?.metadata || {}
-  const trustedBase = hasTrustedTestEvidenceBase(run, entry, policyIdentity)
-
-  if (trustedBase && metadata.outcome === "testing_started" && metadata.endedAt === undefined) {
-    return "test_attempt_open"
-  }
-
-  if (trustedBase && metadata.outcome === "failed" && metadata.testId === undefined && isBoundedSafeText(metadata.endedAt, 80)) {
-    if (
-      isPositiveInteger(metadata.total) &&
-      isNonNegativeInteger(metadata.passed) &&
-      isNonNegativeInteger(metadata.failed) &&
-      isNonNegativeInteger(metadata.ambiguous) &&
-      metadata.total === policyIdentity.requiredTestCount &&
-      metadata.passed + metadata.failed + metadata.ambiguous <= metadata.total
-    ) {
-      return "test_failure_recorded"
-    }
-  }
-
-  if (trustedBase && metadata.outcome === "passed" && metadata.testId === undefined && isBoundedSafeText(metadata.endedAt, 80)) {
-    if (
-      metadata.total === policyIdentity.requiredTestCount &&
-      metadata.passed === policyIdentity.requiredTestCount &&
-      metadata.failed === 0 &&
-      metadata.ambiguous === 0
-    ) {
-      return "test_pass_evidence_present"
-    }
-  }
-
-  return "test_evidence_untrusted"
-}
-
 function requireChildOutcome(childResult, expectedOutcome) {
   if (
     !childResult ||
@@ -717,7 +575,7 @@ function mapCodexReconciliation(run, childResult) {
     return unavailableResult(run, "6D", "reconcile-codex-execution")
   }
 
-  const evidenceState = trustedCodexAttemptState(run)
+  const evidenceState = classifyCodexExecutionAttemptEvidence(run)
 
   if (evidenceState === "invalid") {
     return unavailableResult(run, "6D", "reconcile-codex-execution", "codex_evidence_invalid")
@@ -733,6 +591,10 @@ function mapCodexReconciliation(run, childResult) {
       observation: "codex_attempt_open",
       ownerActionRequired: true
     })
+  }
+
+  if (evidenceState !== "none" && evidenceState !== "definitive_failed") {
+    return unavailableResult(run, "6D", "reconcile-codex-execution", "codex_evidence_invalid")
   }
 
   const observationByStatus = {
@@ -773,7 +635,14 @@ function mapAutomatedTesting(run, childResult, profile) {
     return unavailableResult(run, "6E", "reconcile-automated-testing")
   }
 
-  const evidenceObservation = trustedTestEvidenceObservation(run, policyIdentity)
+  const evidenceState = classifyAutomatedTestAttemptEvidence(run, policyIdentity)
+  const evidenceObservationByState = {
+    open: "test_attempt_open",
+    definitive_failed: "test_failure_recorded",
+    passed: "test_pass_evidence_present",
+    invalid: "test_evidence_untrusted"
+  }
+  const evidenceObservation = evidenceObservationByState[evidenceState] || null
   const observationByStatus = {
     open_attempt: "test_attempt_open",
     passed_valid: "test_pass_evidence_present",
@@ -842,12 +711,16 @@ function mapGitHubDelivery(run, childResult) {
     observation = "delivery_remote_merged"
   } else if (delivery.mergeStatus === "merge_ready") {
     observation = "delivery_merge_ready"
+  } else if (delivery.remoteReviewOutcome === "approved") {
+    observation = "delivery_remote_review_observed"
   } else if (delivery.ciStatus === "passed") {
     observation = "delivery_ci_observed"
   } else if (Number.isInteger(delivery.prNumber) && delivery.prNumber > 0) {
     observation = "delivery_pr_observed"
   } else if (safeHeadSha(delivery.remoteBranchSha)) {
     observation = "delivery_branch_observed"
+  } else if (delivery.mergeStatus === "not_started" && delivery.latestOutcome === null) {
+    observation = "delivery_not_started"
   }
 
   return baseResult({
@@ -855,9 +728,14 @@ function mapGitHubDelivery(run, childResult) {
     run,
     phase: "6G",
     operation: "reconcile-github-delivery",
-    outcome: observation === "delivery_state_unavailable" ? "recovery_unavailable" : "recovery_observed",
+    outcome: observation === "delivery_state_unavailable"
+      ? "recovery_unavailable"
+      : observation === "delivery_not_started"
+        ? "recovery_not_required"
+        : "recovery_observed",
     observation,
-    ownerActionRequired: true
+    ownerActionRequired: !["delivery_not_started"].includes(observation),
+    continuationCandidate: observation === "delivery_not_started"
   })
 }
 
@@ -968,14 +846,15 @@ async function runChildRecovery(run, boundary, options = {}) {
   }
 
   let childResult
+  let childThrew = false
 
   try {
     childResult = await child(run.runId, childOptions(options, profile, boundary.phase === "6G"))
   } catch {
-    return unavailableResult(run, boundary.phase, boundary.operation)
+    childThrew = true
   }
 
-  if (childRunClaimsStateChange(run, childResult)) {
+  if (!childThrew && childRunClaimsStateChange(run, childResult)) {
     return stateChangedResult(run, boundary)
   }
 
@@ -987,8 +866,18 @@ async function runChildRecovery(run, boundary, options = {}) {
     return unavailableResult(run, boundary.phase, boundary.operation)
   }
 
-  if (stateFingerprint(after) !== stateFingerprint(run)) {
+  const durableChange = classifyDurableChangeAfterChild(run, after)
+
+  if (durableChange === "child_state_changed") {
+    return stateChangedResult(after, boundary)
+  }
+
+  if (durableChange === "stale_observation") {
     return staleObservationResult(after, boundary)
+  }
+
+  if (childThrew) {
+    return unavailableResult(run, boundary.phase, boundary.operation)
   }
 
   if (boundary.operation === "inspect-implementation-workspace") {

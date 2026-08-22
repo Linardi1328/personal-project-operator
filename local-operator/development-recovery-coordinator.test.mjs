@@ -1,19 +1,51 @@
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { execFile } from "node:child_process"
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile
+} from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { promisify } from "node:util"
 import test from "node:test"
 import {
+  createDevelopmentRun,
   DEVELOPMENT_RUN_STATUSES,
-  PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
+  PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
+  recordDevelopmentRunProgress,
+  transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
-  CODEX_EXECUTION_SANDBOX_ID
+  CODEX_EXECUTION_SANDBOX_ID,
+  classifyCodexExecutionAttemptEvidence
 } from "./development-codex-execution-adapter.mjs"
 import {
   AUTOMATED_TEST_RUNNER_ID,
   AUTOMATED_TEST_SANDBOX_ID,
+  classifyAutomatedTestAttemptEvidence,
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
+import {
+  INDEPENDENT_REVIEW_AGENT_ID,
+  REMOTE_PR_REVIEW_AGENT_ID,
+  REVIEW_DECISIONS
+} from "./development-review-agent.mjs"
+import {
+  PHASE_6G_DELIVERY_POLICY_HASH,
+  PHASE_6G_DELIVERY_POLICY_ID
+} from "./development-acceptance-gate.mjs"
+import {
+  GITHUB_DELIVERY_AGENT_ID,
+  REQUIRED_PPO_PR_VALIDATION_STEPS
+} from "./github-delivery-agent.mjs"
+import {
+  prepareImplementationWorkspace,
+  resolveImplementationWorkspaceLocation
+} from "./development-workspace-manager.mjs"
 import {
   DEVELOPMENT_RECOVERY_COORDINATOR_ID,
   PHASE_6L_RECOVERY_POLICY_ID,
@@ -27,6 +59,7 @@ import {
 } from "./development-continue-runtime-profile.mjs"
 import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
 
+const execFileAsync = promisify(execFile)
 const RUN_ID = "L".repeat(43)
 const BASE_SHA = "a".repeat(40)
 const HEAD_SHA = "b".repeat(40)
@@ -243,6 +276,384 @@ function testEvidence(run, policyIdentity, outcome, overrides = {}) {
   }
 }
 
+async function git(args, cwd) {
+  const result = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 128 * 1024,
+    shell: false
+  })
+
+  return String(result.stdout ?? "").trim()
+}
+
+async function makeDurableReviewPassedFixture() {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ppo-6l-real-")))
+  const sourceRepoPath = join(root, "source")
+  const workspaceRoot = join(root, "workspaces")
+  const writeDataDir = join(root, "write-data")
+
+  await mkdir(sourceRepoPath)
+  await git(["init"], sourceRepoPath)
+  await git(["checkout", "-B", "main"], sourceRepoPath)
+  await git(["config", "user.email", "ppo-test@example.invalid"], sourceRepoPath)
+  await git(["config", "user.name", "PPO Test"], sourceRepoPath)
+  await git(["remote", "add", "origin", `git@github.com:${PROJECT.fullName}.git`], sourceRepoPath)
+  await writeFile(join(sourceRepoPath, "README.md"), "# Phase 6L\n", "utf8")
+  await git(["add", "README.md"], sourceRepoPath)
+  await git(["commit", "-m", "initial fixture"], sourceRepoPath)
+  const baseSha = await git(["rev-parse", "HEAD"], sourceRepoPath)
+  const workspaceRegistry = {
+    [PROJECT.id]: {
+      sourceRepoPath,
+      workspaceRoot
+    }
+  }
+  const now = () => new Date(STARTED_AT)
+  const created = await createDevelopmentRun({
+    projectId: PROJECT.id,
+    task: "Recover a Phase 6L GitHub delivery fixture.",
+    baseSha,
+    branch: "main",
+    headSha: baseSha,
+    actor: "test-planner"
+  }, {
+    writeDataDir,
+    now
+  })
+  const planning = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: created.version,
+    status: "planning_in_progress",
+    actor: "test-planner"
+  }, {
+    writeDataDir,
+    now
+  })
+  const planned = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: planning.version,
+    status: "planned",
+    actor: "test-planner"
+  }, {
+    writeDataDir,
+    now
+  })
+  const prepared = await prepareImplementationWorkspace(planned.runId, {
+    expectedVersion: planned.version,
+    writeDataDir,
+    workspaceRegistry,
+    now
+  })
+  const location = await resolveImplementationWorkspaceLocation(prepared.run, {
+    writeDataDir,
+    workspaceRegistry
+  })
+
+  await writeFile(join(location.workspacePath, "implementation.txt"), "implemented\n", "utf8")
+  await git(["add", "implementation.txt"], location.workspacePath)
+  await git(["commit", "-m", "phase 6l implementation"], location.workspacePath)
+  const headSha = await git(["rev-parse", "HEAD"], location.workspacePath)
+  const implementationReady = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: prepared.run.version,
+    status: "implementation_ready",
+    branch: location.branch,
+    headSha,
+    actor: CODEX_EXECUTION_ADAPTER_ID,
+    evidence: [{
+      kind: "implementation",
+      sha: headSha,
+      source: CODEX_EXECUTION_ADAPTER_ID,
+      metadata: {
+        project: PROJECT.id,
+        adapter: CODEX_EXECUTION_ADAPTER_ID,
+        attempt: 1,
+        promptHash: PROMPT_HASH,
+        outcome: "implementation_ready",
+        changedFiles: 1
+      }
+    }]
+  }, {
+    writeDataDir,
+    now
+  })
+  const testing = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: implementationReady.version,
+    status: "tests_in_progress",
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    evidence: [{
+      kind: "test",
+      sha: headSha,
+      source: AUTOMATED_TEST_RUNNER_ID,
+      metadata: {
+        project: PROJECT.id,
+        runner: AUTOMATED_TEST_RUNNER_ID,
+        attempt: 1,
+        policyId: "phase-6e-local-node-policy",
+        policyHash: "b".repeat(64),
+        implSha: headSha,
+        outcome: "testing_started",
+        sandbox: AUTOMATED_TEST_SANDBOX_ID,
+        network: "none"
+      }
+    }]
+  }, {
+    writeDataDir,
+    now
+  })
+  const testsPassed = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: testing.version,
+    status: "tests_passed",
+    branch: location.branch,
+    headSha,
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    evidence: [{
+      kind: "test",
+      sha: headSha,
+      source: AUTOMATED_TEST_RUNNER_ID,
+      metadata: {
+        project: PROJECT.id,
+        runner: AUTOMATED_TEST_RUNNER_ID,
+        attempt: 1,
+        policyId: "phase-6e-local-node-policy",
+        policyHash: "b".repeat(64),
+        implSha: headSha,
+        outcome: "passed",
+        total: 1,
+        passed: 1,
+        failed: 0,
+        ambiguous: 0
+      }
+    }]
+  }, {
+    writeDataDir,
+    now
+  })
+  const reviewing = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: testsPassed.version,
+    status: "review_in_progress",
+    actor: INDEPENDENT_REVIEW_AGENT_ID,
+    evidence: [{
+      kind: "review",
+      sha: headSha,
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      metadata: {
+        project: PROJECT.id,
+        reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: 1,
+        reviewedSha: headSha,
+        promptHash: "c".repeat(64),
+        outcome: "review_started",
+        sandbox: "phase-6f-no-outbound-network-review-sandbox",
+        network: "none"
+      }
+    }]
+  }, {
+    writeDataDir,
+    now
+  })
+  const reviewPassed = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: reviewing.version,
+    status: "review_passed",
+    branch: location.branch,
+    headSha,
+    actor: INDEPENDENT_REVIEW_AGENT_ID,
+    evidence: [{
+      kind: "review",
+      sha: headSha,
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      metadata: {
+        project: PROJECT.id,
+        reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: 1,
+        reviewedSha: headSha,
+        promptHash: "c".repeat(64),
+        decision: REVIEW_DECISIONS.APPROVED,
+        mergeAllowed: true,
+        blockers: 0,
+        securityFindings: 0,
+        testsRequired: 0,
+        summaryHash: "e".repeat(64),
+        outcome: "approved",
+        sandbox: "phase-6f-no-outbound-network-review-sandbox",
+        network: "none"
+      }
+    }]
+  }, {
+    writeDataDir,
+    now
+  })
+
+  return {
+    writeDataDir,
+    workspaceRegistry,
+    location,
+    run: reviewPassed,
+    headSha,
+    now
+  }
+}
+
+function makePhase6GDeliveryEvidence(run, outcome, metadata = {}) {
+  return {
+    kind: "merge",
+    sha: run.headSha,
+    source: GITHUB_DELIVERY_AGENT_ID,
+    summary: "Phase 6G delivery progress fixture.",
+    metadata: {
+      project: run.project.id,
+      agent: GITHUB_DELIVERY_AGENT_ID,
+      policyId: PHASE_6G_DELIVERY_POLICY_ID,
+      policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+      implementationSha: run.headSha,
+      outcome,
+      ...metadata
+    }
+  }
+}
+
+function makePhase6GRemoteReviewEvidence(run, pr, metadata = {}) {
+  return {
+    kind: "review",
+    sha: run.headSha,
+    source: REMOTE_PR_REVIEW_AGENT_ID,
+    summary: "Phase 6G remote review fixture.",
+    metadata: {
+      project: run.project.id,
+      reviewer: REMOTE_PR_REVIEW_AGENT_ID,
+      policyId: PHASE_6G_DELIVERY_POLICY_ID,
+      policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+      attempt: 1,
+      prNumber: pr.number,
+      branch: run.branch,
+      reviewedSha: run.headSha,
+      decision: REVIEW_DECISIONS.APPROVED,
+      mergeAllowed: true,
+      blockers: 0,
+      securityFindings: 0,
+      testsRequired: 0,
+      outcome: "approved",
+      endedAt: ENDED_AT,
+      ...metadata
+    }
+  }
+}
+
+async function appendPhase6GProgress(run, fixture, evidenceEntry, actor = GITHUB_DELIVERY_AGENT_ID) {
+  return await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: run.status,
+    actor,
+    evidence: [evidenceEntry]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+}
+
+function makeReadOnlyDeliveryGitRunner(remoteBranchSha = null) {
+  return async (args) => {
+    if (args[2] === "ls-remote") {
+      return {
+        stdout: remoteBranchSha ? `${remoteBranchSha}\t${args[4]}\n` : "",
+        stderr: "",
+        exitCode: 0
+      }
+    }
+
+    const result = await execFileAsync("git", args, {
+      encoding: "utf8",
+      maxBuffer: 128 * 1024,
+      shell: false
+    })
+
+    return {
+      stdout: result.stdout,
+      stderr: "",
+      exitCode: 0
+    }
+  }
+}
+
+function makeReadOnlyDeliveryGithubClient(run, options = {}) {
+  const writes = []
+  const prs = options.prs || []
+  const mainSha = options.mainSha || "m".repeat(40)
+
+  return {
+    writes,
+    async listPullRequests(_project, query) {
+      return prs.filter((pr) => (
+        pr.state === "open" &&
+        pr.headRef === query.branch &&
+        pr.baseRef === query.base
+      ))
+    },
+    async getPullRequest(_project, prNumber) {
+      const pr = prs.find((entry) => entry.number === prNumber)
+      if (!pr) {
+        throw new Error("missing pr")
+      }
+      return pr
+    },
+    async listWorkflowRuns() {
+      return [{
+        id: 100,
+        name: "PPO PR validation",
+        event: "pull_request",
+        status: "completed",
+        conclusion: "success",
+        headSha: run.headSha,
+        headBranch: run.branch
+      }]
+    },
+    async listWorkflowRunJobs() {
+      return [{
+        id: 101,
+        name: "validate",
+        status: "completed",
+        conclusion: "success",
+        steps: REQUIRED_PPO_PR_VALIDATION_STEPS.map((name) => ({
+          name,
+          status: "completed",
+          conclusion: "success"
+        }))
+      }]
+    },
+    async getBranchRef() {
+      return { sha: mainSha }
+    },
+    async createPullRequest() {
+      writes.push("createPullRequest")
+      throw new Error("write refused")
+    },
+    async mergePullRequest() {
+      writes.push("mergePullRequest")
+      throw new Error("write refused")
+    },
+    async submitPullRequestReview() {
+      writes.push("submitPullRequestReview")
+      throw new Error("write refused")
+    }
+  }
+}
+
+function makePr(run, overrides = {}) {
+  return {
+    number: overrides.number || 1,
+    state: overrides.state || "open",
+    draft: overrides.draft ?? false,
+    merged: overrides.merged ?? false,
+    mergeable: overrides.mergeable ?? true,
+    mergeableState: "clean",
+    mergeCommitSha: overrides.mergeCommitSha || null,
+    baseRef: "main",
+    baseRepoFullName: run.project.fullName,
+    headRef: run.branch,
+    headSha: overrides.headSha || run.headSha,
+    headRepoFullName: run.project.fullName,
+    nodeId: "PR_node"
+  }
+}
+
 test("Phase 6L status contract covers every development run status exactly once", () => {
   assert.deepEqual(Object.keys(PHASE_6L_RECOVERY_STATUS_CONTRACT).sort(), [...DEVELOPMENT_RUN_STATUSES].sort())
 })
@@ -434,6 +845,86 @@ test("Phase 6L automated testing recovery uses the exact current reviewed policy
   assert.equal(stale.observation, "test_evidence_untrusted")
 })
 
+test("shared Phase 6D evidence classifier covers current attempt trust cases", () => {
+  const baseRun = runFor("implementation_in_progress", {
+    attempts: { implementation: 2 }
+  })
+  const trustedStarted = codexStartedEvidence(baseRun)
+  const trustedFailed = codexStartedEvidence(baseRun, {
+    outcome: "execution_failed",
+    endedAt: ENDED_AT
+  })
+
+  for (const [name, entries, expected] of [
+    ["none", [], "none"],
+    ["trusted-started", [trustedStarted], "open"],
+    ["trusted-failed", [trustedFailed], "definitive_failed"],
+    ["wrong-source", [{ ...trustedStarted, source: "wrong-source" }], "invalid"],
+    ["source-adapter-mismatch", [codexStartedEvidence(baseRun, { adapter: "wrong-adapter" })], "invalid"],
+    ["missing-attempt", [codexStartedEvidence(baseRun, { attempt: undefined })], "invalid"],
+    ["malformed-attempt", [codexStartedEvidence(baseRun, { attempt: "2" })], "invalid"],
+    ["wrong-attempt", [codexStartedEvidence(baseRun, { attempt: 1 })], "none"],
+    ["stale-sha", [{ ...trustedStarted, sha: OTHER_SHA, metadata: { ...trustedStarted.metadata } }], "invalid"],
+    ["wrong-project", [codexStartedEvidence(baseRun, { project: "wrong-project" })], "invalid"],
+    ["wrong-sandbox", [codexStartedEvidence(baseRun, { sandbox: "wrong-sandbox" })], "invalid"],
+    ["network-mismatch", [codexStartedEvidence(baseRun, { network: "default" })], "invalid"],
+    ["branch-mismatch", [codexStartedEvidence(baseRun, { branch: "wrong-branch" })], "invalid"],
+    ["malformed-prompt-hash", [codexStartedEvidence(baseRun, { promptHash: "bad" })], "invalid"],
+    ["missing-workspace-id", [codexStartedEvidence(baseRun, { workspaceId: undefined })], "invalid"],
+    ["malformed-backend", [codexStartedEvidence(baseRun, { backend: "bad\nbackend" })], "invalid"],
+    ["malformed-timestamp", [codexStartedEvidence(baseRun, { startedAt: "bad\ntime" })], "invalid"]
+  ]) {
+    const run = runFor("implementation_in_progress", {
+      attempts: { implementation: 2 },
+      evidence: {
+        implementation: entries
+      }
+    })
+
+    assert.equal(classifyCodexExecutionAttemptEvidence(run), expected, name)
+  }
+})
+
+test("shared Phase 6E evidence classifier covers current attempt trust cases", async () => {
+  const baseRun = runFor("tests_in_progress", {
+    attempts: { test: 2 }
+  })
+  const identity = await policyIdentityFor(baseRun)
+  const trustedStarted = testEvidence(baseRun, identity, "testing_started")
+  const trustedFailed = testEvidence(baseRun, identity, "failed")
+  const trustedPassed = testEvidence(baseRun, identity, "passed")
+
+  for (const [name, entries, expected] of [
+    ["none", [], "none"],
+    ["trusted-started", [trustedStarted], "open"],
+    ["trusted-failed", [trustedFailed], "definitive_failed"],
+    ["trusted-passed", [trustedPassed], "passed"],
+    ["wrong-source", [{ ...trustedFailed, source: "wrong-source" }], "invalid"],
+    ["runner-mismatch", [testEvidence(baseRun, identity, "failed", { runner: "wrong-runner" })], "invalid"],
+    ["wrong-sha", [{ ...trustedFailed, sha: OTHER_SHA, metadata: { ...trustedFailed.metadata } }], "invalid"],
+    ["wrong-attempt", [testEvidence(baseRun, identity, "failed", { attempt: 1 })], "invalid"],
+    ["wrong-project", [testEvidence(baseRun, identity, "failed", { project: "wrong-project" })], "invalid"],
+    ["wrong-policy-id", [testEvidence(baseRun, identity, "failed", { policyId: "wrong-policy" })], "invalid"],
+    ["wrong-policy-hash", [testEvidence(baseRun, identity, "failed", { policyHash: "f".repeat(64) })], "invalid"],
+    ["step-level-failure", [testEvidence(baseRun, identity, "failed", { testId: "unit" })], "invalid"],
+    ["wrong-required-count", [testEvidence(baseRun, identity, "failed", { total: identity.requiredTestCount + 1 })], "invalid"],
+    ["malformed-counts", [testEvidence(baseRun, identity, "failed", { failed: -1 })], "invalid"],
+    ["wrong-sandbox", [testEvidence(baseRun, identity, "failed", { sandbox: "wrong-sandbox" })], "invalid"],
+    ["network-mismatch", [testEvidence(baseRun, identity, "failed", { network: "default" })], "invalid"],
+    ["malformed-workspace", [testEvidence(baseRun, identity, "testing_started", { workspaceId: "bad\nworkspace" })], "invalid"],
+    ["malformed-timestamp", [testEvidence(baseRun, identity, "failed", { startedAt: "bad\ntime" })], "invalid"]
+  ]) {
+    const run = runFor("tests_in_progress", {
+      attempts: { test: 2 },
+      evidence: {
+        test: entries
+      }
+    })
+
+    assert.equal(classifyAutomatedTestAttemptEvidence(run, identity), expected, name)
+  }
+})
+
 test("Phase 6L recovery-only profile matches Phase 6K policy identity without mutation readiness probes", async () => {
   const directoryPaths = new Set([
     "/Users/richie/.local/share/personal-project-operator/development-workspaces",
@@ -536,6 +1027,311 @@ test("Phase 6L GitHub delivery recovery is read-only and never marks durable mer
   assert.equal(result.run.status, "merge_ready")
 })
 
+test("Phase 6L maps real Phase 6G read-only delivery reconciliation states", async () => {
+  const cases = [
+    {
+      name: "not-started",
+      remoteBranchSha: null,
+      pr: null,
+      progress: [],
+      observation: "delivery_not_started",
+      outcome: "recovery_not_required",
+      ownerActionRequired: false,
+      continuationCandidate: true
+    },
+    {
+      name: "branch",
+      remoteBranchSha: "exact",
+      pr: null,
+      progress: (run) => [makePhase6GDeliveryEvidence(run, "branch_pushed", {
+        branch: run.branch,
+        pushedSha: run.headSha,
+        previousRemoteSha: "",
+        remoteBranchSha: run.headSha,
+        pushedAt: STARTED_AT
+      })],
+      observation: "delivery_branch_observed",
+      outcome: "recovery_observed"
+    },
+    {
+      name: "pr",
+      remoteBranchSha: "exact",
+      pr: "exact",
+      progress: (run, pr) => [
+        makePhase6GDeliveryEvidence(run, "branch_pushed", {
+          branch: run.branch,
+          pushedSha: run.headSha,
+          previousRemoteSha: "",
+          remoteBranchSha: run.headSha,
+          pushedAt: STARTED_AT
+        }),
+        makePhase6GDeliveryEvidence(run, "pr_created", {
+          branch: run.branch,
+          base: "main",
+          prNumber: pr.number,
+          prHeadSha: run.headSha,
+          reconciledAt: ENDED_AT
+        })
+      ],
+      observation: "delivery_pr_observed",
+      outcome: "recovery_observed"
+    },
+    {
+      name: "ci",
+      remoteBranchSha: "exact",
+      pr: "exact",
+      progress: (run, pr) => [
+        makePhase6GDeliveryEvidence(run, "branch_pushed", {
+          branch: run.branch,
+          pushedSha: run.headSha,
+          previousRemoteSha: "",
+          remoteBranchSha: run.headSha,
+          pushedAt: STARTED_AT
+        }),
+        makePhase6GDeliveryEvidence(run, "pr_created", {
+          branch: run.branch,
+          base: "main",
+          prNumber: pr.number,
+          prHeadSha: run.headSha,
+          reconciledAt: ENDED_AT
+        }),
+        makePhase6GDeliveryEvidence(run, "ci_passed", {
+          prNumber: pr.number,
+          workflowName: "PPO PR validation",
+          workflowRunId: 100,
+          workflowConclusion: "success",
+          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          checkedAt: ENDED_AT
+        })
+      ],
+      observation: "delivery_ci_observed",
+      outcome: "recovery_observed"
+    },
+    {
+      name: "remote-review",
+      remoteBranchSha: "exact",
+      pr: "exact",
+      progress: (run, pr) => [
+        makePhase6GDeliveryEvidence(run, "branch_pushed", {
+          branch: run.branch,
+          pushedSha: run.headSha,
+          previousRemoteSha: "",
+          remoteBranchSha: run.headSha,
+          pushedAt: STARTED_AT
+        }),
+        makePhase6GDeliveryEvidence(run, "pr_created", {
+          branch: run.branch,
+          base: "main",
+          prNumber: pr.number,
+          prHeadSha: run.headSha,
+          reconciledAt: ENDED_AT
+        }),
+        makePhase6GDeliveryEvidence(run, "ci_passed", {
+          prNumber: pr.number,
+          workflowName: "PPO PR validation",
+          workflowRunId: 100,
+          workflowConclusion: "success",
+          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          checkedAt: ENDED_AT
+        }),
+        makePhase6GRemoteReviewEvidence(run, pr)
+      ],
+      observation: "delivery_remote_review_observed",
+      outcome: "recovery_observed"
+    }
+  ]
+
+  for (const entry of cases) {
+    const fixture = await makeDurableReviewPassedFixture()
+    const pr = entry.pr === "exact" ? makePr(fixture.run) : null
+    let run = fixture.run
+    const progress = typeof entry.progress === "function" ? entry.progress(run, pr) : entry.progress
+
+    for (const progressEntry of progress) {
+      const actor = progressEntry.source === REMOTE_PR_REVIEW_AGENT_ID ? REMOTE_PR_REVIEW_AGENT_ID : GITHUB_DELIVERY_AGENT_ID
+      run = await appendPhase6GProgress(run, fixture, progressEntry, actor)
+    }
+
+    const githubClient = makeReadOnlyDeliveryGithubClient(run, {
+      prs: pr ? [pr] : []
+    })
+    const result = await executeDevelopmentRecovery(run.runId, {
+      writeDataDir: fixture.writeDataDir,
+      recoveryRuntimeProfileProvider: async () => ({
+        workspaceRegistry: fixture.workspaceRegistry
+      }),
+      gitRunner: makeReadOnlyDeliveryGitRunner(entry.remoteBranchSha === "exact" ? run.headSha : entry.remoteBranchSha),
+      githubClient
+    })
+
+    assert.equal(result.observation, entry.observation, entry.name)
+    assert.equal(result.outcome, entry.outcome, entry.name)
+    assert.equal(result.ownerActionRequired, entry.ownerActionRequired ?? true, entry.name)
+    assert.equal(result.continuationCandidate, entry.continuationCandidate ?? false, entry.name)
+    assert.deepEqual(githubClient.writes, [], entry.name)
+  }
+})
+
+test("Phase 6L real Phase 6G recovery observes merge-ready and remote-merged state without writes", async () => {
+  const fixture = await makeDurableReviewPassedFixture()
+  const pr = makePr(fixture.run)
+  let run = fixture.run
+
+  for (const entry of [
+    makePhase6GDeliveryEvidence(run, "branch_pushed", {
+      branch: run.branch,
+      pushedSha: run.headSha,
+      previousRemoteSha: "",
+      remoteBranchSha: run.headSha,
+      pushedAt: STARTED_AT
+    }),
+    makePhase6GDeliveryEvidence(run, "pr_created", {
+      branch: run.branch,
+      base: "main",
+      prNumber: pr.number,
+      prHeadSha: run.headSha,
+      reconciledAt: ENDED_AT
+    }),
+    makePhase6GDeliveryEvidence(run, "ci_passed", {
+      prNumber: pr.number,
+      workflowName: "PPO PR validation",
+      workflowRunId: 100,
+      workflowConclusion: "success",
+      requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+      checkedAt: ENDED_AT
+    }),
+    makePhase6GRemoteReviewEvidence(run, pr)
+  ]) {
+    const actor = entry.source === REMOTE_PR_REVIEW_AGENT_ID ? REMOTE_PR_REVIEW_AGENT_ID : GITHUB_DELIVERY_AGENT_ID
+    run = await appendPhase6GProgress(run, fixture, entry, actor)
+  }
+
+  const mergeReady = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status: "merge_ready",
+    branch: run.branch,
+    headSha: run.headSha,
+    actor: GITHUB_DELIVERY_AGENT_ID,
+    evidence: [makePhase6GDeliveryEvidence(run, "merge_ready", {
+      prNumber: pr.number,
+      branch: run.branch,
+      base: "main",
+      prHeadSha: run.headSha,
+      workflowRunId: 100,
+      remoteReviewedSha: run.headSha,
+      remoteDecision: REVIEW_DECISIONS.APPROVED,
+      preparedAt: ENDED_AT
+    })]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+  const readyClient = makeReadOnlyDeliveryGithubClient(mergeReady, {
+    prs: [pr],
+    mainSha: OTHER_SHA
+  })
+  const ready = await executeDevelopmentRecovery(mergeReady.runId, {
+    writeDataDir: fixture.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: fixture.workspaceRegistry
+    }),
+    githubClient: readyClient
+  })
+
+  assert.equal(ready.observation, "delivery_merge_ready")
+  assert.equal(ready.run.status, "merge_ready")
+  assert.deepEqual(readyClient.writes, [])
+
+  const mergedPr = {
+    ...pr,
+    state: "closed",
+    merged: true,
+    mergeCommitSha: OTHER_SHA
+  }
+  const mergedClient = makeReadOnlyDeliveryGithubClient(mergeReady, {
+    prs: [mergedPr],
+    mainSha: OTHER_SHA
+  })
+  const merged = await executeDevelopmentRecovery(mergeReady.runId, {
+    writeDataDir: fixture.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: fixture.workspaceRegistry
+    }),
+    githubClient: mergedClient
+  })
+
+  assert.equal(merged.observation, "delivery_remote_merged")
+  assert.equal(merged.run.status, "merge_ready")
+  assert.deepEqual(mergedClient.writes, [])
+})
+
+test("Phase 6L real Phase 6G recovery fails closed for wrong or conflicting remote delivery state", async () => {
+  const wrongHead = await makeDurableReviewPassedFixture()
+  const wrongPr = makePr(wrongHead.run, { headSha: "f".repeat(40) })
+  const wrongHeadRun = await appendPhase6GProgress(wrongHead.run, wrongHead, makePhase6GDeliveryEvidence(wrongHead.run, "pr_created", {
+    branch: wrongHead.run.branch,
+    base: "main",
+    prNumber: wrongPr.number,
+    prHeadSha: wrongHead.run.headSha,
+    reconciledAt: ENDED_AT
+  }))
+  const wrongHeadClient = makeReadOnlyDeliveryGithubClient(wrongHeadRun, {
+    prs: [wrongPr]
+  })
+  const wrongHeadResult = await executeDevelopmentRecovery(wrongHeadRun.runId, {
+    writeDataDir: wrongHead.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: wrongHead.workspaceRegistry
+    }),
+    gitRunner: makeReadOnlyDeliveryGitRunner(wrongHeadRun.headSha),
+    githubClient: wrongHeadClient
+  })
+
+  assert.equal(wrongHeadResult.outcome, "recovery_unavailable")
+  assert.deepEqual(wrongHeadClient.writes, [])
+
+  const duplicate = await makeDurableReviewPassedFixture()
+  const duplicateClient = makeReadOnlyDeliveryGithubClient(duplicate.run, {
+    prs: [
+      makePr(duplicate.run, { number: 1 }),
+      makePr(duplicate.run, { number: 2 })
+    ]
+  })
+  const duplicateResult = await executeDevelopmentRecovery(duplicate.run.runId, {
+    writeDataDir: duplicate.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: duplicate.workspaceRegistry
+    }),
+    gitRunner: makeReadOnlyDeliveryGitRunner(duplicate.run.headSha),
+    githubClient: duplicateClient
+  })
+
+  assert.equal(duplicateResult.outcome, "recovery_unavailable")
+  assert.deepEqual(duplicateClient.writes, [])
+
+  const stalePolicy = await makeDurableReviewPassedFixture()
+  const staleRun = await appendPhase6GProgress(stalePolicy.run, stalePolicy, makePhase6GDeliveryEvidence(stalePolicy.run, "branch_pushed", {
+    branch: stalePolicy.run.branch,
+    pushedSha: stalePolicy.run.headSha,
+    previousRemoteSha: "",
+    remoteBranchSha: stalePolicy.run.headSha,
+    policyHash: "0".repeat(64),
+    pushedAt: STARTED_AT
+  }))
+  const staleClient = makeReadOnlyDeliveryGithubClient(staleRun)
+  const staleResult = await executeDevelopmentRecovery(staleRun.runId, {
+    writeDataDir: stalePolicy.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: stalePolicy.workspaceRegistry
+    }),
+    gitRunner: makeReadOnlyDeliveryGitRunner(staleRun.headSha),
+    githubClient: staleClient
+  })
+
+  assert.equal(staleResult.outcome, "recovery_unavailable")
+  assert.deepEqual(staleClient.writes, [])
+})
+
 test("Phase 6L detects concurrent durable state changes after read-only observation", async () => {
   const before = runFor("implementation_in_progress", {
     version: 7
@@ -553,6 +1349,58 @@ test("Phase 6L detects concurrent durable state changes after read-only observat
   assert.equal(result.outcome, "stale_recovery_observation")
   assert.equal(result.observation, "state_changed")
   assert.equal(reader.reads.length, 2)
+})
+
+test("Phase 6L still re-reads durable state when a child reconciler throws", async () => {
+  const run = runFor("implementation_in_progress", {
+    version: 7
+  })
+  const unchangedReader = makeReader([run, run])
+  const throwingChildren = makeReconcilers({
+    reconcileCodexExecution: async () => {
+      throw new Error("SENSITIVE_TEST_SENTINEL child failure")
+    }
+  })
+  const unchanged = await executeDevelopmentRecovery(RUN_ID, {
+    readRun: unchangedReader.readRun,
+    reconcilers: throwingChildren.reconcilers,
+    recoveryRuntimeProfileProvider: recoveryProfileProvider
+  })
+
+  assert.equal(unchanged.outcome, "recovery_unavailable")
+  assert.equal(unchanged.observation, "malformed_child_result")
+  assert.equal(unchangedReader.reads.length, 2)
+  assert.doesNotMatch(JSON.stringify(unchanged), /SENSITIVE_TEST_SENTINEL/)
+
+  const childMutated = runFor("implementation_ready", {
+    version: 8,
+    history: [{ actor: CODEX_EXECUTION_ADAPTER_ID }]
+  })
+  const childMutationReader = makeReader([run, childMutated])
+  const childMutation = await executeDevelopmentRecovery(RUN_ID, {
+    readRun: childMutationReader.readRun,
+    reconcilers: throwingChildren.reconcilers,
+    recoveryRuntimeProfileProvider: recoveryProfileProvider
+  })
+
+  assert.equal(childMutation.outcome, "recovery_state_changed")
+  assert.equal(childMutation.observation, "state_changed")
+  assert.equal(childMutationReader.reads.length, 2)
+
+  const concurrent = runFor("implementation_ready", {
+    version: 8,
+    history: [{ actor: "another-actor" }]
+  })
+  const concurrentReader = makeReader([run, concurrent])
+  const stale = await executeDevelopmentRecovery(RUN_ID, {
+    readRun: concurrentReader.readRun,
+    reconcilers: throwingChildren.reconcilers,
+    recoveryRuntimeProfileProvider: recoveryProfileProvider
+  })
+
+  assert.equal(stale.outcome, "stale_recovery_observation")
+  assert.equal(stale.observation, "state_changed")
+  assert.equal(concurrentReader.reads.length, 2)
 })
 
 test("Phase 6L detects child reconciler state-write regressions from claimed child run", async () => {
@@ -639,6 +1487,7 @@ test("Phase 6L formatter is bounded and omits raw evidence and secrets", () => {
 
 test("Phase 6L coordinator source remains composition-only and production-isolated", async () => {
   const source = await readFile(new URL("./development-recovery-coordinator.mjs", import.meta.url), "utf8")
+  const continueSource = await readFile(new URL("./development-continue-orchestrator.mjs", import.meta.url), "utf8")
 
   assert.doesNotMatch(source, /development-deployment-agent\.mjs/)
   assert.doesNotMatch(source, /development-production-verification-agent\.mjs/)
@@ -649,4 +1498,10 @@ test("Phase 6L coordinator source remains composition-only and production-isolat
   assert.doesNotMatch(source, /\b(?:git push|git merge|git checkout|git switch|gh |curl|wget|ssh|scp|rsync)\b/)
   assert.doesNotMatch(source, /planExistingDevelopmentRun|prepareImplementationWorkspace|executeCodexImplementation|executeAutomatedTests|executeIndependentReview|executeBoundedHardening|executePhase6GDelivery|executeShaPinnedMerge/)
   assert.doesNotMatch(source, /transitionDevelopmentRun|recordDevelopmentRunProgress|createDevelopmentRun/)
+  assert.match(source, /classifyCodexExecutionAttemptEvidence/)
+  assert.match(source, /classifyAutomatedTestAttemptEvidence/)
+  assert.match(continueSource, /classifyCodexExecutionAttemptEvidence/)
+  assert.match(continueSource, /classifyAutomatedTestAttemptEvidence/)
+  assert.doesNotMatch(source, /trustedCodexAttemptState|trustedTestEvidenceObservation/)
+  assert.doesNotMatch(continueSource, /trustedCodexAttemptState|trustedTestEvidenceObservation/)
 })

@@ -41,6 +41,8 @@ import {
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
 import {
+  PHASE_6G_DELIVERY_POLICY_HASH,
+  PHASE_6G_DELIVERY_POLICY_ID,
   assertDevelopmentAcceptanceGate
 } from "./development-acceptance-gate.mjs"
 import {
@@ -53,6 +55,7 @@ import {
   executeRemotePrReview,
   executeShaPinnedMerge,
   pushApprovedBranch,
+  reconcileGitHubDelivery,
   reconcileRemotePullRequestHead,
   requireExactHeadCi
 } from "./github-delivery-agent.mjs"
@@ -601,6 +604,89 @@ function makeGitRunner(remoteState = {}) {
   return runner
 }
 
+function deliveryProgressEvidence(run, outcome, metadata = {}) {
+  return {
+    kind: "merge",
+    sha: run.headSha,
+    source: GITHUB_DELIVERY_AGENT_ID,
+    summary: "Phase 6G delivery progress fixture.",
+    metadata: {
+      project: run.project.id,
+      agent: GITHUB_DELIVERY_AGENT_ID,
+      policyId: PHASE_6G_DELIVERY_POLICY_ID,
+      policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+      implementationSha: run.headSha,
+      outcome,
+      ...metadata
+    }
+  }
+}
+
+function remoteReviewProgressEvidence(run, pr, outcome = "approved", metadata = {}) {
+  return {
+    kind: "review",
+    sha: run.headSha,
+    source: REMOTE_PR_REVIEW_AGENT_ID,
+    summary: "Phase 6G remote review progress fixture.",
+    metadata: {
+      project: run.project.id,
+      reviewer: REMOTE_PR_REVIEW_AGENT_ID,
+      policyId: PHASE_6G_DELIVERY_POLICY_ID,
+      policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+      attempt: 1,
+      prNumber: pr.number,
+      branch: run.branch,
+      reviewedSha: run.headSha,
+      decision: REVIEW_DECISIONS.APPROVED,
+      mergeAllowed: true,
+      blockers: 0,
+      securityFindings: 0,
+      testsRequired: 0,
+      outcome,
+      endedAt: "2026-08-21T12:00:00.000Z",
+      ...metadata
+    }
+  }
+}
+
+async function appendDeliveryProgress(run, evidence, fixture, actor = GITHUB_DELIVERY_AGENT_ID) {
+  return await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: run.status,
+    actor,
+    evidence: [evidence]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+}
+
+function readOnlyGithubClient(client) {
+  const writes = []
+
+  return {
+    writes,
+    state: client.state,
+    listPullRequests: (...args) => client.listPullRequests(...args),
+    getPullRequest: (...args) => client.getPullRequest(...args),
+    listWorkflowRuns: (...args) => client.listWorkflowRuns(...args),
+    listWorkflowRunJobs: (...args) => client.listWorkflowRunJobs(...args),
+    getBranchRef: (...args) => client.getBranchRef(...args),
+    async createPullRequest() {
+      writes.push("createPullRequest")
+      throw new Error("write refused")
+    },
+    async mergePullRequest() {
+      writes.push("mergePullRequest")
+      throw new Error("write refused")
+    },
+    async submitPullRequestReview() {
+      writes.push("submitPullRequestReview")
+      throw new Error("write refused")
+    }
+  }
+}
+
 async function makeMergeReadyDeliveryFixture(options = {}) {
   const fixture = await makeReviewPassedFixture(options.fixtureOptions || {})
   const githubClient = options.githubClient || makeGitHubClient(
@@ -656,6 +742,271 @@ async function makeMergeStartedCrashFixture(options = {}) {
     withStarted
   }
 }
+
+test("read-only delivery reconciliation observes review_passed delivery progress before merge_ready", async () => {
+  const cases = [
+    {
+      name: "not-started",
+      remoteBranchSha: null,
+      pr: null,
+      evidence: [],
+      expected: {
+        latestOutcome: null,
+        remoteBranchSha: null,
+        prNumber: null,
+        ciStatus: "unknown",
+        remoteReviewOutcome: null,
+        mergeStatus: "not_started"
+      }
+    },
+    {
+      name: "branch",
+      remoteBranchSha: "exact",
+      pr: null,
+      evidence: (run) => [deliveryProgressEvidence(run, "branch_pushed", {
+        branch: run.branch,
+        pushedSha: run.headSha,
+        previousRemoteSha: "",
+        remoteBranchSha: run.headSha,
+        pushedAt: "2026-08-21T12:00:00.000Z"
+      })],
+      expected: {
+        latestOutcome: "branch_pushed",
+        remoteBranchSha: "exact",
+        prNumber: null,
+        ciStatus: "unknown",
+        remoteReviewOutcome: null,
+        mergeStatus: "review_passed"
+      }
+    },
+    {
+      name: "pr",
+      remoteBranchSha: "exact",
+      pr: "exact",
+      evidence: (run, pr) => [
+        deliveryProgressEvidence(run, "branch_pushed", {
+          branch: run.branch,
+          pushedSha: run.headSha,
+          previousRemoteSha: "",
+          remoteBranchSha: run.headSha,
+          pushedAt: "2026-08-21T12:00:00.000Z"
+        }),
+        deliveryProgressEvidence(run, "pr_created", {
+          branch: run.branch,
+          base: "main",
+          prNumber: pr.number,
+          prHeadSha: run.headSha,
+          reconciledAt: "2026-08-21T12:00:01.000Z"
+        })
+      ],
+      expected: {
+        latestOutcome: "pr_created",
+        remoteBranchSha: "exact",
+        prNumber: 1,
+        prHeadSha: "exact",
+        ciStatus: "unknown",
+        remoteReviewOutcome: null,
+        mergeStatus: "review_passed"
+      }
+    },
+    {
+      name: "ci",
+      remoteBranchSha: "exact",
+      pr: "exact",
+      evidence: (run, pr) => [
+        deliveryProgressEvidence(run, "branch_pushed", {
+          branch: run.branch,
+          pushedSha: run.headSha,
+          previousRemoteSha: "",
+          remoteBranchSha: run.headSha,
+          pushedAt: "2026-08-21T12:00:00.000Z"
+        }),
+        deliveryProgressEvidence(run, "pr_created", {
+          branch: run.branch,
+          base: "main",
+          prNumber: pr.number,
+          prHeadSha: run.headSha,
+          reconciledAt: "2026-08-21T12:00:01.000Z"
+        }),
+        deliveryProgressEvidence(run, "ci_passed", {
+          prNumber: pr.number,
+          workflowName: "PPO PR validation",
+          workflowRunId: 100,
+          workflowConclusion: "success",
+          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          checkedAt: "2026-08-21T12:00:02.000Z"
+        })
+      ],
+      expected: {
+        latestOutcome: "ci_passed",
+        remoteBranchSha: "exact",
+        prNumber: 1,
+        prHeadSha: "exact",
+        ciStatus: "passed",
+        remoteReviewOutcome: null,
+        mergeStatus: "review_passed"
+      }
+    },
+    {
+      name: "remote-review",
+      remoteBranchSha: "exact",
+      pr: "exact",
+      evidence: (run, pr) => [
+        deliveryProgressEvidence(run, "branch_pushed", {
+          branch: run.branch,
+          pushedSha: run.headSha,
+          previousRemoteSha: "",
+          remoteBranchSha: run.headSha,
+          pushedAt: "2026-08-21T12:00:00.000Z"
+        }),
+        deliveryProgressEvidence(run, "pr_created", {
+          branch: run.branch,
+          base: "main",
+          prNumber: pr.number,
+          prHeadSha: run.headSha,
+          reconciledAt: "2026-08-21T12:00:01.000Z"
+        }),
+        deliveryProgressEvidence(run, "ci_passed", {
+          prNumber: pr.number,
+          workflowName: "PPO PR validation",
+          workflowRunId: 100,
+          workflowConclusion: "success",
+          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          checkedAt: "2026-08-21T12:00:02.000Z"
+        }),
+        remoteReviewProgressEvidence(run, pr)
+      ],
+      expected: {
+        latestOutcome: "ci_passed",
+        remoteBranchSha: "exact",
+        prNumber: 1,
+        prHeadSha: "exact",
+        ciStatus: "passed",
+        remoteReviewOutcome: "approved",
+        mergeStatus: "review_passed"
+      }
+    }
+  ]
+
+  for (const entry of cases) {
+    const fixture = await makeReviewPassedFixture()
+    const pr = entry.pr === "exact" ? makePr(fixture.project, fixture.run.branch, fixture.headSha) : null
+    const client = readOnlyGithubClient(makeGitHubClient(fixture.project, fixture.run.branch, fixture.headSha, {
+      prs: pr ? [pr] : []
+    }))
+    const evidenceEntries = typeof entry.evidence === "function" ? entry.evidence(fixture.run, pr) : entry.evidence
+
+    let run = fixture.run
+    for (const evidenceEntry of evidenceEntries) {
+      const actor = evidenceEntry.source === REMOTE_PR_REVIEW_AGENT_ID ? REMOTE_PR_REVIEW_AGENT_ID : GITHUB_DELIVERY_AGENT_ID
+      run = await appendDeliveryProgress(run, evidenceEntry, fixture, actor)
+    }
+
+    const reconciled = await reconcileGitHubDelivery(run.runId, {
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      gitRunner: makeGitRunner({
+        branchSha: entry.remoteBranchSha === "exact" ? fixture.headSha : entry.remoteBranchSha
+      }),
+      githubClient: client
+    })
+
+    assert.equal(reconciled.outcome, "github_delivery_reconciled", entry.name)
+    assert.equal(reconciled.delivery.latestOutcome, entry.expected.latestOutcome, entry.name)
+    assert.equal(reconciled.delivery.remoteBranchSha, entry.expected.remoteBranchSha === "exact" ? fixture.headSha : entry.expected.remoteBranchSha, entry.name)
+    assert.equal(reconciled.delivery.prNumber, entry.expected.prNumber, entry.name)
+    assert.equal(reconciled.delivery.prHeadSha, entry.expected.prHeadSha === "exact" ? fixture.headSha : null, entry.name)
+    assert.equal(reconciled.delivery.ciStatus, entry.expected.ciStatus, entry.name)
+    assert.equal(reconciled.delivery.remoteReviewOutcome, entry.expected.remoteReviewOutcome, entry.name)
+    assert.equal(reconciled.delivery.mergeStatus, entry.expected.mergeStatus, entry.name)
+    assert.deepEqual(client.writes, [], entry.name)
+  }
+})
+
+test("read-only delivery reconciliation observes merge_ready and remote merge without writing", async () => {
+  const fixture = await makeMergeReadyDeliveryFixture({
+    githubOptions: {
+      mainSha: "c".repeat(40)
+    }
+  })
+  const client = readOnlyGithubClient(fixture.githubClient)
+  const ready = await reconcileGitHubDelivery(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    githubClient: client
+  })
+
+  assert.equal(ready.delivery.mergeStatus, "merge_ready")
+  assert.equal(ready.delivery.prNumber, 1)
+  assert.deepEqual(client.writes, [])
+
+  fixture.githubClient.state.prs[0].state = "closed"
+  fixture.githubClient.state.prs[0].merged = true
+  fixture.githubClient.state.prs[0].mergeCommitSha = MERGE_SHA
+  fixture.githubClient.state.mainSha = MERGE_SHA
+
+  const merged = await reconcileGitHubDelivery(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    githubClient: client
+  })
+
+  assert.equal(merged.delivery.mergeStatus, "merged_remote")
+  assert.deepEqual(client.writes, [])
+})
+
+test("read-only delivery reconciliation fails closed on wrong PR head, duplicate PRs, and stale policy evidence", async () => {
+  const wrongHead = await makeReviewPassedFixture()
+  const wrongHeadPr = makePr(wrongHead.project, wrongHead.run.branch, wrongHead.headSha, {
+    headSha: "e".repeat(40)
+  })
+  const wrongHeadRun = await appendDeliveryProgress(wrongHead.run, deliveryProgressEvidence(wrongHead.run, "pr_created", {
+    branch: wrongHead.run.branch,
+    base: "main",
+    prNumber: wrongHeadPr.number,
+    prHeadSha: wrongHead.run.headSha,
+    reconciledAt: "2026-08-21T12:00:01.000Z"
+  }), wrongHead)
+
+  await assertRejectsCode(reconcileGitHubDelivery(wrongHeadRun.runId, {
+    writeDataDir: wrongHead.writeDataDir,
+    workspaceRegistry: wrongHead.registry,
+    gitRunner: makeGitRunner({ branchSha: wrongHead.headSha }),
+    githubClient: readOnlyGithubClient(makeGitHubClient(wrongHead.project, wrongHead.run.branch, wrongHead.headSha, {
+      prs: [wrongHeadPr]
+    }))
+  }), "GITHUB_DELIVERY_PR_HEAD_MISMATCH")
+
+  const duplicate = await makeReviewPassedFixture()
+  await assertRejectsCode(reconcileGitHubDelivery(duplicate.run.runId, {
+    writeDataDir: duplicate.writeDataDir,
+    workspaceRegistry: duplicate.registry,
+    gitRunner: makeGitRunner({ branchSha: duplicate.headSha }),
+    githubClient: readOnlyGithubClient(makeGitHubClient(duplicate.project, duplicate.run.branch, duplicate.headSha, {
+      prs: [
+        makePr(duplicate.project, duplicate.run.branch, duplicate.headSha, { number: 1 }),
+        makePr(duplicate.project, duplicate.run.branch, duplicate.headSha, { number: 2 })
+      ]
+    }))
+  }), "GITHUB_DELIVERY_PR_AMBIGUOUS")
+
+  const stalePolicy = await makeReviewPassedFixture()
+  const staleRun = await appendDeliveryProgress(stalePolicy.run, deliveryProgressEvidence(stalePolicy.run, "branch_pushed", {
+    branch: stalePolicy.run.branch,
+    pushedSha: stalePolicy.run.headSha,
+    previousRemoteSha: "",
+    remoteBranchSha: stalePolicy.run.headSha,
+    policyHash: "f".repeat(64),
+    pushedAt: "2026-08-21T12:00:00.000Z"
+  }), stalePolicy)
+
+  await assertRejectsCode(reconcileGitHubDelivery(staleRun.runId, {
+    writeDataDir: stalePolicy.writeDataDir,
+    workspaceRegistry: stalePolicy.registry,
+    gitRunner: makeGitRunner({ branchSha: stalePolicy.headSha }),
+    githubClient: readOnlyGithubClient(makeGitHubClient(stalePolicy.project, stalePolicy.run.branch, stalePolicy.headSha))
+  }), "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID")
+})
 
 test("acceptance gate requires exact review_passed state, SHA equality, clean workspace, and no open attempts", async () => {
   const fixture = await makeReviewPassedFixture()

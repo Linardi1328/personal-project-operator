@@ -216,7 +216,7 @@ Phase 6L adds a unified read-only development recovery coordinator:
 local-operator/development-recovery-coordinator.mjs
 ```
 
-It accepts only an existing opaque Phase 6A run id for one of the ordinary five projects, dispatches at most one existing read-only Phase 6C-6G inspection/reconciliation boundary for the current durable status, and returns bounded owner-diagnostic metadata. It does not retry work, mutate run state, create/remove workspaces, execute Codex/tests/reviewers, push, create or modify PRs, merge, deploy, verify production, rollback, or add a `/ppo` route. A future `/ppo recover <run-id>` route remains separately reviewed.
+It accepts only an existing opaque Phase 6A run id for one of the ordinary five projects, dispatches at most one existing read-only Phase 6C-6G inspection/reconciliation boundary for the current durable status, and returns bounded owner-diagnostic metadata. Phase 6G recovery remains owned by the GitHub delivery reconciler and reports delivery not started, branch, PR, exact-head CI, remote review, merge-ready, and remote-merged observations without writes. It does not retry work, mutate run state, create/remove workspaces, execute Codex/tests/reviewers, push, create or modify PRs, merge, deploy, verify production, rollback, or add a `/ppo` route. A future `/ppo recover <run-id>` route remains separately reviewed.
 
 ## Files
 
