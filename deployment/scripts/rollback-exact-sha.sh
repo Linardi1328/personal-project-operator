@@ -5,12 +5,14 @@ SERVICE_USER="ppo"
 SERVICE_GROUP="ppo"
 INSTALL_DIR="/opt/personal-project-operator"
 STATE_DIR="/var/lib/personal-project-operator"
+CONFIG_DIR="/etc/personal-project-operator"
+OPENCLAW_PREFIX="/home/ppo/.local/openclaw"
+NODE_BIN="${OPENCLAW_PREFIX}/tools/node/bin/node"
+OPENCLAW_BIN="${OPENCLAW_PREFIX}/bin/openclaw"
 REMOTE_NAME="origin"
 REPO_URL="https://github.com/Linardi1328/personal-project-operator.git"
 SERVICE_NAME="ppo-openclaw.service"
-SERVICE_CONFIRMATION="systemd-service-control"
-PREFLIGHT_SCRIPT="${INSTALL_DIR}/deployment/scripts/preflight-openclaw-runtime.sh"
-SERVICE_CONTROL_SCRIPT="${INSTALL_DIR}/deployment/scripts/service-control.sh"
+SYSTEMCTL_BIN="/usr/bin/systemctl"
 EXPECTED_DEPLOYMENT_SHA="${1:-}"
 ROLLBACK_SHA="${2:-}"
 
@@ -73,6 +75,48 @@ read_first_line() {
   local value
   IFS= read -r value <"$path" || return 1
   printf '%s\n' "$value"
+}
+
+require_executable() {
+  local path="$1"
+  [[ -x "$path" ]]
+}
+
+parse_node_version() {
+  local version
+  version="${1#v}"
+  [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+  printf '%s %s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+}
+
+is_supported_node_version() {
+  local raw_version="$1"
+  local parsed major minor patch
+  parsed="$(parse_node_version "$raw_version")" || return 1
+  read -r major minor patch <<<"$parsed"
+
+  case "$major" in
+    22)
+      (( minor > 22 || (minor == 22 && patch >= 3) ))
+      ;;
+    24)
+      (( minor > 15 || (minor == 15 && patch >= 0) ))
+      ;;
+    25)
+      (( minor > 9 || (minor == 9 && patch >= 0) ))
+      ;;
+    *)
+      (( major >= 26 ))
+      ;;
+  esac
+}
+
+node_version_string() {
+  local version
+  version="$(sudo -u "$SERVICE_USER" "$NODE_BIN" --version 2>/dev/null)" || return 1
+  version="${version#v}"
+  parse_node_version "$version" >/dev/null || return 1
+  printf '%s\n' "$version"
 }
 
 require_exact_inputs() {
@@ -164,13 +208,26 @@ restore_permissions() {
 }
 
 run_runtime_preflight() {
-  sudo -u "$SERVICE_USER" "$PREFLIGHT_SCRIPT" >/dev/null 2>&1 ||
+  local node_version
+
+  [[ -d "$INSTALL_DIR" && -d "$CONFIG_DIR" ]] ||
+    fail_result "runtime_preflight_failed"
+  require_executable "$NODE_BIN" ||
+    fail_result "runtime_preflight_failed"
+  require_executable "$OPENCLAW_BIN" ||
+    fail_result "runtime_preflight_failed"
+
+  node_version="$(node_version_string)" ||
+    fail_result "runtime_preflight_failed"
+  is_supported_node_version "$node_version" ||
+    fail_result "runtime_preflight_failed"
+  sudo -u "$SERVICE_USER" "$OPENCLAW_BIN" --version >/dev/null 2>&1 ||
     fail_result "runtime_preflight_failed"
   runtime_preflight="passed"
 }
 
 restart_fixed_service() {
-  env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin" PPO_SERVICE_CONFIRM="$SERVICE_CONFIRMATION" "$SERVICE_CONTROL_SCRIPT" restart >/dev/null 2>&1 ||
+  "$SYSTEMCTL_BIN" restart "$SERVICE_NAME" >/dev/null 2>&1 ||
     fail_result "service_restart_failed"
   service_restart="passed"
 }
@@ -190,22 +247,22 @@ verify_postrollback_checkout() {
 verify_service_running() {
   local sub_state main_pid
 
-  if systemctl is-enabled --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
+  if "$SYSTEMCTL_BIN" is-enabled --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
     service_enabled=true
   fi
 
-  if systemctl is-active --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
+  if "$SYSTEMCTL_BIN" is-active --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
     service_active=true
   else
     fail_result "service_not_running"
   fi
 
-  sub_state="$(systemctl show "$SERVICE_NAME" --property=SubState --value 2>/dev/null)" ||
+  sub_state="$("$SYSTEMCTL_BIN" show "$SERVICE_NAME" --property=SubState --value 2>/dev/null)" ||
     fail_result "service_not_running"
   [[ "$sub_state" == "running" ]] || fail_result "service_not_running"
   service_running=true
 
-  main_pid="$(systemctl show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null)" ||
+  main_pid="$("$SYSTEMCTL_BIN" show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null)" ||
     fail_result "service_not_running"
   [[ "$main_pid" =~ ^[0-9]+$ && "$main_pid" != "0" ]] || fail_result "service_not_running"
   service_main_pid_nonzero=true

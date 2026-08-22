@@ -291,6 +291,20 @@ test("invalid, skipped, and backward lifecycle transitions are refused", async (
 })
 
 test("Phase 6J rollback lifecycle transitions are explicit and bounded", async () => {
+  for (const targetStatus of ["deploy_in_progress", "implementation_in_progress"]) {
+    const recovery = await runToStatus("verification_failed")
+    const next = await transitionDevelopmentRun(recovery.record.runId, {
+      expectedVersion: recovery.record.version,
+      status: targetStatus,
+      actor: "owner"
+    }, {
+      writeDataDir: recovery.writeDataDir,
+      now: recovery.now
+    })
+
+    assert.equal(next.status, targetStatus)
+  }
+
   const verificationFailed = await runToStatus("verification_failed")
   const rollbackStarted = await transitionDevelopmentRun(verificationFailed.record.runId, {
     expectedVersion: verificationFailed.record.version,
@@ -346,6 +360,16 @@ test("Phase 6J rollback lifecycle transitions are explicit and bounded", async (
   }, {
     writeDataDir: verificationFailed.writeDataDir,
     now: verificationFailed.now
+  }), "INVALID_RUN_TRANSITION")
+
+  const verified = await runToStatus("verified")
+  await assertRejectsCode(transitionDevelopmentRun(verified.record.runId, {
+    expectedVersion: verified.record.version,
+    status: "rollback_in_progress",
+    actor: "rollback-agent"
+  }, {
+    writeDataDir: verified.writeDataDir,
+    now: verified.now
   }), "INVALID_RUN_TRANSITION")
 })
 

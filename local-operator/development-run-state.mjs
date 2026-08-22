@@ -121,7 +121,7 @@ export const ALLOWED_DEVELOPMENT_RUN_TRANSITIONS = Object.freeze({
   deploy_failed: Object.freeze(["deploy_in_progress", "cancelled", "failed"]),
   deployed: Object.freeze(["verification_in_progress", "cancelled", "failed"]),
   verification_in_progress: Object.freeze(["verification_failed", "verified", "cancelled", "failed"]),
-  verification_failed: Object.freeze(["rollback_in_progress", "cancelled", "failed"]),
+  verification_failed: Object.freeze(["rollback_in_progress", "deploy_in_progress", "implementation_in_progress", "cancelled", "failed"]),
   rollback_in_progress: Object.freeze(["rolled_back", "rollback_failed", "cancelled", "failed"]),
   rollback_failed: Object.freeze(["rollback_in_progress", "implementation_in_progress", "cancelled", "failed"]),
   rolled_back: Object.freeze(["implementation_in_progress", "cancelled", "failed"]),

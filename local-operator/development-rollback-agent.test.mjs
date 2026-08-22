@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 import test from "node:test"
 import {
   DEVELOPMENT_DEPLOYMENT_AGENT_ID,
@@ -319,6 +321,42 @@ function rolledBackEvidence({
   }
 }
 
+function rollbackFailedEvidence({
+  attempt = 1,
+  deploymentSha = DEPLOYMENT_SHA,
+  rollbackSha = ROLLBACK_SHA,
+  policyId = PHASE_6J_ROLLBACK_POLICY_ID,
+  policyHash = PHASE_6J_ROLLBACK_POLICY_HASH,
+  failureClass = "dirty_checkout"
+} = {}) {
+  return {
+    kind: "rollback",
+    sha: rollbackSha,
+    source: DEVELOPMENT_ROLLBACK_AGENT_ID,
+    summary: "Phase 6J exact previous-SHA rollback failed definitively.",
+    metadata: {
+      project: PHASE_6H_PPO_DEPLOYMENT_PROFILE.projectId,
+      agent: DEVELOPMENT_ROLLBACK_AGENT_ID,
+      policyId,
+      policyHash,
+      deploymentSha,
+      rollbackSha,
+      outcome: "rollback_failed",
+      attempt,
+      failureClass,
+      observedCheckoutSha: deploymentSha,
+      service: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName,
+      contract: rollbackContract({
+        ok: false,
+        observedCheckoutSha: deploymentSha,
+        checkoutSwitch: "not_run",
+        serviceRestart: "not_run",
+        postrollbackCheckout: "failed"
+      })
+    }
+  }
+}
+
 function makeRolledBackRun(evidenceOverrides = {}) {
   const run = makeVerificationFailedRun({
     status: "rolled_back",
@@ -328,6 +366,18 @@ function makeRolledBackRun(evidenceOverrides = {}) {
 
   run.evidence.rollback.push(rollbackStartedEvidence({ attempt: evidenceOverrides.startedAttempt || 1 }))
   run.evidence.rollback.push(rolledBackEvidence(evidenceOverrides))
+  return run
+}
+
+function makeRollbackFailedRun(evidenceOverrides = {}) {
+  const run = makeVerificationFailedRun({
+    status: "rollback_failed",
+    stage: "rollback",
+    rollbackAttempts: evidenceOverrides.rollbackAttempts || 1
+  })
+
+  run.evidence.rollback.push(rollbackStartedEvidence({ attempt: evidenceOverrides.startedAttempt || 1 }))
+  run.evidence.rollback.push(rollbackFailedEvidence(evidenceOverrides))
   return run
 }
 
@@ -427,6 +477,27 @@ function makeRollbackRunner(options = {}) {
 
     if (invocation.kind === "inspect-rollback") {
       state.inspectCalls.push(clone(invocation))
+
+      if (options.inspectAmbiguousMode) {
+        const error = new Error("ambiguous rollback inspection")
+
+        if (options.inspectAmbiguousMode === "timeout") {
+          error.timedOut = true
+        } else if (options.inspectAmbiguousMode === "signal") {
+          error.signal = "SIGTERM"
+        } else if (options.inspectAmbiguousMode === "overflow") {
+          error.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        } else {
+          error.ambiguous = true
+        }
+
+        throw error
+      }
+
+      if (Object.hasOwn(options, "inspectRawResult")) {
+        return options.inspectRawResult
+      }
+
       return rollbackInspectionResult(options.inspectResult || {})
     }
 
@@ -474,6 +545,20 @@ async function executeWithFixture(fixture, runner, options = {}) {
   })
 }
 
+function notStartedInspection(overrides = {}) {
+  return {
+    ok: false,
+    failureClass: "rollback_not_started",
+    observedCheckoutSha: DEPLOYMENT_SHA,
+    currentCheckout: "passed",
+    checkoutSwitch: "not_applicable",
+    serviceRestart: "not_applicable",
+    postrollbackCheckout: "failed",
+    rollbackInvoked: false,
+    ...overrides
+  }
+}
+
 async function assertRejectsCode(promise, code) {
   await assert.rejects(promise, (error) => {
     assert.equal(error.code, code)
@@ -496,7 +581,7 @@ test("verification_failed run with valid Phase 6H and Phase 6I evidence reserves
   assert.equal(runner.state.executeCalls.length, 1)
 })
 
-test("only verification_failed runs are accepted for Phase 6J rollback", async () => {
+test("only verification_failed and safe rollback_failed runs are accepted for Phase 6J rollback", async () => {
   for (const status of [
     "created",
     "planning_in_progress",
@@ -515,6 +600,8 @@ test("only verification_failed runs are accepted for Phase 6J rollback", async (
     "deploy_failed",
     "deployed",
     "verification_in_progress",
+    "rollback_in_progress",
+    "rolled_back",
     "verified",
     "cancelled",
     "failed"
@@ -527,6 +614,87 @@ test("only verification_failed runs are accepted for Phase 6J rollback", async (
 
     await assertRejectsCode(executeWithFixture(fixture, runner), "ROLLBACK_RUN_NOT_VERIFICATION_FAILED")
     assert.equal(runner.state.executeCalls.length, 0, status)
+  }
+})
+
+test("rollback_failed retry is explicit and allowed only after read-only not-started reconciliation", async () => {
+  const fixture = makeStateAdapter(makeRollbackFailedRun())
+  const runner = makeRollbackRunner({ inspectResult: notStartedInspection() })
+  const response = await executeWithFixture(fixture, runner)
+
+  assert.equal(response.ok, true)
+  assert.equal(response.outcome, "rolled_back")
+  assert.equal(fixture.state.run.status, "rolled_back")
+  assert.equal(fixture.state.transitions.at(0).status, "rollback_in_progress")
+  assert.equal(fixture.state.transitions.at(1).status, "rolled_back")
+  assert.equal(fixture.state.run.attempts.rollback, 2)
+  assert.equal(fixture.state.run.evidence.rollback.at(-2).metadata.outcome, "rollback_started")
+  assert.equal(fixture.state.run.evidence.rollback.at(-2).metadata.attempt, 2)
+  assert.equal(runner.state.inspectCalls.length, 1)
+  assert.equal(runner.state.executeCalls.length, 1)
+})
+
+test("rollback_failed retry still requires fresh owner confirmation and exact expectedVersion", async () => {
+  for (const [name, options, expectedCode] of [
+    ["missing owner confirmation", { ownerConfirmation: undefined }, "ROLLBACK_OWNER_CONFIRMATION_REQUIRED"],
+    ["mismatched owner confirmation", { ownerConfirmation: "wrong-confirmation" }, "ROLLBACK_OWNER_CONFIRMATION_REQUIRED"],
+    ["stale expectedVersion", { expectedVersion: 15 }, "STALE_RUN_VERSION"]
+  ]) {
+    const fixture = makeStateAdapter(makeRollbackFailedRun({ rollbackAttempts: 1 }))
+    const runner = makeRollbackRunner({ inspectResult: notStartedInspection() })
+
+    await assertRejectsCode(executeDevelopmentRollback(RUN_ID, {
+      ...fixture.api,
+      rollbackRunner: runner,
+      expectedVersion: fixture.state.run.version,
+      ownerConfirmation: PHASE_6J_OWNER_ROLLBACK_CONFIRMATION,
+      ...options
+    }), expectedCode)
+
+    assert.equal(fixture.state.run.status, "rollback_failed", name)
+    assert.equal(fixture.state.transitions.length, 0, name)
+    assert.equal(runner.state.inspectCalls.length, 0, name)
+    assert.equal(runner.state.executeCalls.length, 0, name)
+  }
+})
+
+test("rollback_failed retry refuses applied third-SHA dirty ambiguous or unsafe-service states", async () => {
+  for (const [name, runnerOptions, expectedCode] of [
+    ["already applied rollback", {}, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["third SHA", { inspectResult: { ...notStartedInspection({ observedCheckoutSha: WRONG_SHA, currentCheckout: "failed", failureClass: "rollback_incomplete" }) } }, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["dirty checkout", { inspectResult: { ...notStartedInspection({ clean: "failed", failureClass: "dirty_checkout" }) } }, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["unsafe inactive service", { inspectResult: { ...notStartedInspection({ serviceActive: false, failureClass: "service_not_running" }) } }, "ROLLBACK_RETRY_RECONCILIATION_REQUIRED"],
+    ["ambiguous inspection", { inspectAmbiguousMode: "timeout" }, "ROLLBACK_AMBIGUOUS"],
+    ["malformed inspection output", { inspectRawResult: { ...notStartedInspection(), observedCheckoutSha: "not-a-sha" } }, "ROLLBACK_AMBIGUOUS"]
+  ]) {
+    const fixture = makeStateAdapter(makeRollbackFailedRun())
+    const runner = makeRollbackRunner(runnerOptions)
+
+    await assertRejectsCode(executeWithFixture(fixture, runner), expectedCode)
+
+    assert.equal(fixture.state.run.status, "rollback_failed", name)
+    assert.equal(fixture.state.transitions.length, 0, name)
+    assert.equal(runner.state.inspectCalls.length, 1, name)
+    assert.equal(runner.state.executeCalls.length, 0, name)
+  }
+})
+
+test("rollback_failed retry requires current Phase 6J policy evidence for the same exact SHAs", async () => {
+  for (const [name, overrides] of [
+    ["wrong policy id", { policyId: "phase-6j-stale-policy" }],
+    ["wrong policy hash", { policyHash: "0".repeat(64) }],
+    ["mismatched deployment SHA", { deploymentSha: WRONG_SHA }],
+    ["mismatched rollback SHA", { rollbackSha: WRONG_SHA }],
+    ["mismatched attempt", { startedAttempt: 2, attempt: 1 }]
+  ]) {
+    const fixture = makeStateAdapter(makeRollbackFailedRun(overrides))
+    const runner = makeRollbackRunner({ inspectResult: notStartedInspection() })
+
+    await assertRejectsCode(executeWithFixture(fixture, runner), "ROLLBACK_RETRY_EVIDENCE_INVALID")
+
+    assert.equal(fixture.state.transitions.length, 0, name)
+    assert.equal(runner.state.inspectCalls.length, 0, name)
+    assert.equal(runner.state.executeCalls.length, 0, name)
   }
 })
 
@@ -767,6 +935,43 @@ test("rollback reconciliation proves completion only with full exact evidence an
   }
 })
 
+function runInspectPermissionHelper(command) {
+  const scriptPath = fileURLToPath(new URL("../deployment/scripts/inspect-rollback-readonly.sh", import.meta.url))
+
+  return spawnSync("bash", ["-c", `source "$1"; ${command}`, "bash", scriptPath], {
+    encoding: "utf8"
+  })
+}
+
+function assertPermissionHelperPass(command, name) {
+  const result = runInspectPermissionHelper(command)
+
+  assert.equal(result.status, 0, `${name}: ${result.stderr}`)
+}
+
+function assertPermissionHelperFail(command, name) {
+  const result = runInspectPermissionHelper(command)
+
+  assert.notEqual(result.status, 0, name)
+}
+
+test("rollback read-only permission contract classifies recursive runtime checkout ownership modes and executable bits", () => {
+  assertPermissionHelperPass(`
+    [[ "$(tracked_file_expected_mode 100644)" == "644" ]] &&
+    [[ "$(tracked_file_expected_mode 100755)" == "755" ]] &&
+    permission_entry_matches root ppo 755 755 &&
+    permission_entry_matches root ppo 644 "$(tracked_file_expected_mode 100644)" &&
+    permission_entry_matches root ppo 755 "$(tracked_file_expected_mode 100755)"
+  `, "exact recursive permission contract")
+
+  assertPermissionHelperFail("permission_entry_matches ppo ppo 644 644", "wrong tracked-file ownership fails")
+  assertPermissionHelperFail("permission_entry_matches root root 644 644", "wrong tracked-file group fails")
+  assertPermissionHelperFail("permission_entry_matches root ppo 600 \"$(tracked_file_expected_mode 100644)\"", "wrong regular-file mode fails")
+  assertPermissionHelperFail("permission_entry_matches root ppo 644 \"$(tracked_file_expected_mode 100755)\"", "missing executable mode on tracked executable fails")
+  assertPermissionHelperFail("permission_entry_matches root ppo 755 \"$(tracked_file_expected_mode 100644)\"", "unexpected executable mode on tracked regular file fails")
+  assertPermissionHelperFail("permission_entry_matches root ppo 750 755", "directory mode drift fails")
+})
+
 test("Phase 6J scope excludes automatic rollback, GitHub writes, model execution, routes, and continue command", async () => {
   const rollbackSource = await readFile(new URL("./development-rollback-agent.mjs", import.meta.url), "utf8")
   const verificationSource = await readFile(new URL("./development-production-verification-agent.mjs", import.meta.url), "utf8")
@@ -799,17 +1004,35 @@ test("Phase 6J rollback shell primitives use fixed identities and avoid forbidde
   assert.match(rollbackScript, /^#!\/usr\/bin\/env bash\nset -Eeuo pipefail/m)
   assert.match(rollbackScript, /INSTALL_DIR="\/opt\/personal-project-operator"/)
   assert.match(rollbackScript, /STATE_DIR="\/var\/lib\/personal-project-operator"/)
+  assert.match(rollbackScript, /CONFIG_DIR="\/etc\/personal-project-operator"/)
+  assert.match(rollbackScript, /NODE_BIN="\$\{OPENCLAW_PREFIX\}\/tools\/node\/bin\/node"/)
+  assert.match(rollbackScript, /OPENCLAW_BIN="\$\{OPENCLAW_PREFIX\}\/bin\/openclaw"/)
   assert.match(rollbackScript, /SERVICE_NAME="ppo-openclaw\.service"/)
+  assert.match(rollbackScript, /SYSTEMCTL_BIN="\/usr\/bin\/systemctl"/)
   assert.match(rollbackScript, /REMOTE_NAME="origin"/)
   assert.match(rollbackScript, /REPO_URL="https:\/\/github\.com\/Linardi1328\/personal-project-operator\.git"/)
   assert.match(rollbackScript, /git --no-optional-locks -C "\$INSTALL_DIR" -c core\.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames/)
   assert.match(rollbackScript, /git -C "\$INSTALL_DIR" switch --detach "\$ROLLBACK_SHA"/)
-  assert.match(rollbackScript, /sudo -u "\$SERVICE_USER" "\$PREFLIGHT_SCRIPT"/)
-  assert.match(rollbackScript, /PPO_SERVICE_CONFIRM="\$SERVICE_CONFIRMATION" "\$SERVICE_CONTROL_SCRIPT" restart/)
+  assert.match(rollbackScript, /sudo -u "\$SERVICE_USER" "\$NODE_BIN" --version/)
+  assert.match(rollbackScript, /sudo -u "\$SERVICE_USER" "\$OPENCLAW_BIN" --version/)
+  assert.match(rollbackScript, /"\$SYSTEMCTL_BIN" restart "\$SERVICE_NAME"/)
+  assert.deepEqual(
+    rollbackScript.split("\n").filter((line) => line.includes('"$SYSTEMCTL_BIN" restart')).map((line) => line.trim()),
+    ['"$SYSTEMCTL_BIN" restart "$SERVICE_NAME" >/dev/null 2>&1 ||']
+  )
+  assert.doesNotMatch(rollbackScript, /PREFLIGHT_SCRIPT|SERVICE_CONTROL_SCRIPT|preflight-openclaw-runtime\.sh|service-control\.sh/)
   assert.doesNotMatch(rollbackScript, /last-good-revision|git fetch|git pull|git reset --hard|git checkout|git branch|git update-ref|curl|wget|gh\s|ssh|scp|rsync/)
   assert.doesNotMatch(rollbackScript, /systemctl\s+(?:start|stop|restart|reload|enable|disable)\s+\$/)
 
   assert.match(inspectScript, /git --no-optional-locks -C "\$INSTALL_DIR" -c core\.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames/)
+  assert.match(inspectScript, /check_runtime_checkout_permission_contract/)
+  assert.match(inspectScript, /find "\$INSTALL_DIR" -type d -print0/)
+  assert.match(inspectScript, /find "\$INSTALL_DIR" -type f -print0/)
+  assert.match(inspectScript, /git -C "\$INSTALL_DIR" ls-files -s -- "\$relative_path"/)
+  assert.match(inspectScript, /tracked_file_expected_mode/)
+  assert.match(inspectScript, /sudo -u "\$SERVICE_USER" "\$NODE_BIN" --version/)
+  assert.match(inspectScript, /sudo -u "\$SERVICE_USER" "\$OPENCLAW_BIN" --version/)
+  assert.doesNotMatch(inspectScript, /PREFLIGHT_SCRIPT|SERVICE_CONTROL_SCRIPT|preflight-openclaw-runtime\.sh|service-control\.sh/)
   assert.doesNotMatch(inspectScript, /git fetch|git pull|git switch|git checkout|git reset|systemctl\s+(?:start|stop|restart|reload|enable|disable)|curl|wget|gh\s|ssh|scp|rsync/)
   assert.match(legacyRollback, /last-good-revision/)
 })

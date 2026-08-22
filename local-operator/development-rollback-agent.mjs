@@ -854,6 +854,90 @@ function currentInspectionProvesRollbackApplied(inspection, facts) {
   )
 }
 
+function rollbackFailedEvidenceProvesRetryIdentity(run, facts) {
+  const latestRollback = latestRollbackEvidence(run)
+  const started = latestRollbackEvidence(run, "rollback_started")
+  const failed = latestRollbackEvidence(run, "rollback_failed")
+  const startedMetadata = started?.metadata || {}
+  const failedMetadata = failed?.metadata || {}
+
+  if (
+    latestRollback !== failed ||
+    !started ||
+    !failed ||
+    started.source !== DEVELOPMENT_ROLLBACK_AGENT_ID ||
+    failed.source !== DEVELOPMENT_ROLLBACK_AGENT_ID ||
+    started.sha !== facts.rollbackSha ||
+    failed.sha !== facts.rollbackSha ||
+    startedMetadata.agent !== DEVELOPMENT_ROLLBACK_AGENT_ID ||
+    failedMetadata.agent !== DEVELOPMENT_ROLLBACK_AGENT_ID ||
+    startedMetadata.policyId !== PHASE_6J_ROLLBACK_POLICY_ID ||
+    startedMetadata.policyHash !== PHASE_6J_ROLLBACK_POLICY_HASH ||
+    failedMetadata.policyId !== PHASE_6J_ROLLBACK_POLICY_ID ||
+    failedMetadata.policyHash !== PHASE_6J_ROLLBACK_POLICY_HASH ||
+    startedMetadata.deploymentSha !== facts.deploymentSha ||
+    failedMetadata.deploymentSha !== facts.deploymentSha ||
+    startedMetadata.rollbackSha !== facts.rollbackSha ||
+    failedMetadata.rollbackSha !== facts.rollbackSha ||
+    startedMetadata.outcome !== "rollback_started" ||
+    failedMetadata.outcome !== "rollback_failed" ||
+    !Number.isInteger(startedMetadata.attempt) ||
+    startedMetadata.attempt <= 0 ||
+    !Number.isInteger(failedMetadata.attempt) ||
+    failedMetadata.attempt <= 0 ||
+    startedMetadata.attempt !== failedMetadata.attempt
+  ) {
+    throw rollbackError(
+      "ROLLBACK_RETRY_EVIDENCE_INVALID",
+      "A rollback_failed retry requires exact Phase 6J policy evidence for the same deployment and rollback SHAs."
+    )
+  }
+}
+
+function retryInspectionProvesRollbackNeverStarted(inspection, facts) {
+  return Boolean(
+    inspection &&
+    inspection.observedCheckoutSha === facts.deploymentSha &&
+    inspection.repository === "passed" &&
+    inspection.currentCheckout === "passed" &&
+    inspection.detached === "passed" &&
+    inspection.clean === "passed" &&
+    inspection.previousRevision === "passed" &&
+    inspection.rollbackCommit === "passed" &&
+    inspection.postrollbackCheckout !== "passed" &&
+    inspection.rollbackInvoked === false &&
+    inspection.deploymentInvoked !== true &&
+    inspection.networkRefreshInvoked !== true &&
+    inspection.serviceEnabled === true &&
+    inspection.serviceActive === true &&
+    inspection.serviceRunning === true &&
+    inspection.serviceMainPidNonZero === true
+  )
+}
+
+async function assertRollbackFailedRetrySafe(run, profile, facts, options = {}) {
+  rollbackFailedEvidenceProvesRetryIdentity(run, facts)
+
+  let inspection
+
+  try {
+    inspection = await inspectRollback(profile, facts, options)
+  } catch (error) {
+    if (isUncertainOutcome(error) || error?.code === "ROLLBACK_AMBIGUOUS") {
+      throw ambiguousRollbackError()
+    }
+
+    throw error
+  }
+
+  if (!retryInspectionProvesRollbackNeverStarted(inspection, facts)) {
+    throw rollbackError(
+      "ROLLBACK_RETRY_RECONCILIATION_REQUIRED",
+      "Rollback retry requires read-only reconciliation proving production is still at the failed deployment SHA and safe to retry."
+    )
+  }
+}
+
 function rollbackEvidence(run, facts, outcome, metadata, summary) {
   return {
     kind: "rollback",
@@ -930,14 +1014,19 @@ async function executeDevelopmentRollbackInternal(runId, options = {}) {
     )
   }
 
-  if (run.status !== "verification_failed") {
+  if (!["verification_failed", "rollback_failed"].includes(run.status)) {
     throw rollbackError(
       "ROLLBACK_RUN_NOT_VERIFICATION_FAILED",
-      "Development run must be verification_failed before Phase 6J rollback."
+      "Development run must be verification_failed or rollback_failed before Phase 6J rollback."
     )
   }
 
   const facts = rollbackEvidenceFacts(run, profile)
+
+  if (run.status === "rollback_failed") {
+    await assertRollbackFailedRetrySafe(run, profile, facts, options)
+  }
+
   const attempt = run.attempts.rollback + 1
 
   run = await api.transition(run.runId, {

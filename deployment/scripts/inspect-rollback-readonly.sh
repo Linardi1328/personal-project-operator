@@ -5,10 +5,14 @@ SERVICE_USER="ppo"
 SERVICE_GROUP="ppo"
 INSTALL_DIR="/opt/personal-project-operator"
 STATE_DIR="/var/lib/personal-project-operator"
+CONFIG_DIR="/etc/personal-project-operator"
+OPENCLAW_PREFIX="/home/ppo/.local/openclaw"
+NODE_BIN="${OPENCLAW_PREFIX}/tools/node/bin/node"
+OPENCLAW_BIN="${OPENCLAW_PREFIX}/bin/openclaw"
 REMOTE_NAME="origin"
 REPO_URL="https://github.com/Linardi1328/personal-project-operator.git"
 SERVICE_NAME="ppo-openclaw.service"
-PREFLIGHT_SCRIPT="${INSTALL_DIR}/deployment/scripts/preflight-openclaw-runtime.sh"
+SYSTEMCTL_BIN="/usr/bin/systemctl"
 EXPECTED_DEPLOYMENT_SHA="${1:-}"
 ROLLBACK_SHA="${2:-}"
 
@@ -78,6 +82,67 @@ path_contract() {
   [[ "$actual_user" == "$expected_user" && "$actual_group" == "$expected_group" && "$actual_mode" == "$expected_mode" ]]
 }
 
+permission_entry_matches() {
+  local actual_user="$1"
+  local actual_group="$2"
+  local actual_mode="$3"
+  local expected_mode="$4"
+
+  [[ "$actual_user" == "root" && "$actual_group" == "$SERVICE_GROUP" && "$actual_mode" == "$expected_mode" ]]
+}
+
+tracked_file_expected_mode() {
+  local tracked_mode="$1"
+
+  if [[ "$tracked_mode" == "100755" ]]; then
+    printf '755\n'
+  else
+    printf '644\n'
+  fi
+}
+
+require_executable() {
+  local path="$1"
+  [[ -x "$path" ]]
+}
+
+parse_node_version() {
+  local version
+  version="${1#v}"
+  [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+  printf '%s %s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+}
+
+is_supported_node_version() {
+  local raw_version="$1"
+  local parsed major minor patch
+  parsed="$(parse_node_version "$raw_version")" || return 1
+  read -r major minor patch <<<"$parsed"
+
+  case "$major" in
+    22)
+      (( minor > 22 || (minor == 22 && patch >= 3) ))
+      ;;
+    24)
+      (( minor > 15 || (minor == 15 && patch >= 0) ))
+      ;;
+    25)
+      (( minor > 9 || (minor == 9 && patch >= 0) ))
+      ;;
+    *)
+      (( major >= 26 ))
+      ;;
+  esac
+}
+
+node_version_string() {
+  local version
+  version="$(sudo -u "$SERVICE_USER" "$NODE_BIN" --version 2>/dev/null)" || return 1
+  version="${version#v}"
+  parse_node_version "$version" >/dev/null || return 1
+  printf '%s\n' "$version"
+}
+
 check_repository() {
   local remote_url
 
@@ -137,15 +202,48 @@ check_rollback_commit() {
 }
 
 check_permissions() {
-  if path_contract "$INSTALL_DIR" root "$SERVICE_GROUP" 755; then
+  if check_runtime_checkout_permission_contract; then
     permission_contract="passed"
   else
     permission_contract="failed"
   fi
 }
 
+file_expected_mode() {
+  local relative_path="$1"
+  local tracked_mode
+
+  tracked_mode="$(git -C "$INSTALL_DIR" ls-files -s -- "$relative_path" 2>/dev/null | awk 'NR == 1 {print $1}')" ||
+    return 1
+  tracked_file_expected_mode "$tracked_mode"
+}
+
+check_runtime_checkout_permission_contract() {
+  local path relative_path expected_mode
+
+  path_contract "$INSTALL_DIR" root "$SERVICE_GROUP" 755 || return 1
+
+  while IFS= read -r -d '' path; do
+    path_contract "$path" root "$SERVICE_GROUP" 755 || return 1
+  done < <(find "$INSTALL_DIR" -type d -print0)
+
+  while IFS= read -r -d '' path; do
+    relative_path="${path#"$INSTALL_DIR"/}"
+    expected_mode="$(file_expected_mode "$relative_path")" || return 1
+    path_contract "$path" root "$SERVICE_GROUP" "$expected_mode" || return 1
+  done < <(find "$INSTALL_DIR" -type f -print0)
+}
+
 check_runtime() {
-  if sudo -u "$SERVICE_USER" "$PREFLIGHT_SCRIPT" >/dev/null 2>&1; then
+  local node_version
+
+  if [[ -d "$INSTALL_DIR" &&
+        -d "$CONFIG_DIR" ]] &&
+      require_executable "$NODE_BIN" &&
+      require_executable "$OPENCLAW_BIN" &&
+      node_version="$(node_version_string)" &&
+      is_supported_node_version "$node_version" &&
+      sudo -u "$SERVICE_USER" "$OPENCLAW_BIN" --version >/dev/null 2>&1; then
     runtime_preflight="passed"
   else
     runtime_preflight="failed"
@@ -155,20 +253,20 @@ check_runtime() {
 check_service() {
   local sub_state main_pid
 
-  if systemctl is-enabled --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
+  if "$SYSTEMCTL_BIN" is-enabled --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
     service_enabled=true
   fi
 
-  if systemctl is-active --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
+  if "$SYSTEMCTL_BIN" is-active --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
     service_active=true
   fi
 
-  sub_state="$(systemctl show "$SERVICE_NAME" --property=SubState --value 2>/dev/null || true)"
+  sub_state="$("$SYSTEMCTL_BIN" show "$SERVICE_NAME" --property=SubState --value 2>/dev/null || true)"
   if [[ "$sub_state" == "running" ]]; then
     service_running=true
   fi
 
-  main_pid="$(systemctl show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null || true)"
+  main_pid="$("$SYSTEMCTL_BIN" show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null || true)"
   if [[ "$main_pid" =~ ^[0-9]+$ && "$main_pid" != "0" ]]; then
     service_main_pid_nonzero=true
   fi
