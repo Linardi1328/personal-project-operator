@@ -60,6 +60,9 @@ export const DEVELOPMENT_RUN_STATUSES = Object.freeze([
   "deployed",
   "verification_in_progress",
   "verification_failed",
+  "rollback_in_progress",
+  "rollback_failed",
+  "rolled_back",
   "verified",
   "cancelled",
   "failed"
@@ -74,6 +77,7 @@ export const DEVELOPMENT_RUN_STAGES = Object.freeze([
   "merge",
   "deploy",
   "verification",
+  "rollback",
   "closed"
 ])
 
@@ -84,7 +88,8 @@ export const DEVELOPMENT_RUN_EVIDENCE_KINDS = Object.freeze([
   "test",
   "merge",
   "deploy",
-  "verification"
+  "verification",
+  "rollback"
 ])
 
 export const DEVELOPMENT_RUN_ATTEMPT_KEYS = Object.freeze([
@@ -94,7 +99,8 @@ export const DEVELOPMENT_RUN_ATTEMPT_KEYS = Object.freeze([
   "review",
   "merge",
   "deploy",
-  "verification"
+  "verification",
+  "rollback"
 ])
 
 export const ALLOWED_DEVELOPMENT_RUN_TRANSITIONS = Object.freeze({
@@ -115,7 +121,10 @@ export const ALLOWED_DEVELOPMENT_RUN_TRANSITIONS = Object.freeze({
   deploy_failed: Object.freeze(["deploy_in_progress", "cancelled", "failed"]),
   deployed: Object.freeze(["verification_in_progress", "cancelled", "failed"]),
   verification_in_progress: Object.freeze(["verification_failed", "verified", "cancelled", "failed"]),
-  verification_failed: Object.freeze(["deploy_in_progress", "implementation_in_progress", "cancelled", "failed"]),
+  verification_failed: Object.freeze(["rollback_in_progress", "deploy_in_progress", "implementation_in_progress", "cancelled", "failed"]),
+  rollback_in_progress: Object.freeze(["rolled_back", "rollback_failed", "cancelled", "failed"]),
+  rollback_failed: Object.freeze(["rollback_in_progress", "implementation_in_progress", "cancelled", "failed"]),
+  rolled_back: Object.freeze(["implementation_in_progress", "cancelled", "failed"]),
   verified: Object.freeze([]),
   cancelled: Object.freeze([]),
   failed: Object.freeze([])
@@ -138,7 +147,33 @@ const prePhase6GEvidenceKindKeys = Object.freeze([
   "deploy",
   "verification"
 ])
-const phase6GLegacyPlanningEvidenceKindKeys = DEVELOPMENT_RUN_EVIDENCE_KINDS.filter((kind) => kind !== "planning")
+const phase6GLegacyPlanningEvidenceKindKeys = Object.freeze([
+  "implementation",
+  "review",
+  "test",
+  "merge",
+  "deploy",
+  "verification"
+])
+const phase6JPlanningLegacyEvidenceKindKeys = DEVELOPMENT_RUN_EVIDENCE_KINDS.filter((kind) => kind !== "planning")
+const prePhase6JAttemptKeys = Object.freeze([
+  "planning",
+  "implementation",
+  "test",
+  "review",
+  "merge",
+  "deploy",
+  "verification"
+])
+const prePhase6JEvidenceKindKeys = Object.freeze([
+  "planning",
+  "implementation",
+  "review",
+  "test",
+  "merge",
+  "deploy",
+  "verification"
+])
 const stageSet = new Set(DEVELOPMENT_RUN_STAGES)
 const shaPattern = /^[a-f0-9]{40}$/iu
 const actorPattern = /^[A-Za-z0-9_.:-]{1,80}$/u
@@ -168,6 +203,9 @@ const stageByStatus = Object.freeze({
   deployed: "deploy",
   verification_in_progress: "verification",
   verification_failed: "verification",
+  rollback_in_progress: "rollback",
+  rollback_failed: "rollback",
+  rolled_back: "rollback",
   verified: "closed",
   cancelled: "closed",
   failed: "closed"
@@ -180,7 +218,8 @@ const attemptKeyByEnteringStatus = Object.freeze({
   review_in_progress: "review",
   merge_ready: "merge",
   deploy_in_progress: "deploy",
-  verification_in_progress: "verification"
+  verification_in_progress: "verification",
+  rollback_in_progress: "rollback"
 })
 const sameStatusAttemptStatuses = new Set([
   "implementation_in_progress",
@@ -1192,27 +1231,43 @@ function normalizeProjectShape(project, options = {}) {
   return resolved
 }
 
-function validateAttemptShape(attempts) {
-  if (!attempts || typeof attempts !== "object" || Array.isArray(attempts) || !hasOnlyKeys(attempts, DEVELOPMENT_RUN_ATTEMPT_KEYS)) {
+function normalizeAttemptShape(attempts) {
+  if (!attempts || typeof attempts !== "object" || Array.isArray(attempts) || !(
+    hasOnlyKeys(attempts, DEVELOPMENT_RUN_ATTEMPT_KEYS) ||
+    hasOnlyKeys(attempts, prePhase6JAttemptKeys)
+  )) {
     throw runStateError(
       "RUN_RECORD_INVALID",
       "Stored development run record is invalid."
     )
   }
 
+  const normalized = {
+    ...emptyAttempts(),
+    ...attempts
+  }
+
   for (const key of DEVELOPMENT_RUN_ATTEMPT_KEYS) {
-    if (!Number.isInteger(attempts[key]) || attempts[key] < 0 || attempts[key] > MAX_DEVELOPMENT_RUN_STAGE_ATTEMPTS) {
+    if (!Number.isInteger(normalized[key]) || normalized[key] < 0 || normalized[key] > MAX_DEVELOPMENT_RUN_STAGE_ATTEMPTS) {
       throw runStateError(
         "RUN_RECORD_INVALID",
         "Stored development run record is invalid."
       )
     }
   }
+
+  return normalized
+}
+
+function validateAttemptShape(attempts) {
+  normalizeAttemptShape(attempts)
 }
 
 function validateEvidenceShape(evidence) {
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || !(
     hasOnlyKeys(evidence, DEVELOPMENT_RUN_EVIDENCE_KINDS) ||
+    hasOnlyKeys(evidence, phase6JPlanningLegacyEvidenceKindKeys) ||
+    hasOnlyKeys(evidence, prePhase6JEvidenceKindKeys) ||
     hasOnlyKeys(evidence, phase6GLegacyPlanningEvidenceKindKeys) ||
     hasOnlyKeys(evidence, prePhase6GEvidenceKindKeys) ||
     hasOnlyKeys(evidence, phase6ALegacyEvidenceKindKeys)
@@ -1373,6 +1428,7 @@ function validateHistory(record) {
   for (let index = 0; index < record.history.length; index += 1) {
     const event = record.history[index]
     validateHistoryEventShape(event)
+    const eventAttempts = normalizeAttemptShape(event.attempts)
 
     if (
       event.version !== index ||
@@ -1419,9 +1475,9 @@ function validateHistory(record) {
         incrementedAttempts = null
       }
 
-      if (stableStringify(event.attempts) === stableStringify(sameStatusAttempts)) {
+      if (stableStringify(eventAttempts) === stableStringify(sameStatusAttempts)) {
         attempts = sameStatusAttempts
-      } else if (incrementedAttempts && stableStringify(event.attempts) === stableStringify(incrementedAttempts)) {
+      } else if (incrementedAttempts && stableStringify(eventAttempts) === stableStringify(incrementedAttempts)) {
         attempts = incrementedAttempts
       } else {
         throw runStateError(
@@ -1431,7 +1487,7 @@ function validateHistory(record) {
       }
     }
 
-    if (stableStringify(attempts) !== stableStringify(event.attempts)) {
+    if (stableStringify(attempts) !== stableStringify(eventAttempts)) {
       throw runStateError(
         "RUN_HISTORY_INVALID",
         "Stored development run transition history is invalid."
@@ -1473,7 +1529,7 @@ function validateHistory(record) {
     record.timestamps.updatedAt !== lastEvent.timestamp ||
     record.timestamps.statusChangedAt !== lastEvent.timestamp ||
     record.timestamps.terminalAt !== (["verified", "cancelled", "failed"].includes(record.status) ? lastEvent.timestamp : null) ||
-    stableStringify(record.attempts) !== stableStringify(lastEvent.attempts) ||
+    stableStringify(record.attempts) !== stableStringify(normalizeAttemptShape(lastEvent.attempts)) ||
     stableStringify(record.evidence) !== stableStringify(evidence)
   ) {
     throw runStateError(
@@ -1566,7 +1622,7 @@ function parseRunRecord(payload, expectedRunId = null, options = {}) {
   }
 
   parsed.project = normalizeProjectShape(parsed.project, options)
-  validateAttemptShape(parsed.attempts)
+  parsed.attempts = normalizeAttemptShape(parsed.attempts)
   validateTimestamps(parsed.timestamps)
   validateEvidenceShape(parsed.evidence)
   validateHistory(parsed)
