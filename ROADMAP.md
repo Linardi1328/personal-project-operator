@@ -433,9 +433,22 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Store only bounded metadata-only rollback evidence: project, agent, policy id/hash, attempt, deployment SHA, rollback SHA, fixed service identity, bounded result classes/booleans, timestamps, and outcome. Never store owner confirmation, raw stdout/stderr, stack traces, command strings, arbitrary paths, environment dumps, journal/OpenClaw output, credentials, tokens, or secrets.
 - Phase 6J must not add automatic rollback after verification failure, rollback from `verified`, rollback from `deploy_failed`, arbitrary historical-SHA rollback, latest-main rollback, branch rollback, GitHub writes, Codex/model calls, Telegram/OpenClaw routes, `/ppo continue`, credential/auth changes, or ordinary-project registry expansion.
 
+### Phase 6K - Controlled `/ppo continue` Orchestrator
+
+- Add `/ppo continue <run-id>` through the existing `ppo_local` direct-tool route and terminal wrapper.
+- Accept exactly one caller-controlled value: the existing opaque 43-character Phase 6A development run id. Reject caller-supplied expected versions, project ids, statuses, actions, branches, SHAs, repositories, workspaces, commands, services, deployment targets, rollback targets, confirmations, and environment overrides.
+- Scope the command to the existing ordinary five-project registry only. Refuse `personal-project-operator`; PPO deployment, verification, and rollback remain local-only.
+- Reuse the existing Phase 6A run-state store and existing Phase 6B-6G public APIs. Do not add statuses, evidence kinds, attempt counters, a second store, or parallel planner/workspace/Codex/test/review/hardening/delivery logic.
+- At invocation start, read the durable run, capture its version, classify the current status, then re-read immediately before invoking a mutating child phase and pass that current version internally as `expectedVersion`.
+- Invoke at most one reviewed high-level boundary per call: `created` planning, `planned` workspace preparation, safe `implementation_in_progress` Codex execution, `implementation_ready` tests, safe `tests_in_progress` retry, `tests_passed` review, `review_changes_requested` bounded hardening, `review_passed` Phase 6G delivery, or `merge_ready` SHA-pinned merge.
+- Fail closed on open or ambiguous durable attempts such as `execution_started`, `testing_started`, `review_started`, planning/review in-progress states, and unsupported recovery statuses. Do not infer success from workspace observations alone.
+- Stop at `merged`. For `merged`, production statuses, rollback statuses, `verified`, `cancelled`, and `failed`, perform zero deployment, verification, rollback, service, or production mutation and return bounded status metadata.
+- Keep routing deterministic: the bridge parses only `/ppo continue <run-id>` and invokes the fixed wrapper argv `["continue", "<run-id>"]` with `shell: false`, bounded output, and no model interpretation.
+- Do not add background execution, polling, queues, recursive continue, new OpenClaw tools, GitHub delivery reimplementation, production routes, `/ppo start`, `/ppo develop`, run listing, run search, or broader recovery workflows.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
 - Add broader recovery workflows only after separate review.
-- Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.
+- Add broader `/ppo` recovery and run-management workflows only after separate review.

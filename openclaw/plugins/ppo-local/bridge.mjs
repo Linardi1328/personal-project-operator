@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
+import { DEVELOPMENT_RUN_ID_PATTERN } from "../../../local-operator/development-run-state.mjs";
 import {
   parsePpoIssueConfirmRequest,
   parsePpoIssueCreateRequest
@@ -54,7 +55,8 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo issue-create <project> <title> [--body <body>]",
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
-    "- /ppo note-confirm <request-id>"
+    "- /ppo note-confirm <request-id>",
+    "- /ppo continue <run-id>"
   ].join("\n");
 }
 
@@ -175,6 +177,16 @@ function parseNoteConfirmCommand(rest) {
   }
 }
 
+function parseContinueCommand(rest) {
+  const normalized = String(rest ?? "").trim();
+
+  if (!DEVELOPMENT_RUN_ID_PATTERN.test(normalized)) {
+    return null;
+  }
+
+  return ["continue", normalized];
+}
+
 export function toPpoWrapperArgs(rawCommand) {
   if (typeof rawCommand !== "string") {
     return null;
@@ -236,6 +248,10 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "note-confirm") {
     return parseNoteConfirmCommand(commandEnvelope.rest);
+  }
+
+  if (commandName === "continue") {
+    return parseContinueCommand(commandEnvelope.rest);
   }
 
   return null;

@@ -202,6 +202,14 @@ It accepts only a Phase 6A PPO self-development run in `deployed`, requires exac
 
 The agent transitions `deployed -> verification_in_progress` before running checks, invokes only the trusted read-only verification primitive with explicit argv, `shell: false`, bounded timeout/output, sanitized env, and strict bounded JSON output validation, then transitions to `verified` only after the full contract passes. Definitive failures transition to `verification_failed`; ambiguous outcomes remain open and require read-only reconciliation. Phase 6I does not deploy, rollback, restart services, refresh Git refs, mutate files, invoke Codex/models, write to GitHub, add `/ppo continue`, or add Telegram/OpenClaw routes. See [phase-6i-production-verification-agent.md](phase-6i-production-verification-agent.md).
 
+Phase 6K adds a controlled `/ppo continue <run-id>` orchestrator:
+
+```text
+local-operator/development-continue-orchestrator.mjs
+```
+
+It accepts only an existing opaque Phase 6A run id for one of the ordinary five projects, reads the durable run state, captures the current version, re-reads immediately before dispatch, and passes that version internally to the existing reviewed Phase 6B-6G child API for the current status. It advances at most one outer boundary per invocation and stops at `merged`. It refuses PPO self-development runs, caller-selected versions/projects/actions/SHAs/workspaces/policies, ambiguous open attempts, production statuses, and all Phase 6H/6I/6J deployment, verification, and rollback operations.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -239,6 +247,7 @@ The agent transitions `deployed -> verification_in_progress` before running chec
 - `phase-6h-deployment-agent.md`: Phase 6H local usage and safety boundary.
 - `development-production-verification-agent.mjs`: Phase 6I read-only PPO production verification agent.
 - `phase-6i-production-verification-agent.md`: Phase 6I local usage and safety boundary.
+- `development-continue-orchestrator.mjs`: Phase 6K controlled `/ppo continue <run-id>` orchestrator for ordinary five-project runs.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -259,6 +268,7 @@ The agent transitions `deployed -> verification_in_progress` before running chec
 - `github-delivery-agent.test.mjs`: Phase 6G tests for deterministic acceptance, exact SHA push, origin/repo identity, no-force/idempotent push, ambiguous push reconciliation, PR create/reuse/refusal/recovery, remote head validation, exact-head CI, independent remote review, merge-ready gating, expected-head merge, ambiguous merge reconciliation, metadata-only evidence, optimistic state, and route/deployment/write-surface exclusions.
 - `development-deployment-agent.test.mjs`: Phase 6H tests for merged-run gating, exact Phase 6G evidence, trusted PPO deployment profile, exact merge-SHA checkout, success/failure transitions, ambiguous deployment reconciliation, metadata-only evidence, and route/rollback/verification exclusions.
 - `development-production-verification-agent.test.mjs`: Phase 6I tests for deployed-run gating, exact Phase 6H evidence, fixed PPO profile reuse, read-only verification result validation, success/failure transitions, ambiguous reconciliation, metadata-only evidence, and route/rollback/deployment/model exclusions.
+- `development-continue-orchestrator.test.mjs`: Phase 6K tests for one-boundary dispatch, run-id parsing, caller-option refusal, stale-state handling, open-attempt refusal, production cutoff, bounded output, concurrency, and static production exclusions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -388,9 +398,10 @@ node local-operator/ppo-command.mjs issue-create khlim-assist "owner review test
 node local-operator/ppo-command.mjs note-add khlim-assist "owner review local note"
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review test issue --body created only after confirmation"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
+node local-operator/ppo-command.mjs "/ppo continue <run-id>"
 ```
 
-Phase 6A through Phase 6I remain library-only and have no owner-facing `/ppo` command in this test plan.
+Phase 6K adds only `/ppo continue <run-id>` for existing ordinary development runs. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.
 
 Then through OpenClaw/Telegram after review:
 
@@ -410,11 +421,12 @@ Requirements:
 /ppo issue-confirm <request-id>
 /ppo note-add khlim-assist owner review staged note
 /ppo note-confirm <request-id>
+/ppo continue <run-id>
 ```
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
-Phase 6A, Phase 6B, Phase 6C, Phase 6D, Phase 6E, and Phase 6F remain library-only; do not add `/ppo continue` or any autonomous-development route to the OpenClaw/Telegram owner test until a later separately reviewed phase.
+Do not add `/ppo start`, `/ppo develop`, run listing, run search, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
 
 ## OpenClaw handoff shape
 

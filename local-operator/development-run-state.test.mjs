@@ -730,14 +730,15 @@ test("corrupt or malformed canonical records fail safe", async () => {
   assert.doesNotMatch(formatted, /SENSITIVE_TEST_SENTINEL|not json/u)
 })
 
-test("Phase 6A adds no command route and Phase 5 local note storage still works", async () => {
+test("Phase 6A remains library-only and Phase 5 local note storage still works", async () => {
   const repoRoot = fileURLToPath(new URL("../", import.meta.url))
   const commandSource = await readFile(join(repoRoot, "local-operator", "ppo-command.mjs"), "utf8")
   const bridgeSource = await readFile(join(repoRoot, "openclaw", "plugins", "ppo-local", "bridge.mjs"), "utf8")
   const moduleSource = await readFile(new URL("development-run-state.mjs", import.meta.url), "utf8")
 
   assert.equal(commandSource.includes("development-run-state"), false)
-  assert.equal(bridgeSource.includes("development-run-state"), false)
+  assert.match(bridgeSource, /DEVELOPMENT_RUN_ID_PATTERN/)
+  assert.doesNotMatch(bridgeSource, /createDevelopmentRun|transitionDevelopmentRun|recordDevelopmentRunProgress/)
 
   for (const forbidden of [
     "child_process",

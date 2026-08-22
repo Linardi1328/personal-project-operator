@@ -18,6 +18,7 @@ It exists because OpenClaw owns built-in commands such as `/status`, `/menu`, an
 /ppo issue-confirm <request-id>
 /ppo note-add <project> <note...>
 /ppo note-confirm <request-id>
+/ppo continue <run-id>
 /ppo menu
 /ppo menu project
 /ppo menu codex
@@ -41,6 +42,7 @@ node local-operator/ppo-command.mjs pr khlim-assist
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note text"
 node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
+node local-operator/ppo-command.mjs "/ppo continue <run-id>"
 ```
 
 Phase 5C project notes are terminal-only:
@@ -50,6 +52,8 @@ node local-operator/ppo-command.mjs note-add khlim-assist "project note text"
 ```
 
 Phase 5D `/ppo note-add` is staging only and rejects `PPO_NOTE_WRITE_CONFIRM` in chat. `/ppo note-confirm <request-id>` consumes one pending request before invoking the Phase 5C writer with internal confirmation.
+
+Phase 6K `/ppo continue <run-id>` accepts only an existing ordinary Phase 6 development run id, advances at most one reviewed Phase 6B-6G boundary, and never routes PPO production deployment, verification, rollback, rollback reconciliation, services, or owner confirmations.
 
 OpenClaw direct command dispatch uses the local plugin tool:
 
@@ -90,9 +94,11 @@ This scaffold does not:
 - deploy to VPS
 - add any OpenClaw tool beyond `ppo_local`
 - accept or expose terminal write confirmation environment values through chat
+- accept rollback confirmations or production targets through chat
 - create comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, or deployments
 - route `/ppo` through model interpretation
 - create notes outside terminal-only `note-add` or the Phase 5D `/ppo note-add` plus `/ppo note-confirm` approval path
+- route PPO production deployment, verification, or rollback through `/ppo continue`
 - mutate project-state files from stored notes
 
 Use it as the local routing contract for OpenClaw.
