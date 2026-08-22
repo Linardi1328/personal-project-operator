@@ -221,8 +221,8 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Resolve projects only through the existing five-project registry.
 - Generate cryptographically random opaque run ids.
 - Store one canonical run record under `${PPO_WRITE_DATA_DIR}/development-runs` with private `0700` directories and `0600` files.
-- Include project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned planning/implementation/review/test/deploy/verification evidence metadata, and immutable transition history.
-- Define explicit lifecycle statuses and allowed transitions for planning, implementation, testing, review, merge, deploy, verification, cancellation, and failure.
+- Include project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned planning/implementation/review/test/deploy/verification/rollback evidence metadata, and immutable transition history.
+- Define explicit lifecycle statuses and allowed transitions for planning, implementation, testing, review, merge, deploy, verification, rollback, cancellation, and failure.
 - Reject invalid, skipped, terminal, and backward transitions unless they are explicit retry transitions in the state graph.
 - Require every transition to supply an expected version; stale or concurrent writers must be refused.
 - Use durable version guards plus fsynced temp-file write, atomic rename, and directory fsync for canonical record replacement.
@@ -415,9 +415,27 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Never persist tokens, authorization headers, credentials, SSH material, environment dumps, journal contents, OpenClaw output, raw stdout/stderr, raw process failures, arbitrary absolute paths, shell command strings, or unbounded errors.
 - Phase 6I stops at `verified` or `verification_failed`. It must not automatically rollback, deploy, restart services, refresh Git refs, add `/ppo continue`, add Telegram/OpenClaw routes, alter credentials/authentication, or broaden GitHub write permissions.
 
+### Phase 6J - Exact Previous-SHA Rollback Agent Foundation
+
+- Add a local-only rollback agent for a Phase 6A PPO self-development run that reached `verification_failed` after a successful Phase 6H deployment and Phase 6I verification attempt.
+- Require exact expected-version checks and a fixed explicit owner rollback confirmation before any run-state transition or production mutation.
+- Start rollback only from `verification_failed`; do not rollback from `verified`, `deployed`, `deploy_failed`, ambiguous deployment states, or arbitrary lifecycle states.
+- Reuse the fixed Phase 6H PPO production profile without changing the Phase 6H profile, policy id, or policy hash semantics.
+- Derive the failed deployment SHA only from valid durable Phase 6H `deployed` evidence and the rollback target only from that same evidence's full-SHA `previousInstalledSha`.
+- Require the trusted evidence chain: fixed PPO identity, valid Phase 6G merged evidence, valid Phase 6H deployed evidence and policy id/hash, distinct full previous SHA, and latest valid Phase 6I `verification_failed` evidence for the same deployment SHA and attempt.
+- Add a separate `rollback-exact-sha.sh` primitive for the evidence-bound Phase 6J rollback. Stage a fixed, hash-verified read-only recovery artifact under `/var/lib/personal-project-operator/phase6j-control` before checkout mutation so post-crash reconciliation does not depend on the mutable production checkout. Keep `rollback-repo.sh` as the earlier manual Phase 4 recovery primitive based on `last-good-revision`.
+- Perform zero network refresh. Do not fetch, pull, call GitHub, SSH elsewhere, invoke a model, or accept caller-selected repos, paths, services, commands, refs, branches, or SHAs.
+- Before mutation, require fixed repository origin, current detached checkout exactly at the failed deployment SHA, clean worktree using the Phase 6I read-only Git cleanliness boundary, matching Phase 6H previous-revision marker, and local existence of the rollback commit.
+- Switch only to the exact detached rollback SHA, restore the reviewed runtime checkout permission contract, run fixed OpenClaw runtime preflight as `ppo`, restart only `ppo-openclaw.service`, and prove final detached checkout plus active/running service with nonzero MainPID.
+- Transition `verification_failed -> rollback_in_progress` before production mutation and reserve metadata-only rollback-started evidence. On deterministic success transition `rollback_in_progress -> rolled_back`; on definitive failure transition `rollback_in_progress -> rollback_failed`.
+- Treat timeout, signal, interruption, killed process, output overflow, uncertain checkout/restart completion, malformed output, or similar uncertainty as ambiguous. Preserve the open rollback attempt, do not retry, do not restart again, and require read-only reconciliation.
+- Add read-only rollback reconciliation through the staged host recovery artifact that reports run status, expected deployment and rollback SHAs, attempt, current checkout, detached/clean marker state, runtime class, fixed service state, evidence completeness, apparent application state, retry owner-action requirement, and completion proof. Treat `inspect-rollback-readonly.sh` as a manual diagnostic only, not the post-crash trust root.
+- Store only bounded metadata-only rollback evidence: project, agent, policy id/hash, attempt, deployment SHA, rollback SHA, fixed service identity, bounded result classes/booleans, timestamps, and outcome. Never store owner confirmation, raw stdout/stderr, stack traces, command strings, arbitrary paths, environment dumps, journal/OpenClaw output, credentials, tokens, or secrets.
+- Phase 6J must not add automatic rollback after verification failure, rollback from `verified`, rollback from `deploy_failed`, arbitrary historical-SHA rollback, latest-main rollback, branch rollback, GitHub writes, Codex/model calls, Telegram/OpenClaw routes, `/ppo continue`, credential/auth changes, or ordinary-project registry expansion.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add rollback as a separate reviewed boundary.
+- Add broader recovery workflows only after separate review.
 - Add `/ppo continue` only after the run-state, approval, execution, and recovery boundaries have independent review.
