@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Manual diagnostic only. Coordinated Phase 6J reconciliation uses the staged
-# host recovery artifact under /var/lib/personal-project-operator/phase6j-control
-# so it never executes files from the mutable production checkout after rollback.
+# Phase 6J post-crash recovery entrypoint.
+# This script is staged to /var/lib/personal-project-operator/phase6j-control
+# before rollback checkout mutation and is the coordinated read-only
+# reconciliation trust root. It must not execute code from the mutable checkout.
+
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
 
 SERVICE_USER="ppo"
 SERVICE_GROUP="ppo"
@@ -16,7 +20,13 @@ OPENCLAW_BIN="${OPENCLAW_PREFIX}/bin/openclaw"
 REMOTE_NAME="origin"
 REPO_URL="https://github.com/Linardi1328/personal-project-operator.git"
 SERVICE_NAME="ppo-openclaw.service"
+GIT_BIN="/usr/bin/git"
 SYSTEMCTL_BIN="/usr/bin/systemctl"
+STAT_BIN="/usr/bin/stat"
+FIND_BIN="/usr/bin/find"
+CAT_BIN="/usr/bin/cat"
+SUDO_BIN="/usr/bin/sudo"
+AWK_BIN="/usr/bin/awk"
 EXPECTED_DEPLOYMENT_SHA="${1:-}"
 ROLLBACK_SHA="${2:-}"
 
@@ -25,17 +35,17 @@ service_enabled=false
 service_active=false
 service_running=false
 service_main_pid_nonzero=false
-repository="not_run"
-current_checkout="not_run"
-detached="not_run"
-clean="not_run"
-previous_revision="not_run"
-rollback_commit="not_run"
+repository="failed"
+current_checkout="failed"
+detached="failed"
+clean="failed"
+previous_revision="failed"
+rollback_commit="failed"
 checkout_switch="not_applicable"
-permission_contract="not_run"
-runtime_preflight="not_run"
+permission_contract="failed"
+runtime_preflight="failed"
 service_restart="not_applicable"
-postrollback_checkout="not_run"
+postrollback_checkout="failed"
 
 emit_result() {
   local ok="$1"
@@ -82,32 +92,8 @@ path_contract() {
   local actual_user actual_group actual_mode
 
   [[ -e "$path" ]] || return 1
-  read -r actual_user actual_group actual_mode < <(stat -c '%U %G %a' "$path" 2>/dev/null) || return 1
+  read -r actual_user actual_group actual_mode < <("$STAT_BIN" -c '%U %G %a' "$path" 2>/dev/null) || return 1
   [[ "$actual_user" == "$expected_user" && "$actual_group" == "$expected_group" && "$actual_mode" == "$expected_mode" ]]
-}
-
-permission_entry_matches() {
-  local actual_user="$1"
-  local actual_group="$2"
-  local actual_mode="$3"
-  local expected_mode="$4"
-
-  [[ "$actual_user" == "root" && "$actual_group" == "$SERVICE_GROUP" && "$actual_mode" == "$expected_mode" ]]
-}
-
-tracked_file_expected_mode() {
-  local tracked_mode="$1"
-
-  if [[ "$tracked_mode" == "100755" ]]; then
-    printf '755\n'
-  else
-    printf '644\n'
-  fi
-}
-
-require_executable() {
-  local path="$1"
-  [[ -x "$path" ]]
 }
 
 parse_node_version() {
@@ -141,47 +127,60 @@ is_supported_node_version() {
 
 node_version_string() {
   local version
-  version="$(sudo -u "$SERVICE_USER" "$NODE_BIN" --version 2>/dev/null)" || return 1
+  version="$("$SUDO_BIN" -n -u "$SERVICE_USER" "$NODE_BIN" --version 2>/dev/null)" || return 1
   version="${version#v}"
   parse_node_version "$version" >/dev/null || return 1
   printf '%s\n' "$version"
+}
+
+tracked_file_expected_mode() {
+  local tracked_mode="$1"
+
+  if [[ "$tracked_mode" == "100755" ]]; then
+    printf '755\n'
+  else
+    printf '644\n'
+  fi
+}
+
+file_expected_mode() {
+  local relative_path="$1"
+  local tracked_mode
+
+  tracked_mode="$("$GIT_BIN" --no-optional-locks -C "$INSTALL_DIR" ls-files -s -- "$relative_path" 2>/dev/null | "$AWK_BIN" 'NR == 1 {print $1}')" ||
+    return 1
+  tracked_file_expected_mode "$tracked_mode"
 }
 
 check_repository() {
   local remote_url
 
   [[ -d "${INSTALL_DIR}/.git" ]] || return 0
-  remote_url="$(git -C "$INSTALL_DIR" remote get-url "$REMOTE_NAME" 2>/dev/null)" || return 0
+  remote_url="$("$GIT_BIN" --no-optional-locks -C "$INSTALL_DIR" remote get-url "$REMOTE_NAME" 2>/dev/null)" || return 0
   [[ "$remote_url" == "$REPO_URL" ]] || return 0
   repository="passed"
 }
 
 check_checkout() {
-  observed_checkout_sha="$(git -C "$INSTALL_DIR" rev-parse --verify HEAD 2>/dev/null || true)"
+  observed_checkout_sha="$("$GIT_BIN" --no-optional-locks -C "$INSTALL_DIR" rev-parse --verify HEAD 2>/dev/null || true)"
   valid_sha "$observed_checkout_sha" || return 0
 
   if [[ "$observed_checkout_sha" == "$EXPECTED_DEPLOYMENT_SHA" ]]; then
     current_checkout="passed"
-  else
-    current_checkout="failed"
   fi
 
   if [[ "$observed_checkout_sha" == "$ROLLBACK_SHA" ]]; then
     postrollback_checkout="passed"
-  else
-    postrollback_checkout="failed"
   fi
 
-  if git -C "$INSTALL_DIR" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  if "$GIT_BIN" --no-optional-locks -C "$INSTALL_DIR" symbolic-ref -q HEAD >/dev/null 2>&1; then
     detached="failed"
   else
     detached="passed"
   fi
 
-  if [[ -z "$(git --no-optional-locks -C "$INSTALL_DIR" -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>/dev/null)" ]]; then
+  if [[ -z "$("$GIT_BIN" --no-optional-locks -C "$INSTALL_DIR" -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all --no-renames 2>/dev/null)" ]]; then
     clean="passed"
-  else
-    clean="failed"
   fi
 }
 
@@ -192,34 +191,13 @@ check_previous_revision_marker() {
   marker_value="$(read_first_line "$marker_path" 2>/dev/null || true)"
   if [[ "$marker_value" == "$ROLLBACK_SHA" ]]; then
     previous_revision="passed"
-  else
-    previous_revision="failed"
   fi
 }
 
 check_rollback_commit() {
-  if git -C "$INSTALL_DIR" rev-parse --verify --quiet "${ROLLBACK_SHA}^{commit}" >/dev/null 2>&1; then
+  if "$GIT_BIN" --no-optional-locks -C "$INSTALL_DIR" rev-parse --verify --quiet "${ROLLBACK_SHA}^{commit}" >/dev/null 2>&1; then
     rollback_commit="passed"
-  else
-    rollback_commit="failed"
   fi
-}
-
-check_permissions() {
-  if check_runtime_checkout_permission_contract; then
-    permission_contract="passed"
-  else
-    permission_contract="failed"
-  fi
-}
-
-file_expected_mode() {
-  local relative_path="$1"
-  local tracked_mode
-
-  tracked_mode="$(git -C "$INSTALL_DIR" ls-files -s -- "$relative_path" 2>/dev/null | awk 'NR == 1 {print $1}')" ||
-    return 1
-  tracked_file_expected_mode "$tracked_mode"
 }
 
 check_runtime_checkout_permission_contract() {
@@ -229,28 +207,32 @@ check_runtime_checkout_permission_contract() {
 
   while IFS= read -r -d '' path; do
     path_contract "$path" root "$SERVICE_GROUP" 755 || return 1
-  done < <(find "$INSTALL_DIR" -type d -print0)
+  done < <("$FIND_BIN" "$INSTALL_DIR" -type d -print0)
 
   while IFS= read -r -d '' path; do
     relative_path="${path#"$INSTALL_DIR"/}"
     expected_mode="$(file_expected_mode "$relative_path")" || return 1
     path_contract "$path" root "$SERVICE_GROUP" "$expected_mode" || return 1
-  done < <(find "$INSTALL_DIR" -type f -print0)
+  done < <("$FIND_BIN" "$INSTALL_DIR" -type f -print0)
+}
+
+check_permissions() {
+  if check_runtime_checkout_permission_contract; then
+    permission_contract="passed"
+  fi
 }
 
 check_runtime() {
   local node_version
 
   if [[ -d "$INSTALL_DIR" &&
-        -d "$CONFIG_DIR" ]] &&
-      require_executable "$NODE_BIN" &&
-      require_executable "$OPENCLAW_BIN" &&
+        -d "$CONFIG_DIR" &&
+        -x "$NODE_BIN" &&
+        -x "$OPENCLAW_BIN" ]] &&
       node_version="$(node_version_string)" &&
       is_supported_node_version "$node_version" &&
-      sudo -u "$SERVICE_USER" "$OPENCLAW_BIN" --version >/dev/null 2>&1; then
+      "$SUDO_BIN" -n -u "$SERVICE_USER" "$OPENCLAW_BIN" --version >/dev/null 2>&1; then
     runtime_preflight="passed"
-  else
-    runtime_preflight="failed"
   fi
 }
 

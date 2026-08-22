@@ -5,6 +5,10 @@ SERVICE_USER="ppo"
 SERVICE_GROUP="ppo"
 INSTALL_DIR="/opt/personal-project-operator"
 STATE_DIR="/var/lib/personal-project-operator"
+CONTROL_DIR="${STATE_DIR}/phase6j-control"
+RECOVERY_SOURCE="${INSTALL_DIR}/deployment/scripts/phase6j-recovery-inspect-readonly.sh"
+RECOVERY_ARTIFACT="${CONTROL_DIR}/phase6j-recovery-inspect-readonly.sh"
+RECOVERY_ARTIFACT_SHA256="b3700ffe8381d30ceffde3b981519dcca392b39b6ee307555bbf26301ffaf993"
 CONFIG_DIR="/etc/personal-project-operator"
 OPENCLAW_PREFIX="/home/ppo/.local/openclaw"
 NODE_BIN="${OPENCLAW_PREFIX}/tools/node/bin/node"
@@ -13,6 +17,11 @@ REMOTE_NAME="origin"
 REPO_URL="https://github.com/Linardi1328/personal-project-operator.git"
 SERVICE_NAME="ppo-openclaw.service"
 SYSTEMCTL_BIN="/usr/bin/systemctl"
+INSTALL_BIN="/usr/bin/install"
+MV_BIN="/bin/mv"
+STAT_BIN="/usr/bin/stat"
+SHA256SUM_BIN="/usr/bin/sha256sum"
+AWK_BIN="/usr/bin/awk"
 EXPECTED_DEPLOYMENT_SHA="${1:-}"
 ROLLBACK_SHA="${2:-}"
 
@@ -75,6 +84,25 @@ read_first_line() {
   local value
   IFS= read -r value <"$path" || return 1
   printf '%s\n' "$value"
+}
+
+sha256_file() {
+  local path="$1"
+  local value
+  value="$("$SHA256SUM_BIN" "$path" 2>/dev/null | "$AWK_BIN" '{print $1}')" || return 1
+  printf '%s\n' "$value"
+}
+
+path_contract() {
+  local path="$1"
+  local expected_user="$2"
+  local expected_group="$3"
+  local expected_mode="$4"
+  local actual_user actual_group actual_mode
+
+  [[ -e "$path" ]] || return 1
+  read -r actual_user actual_group actual_mode < <("$STAT_BIN" -c '%U %G %a' "$path" 2>/dev/null) || return 1
+  [[ "$actual_user" == "$expected_user" && "$actual_group" == "$expected_group" && "$actual_mode" == "$expected_mode" ]]
 }
 
 require_executable() {
@@ -141,7 +169,7 @@ lock_runtime_checkout_permissions() {
   find "$INSTALL_DIR" -type d -exec chmod 0755 {} + || return 1
   find "$INSTALL_DIR" -type f -exec chmod 0644 {} + || return 1
 
-  executable_files="$(git -C "$INSTALL_DIR" ls-files -s | awk '$1 == "100755" {print $4}')" || return 1
+  executable_files="$(git -C "$INSTALL_DIR" ls-files -s | "$AWK_BIN" '$1 == "100755" {print $4}')" || return 1
   while IFS= read -r tracked_file; do
     [[ -n "$tracked_file" ]] || continue
     [[ -f "${INSTALL_DIR}/${tracked_file}" ]] || continue
@@ -192,6 +220,47 @@ validate_rollback_commit() {
   git -C "$INSTALL_DIR" rev-parse --verify --quiet "${ROLLBACK_SHA}^{commit}" >/dev/null ||
     fail_result "rollback_commit_missing"
   rollback_commit="passed"
+}
+
+validate_recovery_artifact() {
+  path_contract "$RECOVERY_ARTIFACT" root "$SERVICE_GROUP" 550 ||
+    return 1
+  [[ "$(sha256_file "$RECOVERY_ARTIFACT")" == "$RECOVERY_ARTIFACT_SHA256" ]] ||
+    return 1
+}
+
+stage_recovery_artifact() {
+  local source_hash staged_hash temp_path
+
+  [[ "$RECOVERY_SOURCE" == "${INSTALL_DIR}/deployment/scripts/phase6j-recovery-inspect-readonly.sh" ]] ||
+    fail_result "recovery_artifact_stage_failed"
+  [[ "$RECOVERY_ARTIFACT" == "${CONTROL_DIR}/phase6j-recovery-inspect-readonly.sh" ]] ||
+    fail_result "recovery_artifact_stage_failed"
+  [[ -f "$RECOVERY_SOURCE" ]] ||
+    fail_result "recovery_artifact_stage_failed"
+
+  source_hash="$(sha256_file "$RECOVERY_SOURCE")" ||
+    fail_result "recovery_artifact_integrity_failed"
+  [[ "$source_hash" == "$RECOVERY_ARTIFACT_SHA256" ]] ||
+    fail_result "recovery_artifact_integrity_failed"
+
+  "$INSTALL_BIN" -d -o root -g "$SERVICE_GROUP" -m 0750 "$CONTROL_DIR" ||
+    fail_result "recovery_artifact_stage_failed"
+
+  temp_path="${CONTROL_DIR}/.phase6j-recovery-inspect-readonly.$$"
+  "$INSTALL_BIN" -o root -g "$SERVICE_GROUP" -m 0550 "$RECOVERY_SOURCE" "$temp_path" ||
+    fail_result "recovery_artifact_stage_failed"
+
+  staged_hash="$(sha256_file "$temp_path")" ||
+    fail_result "recovery_artifact_integrity_failed"
+  [[ "$staged_hash" == "$RECOVERY_ARTIFACT_SHA256" ]] ||
+    fail_result "recovery_artifact_integrity_failed"
+
+  "$MV_BIN" -f "$temp_path" "$RECOVERY_ARTIFACT" ||
+    fail_result "recovery_artifact_stage_failed"
+
+  validate_recovery_artifact ||
+    fail_result "recovery_artifact_integrity_failed"
 }
 
 switch_to_rollback() {
@@ -275,6 +344,7 @@ main() {
   validate_repository_and_current_checkout
   validate_previous_revision_marker
   validate_rollback_commit
+  stage_recovery_artifact
   switch_to_rollback
   restore_permissions
   run_runtime_preflight
