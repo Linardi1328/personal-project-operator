@@ -9,6 +9,7 @@ import {
   handleSplitTaskCommand
 } from "./codex-planning-tools.mjs";
 import { handlePpoDevelopmentContinueCommand } from "./development-continue-orchestrator.mjs";
+import { loadDevelopmentContinueRuntimeProfile } from "./development-continue-runtime-profile.mjs";
 import {
   handlePpoIssueConfirmCommand,
   handlePpoIssueCreateApprovalCommand
@@ -644,7 +645,9 @@ async function main() {
       return;
     }
 
-    const result = await handlePpoDevelopmentContinueCommand(args[0]);
+    const result = await handlePpoDevelopmentContinueCommand(args[0], {
+      trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
+    });
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;

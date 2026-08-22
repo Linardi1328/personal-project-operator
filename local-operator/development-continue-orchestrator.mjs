@@ -15,7 +15,8 @@ import {
 import {
   AUTOMATED_TEST_RUNNER_ID,
   AUTOMATED_TEST_SANDBOX_ID,
-  executeAutomatedTests
+  executeAutomatedTests,
+  resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
 import { executeIndependentReview } from "./development-review-agent.mjs"
 import { executeBoundedHardening } from "./development-hardening-orchestrator.mjs"
@@ -62,8 +63,23 @@ const forbiddenCallerOptionKeys = new Set([
   "mergeMethod",
   "command",
   "executable",
+  "executablePath",
   "workspace",
+  "workspaceRegistry",
+  "workspaceRoot",
+  "sourceRepoPath",
   "policy",
+  "codexConfig",
+  "testPolicyRegistry",
+  "reviewConfig",
+  "githubClient",
+  "gitRunner",
+  "workspaceGitRunner",
+  "sandboxRunner",
+  "codexRunner",
+  "reviewRunner",
+  "runtimeProfile",
+  "runtimeProvider",
   "deploymentTarget",
   "service",
   "rollbackTarget",
@@ -75,7 +91,23 @@ const forbiddenCallerOptionKeys = new Set([
 
 const orchestratorOptionKeys = new Set([
   "readRun",
-  "childHandlers"
+  "childHandlers",
+  "trustedRuntimeProfileProvider"
+])
+
+const runtimeProfileOptionKeys = new Set([
+  "workspaceRegistry",
+  "codexConfig",
+  "testPolicyRegistry",
+  "reviewConfig",
+  "githubClient",
+  "gitRunner",
+  "workspaceGitRunner",
+  "sandboxRunner",
+  "codexRunner",
+  "reviewRunner",
+  "platform",
+  "now"
 ])
 
 const statusActions = Object.freeze({
@@ -150,7 +182,6 @@ const safeReasonPattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const safeOutcomePattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const shaPattern = /^[a-f0-9]{40}$/u
 const sha256Pattern = /^[a-f0-9]{64}$/u
-const safeIdPattern = /^[a-z0-9][a-z0-9_.:-]{0,79}$/u
 
 export class DevelopmentContinueOrchestratorError extends Error {
   constructor(code, safeMessage) {
@@ -289,6 +320,27 @@ function isCodexAttemptLooking(entry) {
   )
 }
 
+function claimsCurrentCodexAttempt(run, entry) {
+  if (!isCodexAttemptLooking(entry)) {
+    return false
+  }
+
+  const attempt = entry?.metadata?.attempt
+
+  if (attempt === run?.attempts?.implementation) {
+    return true
+  }
+
+  if (attempt === undefined && (
+    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
+    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID
+  )) {
+    return true
+  }
+
+  return false
+}
+
 function isTrustedCodexAttemptEvidence(run, entry) {
   const metadata = entry?.metadata || {}
   const expectedSha = currentRunSha(run)
@@ -339,7 +391,7 @@ function isTrustedCodexAttemptEvidence(run, entry) {
 }
 
 function validateImplementationAttemptBoundary(run, action) {
-  const latestAttempt = latestMatchingEvidence(run, "implementation", isCodexAttemptLooking)
+  const latestAttempt = latestMatchingEvidence(run, "implementation", (entry) => claimsCurrentCodexAttempt(run, entry))
 
   if (!latestAttempt) {
     return null
@@ -371,7 +423,7 @@ function isAutomatedTestAttemptLooking(entry) {
   )
 }
 
-function hasTrustedTestEvidenceBase(run, entry) {
+function hasTrustedTestEvidenceBase(run, entry, policyIdentity) {
   const metadata = entry?.metadata || {}
   const expectedSha = safeHeadSha(run?.headSha)
   const attempt = run?.attempts?.test
@@ -388,18 +440,18 @@ function hasTrustedTestEvidenceBase(run, entry) {
     safeHeadSha(metadata.implSha) === expectedSha &&
     metadata.sandbox === AUTOMATED_TEST_SANDBOX_ID &&
     metadata.network === "none" &&
-    safeIdPattern.test(String(metadata.policyId || "")) &&
-    sha256Pattern.test(String(metadata.policyHash || "")) &&
+    metadata.policyId === policyIdentity?.policyId &&
+    metadata.policyHash === policyIdentity?.policyHash &&
     branchMatches(run, metadata) &&
     isBoundedSafeString(metadata.startedAt, 80)
   )
 }
 
-function isTrustedOpenTestingEvidence(run, entry) {
+function isTrustedOpenTestingEvidence(run, entry, policyIdentity) {
   const metadata = entry?.metadata || {}
 
   return (
-    hasTrustedTestEvidenceBase(run, entry) &&
+    hasTrustedTestEvidenceBase(run, entry, policyIdentity) &&
     metadata.outcome === "testing_started" &&
     metadata.endedAt === undefined &&
     isBoundedSafeString(metadata.workspaceId, 120) &&
@@ -407,10 +459,10 @@ function isTrustedOpenTestingEvidence(run, entry) {
   )
 }
 
-function isTrustedDefinitiveTestFailureEvidence(run, entry) {
+function isTrustedDefinitiveTestFailureEvidence(run, entry, policyIdentity) {
   const metadata = entry?.metadata || {}
 
-  if (!hasTrustedTestEvidenceBase(run, entry) || metadata.outcome !== "failed") {
+  if (!hasTrustedTestEvidenceBase(run, entry, policyIdentity) || metadata.outcome !== "failed") {
     return false
   }
 
@@ -427,40 +479,63 @@ function isTrustedDefinitiveTestFailureEvidence(run, entry) {
     return false
   }
 
-  return metadata.passed + metadata.failed + metadata.ambiguous <= metadata.total
+  return (
+    metadata.total === policyIdentity.requiredTestCount &&
+    metadata.passed + metadata.failed + metadata.ambiguous <= metadata.total
+  )
 }
 
-function validateAutomatedTestRetryBoundary(run, action) {
+function resolveCurrentTestPolicyIdentity(run, action, runtimeOptions) {
+  try {
+    return {
+      ok: true,
+      identity: resolveAutomatedTestPolicyIdentity(run, runtimeOptions)
+    }
+  } catch {
+    return {
+      ok: false,
+      result: ownerActionResult(run, action, "continue_runtime_not_ready")
+    }
+  }
+}
+
+function validateAutomatedTestRetryBoundary(run, action, runtimeOptions) {
+  const policy = resolveCurrentTestPolicyIdentity(run, action, runtimeOptions)
+
+  if (!policy.ok) {
+    return policy.result
+  }
+
   const latestAttempt = latestMatchingEvidence(run, "test", isAutomatedTestAttemptLooking)
 
   if (!latestAttempt) {
     return ownerActionResult(run, action, "automated_test_reconciliation_required")
   }
 
-  if (isTrustedOpenTestingEvidence(run, latestAttempt)) {
+  if (isTrustedOpenTestingEvidence(run, latestAttempt, policy.identity)) {
     return ownerActionResult(run, action, "automated_test_reconciliation_required")
   }
 
-  if (isTrustedDefinitiveTestFailureEvidence(run, latestAttempt)) {
+  if (isTrustedDefinitiveTestFailureEvidence(run, latestAttempt, policy.identity)) {
     return null
   }
 
   return ownerActionResult(run, action, "automated_test_evidence_invalid")
 }
 
-function validateAttemptBoundary(run, boundary) {
+function validateAttemptBoundary(run, boundary, runtimeOptions = {}) {
   if (run.status === "implementation_in_progress") {
     return validateImplementationAttemptBoundary(run, boundary.action)
   }
 
   if (run.status === "tests_in_progress") {
-    return validateAutomatedTestRetryBoundary(run, boundary.action)
+    return validateAutomatedTestRetryBoundary(run, boundary.action, runtimeOptions)
   }
 
   return null
 }
 
-function childOptions(options, expectedVersion) {
+function childOptions(options, expectedVersion, runtimeOptions = {}) {
   const forwarded = {}
 
   for (const [key, value] of Object.entries(options)) {
@@ -473,6 +548,7 @@ function childOptions(options, expectedVersion) {
 
   return {
     ...forwarded,
+    ...runtimeOptions,
     expectedVersion
   }
 }
@@ -487,6 +563,59 @@ function childHandlers(options = {}) {
 async function readRun(runId, options = {}) {
   const reader = options.readRun || readDevelopmentRun
   return await reader(runId, options)
+}
+
+function normalizeRuntimeProfile(profile) {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+    throw continueError(
+      "CONTINUE_RUNTIME_NOT_READY",
+      "Trusted Phase 6K runtime profile is not ready."
+    )
+  }
+
+  const normalized = {}
+
+  for (const [key, value] of Object.entries(profile)) {
+    if (!runtimeProfileOptionKeys.has(key)) {
+      throw continueError(
+        "CONTINUE_RUNTIME_NOT_READY",
+        "Trusted Phase 6K runtime profile is not ready."
+      )
+    }
+
+    normalized[key] = value
+  }
+
+  return normalized
+}
+
+async function resolveRuntimeOptions(run, boundary, options = {}) {
+  if (typeof options.trustedRuntimeProfileProvider !== "function") {
+    return {
+      ok: true,
+      runtimeOptions: {}
+    }
+  }
+
+  try {
+    const profile = await options.trustedRuntimeProfileProvider({
+      run,
+      action: boundary.action,
+      handler: boundary.handler,
+      policyId: PHASE_6K_CONTINUE_POLICY_ID,
+      policyHash: PHASE_6K_CONTINUE_POLICY_HASH
+    })
+
+    return {
+      ok: true,
+      runtimeOptions: normalizeRuntimeProfile(profile)
+    }
+  } catch {
+    return {
+      ok: false,
+      result: ownerActionResult(run, boundary.action, "continue_runtime_not_ready")
+    }
+  }
 }
 
 function baseResult({
@@ -674,7 +803,13 @@ async function executeDevelopmentContinueInternal(runId, options = {}) {
     return staleStateResult(current, boundary.action)
   }
 
-  const openAttempt = validateAttemptBoundary(current, boundary)
+  const runtime = await resolveRuntimeOptions(current, boundary, options)
+
+  if (!runtime.ok) {
+    return runtime.result
+  }
+
+  const openAttempt = validateAttemptBoundary(current, boundary, runtime.runtimeOptions)
 
   if (openAttempt) {
     return openAttempt
@@ -690,7 +825,7 @@ async function executeDevelopmentContinueInternal(runId, options = {}) {
   }
 
   try {
-    const childResult = await handler(normalizedRunId, childOptions(options, current.version))
+    const childResult = await handler(normalizedRunId, childOptions(options, current.version, runtime.runtimeOptions))
     let afterRun = null
 
     if (!childResult?.run) {
@@ -728,6 +863,9 @@ export function formatDevelopmentContinueResult(result) {
     lines.push(`Outcome: ${result.outcome}`)
     lines.push(`After: ${result.after || result.before}`)
     lines.push(`Head: ${result.headSha || "none"}`)
+    if (result.ok === false && result.reason) {
+      lines.push(`Reason: ${result.reason}`)
+    }
   } else {
     lines.push(`Status: ${result.status || result.before || "unknown"}`)
     lines.push(`Outcome: ${result.outcome}`)

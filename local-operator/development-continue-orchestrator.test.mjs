@@ -5,21 +5,27 @@ import { join } from "node:path"
 import test from "node:test"
 import {
   createDevelopmentRun,
+  readDevelopmentRun,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
-  CODEX_EXECUTION_SANDBOX_ID
+  CODEX_EXECUTION_SANDBOX_ID,
+  PHASE_6F_HARDENING_ORCHESTRATOR_ID
 } from "./development-codex-execution-adapter.mjs"
 import {
   AUTOMATED_TEST_RUNNER_ID,
-  AUTOMATED_TEST_SANDBOX_ID
+  AUTOMATED_TEST_SANDBOX_ID,
+  resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
 import {
   executeDevelopmentContinue,
   formatDevelopmentContinueResult,
   handlePpoDevelopmentContinueCommand
 } from "./development-continue-orchestrator.mjs"
+import {
+  loadDevelopmentContinueRuntimeProfile
+} from "./development-continue-runtime-profile.mjs"
 import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
 
 const RUN_ID = "A".repeat(43)
@@ -29,7 +35,6 @@ const HEAD_SHA = "b".repeat(40)
 const NEXT_SHA = "c".repeat(40)
 const WRONG_SHA = "d".repeat(40)
 const PROMPT_HASH = "e".repeat(64)
-const TEST_POLICY_HASH = "f".repeat(64)
 const STARTED_AT = "2026-08-23T00:00:00.000Z"
 const ENDED_AT = "2026-08-23T00:01:00.000Z"
 const PROJECT = {
@@ -133,6 +138,134 @@ function makeChildHandlers(afterByHandler = {}) {
   }
 }
 
+function trustedTestPolicyRegistry(run, overrides = {}) {
+  return {
+    [run.project.id]: {
+      policyId: TEST_POLICY_ID,
+      policyVersion: "1",
+      trustedExecutablePaths: ["/bin/echo"],
+      env: {
+        PPO_SAFE_TEST_FLAG: "1"
+      },
+      sandbox: {
+        type: "macos-sandbox-exec",
+        platform: "darwin",
+        network: "none",
+        enforcement: "os-process",
+        executablePath: "/usr/bin/sandbox-exec"
+      },
+      steps: [{
+        id: "unit",
+        executablePath: "/bin/echo",
+        args: ["ok"],
+        timeoutMs: 2000,
+        maxOutputBytes: 2048,
+        required: true,
+        shell: false
+      }, {
+        id: "lint",
+        executablePath: "/bin/echo",
+        args: ["ok"],
+        timeoutMs: 2000,
+        maxOutputBytes: 2048,
+        required: true,
+        shell: false
+      }],
+      ...overrides
+    }
+  }
+}
+
+function testPolicyIdentity(run, registry = trustedTestPolicyRegistry(run)) {
+  return resolveAutomatedTestPolicyIdentity(run, {
+    testPolicyRegistry: registry
+  })
+}
+
+function trustedRuntimeProfile(run, overrides = {}) {
+  return {
+    workspaceRegistry: {
+      [run.project.id]: {
+        sourceRepoPath: "/tmp/phase6k-fixed-source",
+        workspaceRoot: "/tmp/phase6k-fixed-workspaces"
+      }
+    },
+    codexConfig: {
+      executablePath: "/bin/echo",
+      gitExecutablePath: "/opt/homebrew/bin/git",
+      args: [],
+      timeoutMs: 1000,
+      env: {},
+      remoteGitWritePolicy: {
+        mode: "deny",
+        enforcement: "adapter-git-wrapper"
+      },
+      executionSandbox: {
+        type: "macos-sandbox-exec",
+        platform: "darwin",
+        network: "none",
+        enforcement: "os-process",
+        executablePath: "/usr/bin/sandbox-exec"
+      }
+    },
+    testPolicyRegistry: trustedTestPolicyRegistry(run),
+    reviewConfig: {
+      executablePath: "/bin/echo",
+      args: [],
+      timeoutMs: 1000,
+      maxOutputBytes: 4096,
+      env: {},
+      sandbox: {
+        type: "macos-sandbox-exec",
+        platform: "darwin",
+        network: "none",
+        enforcement: "os-process",
+        readOnlyWorkspace: true,
+        readOnlyWorkspaceMode: "trusted-read-only-workspace",
+        executablePath: "/usr/bin/sandbox-exec"
+      },
+      shell: false
+    },
+    ...overrides
+  }
+}
+
+function trustedRuntimeProviderFor(run, overrides = {}, calls = []) {
+  return async (request) => {
+    calls.push(request)
+    return trustedRuntimeProfile(run, overrides)
+  }
+}
+
+function fakeRuntimeStatFor({ missing = new Set() } = {}) {
+  return async (path) => {
+    if (missing.has(path)) {
+      const error = new Error("missing")
+      error.code = "ENOENT"
+      throw error
+    }
+
+    const executablePaths = new Set([
+      "/Users/richie/.local/bin/codex",
+      "/opt/homebrew/bin/git",
+      "/opt/homebrew/bin/node",
+      "/usr/local/bin/ppo-independent-reviewer",
+      "/usr/bin/sandbox-exec",
+      "/home/ppo/.local/bin/codex",
+      "/usr/bin/git",
+      "/usr/bin/node",
+      "/usr/bin/unshare",
+      "/usr/bin/setpriv",
+      "/usr/local/bin/ppo-readonly-workspace-wrapper"
+    ])
+
+    return {
+      isFile: () => executablePaths.has(path),
+      isDirectory: () => !executablePaths.has(path)
+    }
+  }
+}
+
 function codexAttemptEvidence(run, overrides = {}) {
   const outcome = overrides.outcome || "execution_started"
   const metadata = {
@@ -171,6 +304,7 @@ function codexAttemptEvidence(run, overrides = {}) {
 }
 
 function testStartedEvidence(run, overrides = {}) {
+  const identity = overrides.policyIdentity || testPolicyIdentity(run)
   const metadata = {
     project: run.project.id,
     branch: run.branch,
@@ -178,8 +312,8 @@ function testStartedEvidence(run, overrides = {}) {
     workspaceRef: "worktrees/phase-6k-workspace",
     runner: AUTOMATED_TEST_RUNNER_ID,
     attempt: run.attempts.test,
-    policyId: TEST_POLICY_ID,
-    policyHash: TEST_POLICY_HASH,
+    policyId: identity.policyId,
+    policyHash: identity.policyHash,
     implSha: run.headSha,
     outcome: "testing_started",
     startedAt: STARTED_AT,
@@ -205,18 +339,19 @@ function testStartedEvidence(run, overrides = {}) {
 }
 
 function testFailureEvidence(run, overrides = {}) {
+  const identity = overrides.policyIdentity || testPolicyIdentity(run)
   const metadata = {
     project: run.project.id,
     branch: run.branch,
     runner: AUTOMATED_TEST_RUNNER_ID,
     attempt: run.attempts.test,
-    policyId: TEST_POLICY_ID,
-    policyHash: TEST_POLICY_HASH,
+    policyId: identity.policyId,
+    policyHash: identity.policyHash,
     implSha: run.headSha,
     outcome: "failed",
     startedAt: STARTED_AT,
     endedAt: ENDED_AT,
-    total: 2,
+    total: identity.requiredTestCount,
     passed: 1,
     failed: 1,
     ambiguous: 0,
@@ -245,6 +380,185 @@ async function tempWriteDataDir(label = "ppo-6k-") {
   return mkdtemp(join(tmpdir(), label))
 }
 
+async function createStoredRun(status, options = {}) {
+  const writeDataDir = options.writeDataDir || await tempWriteDataDir()
+  const created = await createDevelopmentRun({
+    projectId: PROJECT.id,
+    task: options.task || "Phase 6K stored route fixture.",
+    baseSha: BASE_SHA,
+    branch: "main",
+    headSha: BASE_SHA,
+    actor: "phase-6k-test"
+  }, {
+    writeDataDir
+  })
+
+  if (status === "created") {
+    return { writeDataDir, run: created }
+  }
+
+  const planning = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: created.version,
+    status: "planning_in_progress",
+    actor: "phase-6k-test"
+  }, { writeDataDir })
+  const planned = await transitionDevelopmentRun(planning.runId, {
+    expectedVersion: planning.version,
+    status: "planned",
+    actor: "phase-6k-test"
+  }, { writeDataDir })
+
+  if (status === "planned") {
+    return { writeDataDir, run: planned }
+  }
+
+  const implementing = await transitionDevelopmentRun(planned.runId, {
+    expectedVersion: planned.version,
+    status: "implementation_in_progress",
+    branch: "phase-6k-fixture",
+    headSha: HEAD_SHA,
+    actor: "phase-6k-test"
+  }, { writeDataDir })
+
+  if (status === "implementation_in_progress") {
+    return { writeDataDir, run: implementing }
+  }
+
+  const implementationReady = await transitionDevelopmentRun(implementing.runId, {
+    expectedVersion: implementing.version,
+    status: "implementation_ready",
+    branch: "phase-6k-fixture",
+    headSha: HEAD_SHA,
+    actor: CODEX_EXECUTION_ADAPTER_ID,
+    evidence: [{
+      kind: "implementation",
+      sha: HEAD_SHA,
+      source: CODEX_EXECUTION_ADAPTER_ID,
+      metadata: {
+        project: PROJECT.id,
+        adapter: CODEX_EXECUTION_ADAPTER_ID,
+        attempt: implementing.attempts.implementation,
+        promptHash: PROMPT_HASH,
+        startedAt: STARTED_AT,
+        endedAt: ENDED_AT,
+        outcome: "implementation_ready",
+        remotePolicy: "deny",
+        sandbox: CODEX_EXECUTION_SANDBOX_ID,
+        network: "none",
+        changedFiles: 1
+      }
+    }]
+  }, { writeDataDir })
+
+  if (status === "implementation_ready") {
+    return { writeDataDir, run: implementationReady }
+  }
+
+  const testing = await transitionDevelopmentRun(implementationReady.runId, {
+    expectedVersion: implementationReady.version,
+    status: "tests_in_progress",
+    branch: "phase-6k-fixture",
+    headSha: HEAD_SHA,
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    evidence: status === "tests_in_progress" ? [testFailureEvidence({
+      ...implementationReady,
+      status: "tests_in_progress",
+      attempts: {
+        ...implementationReady.attempts,
+        test: implementationReady.attempts.test + 1
+      }
+    })] : []
+  }, { writeDataDir })
+
+  if (status === "tests_in_progress") {
+    return { writeDataDir, run: testing }
+  }
+
+  const testsPassed = await transitionDevelopmentRun(testing.runId, {
+    expectedVersion: testing.version,
+    status: "tests_passed",
+    branch: "phase-6k-fixture",
+    headSha: HEAD_SHA,
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    evidence: [{
+      kind: "test",
+      sha: HEAD_SHA,
+      source: AUTOMATED_TEST_RUNNER_ID,
+      metadata: {
+        project: PROJECT.id,
+        runner: AUTOMATED_TEST_RUNNER_ID,
+        attempt: testing.attempts.test,
+        ...testPolicyIdentity(testing),
+        implSha: HEAD_SHA,
+        outcome: "passed",
+        total: testPolicyIdentity(testing).requiredTestCount,
+        passed: testPolicyIdentity(testing).requiredTestCount,
+        failed: 0,
+        ambiguous: 0,
+        sandbox: AUTOMATED_TEST_SANDBOX_ID,
+        network: "none"
+      }
+    }]
+  }, { writeDataDir })
+
+  if (status === "tests_passed") {
+    return { writeDataDir, run: testsPassed }
+  }
+
+  const reviewing = await transitionDevelopmentRun(testsPassed.runId, {
+    expectedVersion: testsPassed.version,
+    status: "review_in_progress",
+    branch: "phase-6k-fixture",
+    headSha: HEAD_SHA,
+    actor: "phase-6f-independent-review-agent"
+  }, { writeDataDir })
+  const reviewDecision = status === "review_changes_requested" ? "changes_requested" : "approved"
+  const reviewRun = await transitionDevelopmentRun(reviewing.runId, {
+    expectedVersion: reviewing.version,
+    status,
+    branch: "phase-6k-fixture",
+    headSha: HEAD_SHA,
+    actor: "phase-6f-independent-review-agent",
+    evidence: [{
+      kind: "review",
+      sha: HEAD_SHA,
+      source: "phase-6f-independent-review-agent",
+      metadata: {
+        project: PROJECT.id,
+        reviewer: "phase-6f-independent-review-agent",
+        attempt: reviewing.attempts.review,
+        reviewedSha: HEAD_SHA,
+        promptHash: "c".repeat(64),
+        decision: reviewDecision,
+        mergeAllowed: reviewDecision === "approved",
+        blockers: reviewDecision === "approved" ? 0 : 1,
+        securityFindings: 0,
+        testsRequired: 0,
+        summaryHash: "e".repeat(64),
+        outcome: reviewDecision,
+        sandbox: "phase-6f-no-outbound-network-review-sandbox",
+        network: "none"
+      }
+    }, ...(reviewDecision === "changes_requested" ? [{
+      kind: "review",
+      sha: HEAD_SHA,
+      source: "phase-6f-independent-review-agent",
+      metadata: {
+        project: PROJECT.id,
+        reviewer: "phase-6f-independent-review-agent",
+        attempt: reviewing.attempts.review,
+        reviewedSha: HEAD_SHA,
+        outcome: "review_findings",
+        blockers: ["Fix the bounded fixture."],
+        securityFindings: [],
+        testsRequired: []
+      }
+    }] : [])]
+  }, { writeDataDir })
+
+  return { writeDataDir, run: reviewRun }
+}
+
 test("Phase 6K dispatches each supported status to exactly one reviewed child boundary", async () => {
   const cases = [
     ["created", "planExistingDevelopmentRun", "phase-6b-plan", "planned"],
@@ -258,12 +572,18 @@ test("Phase 6K dispatches each supported status to exactly one reviewed child bo
   ]
 
   for (const [status, handlerName, action, afterStatus] of cases) {
-    const run = makeRun(status)
+    const run = makeRun(status, status === "tests_in_progress" ? { attempts: { test: 1 } } : {})
+
+    if (status === "tests_in_progress") {
+      run.evidence.test = [testFailureEvidence(run)]
+    }
+
     const reader = makeReader(run)
     const children = makeChildHandlers({ [handlerName]: afterStatus })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
     })
 
     assert.equal(result.ok, true, status)
@@ -289,7 +609,8 @@ test("Phase 6K allows automated-test retry only after definitive Phase 6E failur
   })
   const result = await executeDevelopmentContinue(RUN_ID, {
     readRun: reader.readRun,
-    childHandlers: children.handlers
+    childHandlers: children.handlers,
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
   })
 
   assert.equal(result.ok, true)
@@ -327,7 +648,8 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
     })
 
     assert.equal(result.ok, false, run.status)
@@ -418,20 +740,38 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
     omitMetadata: ["promptHash"]
   })]
 
-  for (const run of [wrongSourceRun, wrongShaRun, staleAttemptRun, malformedRun]) {
+  for (const run of [wrongSourceRun, wrongShaRun, malformedRun]) {
     const reader = makeReader(run)
     const children = makeChildHandlers({
       executeCodexImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
     })
 
     assert.equal(result.ok, false)
     assert.equal(result.outcome, "owner_action_required")
     assert.equal(result.reason, "codex_evidence_invalid")
     assert.equal(children.calls.length, 0)
+  }
+
+  {
+    const reader = makeReader(staleAttemptRun)
+    const children = makeChildHandlers({
+      executeCodexImplementation: "implementation_ready"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(staleAttemptRun)
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.action, "phase-6d-codex-implementation")
+    assert.equal(children.calls.length, 1)
+    assert.equal(children.calls[0].expectedVersion, staleAttemptRun.version)
   }
 
   const openRun = makeRun("implementation_in_progress", {
@@ -445,7 +785,8 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(openRun)
     })
 
     assert.equal(result.ok, false)
@@ -466,7 +807,8 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(definitiveFailureRun)
     })
 
     assert.equal(result.ok, true)
@@ -515,6 +857,32 @@ test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure e
   malformedRun.evidence.test = [testFailureEvidence(malformedRun, {
     omitMetadata: ["policyHash"]
   })]
+  const wrongPolicyIdRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  wrongPolicyIdRun.evidence.test = [testFailureEvidence(wrongPolicyIdRun, {
+    metadata: { policyId: "phase-6e-other-policy" }
+  })]
+  const wrongPolicyHashRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  wrongPolicyHashRun.evidence.test = [testFailureEvidence(wrongPolicyHashRun, {
+    metadata: { policyHash: "f".repeat(64) }
+  })]
+  const oldPolicyRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  oldPolicyRun.evidence.test = [testFailureEvidence(oldPolicyRun, {
+    policyIdentity: testPolicyIdentity(oldPolicyRun, trustedTestPolicyRegistry(oldPolicyRun, {
+      policyVersion: "old"
+    }))
+  })]
+  const wrongRequiredCountRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  wrongRequiredCountRun.evidence.test = [testFailureEvidence(wrongRequiredCountRun, {
+    metadata: { total: 1, passed: 0, failed: 1, ambiguous: 0 }
+  })]
   const stepFailureRun = makeRun("tests_in_progress", {
     attempts: { test: 1 }
   })
@@ -528,6 +896,10 @@ test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure e
     wrongRunnerRun,
     staleAttemptRun,
     malformedRun,
+    wrongPolicyIdRun,
+    wrongPolicyHashRun,
+    oldPolicyRun,
+    wrongRequiredCountRun,
     stepFailureRun
   ]) {
     const reader = makeReader(run)
@@ -536,7 +908,8 @@ test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure e
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
     })
 
     assert.equal(result.ok, false)
@@ -556,7 +929,8 @@ test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure e
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(openRun)
     })
 
     assert.equal(result.ok, false)
@@ -575,7 +949,8 @@ test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure e
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
-      childHandlers: children.handlers
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(trustedFailureRun)
     })
 
     assert.equal(result.ok, true)
@@ -583,6 +958,169 @@ test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure e
     assert.equal(children.calls.length, 1)
     assert.equal(children.calls[0].expectedVersion, trustedFailureRun.version)
   }
+})
+
+test("Phase 6K default route passes trusted runtime profile into real child APIs", async () => {
+  const cases = [
+    ["implementation_in_progress", "phase-6d-codex-implementation"],
+    ["implementation_ready", "phase-6e-automated-tests"],
+    ["tests_in_progress", "phase-6e-automated-test-retry"],
+    ["tests_passed", "phase-6f-independent-review"],
+    ["review_changes_requested", "phase-6f-bounded-hardening"],
+    ["review_passed", "phase-6g-delivery"]
+  ]
+
+  for (const [status, action] of cases) {
+    const fixture = await createStoredRun(status)
+    const calls = []
+    const result = await executeDevelopmentContinue(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(fixture.run, {}, calls)
+    })
+
+    assert.equal(calls.length, 1, status)
+    assert.equal(calls[0].action, action, status)
+    assert.equal(result.ok, false, status)
+    assert.equal(result.action, action, status)
+    assert.notEqual(result.reason, "continue_runtime_not_ready", status)
+    assert.doesNotMatch(String(result.reason), /config|required|policy/i, status)
+  }
+})
+
+test("Phase 6K fixed runtime profile supplies reviewed local capabilities only", async () => {
+  const run = makeRun("implementation_ready")
+  const profile = await loadDevelopmentContinueRuntimeProfile({ run }, {
+    platform: "darwin",
+    statImpl: fakeRuntimeStatFor(),
+    accessImpl: async () => {}
+  })
+
+  assert.deepEqual(Object.keys(profile.workspaceRegistry), [PROJECT.id])
+  assert.equal(profile.workspaceRegistry[PROJECT.id].sourceRepoPath, "/Users/richie/khlim-assist")
+  assert.equal(profile.workspaceRegistry[PROJECT.id].workspaceRoot, "/Users/richie/.local/share/personal-project-operator/development-workspaces")
+  assert.equal(profile.codexConfig.executablePath, "/Users/richie/.local/bin/codex")
+  assert.equal(profile.codexConfig.gitExecutablePath, "/opt/homebrew/bin/git")
+  assert.equal(profile.codexConfig.remoteGitWritePolicy.mode, "deny")
+  assert.equal(profile.codexConfig.executionSandbox.network, "none")
+  assert.equal(profile.testPolicyRegistry[PROJECT.id].steps.length, 1)
+  assert.equal(profile.testPolicyRegistry[PROJECT.id].steps[0].executablePath, "/opt/homebrew/bin/node")
+  assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
+  assert.equal(profile.reviewConfig.shell, false)
+  assert.equal(profile.reviewConfig.sandbox.readOnlyWorkspace, true)
+  assert.equal(profile.reviewConfig.sandbox.network, "none")
+  assert.equal(Object.hasOwn(profile, "deploymentTarget"), false)
+  assert.equal(Object.hasOwn(profile, "service"), false)
+
+  await assert.rejects(
+    () => loadDevelopmentContinueRuntimeProfile({ run }, {
+      platform: "darwin",
+      statImpl: fakeRuntimeStatFor({ missing: new Set(["/usr/local/bin/ppo-independent-reviewer"]) }),
+      accessImpl: async () => {}
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+
+  await assert.rejects(
+    () => loadDevelopmentContinueRuntimeProfile({ run: makeRun("implementation_ready", {
+      project: {
+        id: "personal-project-operator",
+        owner: "Linardi1328",
+        repo: "personal-project-operator",
+        fullName: "Linardi1328/personal-project-operator"
+      }
+    }) }, {
+      platform: "darwin",
+      statImpl: fakeRuntimeStatFor(),
+      accessImpl: async () => {}
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+})
+
+test("Phase 6K fails closed when the trusted runtime profile is missing or malformed", async () => {
+  for (const provider of [
+    async () => {
+      throw new Error("SENSITIVE_TEST_SENTINEL missing profile")
+    },
+    async () => null,
+    async () => ({
+      workspaceRegistry: {},
+      unexpectedRuntimeField: true
+    })
+  ]) {
+    const fixture = await createStoredRun("implementation_in_progress")
+    const before = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    const result = await executeDevelopmentContinue(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir,
+      trustedRuntimeProfileProvider: provider
+    })
+    const after = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "continue_runtime_not_ready")
+    assert.equal(after.version, before.version)
+    assert.equal(after.status, before.status)
+    assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|missing profile|unexpectedRuntimeField/)
+  }
+})
+
+test("Phase 6K resumes interrupted hardening when no current Codex attempt is reserved", async () => {
+  const run = makeRun("implementation_in_progress", {
+    attempts: {
+      implementation: 2,
+      test: 1,
+      review: 1
+    },
+    evidence: {
+      implementation: [
+        codexAttemptEvidence(makeRun("implementation_in_progress", {
+          attempts: { implementation: 1 }
+        }), {
+          outcome: "execution_failed",
+          metadata: { attempt: 1 }
+        }),
+        {
+          kind: "implementation",
+          sha: HEAD_SHA,
+          source: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+          metadata: {
+            project: PROJECT.id,
+            orchestrator: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+            round: 1,
+            sourceReviewSha: HEAD_SHA,
+            reviewAttempt: 1,
+            blockerCount: 1,
+            securityFindingCount: 0,
+            testRequirementCount: 0,
+            remediationHash: "a".repeat(64),
+            startedAt: STARTED_AT,
+            outcome: "hardening_started",
+            codex: CODEX_EXECUTION_ADAPTER_ID,
+            tests: AUTOMATED_TEST_RUNNER_ID,
+            reviewer: "phase-6f-independent-review-agent"
+          }
+        }
+      ]
+    }
+  })
+  const reader = makeReader(run)
+  const children = makeChildHandlers({
+    executeCodexImplementation: "implementation_ready"
+  })
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: reader.readRun,
+    childHandlers: children.handlers,
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(children.calls.length, 1)
+  assert.equal(children.calls[0].expectedVersion, run.version)
 })
 
 test("Phase 6K surfaces child owner-action outcomes without bypassing caps or reviews", async () => {
@@ -785,6 +1323,15 @@ test("Phase 6K stops at merged and never dispatches production or terminal statu
 test("Phase 6K accepts only runId and refuses caller-selected orchestration values", async () => {
   for (const [key, value] of [
     ["expectedVersion", 7],
+    ["codexConfig", {}],
+    ["testPolicyRegistry", {}],
+    ["reviewConfig", {}],
+    ["workspaceRegistry", {}],
+    ["githubClient", {}],
+    ["gitRunner", async () => {}],
+    ["sandboxRunner", async () => {}],
+    ["runtimeProfile", {}],
+    ["runtimeProvider", async () => {}],
     ["projectId", "khlim-assist"],
     ["project", PROJECT],
     ["status", "review_passed"],
@@ -878,6 +1425,21 @@ test("Phase 6K output is compact bounded metadata", async () => {
   assert.match(handled.output, /Outcome: planned/)
   assert.match(handled.output, /After: planned/)
   assert.doesNotMatch(handled.output, /stdout|stderr|stack|token|secret|SENSITIVE_TEST_SENTINEL/i)
+
+  const blockedRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 }
+  })
+  blockedRun.evidence.implementation = [codexAttemptEvidence(blockedRun)]
+  const blocked = await handlePpoDevelopmentContinueCommand(RUN_ID, {
+    readRun: makeReader(blockedRun).readRun,
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(blockedRun)
+  })
+
+  assert.equal(blocked.ok, false)
+  assert.match(blocked.output, /Action: phase-6d-codex-implementation/)
+  assert.match(blocked.output, /Outcome: owner_action_required/)
+  assert.match(blocked.output, /Reason: codex_reconciliation_required/)
+  assert.doesNotMatch(blocked.output, /stdout|stderr|stack|token|secret|SENSITIVE_TEST_SENTINEL|raw/i)
 })
 
 test("concurrent Phase 6K continue calls cannot duplicate a run-state reservation", async () => {
@@ -965,4 +1527,6 @@ test("Phase 6K orchestrator is composition-only and imports no production agents
   assert.doesNotMatch(source, /development-deployment-agent|development-production-verification-agent|development-rollback-agent/)
   assert.doesNotMatch(commandSource, /development-deployment-agent|development-production-verification-agent|development-rollback-agent/)
   assert.doesNotMatch(bridgeSource, /development-deployment-agent|development-production-verification-agent|development-rollback-agent/)
+  assert.match(commandSource, /development-continue-runtime-profile\.mjs/)
+  assert.match(commandSource, /trustedRuntimeProfileProvider:\s*loadDevelopmentContinueRuntimeProfile/)
 })

@@ -97,6 +97,38 @@ assert.equal(fullPayload.ok, true, "full /ppo payload succeeds");
 assert.deepEqual(fullPayload.wrapperArgs, ["menu", "project"]);
 assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo payload returns exact wrapper output");
 
+{
+  const safeContinueOutput = [
+    "PPO Development Continue",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Before: implementation_in_progress",
+    "Action: phase-6d-codex-implementation",
+    "Outcome: owner_action_required",
+    "After: implementation_in_progress",
+    "Head: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "Reason: codex_reconciliation_required",
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo continue ${validDevelopmentRunId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["continue", validDevelopmentRunId]);
+        return {
+          stdout: safeContinueOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw continue stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "continue output with reason succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["continue", validDevelopmentRunId]);
+  assert.match(result.stdout, /Reason: codex_reconciliation_required/);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw continue stderr|token|secret|stack/i);
+}
+
 for (const [input, expected] of [
   ["/ppo status", ["status"]],
   ["/ppo repo khlim-assist", ["repo", "khlim-assist"]],

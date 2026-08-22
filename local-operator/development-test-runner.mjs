@@ -571,6 +571,17 @@ function resolveProjectPolicy(run, registry) {
   return policy
 }
 
+export function resolveAutomatedTestPolicyIdentity(run, options = {}) {
+  const registry = normalizeTestPolicyRegistry(options.testPolicyRegistry)
+  const policy = resolveProjectPolicy(run, registry)
+
+  return {
+    policyId: policy.policyId,
+    policyHash: policy.policyHash,
+    requiredTestCount: policy.steps.length
+  }
+}
+
 function isUncertainExecutionOutcome(value) {
   return (
     value?.ambiguous === true ||
