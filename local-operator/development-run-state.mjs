@@ -19,6 +19,15 @@ import {
   getPhase2GitHubProject,
   listPhase2GitHubProjects
 } from "./github-project-registry.mjs"
+import {
+  DEVELOPMENT_RUN_ID_BYTES,
+  DEVELOPMENT_RUN_ID_PATTERN
+} from "./development-run-id.mjs"
+
+export {
+  DEVELOPMENT_RUN_ID_BYTES,
+  DEVELOPMENT_RUN_ID_PATTERN
+}
 
 export const PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT = Object.freeze({
   id: "personal-project-operator",
@@ -29,8 +38,6 @@ export const PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT = Object.freeze(
 })
 
 export const DEVELOPMENT_RUN_SCHEMA_VERSION = 1
-export const DEVELOPMENT_RUN_ID_BYTES = 32
-export const DEVELOPMENT_RUN_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/u
 export const DEVELOPMENT_RUN_STORE_DIR = "development-runs"
 export const MAX_DEVELOPMENT_RUN_TASK_CHARS = 1000
 export const MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES = 100

@@ -23,6 +23,7 @@ import {
   handlePpoNoteConfirmCommand
 } from "./project-note-approval.mjs";
 import { handleProjectStatePromoteCommand } from "./project-state-promote.mjs";
+import { DEVELOPMENT_RUN_ID_PATTERN } from "./development-run-id.mjs";
 
 const execFileAsync = promisify(execFile);
 const simulatorPath = fileURLToPath(new URL("simulate-command.mjs", import.meta.url));
@@ -37,6 +38,50 @@ function normalizeArgs(rawArgs) {
   }
 
   return args;
+}
+
+function parseStrictContinueArgs(rawArgs) {
+  const args = rawArgs.map((arg) => String(arg));
+  const unsafe = args.some((arg) => arg !== arg.trim() || /[\r\n\t]/u.test(arg));
+  const lower0 = args[0]?.toLowerCase();
+  const lower1 = args[1]?.toLowerCase();
+  const firstLooksLikeContinue = lower0 === "continue" || lower0?.startsWith("continue ");
+  const envelopeLooksLikeContinue = (
+    (lower0 === "/ppo" || lower0 === "ppo") &&
+    (lower1 === "continue" || lower1?.startsWith("continue "))
+  );
+  const combinedEnvelopeLooksLikeContinue = (
+    (lower0?.startsWith("/ppo") || lower0?.startsWith("ppo")) &&
+    /(?:^|[\s\r\n\t])continue(?:$|[\s\r\n\t])/iu.test(args[0])
+  );
+  const attempted = (
+    firstLooksLikeContinue ||
+    envelopeLooksLikeContinue ||
+    combinedEnvelopeLooksLikeContinue
+  );
+
+  if (!attempted) {
+    return null;
+  }
+
+  if (unsafe) {
+    return { ok: false, attempted: true };
+  }
+
+  if (args.length === 2 && args[0] === "continue" && DEVELOPMENT_RUN_ID_PATTERN.test(args[1])) {
+    return { ok: true, attempted: true, runId: args[1] };
+  }
+
+  if (
+    args.length === 3 &&
+    (args[0] === "/ppo" || args[0] === "ppo") &&
+    args[1] === "continue" &&
+    DEVELOPMENT_RUN_ID_PATTERN.test(args[2])
+  ) {
+    return { ok: true, attempted: true, runId: args[2] };
+  }
+
+  return { ok: false, attempted: true };
 }
 
 function terminalArgsAfterCommand(rawArgs, command) {
@@ -236,7 +281,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo issue-confirm <request-id>\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-add khlim-assist project note text\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-confirm <request-id>\"",
-    "  node local-operator/ppo-command.mjs \"/ppo continue <run-id>\"",
+    "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
     "",
     "Supported Telegram messages:",
     "  /ppo status",
@@ -492,6 +537,23 @@ async function runSimulator(args) {
 
 async function main() {
   const rawProcessArgs = process.argv.slice(2);
+  const strictContinue = parseStrictContinueArgs(rawProcessArgs);
+
+  if (strictContinue?.ok === true) {
+    const result = await handlePpoDevelopmentContinueCommand(strictContinue.runId, {
+      trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
+    });
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictContinue?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "continue"));
+    process.exitCode = 1;
+    return;
+  }
+
   const [rawCommand, ...args] = normalizeArgs(rawProcessArgs);
 
   if (!rawCommand) {
@@ -632,21 +694,6 @@ async function main() {
     const [projectId, noteId, field] = args;
     const result = await handleProjectStatePromoteCommand(projectId, noteId, field, {
       confirmationValue: process.env.PPO_PROJECT_STATE_CONFIRM
-    });
-    console.log(result.output);
-    process.exitCode = result.ok ? 0 : 1;
-    return;
-  }
-
-  if (command === "continue") {
-    if (args.length !== 1) {
-      console.log(unsupported(rawCommand));
-      process.exitCode = 1;
-      return;
-    }
-
-    const result = await handlePpoDevelopmentContinueCommand(args[0], {
-      trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
     });
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;

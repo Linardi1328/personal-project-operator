@@ -398,7 +398,7 @@ node local-operator/ppo-command.mjs issue-create khlim-assist "owner review test
 node local-operator/ppo-command.mjs note-add khlim-assist "owner review local note"
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review test issue --body created only after confirmation"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
-node local-operator/ppo-command.mjs "/ppo continue <run-id>"
+node local-operator/ppo-command.mjs /ppo continue <run-id>
 ```
 
 Phase 6K adds only `/ppo continue <run-id>` for existing ordinary development runs. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.

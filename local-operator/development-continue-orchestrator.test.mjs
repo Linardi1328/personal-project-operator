@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
+import { mkdtemp, readFile, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -10,6 +11,7 @@ import {
 } from "./development-run-state.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
+  CODEX_EXECUTION_POLICY_STORE_DIR,
   CODEX_EXECUTION_SANDBOX_ID,
   PHASE_6F_HARDENING_ORCHESTRATOR_ID
 } from "./development-codex-execution-adapter.mjs"
@@ -237,7 +239,7 @@ function trustedRuntimeProviderFor(run, overrides = {}, calls = []) {
   }
 }
 
-function fakeRuntimeStatFor({ missing = new Set() } = {}) {
+function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByPath = {} } = {}) {
   return async (path) => {
     if (missing.has(path)) {
       const error = new Error("missing")
@@ -249,21 +251,103 @@ function fakeRuntimeStatFor({ missing = new Set() } = {}) {
       "/Users/richie/.local/bin/codex",
       "/opt/homebrew/bin/git",
       "/opt/homebrew/bin/node",
+      "/opt/homebrew/bin/python3.12",
       "/usr/local/bin/ppo-independent-reviewer",
       "/usr/bin/sandbox-exec",
       "/home/ppo/.local/bin/codex",
       "/usr/bin/git",
       "/usr/bin/node",
-      "/usr/bin/unshare",
+      "/usr/bin/python3.12",
+      "/usr/bin/nsenter",
+      "/usr/bin/id",
       "/usr/bin/setpriv",
       "/usr/local/bin/ppo-readonly-workspace-wrapper"
     ])
+    const regularFilePaths = new Set([
+      ...executablePaths,
+      "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/typescript/bin/tsc",
+      "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/eslint/bin/eslint.js",
+      "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns"
+    ])
+    const directoryPaths = new Set([
+      "/Users/richie/khlim-assist",
+      "/Users/richie/ledgerpilot-ai",
+      "/Users/richie/spy-market-agent",
+      "/Users/richie/richie-linardi-portfolio-website",
+      "/Users/richie/rbl-content-engine",
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces",
+      "/var/lib/personal-project-operator/source-repos/khlim-assist",
+      "/var/lib/personal-project-operator/source-repos/ledgerpilot-ai",
+      "/var/lib/personal-project-operator/source-repos/spy-market-agent",
+      "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
+      "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
+      "/var/lib/personal-project-operator/development-workspaces",
+      "/var/lib/personal-project-operator/phase6-sandbox"
+    ])
+    const mode = Object.hasOwn(modeByPath, path) ? modeByPath[path] : 0o100755
 
     return {
-      isFile: () => executablePaths.has(path),
-      isDirectory: () => !executablePaths.has(path)
+      uid: 0,
+      gid: 0,
+      mode,
+      isFile: () => regularFilePaths.has(path),
+      isDirectory: () => directoryPaths.has(path),
+      isSymbolicLink: () => symlinks.has(path)
     }
   }
+}
+
+async function fakeRuntimeExecFile() {
+  return {
+    stdout: "ok\n",
+    stderr: ""
+  }
+}
+
+async function fakeRuntimeIdentity() {
+  return {
+    uid: 4242,
+    gid: 4243,
+    userName: "ppo",
+    groupName: "ppo"
+  }
+}
+
+function runPpoCommand(args, options = {}) {
+  return spawnSync(process.execPath, ["local-operator/ppo-command.mjs", ...args], {
+    cwd: new URL("..", import.meta.url).pathname,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ...(options.env || {})
+    }
+  })
+}
+
+function ordinaryProject(projectId) {
+  const project = listPhase2GitHubProjects().find((entry) => entry.id === projectId)
+
+  assert.ok(project, `ordinary project ${projectId} exists`)
+  return project
+}
+
+function runForProject(projectId, status = "implementation_ready", options = {}) {
+  return makeRun(status, {
+    ...options,
+    project: ordinaryProject(projectId)
+  })
+}
+
+async function loadFakeRuntimeProfileFor(projectId, options = {}) {
+  return await loadDevelopmentContinueRuntimeProfile({ run: runForProject(projectId) }, {
+    platform: options.platform || "darwin",
+    statImpl: options.statImpl || fakeRuntimeStatFor(),
+    lstatImpl: options.lstatImpl || options.statImpl || fakeRuntimeStatFor(),
+    accessImpl: options.accessImpl || (async () => {}),
+    execFileImpl: options.execFileImpl || fakeRuntimeExecFile,
+    identityLookup: options.identityLookup,
+    linuxSandboxCapabilityProbe: options.linuxSandboxCapabilityProbe
+  })
 }
 
 function codexAttemptEvidence(run, overrides = {}) {
@@ -340,6 +424,7 @@ function testStartedEvidence(run, overrides = {}) {
 
 function testFailureEvidence(run, overrides = {}) {
   const identity = overrides.policyIdentity || testPolicyIdentity(run)
+  const defaultPassed = Math.max(0, identity.requiredTestCount - 1)
   const metadata = {
     project: run.project.id,
     branch: run.branch,
@@ -352,7 +437,7 @@ function testFailureEvidence(run, overrides = {}) {
     startedAt: STARTED_AT,
     endedAt: ENDED_AT,
     total: identity.requiredTestCount,
-    passed: 1,
+    passed: defaultPassed,
     failed: 1,
     ambiguous: 0,
     sandbox: AUTOMATED_TEST_SANDBOX_ID,
@@ -378,6 +463,15 @@ function testFailureEvidence(run, overrides = {}) {
 
 async function tempWriteDataDir(label = "ppo-6k-") {
   return mkdtemp(join(tmpdir(), label))
+}
+
+async function pathExists(path) {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function createStoredRun(status, options = {}) {
@@ -454,19 +548,25 @@ async function createStoredRun(status, options = {}) {
     return { writeDataDir, run: implementationReady }
   }
 
+  const testingEvidenceRun = {
+    ...implementationReady,
+    status: "tests_in_progress",
+    attempts: {
+      ...implementationReady.attempts,
+      test: implementationReady.attempts.test + 1
+    }
+  }
+  const testingPolicyIdentity = options.testPolicyRegistry
+    ? testPolicyIdentity(testingEvidenceRun, options.testPolicyRegistry)
+    : undefined
   const testing = await transitionDevelopmentRun(implementationReady.runId, {
     expectedVersion: implementationReady.version,
     status: "tests_in_progress",
     branch: "phase-6k-fixture",
     headSha: HEAD_SHA,
     actor: AUTOMATED_TEST_RUNNER_ID,
-    evidence: status === "tests_in_progress" ? [testFailureEvidence({
-      ...implementationReady,
-      status: "tests_in_progress",
-      attempts: {
-        ...implementationReady.attempts,
-        test: implementationReady.attempts.test + 1
-      }
+    evidence: status === "tests_in_progress" ? [testFailureEvidence(testingEvidenceRun, {
+      ...(testingPolicyIdentity ? { policyIdentity: testingPolicyIdentity } : {})
     })] : []
   }, { writeDataDir })
 
@@ -474,6 +574,9 @@ async function createStoredRun(status, options = {}) {
     return { writeDataDir, run: testing }
   }
 
+  const passedPolicyIdentity = options.testPolicyRegistry
+    ? testPolicyIdentity(testing, options.testPolicyRegistry)
+    : testPolicyIdentity(testing)
   const testsPassed = await transitionDevelopmentRun(testing.runId, {
     expectedVersion: testing.version,
     status: "tests_passed",
@@ -488,11 +591,11 @@ async function createStoredRun(status, options = {}) {
         project: PROJECT.id,
         runner: AUTOMATED_TEST_RUNNER_ID,
         attempt: testing.attempts.test,
-        ...testPolicyIdentity(testing),
+        ...passedPolicyIdentity,
         implSha: HEAD_SHA,
         outcome: "passed",
-        total: testPolicyIdentity(testing).requiredTestCount,
-        passed: testPolicyIdentity(testing).requiredTestCount,
+        total: passedPolicyIdentity.requiredTestCount,
+        passed: passedPolicyIdentity.requiredTestCount,
         failed: 0,
         ambiguous: 0,
         sandbox: AUTOMATED_TEST_SANDBOX_ID,
@@ -960,6 +1063,104 @@ test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure e
   }
 })
 
+test("Phase 6K Phase 6E retry evidence is bound to the exact selected reviewed project policy", async () => {
+  const khlimRun = runForProject("khlim-assist", "tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  const khlimProfile = await loadFakeRuntimeProfileFor("khlim-assist")
+  const khlimIdentity = resolveAutomatedTestPolicyIdentity(khlimRun, khlimProfile)
+  khlimRun.evidence.test = [testFailureEvidence(khlimRun, {
+    policyIdentity: khlimIdentity
+  })]
+  {
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(khlimRun).readRun,
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: async () => khlimProfile
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.action, "phase-6e-automated-test-retry")
+    assert.equal(children.calls.length, 1)
+  }
+
+  for (const [label, metadata] of [
+    ["wrong policy id", { policyId: "phase-6e-other-reviewed-policy" }],
+    ["wrong policy hash", { policyHash: "f".repeat(64) }],
+    ["valid-looking arbitrary hash", { policyHash: "1".repeat(64) }],
+    ["wrong required test count", { total: khlimIdentity.requiredTestCount + 1, passed: 0, failed: 1, ambiguous: 0 }],
+    ["step-level failure", { testId: "pytest" }]
+  ]) {
+    const run = runForProject("khlim-assist", "tests_in_progress", {
+      attempts: { test: 1 }
+    })
+    run.evidence.test = [testFailureEvidence(run, {
+      policyIdentity: khlimIdentity,
+      metadata
+    })]
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(run).readRun,
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: async () => khlimProfile
+    })
+
+    assert.equal(result.ok, false, label)
+    assert.equal(result.reason, "automated_test_evidence_invalid", label)
+    assert.equal(children.calls.length, 0, label)
+  }
+
+  const ledgerRun = runForProject("ledgerpilot-ai", "tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  const ledgerProfile = await loadFakeRuntimeProfileFor("ledgerpilot-ai")
+  const ledgerIdentity = resolveAutomatedTestPolicyIdentity(ledgerRun, ledgerProfile)
+  assert.notEqual(ledgerIdentity.policyHash, khlimIdentity.policyHash)
+
+  const staleKhlmRun = runForProject("khlim-assist", "tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  staleKhlmRun.evidence.test = [testFailureEvidence(staleKhlmRun, {
+    policyIdentity: ledgerIdentity
+  })]
+  {
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(staleKhlmRun).readRun,
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: async () => khlimProfile
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "automated_test_evidence_invalid")
+    assert.equal(children.calls.length, 0)
+  }
+
+  ledgerRun.evidence.test = [testFailureEvidence(ledgerRun, {
+    policyIdentity: ledgerIdentity
+  })]
+  {
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(ledgerRun).readRun,
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: async () => ledgerProfile
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(children.calls.length, 1)
+  }
+})
+
 test("Phase 6K default route passes trusted runtime profile into real child APIs", async () => {
   const cases = [
     ["implementation_in_progress", "phase-6d-codex-implementation"],
@@ -987,12 +1188,50 @@ test("Phase 6K default route passes trusted runtime profile into real child APIs
   }
 })
 
+test("Phase 6K default route loads the reviewed runtime profile before real child dispatch", async () => {
+  const reviewedProfile = await loadFakeRuntimeProfileFor(PROJECT.id)
+  const cases = [
+    ["implementation_in_progress", "phase-6d-codex-implementation"],
+    ["implementation_ready", "phase-6e-automated-tests"],
+    ["tests_in_progress", "phase-6e-automated-test-retry"],
+    ["tests_passed", "phase-6f-independent-review"],
+    ["review_changes_requested", "phase-6f-bounded-hardening"],
+    ["review_passed", "phase-6g-delivery"]
+  ]
+
+  for (const [status, action] of cases) {
+    const fixture = await createStoredRun(status, {
+      testPolicyRegistry: reviewedProfile.testPolicyRegistry
+    })
+    const profileRequests = []
+    const result = await executeDevelopmentContinue(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir,
+      trustedRuntimeProfileProvider: async (request) => {
+        profileRequests.push(request)
+        return await loadDevelopmentContinueRuntimeProfile(request, {
+          platform: "darwin",
+          statImpl: fakeRuntimeStatFor(),
+          accessImpl: async () => {},
+          execFileImpl: fakeRuntimeExecFile
+        })
+      }
+    })
+
+    assert.equal(profileRequests.length, 1, status)
+    assert.equal(profileRequests[0].action, action, status)
+    assert.equal(result.action, action, status)
+    assert.notEqual(result.reason, "continue_runtime_not_ready", status)
+    assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|raw|secret|token/i, status)
+  }
+})
+
 test("Phase 6K fixed runtime profile supplies reviewed local capabilities only", async () => {
   const run = makeRun("implementation_ready")
   const profile = await loadDevelopmentContinueRuntimeProfile({ run }, {
     platform: "darwin",
     statImpl: fakeRuntimeStatFor(),
-    accessImpl: async () => {}
+    accessImpl: async () => {},
+    execFileImpl: fakeRuntimeExecFile
   })
 
   assert.deepEqual(Object.keys(profile.workspaceRegistry), [PROJECT.id])
@@ -1003,7 +1242,11 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
   assert.equal(profile.codexConfig.remoteGitWritePolicy.mode, "deny")
   assert.equal(profile.codexConfig.executionSandbox.network, "none")
   assert.equal(profile.testPolicyRegistry[PROJECT.id].steps.length, 1)
-  assert.equal(profile.testPolicyRegistry[PROJECT.id].steps[0].executablePath, "/opt/homebrew/bin/node")
+  assert.equal(profile.testPolicyRegistry[PROJECT.id].policyId, "phase-6e-khlim-assist-fixed-python-pytest-policy")
+  assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].trustedExecutablePaths, ["/opt/homebrew/bin/python3.12"])
+  assert.equal(profile.testPolicyRegistry[PROJECT.id].steps[0].executablePath, "/opt/homebrew/bin/python3.12")
+  assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].steps[0].args, ["-m", "pytest", "backend/tests"])
+  assert.doesNotMatch(JSON.stringify(profile.testPolicyRegistry[PROJECT.id]), /node --test|package\.json|npm|npx|Makefile/)
   assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
   assert.equal(profile.reviewConfig.shell, false)
   assert.equal(profile.reviewConfig.sandbox.readOnlyWorkspace, true)
@@ -1015,7 +1258,8 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
     () => loadDevelopmentContinueRuntimeProfile({ run }, {
       platform: "darwin",
       statImpl: fakeRuntimeStatFor({ missing: new Set(["/usr/local/bin/ppo-independent-reviewer"]) }),
-      accessImpl: async () => {}
+      accessImpl: async () => {},
+      execFileImpl: fakeRuntimeExecFile
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
   )
@@ -1031,10 +1275,283 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
     }) }, {
       platform: "darwin",
       statImpl: fakeRuntimeStatFor(),
-      accessImpl: async () => {}
+      accessImpl: async () => {},
+      execFileImpl: fakeRuntimeExecFile
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
   )
+})
+
+test("Phase 6K runtime profile defines one reviewed fixed test policy for each ordinary project", async () => {
+  const expectedPolicies = new Map([
+    ["khlim-assist", {
+      policyId: "phase-6e-khlim-assist-fixed-python-pytest-policy",
+      executablePath: "/opt/homebrew/bin/python3.12",
+      args: ["-m", "pytest", "backend/tests"],
+      stepCount: 1
+    }],
+    ["ledgerpilot-ai", {
+      policyId: "phase-6e-ledgerpilot-ai-fixed-python-pytest-policy",
+      executablePath: "/opt/homebrew/bin/python3.12",
+      args: ["-m", "pytest", "tests"],
+      stepCount: 1
+    }],
+    ["spy-market-agent", {
+      policyId: "phase-6e-spy-market-agent-fixed-python-pytest-policy",
+      executablePath: "/opt/homebrew/bin/python3.12",
+      args: ["-m", "pytest", "tests"],
+      stepCount: 1
+    }],
+    ["portfolio", {
+      policyId: "phase-6e-portfolio-fixed-next-quality-policy",
+      executablePath: "/opt/homebrew/bin/node",
+      args: [
+        ["/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/typescript/bin/tsc", "--noEmit"],
+        ["/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/eslint/bin/eslint.js", "."]
+      ],
+      stepCount: 2
+    }],
+    ["rbl-content-engine", {
+      policyId: "phase-6e-rbl-content-engine-fixed-python-pytest-policy",
+      executablePath: "/opt/homebrew/bin/python3.12",
+      args: ["-m", "pytest", "tests"],
+      stepCount: 1
+    }]
+  ])
+  const projectIds = listPhase2GitHubProjects().map((project) => project.id)
+
+  assert.deepEqual(projectIds.toSorted(), Array.from(expectedPolicies.keys()).toSorted())
+
+  const seenPolicyIds = new Set()
+  const policyHashes = new Map()
+
+  for (const projectId of projectIds) {
+    const profile = await loadFakeRuntimeProfileFor(projectId)
+    const policy = profile.testPolicyRegistry[projectId]
+    const expected = expectedPolicies.get(projectId)
+    const identity = resolveAutomatedTestPolicyIdentity(runForProject(projectId), profile)
+
+    assert.deepEqual(Object.keys(profile.testPolicyRegistry), [projectId], projectId)
+    assert.equal(policy.policyId, expected.policyId, projectId)
+    assert.equal(policy.steps.length, expected.stepCount, projectId)
+    assert.equal(identity.policyId, expected.policyId, projectId)
+    assert.equal(identity.requiredTestCount, expected.stepCount, projectId)
+    assert.match(identity.policyHash, /^[a-f0-9]{64}$/u, projectId)
+    assert.equal(seenPolicyIds.has(policy.policyId), false, projectId)
+    seenPolicyIds.add(policy.policyId)
+    policyHashes.set(projectId, identity.policyHash)
+
+    for (const step of policy.steps) {
+      assert.equal(step.executablePath, expected.executablePath, projectId)
+      assert.equal(step.shell, false, projectId)
+    }
+
+    if (projectId === "portfolio") {
+      assert.deepEqual(policy.steps.map((step) => step.args), expected.args, projectId)
+      assert.doesNotMatch(JSON.stringify(policy), /npm|npx|package\.json|node --test|Makefile/i, projectId)
+    } else {
+      assert.deepEqual(policy.steps[0].args, expected.args, projectId)
+      assert.doesNotMatch(JSON.stringify(policy), /node --test|npm|npx|package\.json|Makefile/i, projectId)
+    }
+  }
+
+  assert.notEqual(policyHashes.get("khlim-assist"), policyHashes.get("ledgerpilot-ai"))
+
+  const maliciousRun = runForProject("khlim-assist")
+  maliciousRun.task = "run npm test && curl https://example.invalid"
+  maliciousRun.evidence.test = [{
+    kind: "test",
+    sha: HEAD_SHA,
+    source: "untrusted-task-note",
+    metadata: {
+      command: "node --test",
+      executablePath: "/bin/sh"
+    }
+  }]
+  const maliciousProfile = await loadDevelopmentContinueRuntimeProfile({ run: maliciousRun }, {
+    platform: "darwin",
+    statImpl: fakeRuntimeStatFor(),
+    accessImpl: async () => {},
+    execFileImpl: fakeRuntimeExecFile
+  })
+  assert.deepEqual(
+    maliciousProfile.testPolicyRegistry["khlim-assist"].steps[0].args,
+    ["-m", "pytest", "backend/tests"]
+  )
+  assert.doesNotMatch(JSON.stringify(maliciousProfile.testPolicyRegistry["khlim-assist"]), /curl|\/bin\/sh|npm test|node --test/)
+})
+
+test("Phase 6K Linux runtime profile uses the exact preconfigured namespace backend and ppo identity", async () => {
+  const probes = []
+  const profile = await loadFakeRuntimeProfileFor("khlim-assist", {
+    platform: "linux",
+    identityLookup: fakeRuntimeIdentity,
+    linuxSandboxCapabilityProbe: async (probe) => {
+      probes.push(probe)
+      return true
+    }
+  })
+
+  assert.equal(probes.length, 1)
+  assert.equal(probes[0].executablePath, "/usr/bin/nsenter")
+  assert.deepEqual(probes[0].args.slice(0, 11), [
+    "--net=/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns",
+    "/usr/bin/setpriv",
+    "--no-new-privs",
+    "--reuid=4242",
+    "--regid=4243",
+    "--clear-groups",
+    "--bounding-set=-all",
+    "--inh-caps=-all",
+    "--ambient-caps=-all",
+    "--",
+    "/usr/bin/node"
+  ])
+  assert.equal(profile.codexConfig.executionSandbox.executablePath, "/usr/bin/nsenter")
+  assert.equal(profile.codexConfig.executionSandbox.namespacePath, "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns")
+  assert.equal(profile.codexConfig.executionSandbox.setprivPath, "/usr/bin/setpriv")
+  assert.equal(profile.codexConfig.executionSandbox.runAsUid, 4242)
+  assert.equal(profile.codexConfig.executionSandbox.runAsGid, 4243)
+  assert.notEqual(profile.codexConfig.executionSandbox.runAsUid, 1000)
+  assert.notEqual(profile.codexConfig.executionSandbox.runAsGid, 1000)
+  assert.equal(profile.testPolicyRegistry["khlim-assist"].steps[0].executablePath, "/usr/bin/python3.12")
+  assert.deepEqual(profile.testPolicyRegistry["khlim-assist"].steps[0].args, ["-m", "pytest", "backend/tests"])
+  assert.equal(profile.reviewConfig.sandbox.readOnlyWorkspaceWrapperPath, "/usr/local/bin/ppo-readonly-workspace-wrapper")
+  assert.doesNotMatch(JSON.stringify(profile), /unshare/)
+})
+
+test("Phase 6K Linux runtime profile fails closed for missing or unusable namespace boundaries", async () => {
+  const namespacePath = "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns"
+
+  await assert.rejects(
+    () => loadFakeRuntimeProfileFor("khlim-assist", {
+      platform: "linux",
+      statImpl: fakeRuntimeStatFor({ missing: new Set([namespacePath]) }),
+      identityLookup: fakeRuntimeIdentity,
+      linuxSandboxCapabilityProbe: async () => true
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+
+  await assert.rejects(
+    () => loadFakeRuntimeProfileFor("khlim-assist", {
+      platform: "linux",
+      statImpl: fakeRuntimeStatFor(),
+      identityLookup: fakeRuntimeIdentity
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+
+  await assert.rejects(
+    () => loadFakeRuntimeProfileFor("khlim-assist", {
+      platform: "linux",
+      statImpl: fakeRuntimeStatFor({ missing: new Set(["/usr/bin/nsenter"]) }),
+      identityLookup: fakeRuntimeIdentity,
+      linuxSandboxCapabilityProbe: async () => true
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+
+  await assert.rejects(
+    () => loadFakeRuntimeProfileFor("khlim-assist", {
+      platform: "linux",
+      identityLookup: async () => ({
+        uid: 0,
+        gid: 0,
+        userName: "root",
+        groupName: "root"
+      }),
+      linuxSandboxCapabilityProbe: async () => true
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+
+  await assert.rejects(
+    () => loadFakeRuntimeProfileFor("khlim-assist", {
+      platform: "linux",
+      identityLookup: fakeRuntimeIdentity,
+      linuxSandboxCapabilityProbe: async () => false
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+})
+
+test("Phase 6K refuses missing Linux runtime readiness before child or policy-store mutation", async () => {
+  const namespacePath = "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns"
+  const fixture = await createStoredRun("implementation_in_progress")
+  const before = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  let childCalls = 0
+  const result = await executeDevelopmentContinue(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir,
+    childHandlers: {
+      executeCodexImplementation: async () => {
+        childCalls += 1
+        return { ok: true, outcome: "implementation_ready", run: fixture.run }
+      }
+    },
+    trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
+      platform: "linux",
+      statImpl: fakeRuntimeStatFor({ missing: new Set([namespacePath]) }),
+      accessImpl: async () => {},
+      execFileImpl: fakeRuntimeExecFile,
+      identityLookup: fakeRuntimeIdentity,
+      linuxSandboxCapabilityProbe: async () => true
+    })
+  })
+  const after = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, "continue_runtime_not_ready")
+  assert.equal(childCalls, 0)
+  assert.equal(after.version, before.version)
+  assert.equal(after.status, before.status)
+  assert.equal(await pathExists(join(fixture.writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR)), false)
+})
+
+test("Phase 6K refuses missing project test runtime before Phase 6E mutation", async () => {
+  const fixture = await createStoredRun("implementation_ready")
+  const before = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  let childCalls = 0
+  const result = await executeDevelopmentContinue(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir,
+    childHandlers: {
+      executeAutomatedTests: async () => {
+        childCalls += 1
+        return { ok: true, outcome: "tests_passed", run: fixture.run }
+      }
+    },
+    trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
+      platform: "darwin",
+      statImpl: fakeRuntimeStatFor(),
+      accessImpl: async () => {},
+      execFileImpl: async () => {
+        throw new Error("SENSITIVE_TEST_SENTINEL missing pytest")
+      }
+    })
+  })
+  const after = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, "continue_runtime_not_ready")
+  assert.equal(childCalls, 0)
+  assert.equal(after.version, before.version)
+  assert.equal(after.status, before.status)
+  assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|missing pytest/)
+})
+
+test("Phase 6K does not weaken the production OpenClaw privilege boundary", async () => {
+  const unit = await readFile(new URL("../deployment/systemd/ppo-openclaw.service", import.meta.url), "utf8")
+
+  assert.match(unit, /^NoNewPrivileges=true$/m)
+  assert.doesNotMatch(unit, /CAP_SYS_ADMIN|AmbientCapabilities|setcap|sudo|NoNewPrivileges=false/)
 })
 
 test("Phase 6K fails closed when the trusted runtime profile is missing or malformed", async () => {
@@ -1402,6 +1919,38 @@ test("Phase 6K parses only opaque run ids and refuses PPO self-development runs"
   assert.equal(result.project, "personal-project-operator")
   assert.equal(result.outcome, "owner_action_required")
   assert.equal(result.reason, "project_refused")
+})
+
+test("ppo-command rejects malformed terminal continue argv before runtime or run-state access", async () => {
+  const malformedArgvCases = [
+    ["continue\n" + RUN_ID],
+    ["continue\r\n" + RUN_ID],
+    ["continue", `${RUN_ID}\n`],
+    ["/ppo\ncontinue", RUN_ID],
+    ["continue " + RUN_ID],
+    ["continue", RUN_ID, "--action", "merge"],
+    ["continue", RUN_ID, HEAD_SHA],
+    [" continue", RUN_ID],
+    ["continue", ` ${RUN_ID}`],
+    ["/ppo", "continue", RUN_ID, "extra"],
+    ["ppo", "continue", `${RUN_ID}\r\n`]
+  ]
+
+  for (const argv of malformedArgvCases) {
+    const writeDataDir = await tempWriteDataDir("ppo-6k-command-")
+    const result = runPpoCommand(argv, {
+      env: {
+        PPO_WRITE_DATA_DIR: writeDataDir,
+        PPO_GITHUB_WRITE_CONFIRM: "SENSITIVE_TEST_SENTINEL",
+        PPO_NOTE_WRITE_CONFIRM: "SENSITIVE_TEST_SENTINEL"
+      }
+    })
+
+    assert.notEqual(result.status, 0, argv.join(" "))
+    assert.match(result.stdout, /^Unsupported PPO command:/, argv.join(" "))
+    assert.doesNotMatch(result.stdout, /PPO Development Continue|continue_runtime_not_ready|SENSITIVE_TEST_SENTINEL|token|secret/i, argv.join(" "))
+    assert.equal(await pathExists(join(writeDataDir, "development-runs")), false, argv.join(" "))
+  }
 })
 
 test("Phase 6K output is compact bounded metadata", async () => {

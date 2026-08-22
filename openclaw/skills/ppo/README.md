@@ -42,7 +42,7 @@ node local-operator/ppo-command.mjs pr khlim-assist
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note text"
 node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
-node local-operator/ppo-command.mjs "/ppo continue <run-id>"
+node local-operator/ppo-command.mjs /ppo continue <run-id>
 ```
 
 Phase 5C project notes are terminal-only:

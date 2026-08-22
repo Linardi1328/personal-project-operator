@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
-import { DEVELOPMENT_RUN_ID_PATTERN } from "../../../local-operator/development-run-state.mjs";
+import { DEVELOPMENT_RUN_ID_PATTERN } from "../../../local-operator/development-run-id.mjs";
 import {
   parsePpoIssueConfirmRequest,
   parsePpoIssueCreateRequest
