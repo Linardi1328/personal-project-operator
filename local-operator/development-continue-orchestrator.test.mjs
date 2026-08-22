@@ -8,6 +8,14 @@ import {
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
+  CODEX_EXECUTION_ADAPTER_ID,
+  CODEX_EXECUTION_SANDBOX_ID
+} from "./development-codex-execution-adapter.mjs"
+import {
+  AUTOMATED_TEST_RUNNER_ID,
+  AUTOMATED_TEST_SANDBOX_ID
+} from "./development-test-runner.mjs"
+import {
   executeDevelopmentContinue,
   formatDevelopmentContinueResult,
   handlePpoDevelopmentContinueCommand
@@ -19,10 +27,16 @@ const BAD_RUN_ID = "short"
 const BASE_SHA = "a".repeat(40)
 const HEAD_SHA = "b".repeat(40)
 const NEXT_SHA = "c".repeat(40)
+const WRONG_SHA = "d".repeat(40)
+const PROMPT_HASH = "e".repeat(64)
+const TEST_POLICY_HASH = "f".repeat(64)
+const STARTED_AT = "2026-08-23T00:00:00.000Z"
+const ENDED_AT = "2026-08-23T00:01:00.000Z"
 const PROJECT = {
   ...listPhase2GitHubProjects()[0],
   fullName: `${listPhase2GitHubProjects()[0].owner}/${listPhase2GitHubProjects()[0].repo}`
 }
+const TEST_POLICY_ID = "phase-6e-local-node-policy"
 
 function evidence() {
   return {
@@ -119,6 +133,114 @@ function makeChildHandlers(afterByHandler = {}) {
   }
 }
 
+function codexAttemptEvidence(run, overrides = {}) {
+  const outcome = overrides.outcome || "execution_started"
+  const metadata = {
+    project: run.project.id,
+    branch: run.branch,
+    workspaceId: "phase-6k-workspace",
+    workspaceRef: "worktrees/phase-6k-workspace",
+    adapter: CODEX_EXECUTION_ADAPTER_ID,
+    attempt: run.attempts.implementation,
+    promptHash: PROMPT_HASH,
+    startedAt: STARTED_AT,
+    outcome,
+    remotePolicy: "deny",
+    sandbox: CODEX_EXECUTION_SANDBOX_ID,
+    backend: "macos-sandbox-exec",
+    platform: "darwin",
+    network: "none",
+    ...(outcome === "execution_failed" ? { endedAt: ENDED_AT } : {}),
+    ...(overrides.metadata || {})
+  }
+
+  if (overrides.omitMetadata) {
+    for (const key of overrides.omitMetadata) {
+      delete metadata[key]
+    }
+  }
+
+  return {
+    kind: "implementation",
+    sha: run.headSha,
+    source: CODEX_EXECUTION_ADAPTER_ID,
+    summary: "Codex execution attempt fixture.",
+    metadata,
+    ...overrides.entry
+  }
+}
+
+function testStartedEvidence(run, overrides = {}) {
+  const metadata = {
+    project: run.project.id,
+    branch: run.branch,
+    workspaceId: "phase-6k-workspace",
+    workspaceRef: "worktrees/phase-6k-workspace",
+    runner: AUTOMATED_TEST_RUNNER_ID,
+    attempt: run.attempts.test,
+    policyId: TEST_POLICY_ID,
+    policyHash: TEST_POLICY_HASH,
+    implSha: run.headSha,
+    outcome: "testing_started",
+    startedAt: STARTED_AT,
+    sandbox: AUTOMATED_TEST_SANDBOX_ID,
+    network: "none",
+    ...(overrides.metadata || {})
+  }
+
+  if (overrides.omitMetadata) {
+    for (const key of overrides.omitMetadata) {
+      delete metadata[key]
+    }
+  }
+
+  return {
+    kind: "test",
+    sha: run.headSha,
+    source: AUTOMATED_TEST_RUNNER_ID,
+    summary: "Automated test attempt fixture.",
+    metadata,
+    ...overrides.entry
+  }
+}
+
+function testFailureEvidence(run, overrides = {}) {
+  const metadata = {
+    project: run.project.id,
+    branch: run.branch,
+    runner: AUTOMATED_TEST_RUNNER_ID,
+    attempt: run.attempts.test,
+    policyId: TEST_POLICY_ID,
+    policyHash: TEST_POLICY_HASH,
+    implSha: run.headSha,
+    outcome: "failed",
+    startedAt: STARTED_AT,
+    endedAt: ENDED_AT,
+    total: 2,
+    passed: 1,
+    failed: 1,
+    ambiguous: 0,
+    sandbox: AUTOMATED_TEST_SANDBOX_ID,
+    network: "none",
+    ...(overrides.metadata || {})
+  }
+
+  if (overrides.omitMetadata) {
+    for (const key of overrides.omitMetadata) {
+      delete metadata[key]
+    }
+  }
+
+  return {
+    kind: "test",
+    sha: run.headSha,
+    source: AUTOMATED_TEST_RUNNER_ID,
+    summary: "Automated test aggregate failure fixture.",
+    metadata,
+    ...overrides.entry
+  }
+}
+
 async function tempWriteDataDir(label = "ppo-6k-") {
   return mkdtemp(join(tmpdir(), label))
 }
@@ -159,17 +281,8 @@ test("Phase 6K dispatches each supported status to exactly one reviewed child bo
 test("Phase 6K allows automated-test retry only after definitive Phase 6E failure evidence", async () => {
   const run = makeRun("tests_in_progress", {
     attempts: { test: 1 },
-    evidence: {
-      test: [{
-        kind: "test",
-        sha: HEAD_SHA,
-        source: "phase-6e-automated-test-runner",
-        metadata: {
-          outcome: "failed"
-        }
-      }]
-    }
   })
+  run.evidence.test = [testFailureEvidence(run)]
   const reader = makeReader(run)
   const children = makeChildHandlers({
     executeAutomatedTests: "tests_passed"
@@ -187,17 +300,24 @@ test("Phase 6K allows automated-test retry only after definitive Phase 6E failur
 })
 
 test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => {
+  const implementationRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 }
+  })
+  implementationRun.evidence.implementation = [codexAttemptEvidence(implementationRun)]
+  const testingRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  testingRun.evidence.test = [testStartedEvidence(testingRun)]
   const cases = [
-    ["implementation_in_progress", { implementation: [{ metadata: { outcome: "execution_started" } }] }, "codex_reconciliation_required"],
-    ["tests_in_progress", { test: [{ metadata: { outcome: "testing_started" } }] }, "automated_test_reconciliation_required"],
-    ["tests_in_progress", { test: [] }, "automated_test_reconciliation_required"],
-    ["planning_in_progress", {}, "planning_reconciliation_required"],
-    ["review_in_progress", {}, "review_reconciliation_required"],
-    ["tests_failed", {}, "automated_test_failure_recovery_not_routed"]
+    [implementationRun, "codex_reconciliation_required"],
+    [testingRun, "automated_test_reconciliation_required"],
+    [makeRun("tests_in_progress", { evidence: { test: [] } }), "automated_test_reconciliation_required"],
+    [makeRun("planning_in_progress"), "planning_reconciliation_required"],
+    [makeRun("review_in_progress"), "review_reconciliation_required"],
+    [makeRun("tests_failed"), "automated_test_failure_recovery_not_routed"]
   ]
 
-  for (const [status, openEvidence, reason] of cases) {
-    const run = makeRun(status, { evidence: { ...evidence(), ...openEvidence } })
+  for (const [run, reason] of cases) {
     const reader = makeReader(run)
     const children = makeChildHandlers({
       executeCodexImplementation: "implementation_ready",
@@ -210,10 +330,10 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
       childHandlers: children.handlers
     })
 
-    assert.equal(result.ok, false, status)
-    assert.equal(result.outcome, "owner_action_required", status)
-    assert.equal(result.reason, reason, status)
-    assert.equal(children.calls.length, 0, status)
+    assert.equal(result.ok, false, run.status)
+    assert.equal(result.outcome, "owner_action_required", run.status)
+    assert.equal(result.reason, reason, run.status)
+    assert.equal(children.calls.length, 0, run.status)
   }
 })
 
@@ -255,6 +375,214 @@ test("Phase 6K refuses malformed durable evidence instead of dispatching", async
   assert.equal(result.outcome, "owner_action_required")
   assert.equal(result.reason, "continue_durable_evidence_invalid")
   assert.equal(children.calls.length, 0)
+})
+
+test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evidence", async () => {
+  const wrongSourceRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 },
+    evidence: {
+      implementation: [{
+        kind: "implementation",
+        sha: HEAD_SHA,
+        source: "unrelated-agent",
+        metadata: {
+          outcome: "execution_started",
+          attempt: 1,
+          adapter: "unrelated-agent"
+        }
+      }]
+    }
+  })
+  const wrongShaRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 }
+  })
+  wrongShaRun.evidence.implementation = [codexAttemptEvidence(wrongShaRun, {
+    outcome: "execution_failed",
+    entry: { sha: WRONG_SHA },
+    metadata: {
+      expectedStartSha: WRONG_SHA
+    }
+  })]
+  const staleAttemptRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 2 }
+  })
+  staleAttemptRun.evidence.implementation = [codexAttemptEvidence(staleAttemptRun, {
+    outcome: "execution_failed",
+    metadata: { attempt: 1 }
+  })]
+  const malformedRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 }
+  })
+  malformedRun.evidence.implementation = [codexAttemptEvidence(malformedRun, {
+    outcome: "execution_failed",
+    omitMetadata: ["promptHash"]
+  })]
+
+  for (const run of [wrongSourceRun, wrongShaRun, staleAttemptRun, malformedRun]) {
+    const reader = makeReader(run)
+    const children = makeChildHandlers({
+      executeCodexImplementation: "implementation_ready"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: children.handlers
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.outcome, "owner_action_required")
+    assert.equal(result.reason, "codex_evidence_invalid")
+    assert.equal(children.calls.length, 0)
+  }
+
+  const openRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 }
+  })
+  openRun.evidence.implementation = [codexAttemptEvidence(openRun)]
+  {
+    const reader = makeReader(openRun)
+    const children = makeChildHandlers({
+      executeCodexImplementation: "implementation_ready"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: children.handlers
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "codex_reconciliation_required")
+    assert.equal(children.calls.length, 0)
+  }
+
+  const definitiveFailureRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 }
+  })
+  definitiveFailureRun.evidence.implementation = [codexAttemptEvidence(definitiveFailureRun, {
+    outcome: "execution_failed"
+  })]
+  {
+    const reader = makeReader(definitiveFailureRun)
+    const children = makeChildHandlers({
+      executeCodexImplementation: "implementation_ready"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: children.handlers
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.action, "phase-6d-codex-implementation")
+    assert.equal(children.calls.length, 1)
+    assert.equal(children.calls[0].expectedVersion, definitiveFailureRun.version)
+  }
+})
+
+test("Phase 6K binds Phase 6E retry authorization to trusted aggregate failure evidence", async () => {
+  const unrelatedFailureRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 },
+    evidence: {
+      test: [{
+        kind: "test",
+        sha: HEAD_SHA,
+        source: "unrelated-agent",
+        metadata: {
+          outcome: "failed"
+        }
+      }]
+    }
+  })
+  const wrongShaRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  wrongShaRun.evidence.test = [testFailureEvidence(wrongShaRun, {
+    entry: { sha: WRONG_SHA },
+    metadata: { implSha: WRONG_SHA }
+  })]
+  const wrongRunnerRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  wrongRunnerRun.evidence.test = [testFailureEvidence(wrongRunnerRun, {
+    metadata: { runner: "unrelated-runner" }
+  })]
+  const staleAttemptRun = makeRun("tests_in_progress", {
+    attempts: { test: 2 }
+  })
+  staleAttemptRun.evidence.test = [testFailureEvidence(staleAttemptRun, {
+    metadata: { attempt: 1 }
+  })]
+  const malformedRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  malformedRun.evidence.test = [testFailureEvidence(malformedRun, {
+    omitMetadata: ["policyHash"]
+  })]
+  const stepFailureRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  stepFailureRun.evidence.test = [testFailureEvidence(stepFailureRun, {
+    metadata: { testId: "unit" }
+  })]
+
+  for (const run of [
+    unrelatedFailureRun,
+    wrongShaRun,
+    wrongRunnerRun,
+    staleAttemptRun,
+    malformedRun,
+    stepFailureRun
+  ]) {
+    const reader = makeReader(run)
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: children.handlers
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.outcome, "owner_action_required")
+    assert.equal(result.reason, "automated_test_evidence_invalid")
+    assert.equal(children.calls.length, 0)
+  }
+
+  const openRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  openRun.evidence.test = [testStartedEvidence(openRun)]
+  {
+    const reader = makeReader(openRun)
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: children.handlers
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "automated_test_reconciliation_required")
+    assert.equal(children.calls.length, 0)
+  }
+
+  const trustedFailureRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  trustedFailureRun.evidence.test = [testFailureEvidence(trustedFailureRun)]
+  {
+    const reader = makeReader(trustedFailureRun)
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: children.handlers
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.action, "phase-6e-automated-test-retry")
+    assert.equal(children.calls.length, 1)
+    assert.equal(children.calls[0].expectedVersion, trustedFailureRun.version)
+  }
 })
 
 test("Phase 6K surfaces child owner-action outcomes without bypassing caps or reviews", async () => {
@@ -304,6 +632,117 @@ test("Phase 6K surfaces child owner-action outcomes without bypassing caps or re
     assert.equal(result.outcome, "remote_review_changes_requested")
     assert.equal(result.reason, "remote_review_changes_requested")
   }
+})
+
+test("Phase 6K reports durable child failure state after one read-only reload", async () => {
+  const writeDataDir = await tempWriteDataDir()
+  const created = await createDevelopmentRun({
+    projectId: PROJECT.id,
+    task: "Phase 6K child failure reconciliation fixture.",
+    baseSha: BASE_SHA,
+    branch: "phase-6k-child-failure",
+    actor: "phase-6k-test"
+  }, {
+    writeDataDir
+  })
+  const planning = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: created.version,
+    status: "planning_in_progress",
+    actor: "phase-6k-test",
+    reason: "phase-6k-fixture-planning"
+  }, {
+    writeDataDir
+  })
+  const planned = await transitionDevelopmentRun(created.runId, {
+    expectedVersion: planning.version,
+    status: "planned",
+    actor: "phase-6k-test",
+    reason: "phase-6k-fixture-planned"
+  }, {
+    writeDataDir
+  })
+  let childCalls = 0
+
+  const result = await executeDevelopmentContinue(created.runId, {
+    writeDataDir,
+    childHandlers: {
+      prepareImplementationWorkspace: async (runId, options) => {
+        childCalls += 1
+        await transitionDevelopmentRun(runId, {
+          expectedVersion: options.expectedVersion,
+          status: "implementation_in_progress",
+          headSha: NEXT_SHA,
+          branch: "phase-6k-child-failure",
+          actor: "phase-6k-test",
+          reason: "phase-6k-fixture-child-mutated"
+        }, {
+          writeDataDir
+        })
+        const error = new Error("SENSITIVE_TEST_SENTINEL raw child failure")
+        error.code = "SAFE_CHILD_FAILURE"
+        error.outcome = "remote_review_changes_requested"
+        error.reasonCode = "child_safe_failure"
+        throw error
+      }
+    }
+  })
+
+  assert.equal(childCalls, 1)
+  assert.equal(result.ok, false)
+  assert.equal(result.before, "planned")
+  assert.equal(result.action, "phase-6c-prepare-workspace")
+  assert.equal(result.outcome, "remote_review_changes_requested")
+  assert.equal(result.reason, "child_safe_failure")
+  assert.equal(result.after, "implementation_in_progress")
+  assert.equal(result.headSha, NEXT_SHA)
+
+  const stored = JSON.parse(await readFile(join(
+    writeDataDir,
+    "development-runs",
+    "records",
+    `${planned.runId}.json`
+  ), "utf8"))
+  assert.equal(stored.status, "implementation_in_progress")
+  assert.equal(stored.headSha, NEXT_SHA)
+  assert.equal(stored.version, planned.version + 1)
+})
+
+test("Phase 6K bounds child failure output when post-failure reload is unavailable", async () => {
+  const run = makeRun("created")
+  const calls = []
+  const reader = {
+    async readRun() {
+      calls.push("read")
+
+      if (calls.length > 2) {
+        throw new Error("SENSITIVE_TEST_SENTINEL raw reload failure")
+      }
+
+      return clone(run)
+    }
+  }
+  let childCalls = 0
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: reader.readRun,
+    childHandlers: {
+      planExistingDevelopmentRun: async () => {
+        childCalls += 1
+        const error = new Error("SENSITIVE_TEST_SENTINEL raw child failure")
+        error.code = "SAFE_CHILD_FAILURE"
+        error.outcome = "remote_review_changes_requested"
+        error.reasonCode = "child_safe_failure"
+        throw error
+      }
+    }
+  })
+
+  assert.equal(childCalls, 1)
+  assert.equal(calls.length, 3)
+  assert.equal(result.ok, false)
+  assert.equal(result.outcome, "owner_action_required")
+  assert.equal(result.reason, "child_state_reload_failed")
+  assert.equal(result.after, "created")
+  assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|raw reload|raw child/)
 })
 
 test("Phase 6K stops at merged and never dispatches production or terminal statuses", async () => {
@@ -521,7 +960,7 @@ test("Phase 6K orchestrator is composition-only and imports no production agents
   const bridgeSource = await readFile(new URL("../openclaw/plugins/ppo-local/bridge.mjs", import.meta.url), "utf8")
 
   assert.doesNotMatch(source, /\b(?:exec|execFile|spawn|spawnSync)\b/)
-  assert.doesNotMatch(source, /systemctl|git push|git merge|git checkout|git switch|\bgh\b|\bcurl\b|\bwget\b|\bssh\b|\bscp\b|\brsync\b/)
+  assert.doesNotMatch(source, /systemctl|\bgit\b|\bgh\b|\bcurl\b|\bwget\b|\bssh\b|\bscp\b|\brsync\b/)
   assert.doesNotMatch(source, /deploy-exact-sha|rollback-exact-sha|service-control|vps-health/)
   assert.doesNotMatch(source, /development-deployment-agent|development-production-verification-agent|development-rollback-agent/)
   assert.doesNotMatch(commandSource, /development-deployment-agent|development-production-verification-agent|development-rollback-agent/)

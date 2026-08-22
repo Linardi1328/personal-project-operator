@@ -7,8 +7,16 @@ import {
 } from "./development-run-state.mjs"
 import { planExistingDevelopmentRun } from "./development-next-stage-planner.mjs"
 import { prepareImplementationWorkspace } from "./development-workspace-manager.mjs"
-import { executeCodexImplementation } from "./development-codex-execution-adapter.mjs"
-import { executeAutomatedTests } from "./development-test-runner.mjs"
+import {
+  CODEX_EXECUTION_ADAPTER_ID,
+  CODEX_EXECUTION_SANDBOX_ID,
+  executeCodexImplementation
+} from "./development-codex-execution-adapter.mjs"
+import {
+  AUTOMATED_TEST_RUNNER_ID,
+  AUTOMATED_TEST_SANDBOX_ID,
+  executeAutomatedTests
+} from "./development-test-runner.mjs"
 import { executeIndependentReview } from "./development-review-agent.mjs"
 import { executeBoundedHardening } from "./development-hardening-orchestrator.mjs"
 import {
@@ -81,12 +89,7 @@ const statusActions = Object.freeze({
   }),
   implementation_in_progress: Object.freeze({
     action: "phase-6d-codex-implementation",
-    handler: "executeCodexImplementation",
-    openEvidence: Object.freeze({
-      kind: "implementation",
-      outcome: "execution_started",
-      reason: "codex_reconciliation_required"
-    })
+    handler: "executeCodexImplementation"
   }),
   implementation_ready: Object.freeze({
     action: "phase-6e-automated-tests",
@@ -94,13 +97,7 @@ const statusActions = Object.freeze({
   }),
   tests_in_progress: Object.freeze({
     action: "phase-6e-automated-test-retry",
-    handler: "executeAutomatedTests",
-    openEvidence: Object.freeze({
-      kind: "test",
-      outcome: "testing_started",
-      reason: "automated_test_reconciliation_required",
-      requireDefinitivePriorAttempt: true
-    })
+    handler: "executeAutomatedTests"
   }),
   tests_passed: Object.freeze({
     action: "phase-6f-independent-review",
@@ -152,6 +149,8 @@ const defaultChildHandlers = Object.freeze({
 const safeReasonPattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const safeOutcomePattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const shaPattern = /^[a-f0-9]{40}$/u
+const sha256Pattern = /^[a-f0-9]{64}$/u
+const safeIdPattern = /^[a-z0-9][a-z0-9_.:-]{0,79}$/u
 
 export class DevelopmentContinueOrchestratorError extends Error {
   constructor(code, safeMessage) {
@@ -206,6 +205,27 @@ function safeHeadSha(value) {
   return normalized && shaPattern.test(normalized) ? normalized : null
 }
 
+function currentRunSha(run) {
+  return safeHeadSha(run?.headSha) || safeHeadSha(run?.baseSha)
+}
+
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0
+}
+
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0
+}
+
+function isBoundedSafeString(value, maxChars = 200) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxChars &&
+    !/[\u0000-\u001F\u007F-\u009F]/u.test(value)
+  )
+}
+
 function projectIdFor(run) {
   return typeof run?.project?.id === "string" ? run.project.id : "unknown"
 }
@@ -233,7 +253,7 @@ function projectRefusedResult(run) {
   })
 }
 
-function latestEvidence(run, kind) {
+function latestMatchingEvidence(run, kind, predicate) {
   const entries = run?.evidence?.[kind]
 
   if (!Array.isArray(entries)) {
@@ -243,27 +263,198 @@ function latestEvidence(run, kind) {
     )
   }
 
-  return entries.at(-1) || null
-}
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
 
-function validateOpenAttemptBoundary(run, boundary) {
-  if (!boundary?.openEvidence) {
-    return null
+    if (predicate(entry)) {
+      return entry
+    }
   }
 
-  const latest = latestEvidence(run, boundary.openEvidence.kind)
-  const latestOutcome = latest?.metadata?.outcome
+  return null
+}
 
-  if (latestOutcome === boundary.openEvidence.outcome) {
-    return ownerActionResult(run, boundary.action, boundary.openEvidence.reason)
+function branchMatches(run, metadata) {
+  return !run.branch || metadata.branch === undefined || metadata.branch === run.branch
+}
+
+function isCodexAttemptLooking(entry) {
+  const outcome = entry?.metadata?.outcome
+
+  return (
+    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
+    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID ||
+    outcome === "execution_started" ||
+    outcome === "execution_failed"
+  )
+}
+
+function isTrustedCodexAttemptEvidence(run, entry) {
+  const metadata = entry?.metadata || {}
+  const expectedSha = currentRunSha(run)
+  const attempt = run?.attempts?.implementation
+
+  if (!expectedSha || !isPositiveInteger(attempt)) {
+    return false
   }
 
   if (
-    boundary.openEvidence.requireDefinitivePriorAttempt === true &&
-    run.status === "tests_in_progress" &&
-    latestOutcome !== "failed"
+    entry?.kind !== "implementation" ||
+    entry?.source !== CODEX_EXECUTION_ADAPTER_ID ||
+    safeHeadSha(entry?.sha) !== expectedSha ||
+    metadata.adapter !== CODEX_EXECUTION_ADAPTER_ID ||
+    metadata.project !== projectIdFor(run) ||
+    metadata.attempt !== attempt ||
+    metadata.sandbox !== CODEX_EXECUTION_SANDBOX_ID ||
+    metadata.network !== "none" ||
+    metadata.remotePolicy !== "deny" ||
+    !branchMatches(run, metadata) ||
+    !sha256Pattern.test(String(metadata.promptHash || "")) ||
+    !isBoundedSafeString(metadata.startedAt, 80)
   ) {
-    return ownerActionResult(run, boundary.action, boundary.openEvidence.reason)
+    return false
+  }
+
+  if (!isBoundedSafeString(metadata.workspaceId, 120) || !isBoundedSafeString(metadata.workspaceRef, 160)) {
+    return false
+  }
+
+  if (metadata.backend !== undefined && !isBoundedSafeString(metadata.backend, 80)) {
+    return false
+  }
+
+  if (metadata.platform !== undefined && !isBoundedSafeString(metadata.platform, 40)) {
+    return false
+  }
+
+  if (metadata.outcome === "execution_started") {
+    return metadata.endedAt === undefined
+  }
+
+  if (metadata.outcome === "execution_failed") {
+    return isBoundedSafeString(metadata.endedAt, 80)
+  }
+
+  return false
+}
+
+function validateImplementationAttemptBoundary(run, action) {
+  const latestAttempt = latestMatchingEvidence(run, "implementation", isCodexAttemptLooking)
+
+  if (!latestAttempt) {
+    return null
+  }
+
+  if (!isTrustedCodexAttemptEvidence(run, latestAttempt)) {
+    return ownerActionResult(run, action, "codex_evidence_invalid")
+  }
+
+  if (latestAttempt.metadata.outcome === "execution_started") {
+    return ownerActionResult(run, action, "codex_reconciliation_required")
+  }
+
+  if (latestAttempt.metadata.outcome === "execution_failed") {
+    return null
+  }
+
+  return ownerActionResult(run, action, "codex_evidence_invalid")
+}
+
+function isAutomatedTestAttemptLooking(entry) {
+  const outcome = entry?.metadata?.outcome
+
+  return (
+    entry?.source === AUTOMATED_TEST_RUNNER_ID ||
+    entry?.metadata?.runner === AUTOMATED_TEST_RUNNER_ID ||
+    outcome === "testing_started" ||
+    outcome === "failed"
+  )
+}
+
+function hasTrustedTestEvidenceBase(run, entry) {
+  const metadata = entry?.metadata || {}
+  const expectedSha = safeHeadSha(run?.headSha)
+  const attempt = run?.attempts?.test
+
+  return (
+    Boolean(expectedSha) &&
+    isPositiveInteger(attempt) &&
+    entry?.kind === "test" &&
+    entry?.source === AUTOMATED_TEST_RUNNER_ID &&
+    safeHeadSha(entry?.sha) === expectedSha &&
+    metadata.runner === AUTOMATED_TEST_RUNNER_ID &&
+    metadata.project === projectIdFor(run) &&
+    metadata.attempt === attempt &&
+    safeHeadSha(metadata.implSha) === expectedSha &&
+    metadata.sandbox === AUTOMATED_TEST_SANDBOX_ID &&
+    metadata.network === "none" &&
+    safeIdPattern.test(String(metadata.policyId || "")) &&
+    sha256Pattern.test(String(metadata.policyHash || "")) &&
+    branchMatches(run, metadata) &&
+    isBoundedSafeString(metadata.startedAt, 80)
+  )
+}
+
+function isTrustedOpenTestingEvidence(run, entry) {
+  const metadata = entry?.metadata || {}
+
+  return (
+    hasTrustedTestEvidenceBase(run, entry) &&
+    metadata.outcome === "testing_started" &&
+    metadata.endedAt === undefined &&
+    isBoundedSafeString(metadata.workspaceId, 120) &&
+    isBoundedSafeString(metadata.workspaceRef, 160)
+  )
+}
+
+function isTrustedDefinitiveTestFailureEvidence(run, entry) {
+  const metadata = entry?.metadata || {}
+
+  if (!hasTrustedTestEvidenceBase(run, entry) || metadata.outcome !== "failed") {
+    return false
+  }
+
+  if (metadata.testId !== undefined || !isBoundedSafeString(metadata.endedAt, 80)) {
+    return false
+  }
+
+  if (
+    !isPositiveInteger(metadata.total) ||
+    !isNonNegativeInteger(metadata.passed) ||
+    !isNonNegativeInteger(metadata.failed) ||
+    !isNonNegativeInteger(metadata.ambiguous)
+  ) {
+    return false
+  }
+
+  return metadata.passed + metadata.failed + metadata.ambiguous <= metadata.total
+}
+
+function validateAutomatedTestRetryBoundary(run, action) {
+  const latestAttempt = latestMatchingEvidence(run, "test", isAutomatedTestAttemptLooking)
+
+  if (!latestAttempt) {
+    return ownerActionResult(run, action, "automated_test_reconciliation_required")
+  }
+
+  if (isTrustedOpenTestingEvidence(run, latestAttempt)) {
+    return ownerActionResult(run, action, "automated_test_reconciliation_required")
+  }
+
+  if (isTrustedDefinitiveTestFailureEvidence(run, latestAttempt)) {
+    return null
+  }
+
+  return ownerActionResult(run, action, "automated_test_evidence_invalid")
+}
+
+function validateAttemptBoundary(run, boundary) {
+  if (run.status === "implementation_in_progress") {
+    return validateImplementationAttemptBoundary(run, boundary.action)
+  }
+
+  if (run.status === "tests_in_progress") {
+    return validateAutomatedTestRetryBoundary(run, boundary.action)
   }
 
   return null
@@ -392,9 +583,34 @@ function safeFailureResult(runId, error) {
   })
 }
 
-function childFailureResult(run, action, error) {
+async function childFailureResult(run, action, error, options = {}) {
   const code = typeof error?.code === "string" ? error.code : "CHILD_OPERATION_FAILED"
   const stale = code === "STALE_RUN_VERSION"
+  let observed = null
+
+  try {
+    const reloaded = await readRun(run.runId, options)
+
+    if (reloaded?.runId === run.runId && isOrdinaryProject(reloaded)) {
+      observed = reloaded
+    }
+  } catch {
+    observed = null
+  }
+
+  if (!observed && !stale) {
+    return baseResult({
+      ok: false,
+      runId: run.runId,
+      project: projectIdFor(run),
+      before: run.status,
+      action,
+      outcome: "owner_action_required",
+      after: run.status,
+      headSha: run.headSha,
+      reason: "child_state_reload_failed"
+    })
+  }
 
   return baseResult({
     ok: false,
@@ -402,10 +618,12 @@ function childFailureResult(run, action, error) {
     project: projectIdFor(run),
     before: run.status,
     action,
-    outcome: stale ? "stale_state" : "owner_action_required",
-    after: run.status,
-    headSha: run.headSha,
-    reason: stale ? "stale_run_version" : safeReason(code.toLowerCase(), "child_operation_refused")
+    outcome: stale ? "stale_state" : safeOutcome(error?.outcome || error?.safeOutcome, "owner_action_required"),
+    after: observed?.status || run.status,
+    headSha: observed?.headSha || run.headSha,
+    reason: stale
+      ? "stale_run_version"
+      : safeReason(error?.reasonCode || error?.reason || code.toLowerCase(), "child_operation_refused")
   })
 }
 
@@ -456,7 +674,7 @@ async function executeDevelopmentContinueInternal(runId, options = {}) {
     return staleStateResult(current, boundary.action)
   }
 
-  const openAttempt = validateOpenAttemptBoundary(current, boundary)
+  const openAttempt = validateAttemptBoundary(current, boundary)
 
   if (openAttempt) {
     return openAttempt
@@ -485,7 +703,7 @@ async function executeDevelopmentContinueInternal(runId, options = {}) {
 
     return childResultToContinueResult(current, boundary.action, childResult, afterRun)
   } catch (error) {
-    return childFailureResult(current, boundary.action, error)
+    return await childFailureResult(current, boundary.action, error, options)
   }
 }
 

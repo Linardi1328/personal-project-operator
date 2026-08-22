@@ -177,7 +177,11 @@ function parseNoteConfirmCommand(rest) {
   }
 }
 
-function parseContinueCommand(rest) {
+function parseContinueCommand(commandText, rest, rawHasLineBreak) {
+  if (rawHasLineBreak || /[\r\n]/u.test(commandText)) {
+    return null;
+  }
+
   const normalized = String(rest ?? "").trim();
 
   if (!DEVELOPMENT_RUN_ID_PATTERN.test(normalized)) {
@@ -192,6 +196,7 @@ export function toPpoWrapperArgs(rawCommand) {
     return null;
   }
 
+  const rawHasLineBreak = /[\r\n]/u.test(rawCommand);
   const commandText = unwrapPpoEnvelope(rawCommand);
 
   if (!commandText) {
@@ -251,7 +256,7 @@ export function toPpoWrapperArgs(rawCommand) {
   }
 
   if (commandName === "continue") {
-    return parseContinueCommand(commandEnvelope.rest);
+    return parseContinueCommand(commandText, commandEnvelope.rest, rawHasLineBreak);
   }
 
   return null;
