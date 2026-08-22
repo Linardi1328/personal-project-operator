@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Manual diagnostic only. Coordinated Phase 6J reconciliation uses the
+# embedded read-only inspector in local-operator/development-rollback-agent.mjs
+# so it never executes files from the mutable production checkout after rollback.
+
 SERVICE_USER="ppo"
 SERVICE_GROUP="ppo"
 INSTALL_DIR="/opt/personal-project-operator"

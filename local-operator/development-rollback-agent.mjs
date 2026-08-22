@@ -36,7 +36,11 @@ export const MAX_ROLLBACK_OUTPUT_BYTES = 32 * 1024
 export const MAX_ROLLBACK_TIMEOUT_MS = 3 * 60 * 1000
 export const PHASE_6J_ROLLBACK_SCRIPT =
   `${PHASE_6H_PPO_DEPLOYMENT_PROFILE.installDir}/deployment/scripts/rollback-exact-sha.sh`
-export const PHASE_6J_ROLLBACK_INSPECTION_SCRIPT =
+export const PHASE_6J_ROLLBACK_COORDINATED_INSPECTION_ID =
+  "phase-6j-agent-embedded-readonly-production-inspection"
+// This mutable checkout script is retained only as a manual diagnostic helper.
+// Coordinated Phase 6J reconciliation never executes it.
+export const PHASE_6J_ROLLBACK_MANUAL_INSPECTION_SCRIPT =
   `${PHASE_6H_PPO_DEPLOYMENT_PROFILE.installDir}/deployment/scripts/inspect-rollback-readonly.sh`
 
 const shaPattern = /^[a-f0-9]{40}$/u
@@ -87,6 +91,25 @@ const resultClassKeys = Object.freeze([
   "postrollbackCheckout"
 ])
 const rollbackContractEntryCount = 14
+const fixedRollbackInspectionPaths = Object.freeze({
+  git: "/usr/bin/git",
+  systemctl: "/usr/bin/systemctl",
+  stat: "/usr/bin/stat",
+  find: "/usr/bin/find",
+  cat: "/usr/bin/cat",
+  sudo: "/usr/bin/sudo",
+  installDir: PHASE_6H_PPO_DEPLOYMENT_PROFILE.installDir,
+  stateDir: PHASE_6H_PPO_DEPLOYMENT_PROFILE.stateDir,
+  configDir: "/etc/personal-project-operator",
+  openclawPrefix: "/home/ppo/.local/openclaw",
+  nodeBin: "/home/ppo/.local/openclaw/tools/node/bin/node",
+  openclawBin: "/home/ppo/.local/openclaw/bin/openclaw",
+  remoteName: PHASE_6H_PPO_DEPLOYMENT_PROFILE.remoteName,
+  repositoryUrl: "https://github.com/Linardi1328/personal-project-operator.git",
+  serviceName: PHASE_6H_PPO_DEPLOYMENT_PROFILE.serviceName,
+  serviceUser: "ppo",
+  serviceGroup: "ppo"
+})
 const callerRollbackTargetOptionKeys = Object.freeze([
   "rollbackSha",
   "targetSha",
@@ -120,7 +143,7 @@ const rollbackPolicyContract = Object.freeze({
   stopsAt: "rolled_back",
   profile: PHASE_6H_PPO_DEPLOYMENT_PROFILE,
   rollbackScript: PHASE_6J_ROLLBACK_SCRIPT,
-  inspectionScript: PHASE_6J_ROLLBACK_INSPECTION_SCRIPT,
+  coordinatedInspection: PHASE_6J_ROLLBACK_COORDINATED_INSPECTION_ID,
   explicitOwnerConfirmationRequired: true,
   requiredChecks: Object.freeze([
     "fixed_ppo_project",
@@ -495,7 +518,452 @@ function parseTrustedRollbackOutput(stdout) {
   return parsed
 }
 
-async function defaultRollbackRunner(invocation) {
+async function defaultReadOnlyInspectionCommandRunner(invocation) {
+  try {
+    const result = await execFileAsync(invocation.executablePath, invocation.args, {
+      cwd: "/",
+      env: {
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      encoding: "utf8",
+      maxBuffer: invocation.maxOutputBytes,
+      timeout: invocation.timeoutMs,
+      shell: false
+    })
+
+    return {
+      exitCode: 0,
+      stdout: result.stdout
+    }
+  } catch (error) {
+    if (isUncertainOutcome(error)) {
+      throw ambiguousRollbackError()
+    }
+
+    return {
+      exitCode: Number.isInteger(error?.code) ? error.code : 1,
+      stdout: typeof error?.stdout === "string" ? error.stdout : ""
+    }
+  }
+}
+
+function readOnlyInspectionCommandRunner(options = {}) {
+  return options.readOnlyInspectionCommandRunner || defaultReadOnlyInspectionCommandRunner
+}
+
+async function runReadOnlyInspectionCommand(executablePath, args, options = {}) {
+  const invocation = {
+    executablePath,
+    args: [...args],
+    cwd: "/",
+    env: {
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin"
+    },
+    shell: false,
+    timeoutMs: MAX_ROLLBACK_TIMEOUT_MS,
+    maxOutputBytes: MAX_ROLLBACK_OUTPUT_BYTES
+  }
+  let result
+
+  try {
+    result = await readOnlyInspectionCommandRunner(options)(invocation)
+  } catch (error) {
+    if (isUncertainOutcome(error) || error?.code === "ROLLBACK_AMBIGUOUS") {
+      throw ambiguousRollbackError()
+    }
+
+    if (options.readOnlyInspectionCommandRunner) {
+      throw error
+    }
+
+    return {
+      exitCode: 1,
+      stdout: ""
+    }
+  }
+
+  if (isUncertainOutcome(result)) {
+    throw ambiguousRollbackError()
+  }
+
+  if (!result || !Number.isInteger(result.exitCode)) {
+    throw ambiguousRollbackError("read-only inspection command returned malformed status")
+  }
+
+  const stdout = String(result.stdout ?? "")
+
+  if (Buffer.byteLength(stdout, "utf8") > MAX_ROLLBACK_OUTPUT_BYTES) {
+    throw ambiguousRollbackError("read-only inspection command output exceeded bound")
+  }
+
+  return {
+    exitCode: result.exitCode,
+    stdout
+  }
+}
+
+function firstOutputLine(stdout) {
+  return String(stdout || "").split(/\r?\n/u)[0]?.trim() || ""
+}
+
+function nullSeparatedOutput(stdout) {
+  return String(stdout || "").split("\0").filter((entry) => entry.length > 0)
+}
+
+function baseReadOnlyRollbackInspectionResult(profile) {
+  return {
+    schemaVersion: 1,
+    ok: false,
+    failureClass: "rollback_incomplete",
+    observedCheckoutSha: "",
+    serviceName: profile.serviceName,
+    serviceEnabled: false,
+    serviceActive: false,
+    serviceRunning: false,
+    serviceMainPidNonZero: false,
+    repository: "failed",
+    currentCheckout: "failed",
+    detached: "failed",
+    clean: "failed",
+    previousRevision: "failed",
+    rollbackCommit: "failed",
+    checkoutSwitch: "not_applicable",
+    permissionContract: "failed",
+    runtimePreflight: "failed",
+    serviceRestart: "not_applicable",
+    postrollbackCheckout: "failed",
+    rollbackInvoked: false,
+    deploymentInvoked: false,
+    githubWriteInvoked: false,
+    modelInvoked: false,
+    routeInvoked: false,
+    networkRefreshInvoked: false,
+    legacyRollbackInvoked: false
+  }
+}
+
+async function runFixedGit(args, options = {}) {
+  return await runReadOnlyInspectionCommand(fixedRollbackInspectionPaths.git, args, options)
+}
+
+async function runFixedSystemctl(args, options = {}) {
+  return await runReadOnlyInspectionCommand(fixedRollbackInspectionPaths.systemctl, args, options)
+}
+
+async function statPath(path, options = {}) {
+  const result = await runReadOnlyInspectionCommand(fixedRollbackInspectionPaths.stat, [
+    "-c",
+    "%U %G %a %F",
+    path
+  ], options)
+
+  if (result.exitCode !== 0) {
+    return null
+  }
+
+  const match = firstOutputLine(result.stdout).match(/^(\S+) (\S+) ([0-7]+) (.+)$/u)
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    user: match[1],
+    group: match[2],
+    mode: match[3],
+    fileType: match[4]
+  }
+}
+
+function statMatches(metadata, expectedUser, expectedGroup, expectedMode) {
+  return Boolean(
+    metadata &&
+    metadata.user === expectedUser &&
+    metadata.group === expectedGroup &&
+    metadata.mode === expectedMode
+  )
+}
+
+async function fixedPathIsDirectory(path, options = {}) {
+  const metadata = await statPath(path, options)
+
+  return metadata?.fileType === "directory"
+}
+
+async function fixedPathIsExecutable(path, options = {}) {
+  const metadata = await statPath(path, options)
+  const mode = Number.parseInt(metadata?.mode || "", 8)
+
+  return Number.isInteger(mode) && (mode & 0o111) !== 0
+}
+
+function trackedModeToExpectedPermission(trackedMode) {
+  return trackedMode === "100755" ? "755" : "644"
+}
+
+async function expectedFilePermission(relativePath, options = {}) {
+  const result = await runFixedGit([
+    "-C",
+    fixedRollbackInspectionPaths.installDir,
+    "ls-files",
+    "-s",
+    "--",
+    relativePath
+  ], options)
+  const trackedMode = firstOutputLine(result.stdout).split(/\s+/u)[0] || ""
+
+  return trackedModeToExpectedPermission(trackedMode)
+}
+
+async function checkReadOnlyPermissionContract(options = {}) {
+  const installDir = fixedRollbackInspectionPaths.installDir
+
+  if (!statMatches(await statPath(installDir, options), "root", fixedRollbackInspectionPaths.serviceGroup, "755")) {
+    return false
+  }
+
+  const directoryList = await runReadOnlyInspectionCommand(fixedRollbackInspectionPaths.find, [
+    installDir,
+    "-type",
+    "d",
+    "-print0"
+  ], options)
+
+  if (directoryList.exitCode !== 0) {
+    return false
+  }
+
+  for (const path of nullSeparatedOutput(directoryList.stdout)) {
+    if (!statMatches(await statPath(path, options), "root", fixedRollbackInspectionPaths.serviceGroup, "755")) {
+      return false
+    }
+  }
+
+  const fileList = await runReadOnlyInspectionCommand(fixedRollbackInspectionPaths.find, [
+    installDir,
+    "-type",
+    "f",
+    "-print0"
+  ], options)
+
+  if (fileList.exitCode !== 0) {
+    return false
+  }
+
+  for (const path of nullSeparatedOutput(fileList.stdout)) {
+    const relativePath = path.startsWith(`${installDir}/`) ? path.slice(installDir.length + 1) : path
+    const expectedMode = await expectedFilePermission(relativePath, options)
+
+    if (!statMatches(await statPath(path, options), "root", fixedRollbackInspectionPaths.serviceGroup, expectedMode)) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function parseNodeVersion(rawVersion) {
+  const match = String(rawVersion || "").trim().replace(/^v/u, "").match(/^([0-9]+)\.([0-9]+)\.([0-9]+)$/u)
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10)
+  }
+}
+
+function nodeVersionIsSupported(rawVersion) {
+  const parsed = parseNodeVersion(rawVersion)
+
+  if (!parsed) {
+    return false
+  }
+
+  const { major, minor, patch } = parsed
+
+  if (major === 22) {
+    return minor > 22 || (minor === 22 && patch >= 3)
+  }
+
+  if (major === 24) {
+    return minor > 15 || (minor === 15 && patch >= 0)
+  }
+
+  if (major === 25) {
+    return minor > 9 || (minor === 9 && patch >= 0)
+  }
+
+  return major >= 26
+}
+
+async function checkReadOnlyRuntimePreflight(options = {}) {
+  if (!(await fixedPathIsDirectory(fixedRollbackInspectionPaths.installDir, options))) {
+    return false
+  }
+
+  if (!(await fixedPathIsDirectory(fixedRollbackInspectionPaths.configDir, options))) {
+    return false
+  }
+
+  if (!(await fixedPathIsExecutable(fixedRollbackInspectionPaths.nodeBin, options))) {
+    return false
+  }
+
+  if (!(await fixedPathIsExecutable(fixedRollbackInspectionPaths.openclawBin, options))) {
+    return false
+  }
+
+  const nodeVersion = await runReadOnlyInspectionCommand(fixedRollbackInspectionPaths.sudo, [
+    "-u",
+    fixedRollbackInspectionPaths.serviceUser,
+    fixedRollbackInspectionPaths.nodeBin,
+    "--version"
+  ], options)
+
+  if (nodeVersion.exitCode !== 0 || !nodeVersionIsSupported(firstOutputLine(nodeVersion.stdout))) {
+    return false
+  }
+
+  const openclawVersion = await runReadOnlyInspectionCommand(fixedRollbackInspectionPaths.sudo, [
+    "-u",
+    fixedRollbackInspectionPaths.serviceUser,
+    fixedRollbackInspectionPaths.openclawBin,
+    "--version"
+  ], options)
+
+  return openclawVersion.exitCode === 0
+}
+
+async function inspectProductionRollbackReadOnly(invocation, options = {}) {
+  const result = baseReadOnlyRollbackInspectionResult(invocation.profile)
+  const paths = fixedRollbackInspectionPaths
+
+  const remote = await runFixedGit([
+    "-C",
+    paths.installDir,
+    "remote",
+    "get-url",
+    paths.remoteName
+  ], options)
+  if (remote.exitCode === 0 && firstOutputLine(remote.stdout) === paths.repositoryUrl) {
+    result.repository = "passed"
+  }
+
+  const head = await runFixedGit([
+    "-C",
+    paths.installDir,
+    "rev-parse",
+    "--verify",
+    "HEAD"
+  ], options)
+  const observedCheckoutSha = firstOutputLine(head.stdout).toLowerCase()
+
+  if (head.exitCode === 0 && shaPattern.test(observedCheckoutSha)) {
+    result.observedCheckoutSha = observedCheckoutSha
+    result.currentCheckout = observedCheckoutSha === invocation.deploymentSha ? "passed" : "failed"
+    result.postrollbackCheckout = observedCheckoutSha === invocation.rollbackSha ? "passed" : "failed"
+  }
+
+  const symbolicRef = await runFixedGit([
+    "-C",
+    paths.installDir,
+    "symbolic-ref",
+    "-q",
+    "HEAD"
+  ], options)
+  result.detached = symbolicRef.exitCode === 0 ? "failed" : "passed"
+
+  const status = await runFixedGit([
+    "--no-optional-locks",
+    "-C",
+    paths.installDir,
+    "-c",
+    "core.fsmonitor=false",
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--no-renames"
+  ], options)
+  result.clean = status.exitCode === 0 && status.stdout === "" ? "passed" : "failed"
+
+  const marker = await runReadOnlyInspectionCommand(paths.cat, [
+    `${paths.stateDir}/last-deploy-previous-revision`
+  ], options)
+  result.previousRevision = marker.exitCode === 0 && firstOutputLine(marker.stdout) === invocation.rollbackSha
+    ? "passed"
+    : "failed"
+
+  const rollbackCommit = await runFixedGit([
+    "-C",
+    paths.installDir,
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `${invocation.rollbackSha}^{commit}`
+  ], options)
+  result.rollbackCommit = rollbackCommit.exitCode === 0 ? "passed" : "failed"
+
+  result.permissionContract = await checkReadOnlyPermissionContract(options) ? "passed" : "failed"
+  result.runtimePreflight = await checkReadOnlyRuntimePreflight(options) ? "passed" : "failed"
+
+  const serviceEnabled = await runFixedSystemctl([
+    "is-enabled",
+    "--quiet",
+    paths.serviceName
+  ], options)
+  result.serviceEnabled = serviceEnabled.exitCode === 0
+
+  const serviceActive = await runFixedSystemctl([
+    "is-active",
+    "--quiet",
+    paths.serviceName
+  ], options)
+  result.serviceActive = serviceActive.exitCode === 0
+
+  const subState = await runFixedSystemctl([
+    "show",
+    paths.serviceName,
+    "--property=SubState",
+    "--value"
+  ], options)
+  result.serviceRunning = subState.exitCode === 0 && firstOutputLine(subState.stdout) === "running"
+
+  const mainPid = await runFixedSystemctl([
+    "show",
+    paths.serviceName,
+    "--property=MainPID",
+    "--value"
+  ], options)
+  const mainPidValue = firstOutputLine(mainPid.stdout)
+  result.serviceMainPidNonZero = mainPid.exitCode === 0 && /^[0-9]+$/u.test(mainPidValue) && mainPidValue !== "0"
+
+  if (
+    result.repository === "passed" &&
+    result.postrollbackCheckout === "passed" &&
+    result.detached === "passed" &&
+    result.clean === "passed" &&
+    result.previousRevision === "passed" &&
+    result.rollbackCommit === "passed" &&
+    result.permissionContract === "passed" &&
+    result.runtimePreflight === "passed" &&
+    result.serviceActive === true &&
+    result.serviceRunning === true &&
+    result.serviceMainPidNonZero === true
+  ) {
+    result.ok = true
+    result.failureClass = "none"
+  } else if (result.observedCheckoutSha === invocation.deploymentSha) {
+    result.failureClass = "rollback_not_started"
+  }
+
+  return result
+}
+
+async function defaultRollbackRunner(invocation, options = {}) {
   if (invocation.kind === "execute-rollback") {
     const result = await runTrustedProcess(PHASE_6J_ROLLBACK_SCRIPT, [
       invocation.deploymentSha,
@@ -506,12 +974,7 @@ async function defaultRollbackRunner(invocation) {
   }
 
   if (invocation.kind === "inspect-rollback") {
-    const result = await runTrustedProcess(PHASE_6J_ROLLBACK_INSPECTION_SCRIPT, [
-      invocation.deploymentSha,
-      invocation.rollbackSha
-    ])
-
-    return parseTrustedRollbackOutput(result.stdout)
+    return await inspectProductionRollbackReadOnly(invocation, options)
   }
 
   throw rollbackError(
@@ -520,8 +983,12 @@ async function defaultRollbackRunner(invocation) {
   )
 }
 
-function rollbackRunner(options = {}) {
-  return options.rollbackRunner || defaultRollbackRunner
+function rollbackExecutionRunner(options = {}) {
+  return options.rollbackRunner || ((invocation) => defaultRollbackRunner(invocation, options))
+}
+
+function rollbackInspectionRunner(options = {}) {
+  return options.rollbackInspectionRunner || ((invocation) => defaultRollbackRunner(invocation, options))
 }
 
 function booleanValue(value, fieldName) {
@@ -713,7 +1180,7 @@ function validateRollbackResult(result, profile, facts, mode) {
 
 async function performRollback(profile, facts, options = {}) {
   try {
-    const result = await rollbackRunner(options)({
+    const result = await rollbackExecutionRunner(options)({
       kind: "execute-rollback",
       profile,
       deploymentSha: facts.deploymentSha,
@@ -760,7 +1227,7 @@ async function performRollback(profile, facts, options = {}) {
 }
 
 async function inspectRollback(profile, facts, options = {}) {
-  const result = await rollbackRunner(options)({
+  const result = await rollbackInspectionRunner(options)({
     kind: "inspect-rollback",
     profile,
     deploymentSha: facts.deploymentSha,
