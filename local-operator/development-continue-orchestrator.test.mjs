@@ -476,8 +476,9 @@ async function pathExists(path) {
 
 async function createStoredRun(status, options = {}) {
   const writeDataDir = options.writeDataDir || await tempWriteDataDir()
+  const projectId = options.projectId || PROJECT.id
   const created = await createDevelopmentRun({
-    projectId: PROJECT.id,
+    projectId,
     task: options.task || "Phase 6K stored route fixture.",
     baseSha: BASE_SHA,
     branch: "main",
@@ -529,7 +530,7 @@ async function createStoredRun(status, options = {}) {
       sha: HEAD_SHA,
       source: CODEX_EXECUTION_ADAPTER_ID,
       metadata: {
-        project: PROJECT.id,
+        project: projectId,
         adapter: CODEX_EXECUTION_ADAPTER_ID,
         attempt: implementing.attempts.implementation,
         promptHash: PROMPT_HASH,
@@ -588,7 +589,7 @@ async function createStoredRun(status, options = {}) {
       sha: HEAD_SHA,
       source: AUTOMATED_TEST_RUNNER_ID,
       metadata: {
-        project: PROJECT.id,
+        project: projectId,
         runner: AUTOMATED_TEST_RUNNER_ID,
         attempt: testing.attempts.test,
         ...passedPolicyIdentity,
@@ -627,7 +628,7 @@ async function createStoredRun(status, options = {}) {
       sha: HEAD_SHA,
       source: "phase-6f-independent-review-agent",
       metadata: {
-        project: PROJECT.id,
+        project: projectId,
         reviewer: "phase-6f-independent-review-agent",
         attempt: reviewing.attempts.review,
         reviewedSha: HEAD_SHA,
@@ -647,7 +648,7 @@ async function createStoredRun(status, options = {}) {
       sha: HEAD_SHA,
       source: "phase-6f-independent-review-agent",
       metadata: {
-        project: PROJECT.id,
+        project: projectId,
         reviewer: "phase-6f-independent-review-agent",
         attempt: reviewing.attempts.review,
         reviewedSha: HEAD_SHA,
@@ -1312,10 +1313,13 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
       stepCount: 2
     }],
     ["rbl-content-engine", {
-      policyId: "phase-6e-rbl-content-engine-fixed-python-pytest-policy",
+      policyId: "phase-6e-rbl-content-engine-fixed-python-unittest-policy",
       executablePath: "/opt/homebrew/bin/python3.12",
-      args: ["-m", "pytest", "tests"],
-      stepCount: 1
+      args: [
+        ["-m", "compileall", "-q", "src", "tests"],
+        ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"]
+      ],
+      stepCount: 2
     }]
   ])
   const projectIds = listPhase2GitHubProjects().map((project) => project.id)
@@ -1346,12 +1350,17 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
       assert.equal(step.shell, false, projectId)
     }
 
-    if (projectId === "portfolio") {
+    if (projectId === "portfolio" || projectId === "rbl-content-engine") {
       assert.deepEqual(policy.steps.map((step) => step.args), expected.args, projectId)
       assert.doesNotMatch(JSON.stringify(policy), /npm|npx|package\.json|node --test|Makefile/i, projectId)
     } else {
       assert.deepEqual(policy.steps[0].args, expected.args, projectId)
       assert.doesNotMatch(JSON.stringify(policy), /node --test|npm|npx|package\.json|Makefile/i, projectId)
+    }
+
+    if (projectId === "rbl-content-engine") {
+      assert.deepEqual(policy.steps.map((step) => step.id), ["compile", "unittest"])
+      assert.doesNotMatch(JSON.stringify(policy), /pytest/)
     }
   }
 
@@ -1379,6 +1388,116 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
     ["-m", "pytest", "backend/tests"]
   )
   assert.doesNotMatch(JSON.stringify(maliciousProfile.testPolicyRegistry["khlim-assist"]), /curl|\/bin\/sh|npm test|node --test/)
+})
+
+test("Phase 6K RBL reviewed policy uses fixed Python compileall and unittest without pytest", async () => {
+  const probes = []
+  const profile = await loadFakeRuntimeProfileFor("rbl-content-engine", {
+    execFileImpl: async (executablePath, args) => {
+      probes.push({ executablePath, args })
+      return { stdout: "ok\n", stderr: "" }
+    }
+  })
+  const policy = profile.testPolicyRegistry["rbl-content-engine"]
+  const identity = resolveAutomatedTestPolicyIdentity(runForProject("rbl-content-engine"), profile)
+
+  assert.equal(policy.policyId, "phase-6e-rbl-content-engine-fixed-python-unittest-policy")
+  assert.equal(identity.policyId, "phase-6e-rbl-content-engine-fixed-python-unittest-policy")
+  assert.match(identity.policyHash, /^[a-f0-9]{64}$/u)
+  assert.equal(identity.requiredTestCount, 2)
+  assert.equal(policy.steps.length, 2)
+  assert.deepEqual(policy.steps.map((step) => step.required), [true, true])
+  assert.deepEqual(policy.trustedExecutablePaths, ["/opt/homebrew/bin/python3.12"])
+  assert.equal(policy.steps[0].id, "compile")
+  assert.equal(policy.steps[0].executablePath, "/opt/homebrew/bin/python3.12")
+  assert.deepEqual(policy.steps[0].args, ["-m", "compileall", "-q", "src", "tests"])
+  assert.equal(policy.steps[0].shell, false)
+  assert.equal(policy.steps[1].id, "unittest")
+  assert.equal(policy.steps[1].executablePath, "/opt/homebrew/bin/python3.12")
+  assert.deepEqual(policy.steps[1].args, ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
+  assert.equal(policy.steps[1].shell, false)
+  assert.deepEqual(probes, [{
+    executablePath: "/opt/homebrew/bin/python3.12",
+    args: ["-c", "import compileall, unittest"]
+  }])
+  assert.doesNotMatch(JSON.stringify(policy), /pytest|Makefile|package\.json|npm|npx|node --test/)
+})
+
+test("Phase 6K RBL retry evidence must match the new compile/unittest policy", async () => {
+  const currentProfile = await loadFakeRuntimeProfileFor("rbl-content-engine")
+  const rblRun = runForProject("rbl-content-engine", "tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  const currentIdentity = resolveAutomatedTestPolicyIdentity(rblRun, currentProfile)
+  const oldRblPytestRegistry = {
+    "rbl-content-engine": {
+      policyId: "phase-6e-rbl-content-engine-fixed-python-pytest-policy",
+      policyVersion: "1",
+      trustedExecutablePaths: ["/opt/homebrew/bin/python3.12"],
+      env: {
+        PPO_PHASE6K_TEST_POLICY: "fixed",
+        PYTHONDONTWRITEBYTECODE: "1",
+        PYTHONNOUSERSITE: "1"
+      },
+      sandbox: currentProfile.testPolicyRegistry["rbl-content-engine"].sandbox,
+      steps: [{
+        id: "pytest",
+        executablePath: "/opt/homebrew/bin/python3.12",
+        args: ["-m", "pytest", "tests"],
+        timeoutMs: 120000,
+        maxOutputBytes: currentProfile.testPolicyRegistry["rbl-content-engine"].steps[0].maxOutputBytes,
+        required: true,
+        shell: false
+      }]
+    }
+  }
+  const oldIdentity = resolveAutomatedTestPolicyIdentity(rblRun, {
+    testPolicyRegistry: oldRblPytestRegistry
+  })
+  assert.equal(oldIdentity.policyId, "phase-6e-rbl-content-engine-fixed-python-pytest-policy")
+  assert.notEqual(oldIdentity.policyHash, currentIdentity.policyHash)
+
+  {
+    const run = runForProject("rbl-content-engine", "tests_in_progress", {
+      attempts: { test: 1 }
+    })
+    run.evidence.test = [testFailureEvidence(run, {
+      policyIdentity: oldIdentity
+    })]
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(run).readRun,
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: async () => currentProfile
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "automated_test_evidence_invalid")
+    assert.equal(children.calls.length, 0)
+  }
+
+  {
+    const run = runForProject("rbl-content-engine", "tests_in_progress", {
+      attempts: { test: 1 }
+    })
+    run.evidence.test = [testFailureEvidence(run, {
+      policyIdentity: currentIdentity
+    })]
+    const children = makeChildHandlers({
+      executeAutomatedTests: "tests_passed"
+    })
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(run).readRun,
+      childHandlers: children.handlers,
+      trustedRuntimeProfileProvider: async () => currentProfile
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.action, "phase-6e-automated-test-retry")
+    assert.equal(children.calls.length, 1)
+  }
 })
 
 test("Phase 6K Linux runtime profile uses the exact preconfigured namespace backend and ppo identity", async () => {
@@ -1545,6 +1664,43 @@ test("Phase 6K refuses missing project test runtime before Phase 6E mutation", a
   assert.equal(after.version, before.version)
   assert.equal(after.status, before.status)
   assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|missing pytest/)
+})
+
+test("Phase 6K refuses missing RBL Python runtime before Phase 6E mutation", async () => {
+  const fixture = await createStoredRun("implementation_ready", {
+    projectId: "rbl-content-engine"
+  })
+  const before = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  let childCalls = 0
+  const result = await executeDevelopmentContinue(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir,
+    childHandlers: {
+      executeAutomatedTests: async () => {
+        childCalls += 1
+        return { ok: true, outcome: "tests_passed", run: fixture.run }
+      }
+    },
+    trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
+      platform: "darwin",
+      statImpl: fakeRuntimeStatFor({ missing: new Set(["/opt/homebrew/bin/python3.12"]) }),
+      accessImpl: async () => {},
+      execFileImpl: async () => {
+        throw new Error("SENSITIVE_TEST_SENTINEL rbl runtime")
+      }
+    })
+  })
+  const after = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, "continue_runtime_not_ready")
+  assert.equal(childCalls, 0)
+  assert.equal(after.version, before.version)
+  assert.equal(after.status, before.status)
+  assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|rbl runtime/)
 })
 
 test("Phase 6K does not weaken the production OpenClaw privilege boundary", async () => {

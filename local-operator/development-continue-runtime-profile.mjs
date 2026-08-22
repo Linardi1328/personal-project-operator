@@ -97,9 +97,15 @@ const reviewedProjectTestPolicies = Object.freeze({
     }])
   }),
   "rbl-content-engine": Object.freeze({
-    policyId: "phase-6e-rbl-content-engine-fixed-python-pytest-policy",
-    kind: "python-pytest",
-    pythonTestPaths: Object.freeze(["tests"])
+    policyId: "phase-6e-rbl-content-engine-fixed-python-unittest-policy",
+    kind: "python-compile-unittest",
+    pythonSteps: Object.freeze([{
+      id: "compile",
+      args: Object.freeze(["-m", "compileall", "-q", "src", "tests"])
+    }, {
+      id: "unittest",
+      args: Object.freeze(["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
+    }])
   })
 })
 
@@ -255,6 +261,11 @@ async function runReadOnlyProbe(executablePath, args, options = {}) {
 async function assertPythonPytestRuntime(paths, options = {}) {
   await assertExecutable(paths.pythonExecutablePath, options)
   await runReadOnlyProbe(paths.pythonExecutablePath, ["-m", "pytest", "--version"], options)
+}
+
+async function assertPythonStandardLibraryRuntime(paths, options = {}) {
+  await assertExecutable(paths.pythonExecutablePath, options)
+  await runReadOnlyProbe(paths.pythonExecutablePath, ["-c", "import compileall, unittest"], options)
 }
 
 async function assertNodeToolRuntime(paths, toolPath, options = {}) {
@@ -480,6 +491,29 @@ function pythonTestPolicy(definition, paths, sandbox) {
   }
 }
 
+function pythonCompileUnittestPolicy(definition, paths, sandbox) {
+  return {
+    policyId: definition.policyId,
+    policyVersion: "1",
+    trustedExecutablePaths: [paths.pythonExecutablePath],
+    env: {
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONNOUSERSITE: "1"
+    },
+    sandbox,
+    steps: definition.pythonSteps.map((step) => ({
+      id: step.id,
+      executablePath: paths.pythonExecutablePath,
+      args: [...step.args],
+      timeoutMs: 120000,
+      maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
+      required: true,
+      shell: false
+    }))
+  }
+}
+
 function nodeQualityPolicy(definition, paths, sandbox) {
   return {
     policyId: definition.policyId,
@@ -512,6 +546,10 @@ function testPolicyForProject(projectId, paths, sandbox) {
     return pythonTestPolicy(definition, paths, sandbox)
   }
 
+  if (definition.kind === "python-compile-unittest") {
+    return pythonCompileUnittestPolicy(definition, paths, sandbox)
+  }
+
   if (definition.kind === "node-next-quality") {
     return nodeQualityPolicy(definition, paths, sandbox)
   }
@@ -528,6 +566,11 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
 
   if (definition.kind === "python-pytest") {
     await assertPythonPytestRuntime(paths, options)
+    return
+  }
+
+  if (definition.kind === "python-compile-unittest") {
+    await assertPythonStandardLibraryRuntime(paths, options)
     return
   }
 
