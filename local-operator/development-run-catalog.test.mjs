@@ -1209,7 +1209,7 @@ test("Phase 6N formatters validate hostile caller input before rendering", async
   }
 })
 
-test("Phase 6N catalog module has no route, mutation, recovery, continuation, production, subprocess, or network surface", async () => {
+test("Phase 6N catalog engine stays route-free and mutation-free after Phase 6O exposure", async () => {
   const repoRoot = fileURLToPath(new URL("../", import.meta.url))
   const catalogSource = await readFile(new URL("development-run-catalog.mjs", import.meta.url), "utf8")
   const commandSource = await readFile(join(repoRoot, "local-operator", "ppo-command.mjs"), "utf8")
@@ -1245,6 +1245,6 @@ test("Phase 6N catalog module has no route, mutation, recovery, continuation, pr
     assert.equal(catalogSource.includes(forbidden), false, forbidden)
   }
 
-  assert.doesNotMatch(commandSource, /\/ppo runs|\/ppo run|run-status|list-runs|\/ppo cancel|\/ppo retry|\/ppo resume/u)
-  assert.doesNotMatch(bridgeSource, /development-run-catalog|\/ppo runs|\/ppo run|run-status|list-runs|cancel|retry|resume/u)
+  assert.doesNotMatch(commandSource, /run-status|list-runs|\/ppo cancel|\/ppo retry|\/ppo resume/u)
+  assert.doesNotMatch(bridgeSource, /development-run-catalog\.mjs|run-status|list-runs|\/ppo cancel|\/ppo retry|\/ppo resume/u)
 })

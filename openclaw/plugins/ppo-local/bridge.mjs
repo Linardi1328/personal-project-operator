@@ -56,6 +56,8 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
     "- /ppo note-confirm <request-id>",
+    "- /ppo runs",
+    "- /ppo run <run-id>",
     "- /ppo continue <run-id>",
     "- /ppo recover <run-id>"
   ].join("\n");
@@ -206,6 +208,28 @@ function parseRecoverCommand(commandText, rest, rawHasLineBreak, rawHasTab) {
   return ["recover", normalized];
 }
 
+function parseRunCatalogCommand(commandText, rawCommand) {
+  if (rawCommand !== rawCommand.trim() || /[\u0000-\u001F\u007F-\u009F]/u.test(rawCommand)) {
+    return null;
+  }
+
+  if (commandText === "runs") {
+    return ["runs"];
+  }
+
+  const parts = commandText.split(" ");
+
+  if (
+    parts.length === 2 &&
+    parts[0] === "run" &&
+    DEVELOPMENT_RUN_ID_PATTERN.test(parts[1])
+  ) {
+    return ["run", parts[1]];
+  }
+
+  return null;
+}
+
 export function toPpoWrapperArgs(rawCommand) {
   if (typeof rawCommand !== "string") {
     return null;
@@ -227,6 +251,11 @@ export function toPpoWrapperArgs(rawCommand) {
 
   const commandName = commandEnvelope.token.toLowerCase();
   const normalizedCommand = normalizedStaticCommand(commandName, commandEnvelope.rest);
+
+  if (commandName === "runs" || commandName === "run") {
+    return parseRunCatalogCommand(commandText, rawCommand);
+  }
+
   const staticCommand = allowedCommands.get(normalizedCommand.toLowerCase());
 
   if (staticCommand) {

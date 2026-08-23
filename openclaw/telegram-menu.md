@@ -2,7 +2,7 @@
 
 This document describes how Telegram should expose Personal Project Operator commands.
 
-Phase 6M exposes controlled development continuation and read-only recovery through `/ppo` while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`. `/ppo continue <run-id>` advances at most one existing reviewed Phase 6B-6G boundary for ordinary runs. `/ppo recover <run-id>` returns one reviewed Phase 6L read-only recovery observation. Neither route exposes production deployment, verification, or rollback.
+Phase 6O exposes controlled read-only development run catalog routes alongside controlled development continuation and read-only recovery through `/ppo` while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`. `/ppo runs` lists bounded ordinary-run catalog summaries. `/ppo run <run-id>` returns one bounded ordinary-run summary. `/ppo continue <run-id>` advances at most one existing reviewed Phase 6B-6G boundary for ordinary runs. `/ppo recover <run-id>` returns one reviewed Phase 6L read-only recovery observation. The catalog and recovery routes do not mutate run state, and none of these routes expose production deployment, verification, or rollback.
 
 This repo does not register commands with Telegram and does not call Telegram APIs.
 
@@ -23,6 +23,8 @@ Expected message forms:
 /ppo issue-confirm <request-id> - Confirm one staged issue creation request
 /ppo note-add <project> <note...> - Stage a project note for confirmation
 /ppo note-confirm <request-id> - Confirm one staged project note request
+/ppo runs - List read-only development catalog summaries
+/ppo run <run-id> - Inspect one read-only development summary
 /ppo continue <run-id> - Continue one existing ordinary development run through one reviewed boundary
 /ppo recover <run-id> - Inspect one existing ordinary development run through one read-only recovery boundary
 /ppo codex <project> <task> - Generate deterministic Codex prompt text
@@ -56,6 +58,8 @@ Expected message forms:
 - `/ppo issue-confirm <request-id>` (Phase 5B single-use confirmation)
 - `/ppo note-add <project> <note...>` (Phase 5D staging only)
 - `/ppo note-confirm <request-id>` (Phase 5D single-use confirmation)
+- `/ppo runs` (Phase 6O read-only development catalog)
+- `/ppo run <run-id>` (Phase 6O read-only development summary)
 - `/ppo continue <run-id>` (Phase 6K one-boundary ordinary development continue)
 - `/ppo recover <run-id>` (Phase 6M read-only ordinary development recovery)
 - `/ppo handoff <project>`
@@ -90,7 +94,7 @@ Inline buttons may prefill `/ppo issue-create` or `/ppo issue-confirm`, but they
 
 Inline buttons may prefill `/ppo note-add` or `/ppo note-confirm`, but they must not bypass the request id confirmation step.
 
-Phase 6M keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. `note-add` performs no note write; `note-confirm` can append only one approved local note after atomically claiming an unexpired one-time id. `continue` accepts only an existing run id and delegates to one reviewed Phase 6B-6G boundary. `recover` accepts only an existing run id and delegates to one reviewed Phase 6L read-only recovery boundary. The chat path must not accept or expose terminal write confirmation environment values, rollback confirmations, production services, deployment targets, actions, branches, repositories, SHAs, recovery options, commands, or executables.
+Phase 6O keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. `note-add` performs no note write; `note-confirm` can append only one approved local note after atomically claiming an unexpired one-time id. `runs` and `run` expose only the Phase 6N read-only ordinary-run catalog with no filters, search, sort, retry, repair, recovery, continue, cancellation, production action, or model interpretation. `continue` accepts only an existing run id and delegates to one reviewed Phase 6B-6G boundary. `recover` accepts only an existing run id and delegates to one reviewed Phase 6L read-only recovery boundary. The chat path must not accept or expose terminal write confirmation environment values, rollback confirmations, production services, deployment targets, actions, branches, repositories, SHAs, recovery options, commands, or executables.
 
 Do not override OpenClaw built-ins:
 

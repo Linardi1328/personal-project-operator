@@ -16,7 +16,7 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts the approved PPO command surface through Phase 6M
+- accepts the approved PPO command surface through Phase 6O
 - accepts the Phase 5B approval commands `issue-create` and `issue-confirm`
 - accepts the Phase 5D approval commands `note-add` and `note-confirm`
 - invokes only `local-operator/ppo-command.mjs`
@@ -27,14 +27,16 @@ The plugin:
 - routes `/ppo issue-confirm` to atomically claim one unexpired local request before invoking the Phase 5A issue writer
 - routes `/ppo note-add` to local pending-request staging only; staging never appends a note
 - routes `/ppo note-confirm` to atomically claim one unexpired local request before invoking the Phase 5C note writer
+- routes `/ppo runs` and `/ppo run <run-id>` to the controlled Phase 6O read-only catalog routes for ordinary five-project runs only
 - routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary five-project runs only
 - routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary five-project runs only
 - does not call Telegram APIs
 - does not use secrets
-- mutates only the private local pending stores for Phase 5B issue and Phase 5D note approval requests, plus the approved local note store after `/ppo note-confirm`; Phase 6M recovery is read-only
+- mutates only the private local pending stores for Phase 5B issue and Phase 5D note approval requests, plus the approved local note store after `/ppo note-confirm`; Phase 6M recovery and Phase 6O catalog routes are read-only
 - does not add generic GitHub tools or arbitrary GitHub endpoints
 - accepts `codex ...`, `codex-budget ...`, `prompt-size ...`, and `split-task ...` through OpenClaw/Telegram in Phase 3C as text-only direct routes
 - parses only the command envelope; task, draft, title, body, note text, and run id are inert data
+- accepts no catalog filters, search text, sort fields, limits, offsets, actions, confirmations, or production inputs
 - does not accept or expose terminal write confirmation environment values through chat
 - does not mutate `projects/*.md` or update project-state files
 - does not route PPO production deployment, production verification, rollback, rollback reconciliation, service control, or VPS mutation
@@ -75,6 +77,8 @@ issue-create khlim-assist Add provider validation issue --body Include failing f
 issue-confirm <request-id>
 note-add khlim-assist Record owner-visible project context
 note-confirm <request-id>
+runs
+run <run-id>
 continue <run-id>
 recover <run-id>
 ```
@@ -109,6 +113,10 @@ Phase 6K adds `/ppo continue <run-id>` through this same plugin. The bridge acce
 ## Phase 6M development recovery
 
 Phase 6M adds `/ppo recover <run-id>` through this same plugin. The bridge accepts only the exact opaque run id and maps to wrapper argv `["recover", "<run-id>"]`. The wrapper invokes the reviewed Phase 6L read-only recovery coordinator once and returns only bounded formatted diagnostics. It does not accept project, status, SHA, action, workspace, policy, service, deployment, rollback, confirmation, command, executable, or environment input from chat, and it never calls `/ppo continue`.
+
+## Phase 6O development run catalog
+
+Phase 6O adds `/ppo runs` and `/ppo run <run-id>` through this same plugin. The bridge maps only `/ppo runs` to wrapper argv `["runs"]` and only `/ppo run <run-id>` to wrapper argv `["run", "<run-id>"]`. The wrapper invokes the reviewed Phase 6N catalog once and returns only bounded metadata summaries for ordinary five-project development runs. It accepts no project, status, stage, filter, search, sort, limit, offset, expected version, SHA, branch, path, action, service, production, confirmation, command, executable, or environment input from chat, and it never calls `/ppo continue` or `/ppo recover`.
 
 ## Local Tests
 

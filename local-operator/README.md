@@ -240,7 +240,25 @@ It lists and inspects only existing ordinary Phase 6 runs for the fixed five-pro
 
 Catalog summaries include only metadata: opaque run id, ordinary project id, status, stage, version, safe SHA fields, timestamps, terminal flag, and canonical-state classification. They exclude task text, filesystem paths, evidence, transition history, prompts, review findings, test details, PR raw state, GitHub responses, production metadata, stdout/stderr, raw errors, environment data, credentials, tokens, and secrets. PPO self-development runs are out of scope for the ordinary catalog and are omitted without exposing their run id, status, SHA, or production lifecycle metadata.
 
-Phase 6N adds no `/ppo` route, no OpenClaw tool, no recovery invocation, no continue invocation, no cancellation, no retry, no repair, no run-state mutation, no subprocess/network execution, and no production inspection/deployment/verification/rollback. Controlled `/ppo runs` and `/ppo run <run-id>` routes require separate review after this foundation.
+Phase 6N adds no `/ppo` route, no OpenClaw tool, no recovery invocation, no continue invocation, no cancellation, no retry, no repair, no run-state mutation, no subprocess/network execution, and no production inspection/deployment/verification/rollback.
+
+### Phase 6O - Controlled Read-Only Development Run Catalog Routes
+
+Phase 6O exposes the reviewed Phase 6N catalog through the existing PPO terminal wrapper and existing `ppo_local` direct-tool route:
+
+```text
+local-operator/development-run-catalog-route.mjs
+node local-operator/ppo-command.mjs runs
+node local-operator/ppo-command.mjs run <run-id>
+/ppo runs
+/ppo run <run-id>
+```
+
+`/ppo runs` accepts no caller-controlled filters, search text, sort fields, limits, offsets, project/status/stage selectors, paths, actions, confirmations, or production inputs. `/ppo run <run-id>` accepts exactly one opaque 43-character Phase 6A run id. Both routes invoke the Phase 6N catalog once, use only the Phase 6N formatters, and add a separate Phase 6O output ceiling.
+
+The routes remain read-only and metadata-only. They preserve Phase 6N's ordinary five-project scope, fixed 100-record inspection bound, 20-summary return bound, active-first ordering, corrupt-content isolation, unsafe-filesystem fail-closed behavior, stale-observation fail-closed behavior, zero canonical repair, and PPO self-development exclusion. They do not expose task text, evidence, transition history, paths, raw Git/GitHub state, production lifecycle metadata, stdout/stderr, raw errors, environment data, credentials, tokens, or secrets.
+
+Phase 6O does not add cancellation, retry, repair, resume, run creation, arbitrary filters/search/sort, recovery invocation, continue invocation, deployment, production verification, rollback, a new OpenClaw tool, or model interpretation.
 
 ## Files
 
@@ -283,6 +301,7 @@ Phase 6N adds no `/ppo` route, no OpenClaw tool, no recovery invocation, no cont
 - `development-recovery-coordinator.mjs`: Phase 6L local-only read-only development recovery coordinator for ordinary five-project runs.
 - `development-recovery-route.mjs`: Phase 6M controlled `/ppo recover <run-id>` route adapter around the Phase 6L coordinator.
 - `development-run-catalog.mjs`: Phase 6N local-only read-only development run catalog foundation for ordinary five-project runs.
+- `development-run-catalog-route.mjs`: Phase 6O controlled `/ppo runs` and `/ppo run <run-id>` route adapter around the Phase 6N catalog.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -307,6 +326,7 @@ Phase 6N adds no `/ppo` route, no OpenClaw tool, no recovery invocation, no cont
 - `development-recovery-coordinator.test.mjs`: Phase 6L tests for status recovery dispatch, read-only child composition, policy identity reuse, durable-state change detection, bounded output, and static mutation/production exclusions.
 - `development-recovery-route.test.mjs`: Phase 6M tests for strict recover routing, bounded output, Phase 6L single invocation, terminal parser rejection, self-development out-of-scope handling, and static continue/production exclusions.
 - `development-run-catalog.test.mjs`: Phase 6N tests for run-id discovery, exact bounded summaries, terminal status derivation, self-development exclusion, canonical-state classifications, corrupt/unsafe store handling, fixed catalog bounds, formatter boundaries, static no-route/no-mutation exclusions, and zero filesystem mutation sentinels.
+- `development-run-catalog-route.test.mjs`: Phase 6O tests for route adapter composition, strict wrapper parsing, bridge-safe command exposure, real catalog invariants through `/ppo runs` and `/ppo run <run-id>`, bounded output, stale/fail-closed behavior, and static recovery/continue/production exclusions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -436,11 +456,13 @@ node local-operator/ppo-command.mjs issue-create khlim-assist "owner review test
 node local-operator/ppo-command.mjs note-add khlim-assist "owner review local note"
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review test issue --body created only after confirmation"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
+node local-operator/ppo-command.mjs /ppo runs
+node local-operator/ppo-command.mjs /ppo run <run-id>
 node local-operator/ppo-command.mjs /ppo continue <run-id>
 node local-operator/ppo-command.mjs /ppo recover <run-id>
 ```
 
-Phase 6K adds `/ppo continue <run-id>` for existing ordinary development runs. Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation. Phase 6N adds only a local library catalog foundation and no route. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.
+Phase 6K adds `/ppo continue <run-id>` for existing ordinary development runs. Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation. Phase 6O adds `/ppo runs` and `/ppo run <run-id>` for the reviewed Phase 6N read-only ordinary-run catalog. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.
 
 Then through OpenClaw/Telegram after review:
 
@@ -460,13 +482,15 @@ Requirements:
 /ppo issue-confirm <request-id>
 /ppo note-add khlim-assist owner review staged note
 /ppo note-confirm <request-id>
+/ppo runs
+/ppo run <run-id>
 /ppo continue <run-id>
 /ppo recover <run-id>
 ```
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
-Phase 6M `/ppo recover <run-id>` is diagnostic/read-only and never calls `/ppo continue`. Phase 6N run discovery is not exposed as `/ppo runs` or `/ppo run <run-id>` yet. Do not add `/ppo start`, `/ppo develop`, run listing, run search, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
+Phase 6M `/ppo recover <run-id>` is diagnostic/read-only and never calls `/ppo continue`. Phase 6O `/ppo runs` and `/ppo run <run-id>` are read-only catalog routes and never call `/ppo recover` or `/ppo continue`. Do not add `/ppo start`, `/ppo develop`, run search, arbitrary run filters/sorts, cancellation, retry, repair, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
 
 ## OpenClaw handoff shape
 
