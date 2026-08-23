@@ -56,7 +56,8 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
     "- /ppo note-confirm <request-id>",
-    "- /ppo continue <run-id>"
+    "- /ppo continue <run-id>",
+    "- /ppo recover <run-id>"
   ].join("\n");
 }
 
@@ -191,12 +192,27 @@ function parseContinueCommand(commandText, rest, rawHasLineBreak) {
   return ["continue", normalized];
 }
 
+function parseRecoverCommand(commandText, rest, rawHasLineBreak, rawHasTab) {
+  if (rawHasLineBreak || rawHasTab || /[\r\n\t]/u.test(commandText)) {
+    return null;
+  }
+
+  const normalized = String(rest ?? "").trim();
+
+  if (!DEVELOPMENT_RUN_ID_PATTERN.test(normalized)) {
+    return null;
+  }
+
+  return ["recover", normalized];
+}
+
 export function toPpoWrapperArgs(rawCommand) {
   if (typeof rawCommand !== "string") {
     return null;
   }
 
   const rawHasLineBreak = /[\r\n]/u.test(rawCommand);
+  const rawHasTab = /\t/u.test(rawCommand);
   const commandText = unwrapPpoEnvelope(rawCommand);
 
   if (!commandText) {
@@ -257,6 +273,10 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "continue") {
     return parseContinueCommand(commandText, commandEnvelope.rest, rawHasLineBreak);
+  }
+
+  if (commandName === "recover") {
+    return parseRecoverCommand(commandText, commandEnvelope.rest, rawHasLineBreak, rawHasTab);
   }
 
   return null;

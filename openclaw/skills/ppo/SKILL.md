@@ -1,6 +1,6 @@
 ---
 name: ppo
-description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries, deterministic text tools, Phase 5B approval-gated issue creation, Phase 5D approval-gated project note creation, and Phase 6K controlled development continue.
+description: Route Personal Project Operator commands to the local deterministic wrapper for GitHub read-only summaries, deterministic text tools, Phase 5B approval-gated issue creation, Phase 5D approval-gated project note creation, Phase 6K controlled development continue, and Phase 6M read-only development recovery.
 user-invocable: true
 command-dispatch: tool
 command-tool: ppo_local
@@ -39,10 +39,12 @@ Personal Project Operator must use:
 /ppo note-add <project> <note...>
 /ppo note-confirm <request-id>
 /ppo continue <run-id>
+/ppo recover <run-id>
 ```
 
 Phase 5C bare terminal `note-add` remains terminal-only. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` approval through the existing `ppo_local` path.
 Phase 6K adds `/ppo continue <run-id>` for existing ordinary five-project Phase 6 development runs only. It does not route PPO production deployment, verification, rollback, or rollback reconciliation.
+Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation on an existing ordinary five-project Phase 6 development run. It does not repair, retry, continue, or route production recovery.
 
 ## Local wrapper
 
@@ -52,7 +54,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 6K, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; routes `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation; routes `/ppo note-add` plus `/ppo note-confirm` for approval-gated local project note creation; and routes `/ppo continue <run-id>` to the controlled one-boundary development continue orchestrator. The bridge parses only the command envelope; task, draft, title, body, note text, and run id are inert argv data.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 6M, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; routes `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation; routes `/ppo note-add` plus `/ppo note-confirm` for approval-gated local project note creation; routes `/ppo continue <run-id>` to the controlled one-boundary development continue orchestrator; and routes `/ppo recover <run-id>` to the reviewed Phase 6L read-only recovery coordinator. The bridge parses only the command envelope; task, draft, title, body, note text, and run id are inert argv data.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -82,6 +84,7 @@ node local-operator/ppo-command.mjs "/ppo issue-confirm <request-id>"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note text"
 node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
 node local-operator/ppo-command.mjs /ppo continue <run-id>
+node local-operator/ppo-command.mjs /ppo recover <run-id>
 ```
 
 ## Command mapping
@@ -100,6 +103,7 @@ node local-operator/ppo-command.mjs /ppo continue <run-id>
 | `/ppo note-add <project> <note...>` | `ppo_local` raw `note-add <project> <note...>` | Stage one approved-project note intent; no note append |
 | `/ppo note-confirm <request-id>` | `ppo_local` raw `note-confirm <request-id>` | Atomically claim one pending request, then append one note through the Phase 5C writer |
 | `/ppo continue <run-id>` | `ppo_local` raw `continue <run-id>` | Advance one existing ordinary development run through at most one reviewed Phase 6B-6G boundary; never production deployment, verification, or rollback |
+| `/ppo recover <run-id>` | `ppo_local` raw `recover <run-id>` | Return one bounded Phase 6L read-only development recovery observation; never repair, retry, continue, or production recovery |
 | `/ppo menu` | `ppo_local` raw `menu` | `/menu` |
 | `/ppo menu project` | `ppo_local` raw `menu project` | `/menu project` |
 | `/ppo menu codex` | `ppo_local` raw `menu codex` | `/menu codex` |
@@ -108,7 +112,7 @@ node local-operator/ppo-command.mjs /ppo continue <run-id>
 
 ## Safety boundaries
 
-The `/ppo` plugin path is read-only except for the Phase 5B issue pending store, the single approved GitHub issue creation write after `/ppo issue-confirm`, the Phase 5D note pending store, the single approved local note append after `/ppo note-confirm`, and Phase 6K's explicit delegation to one existing reviewed Phase 6B-6G development boundary.
+The `/ppo` plugin path is read-only except for the Phase 5B issue pending store, the single approved GitHub issue creation write after `/ppo issue-confirm`, the Phase 5D note pending store, the single approved local note append after `/ppo note-confirm`, and Phase 6K's explicit delegation to one existing reviewed Phase 6B-6G development boundary. Phase 6M recovery remains read-only.
 
 They must not:
 
@@ -122,7 +126,7 @@ They must not:
 - mutate project files
 - perform external write actions other than the single approved issue creation path
 - perform local note writes outside the single approved note confirmation path
-- route production deployment, production verification, rollback, rollback reconciliation, rollback confirmation, service control, or VPS mutation through `/ppo continue`
+- route production deployment, production verification, rollback, rollback reconciliation, rollback confirmation, service control, or VPS mutation through `/ppo continue` or `/ppo recover`
 - accept or expose terminal write confirmation environment values through chat
 - create comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state changes, or deployments
 - execute arbitrary shell commands
@@ -134,7 +138,7 @@ OpenClaw should parse Telegram text that starts with `/ppo`, then pass the raw a
 Expected flow:
 
 ```text
-Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture, GitHub read-only, deterministic text output, Phase 5B issue approval flow, Phase 5D note approval flow, or Phase 6K one-boundary development continue
+Telegram message -> OpenClaw /ppo direct tool dispatch -> ppo_local -> local-operator/ppo-command.mjs -> local fixture, GitHub read-only, deterministic text output, Phase 5B issue approval flow, Phase 5D note approval flow, Phase 6K one-boundary development continue, or Phase 6M read-only development recovery
 ```
 
 ## Unsupported commands

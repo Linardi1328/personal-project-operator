@@ -459,9 +459,17 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Do not add `/ppo recover`, `/ppo recovery`, `/ppo reconcile`, `/ppo resume`, `/ppo repair`, `/ppo retry`, a new OpenClaw tool, or automatic Phase 6K recovery calls in this phase.
 - Do not execute Codex, tests, reviewers, pushes, PR writes, merges, deployments, production verification, rollback, service control, model calls, or production inspection.
 
+### Phase 6M - Controlled /ppo recover Route
+
+- Expose the reviewed Phase 6L coordinator through the existing `ppo_local` direct-tool route and terminal PPO wrapper as `/ppo recover <run-id>`.
+- Accept exactly one caller-controlled value: the existing opaque 43-character Phase 6A development run id. Reject caller-selected expected versions, projects, statuses, actions, SHAs, branches, repositories, workspaces, PR numbers, commands, policies, deployment targets, rollback targets, confirmations, environment overrides, extra arguments, and control-character input.
+- Keep Phase 6L semantics and policy hash inputs unchanged. Phase 6L remains the reviewed read-only recovery engine with `routeExposed: false`; Phase 6M is a separate route adapter that validates input, invokes Phase 6L once, and returns bounded formatted output.
+- Keep the route diagnostic and read-only. Do not repair state, retry work, invoke `/ppo continue`, create or transition runs, record progress, execute Codex/tests/reviewers, push, create or modify PRs, submit reviews, merge, deploy, verify production, rollback, poll, or run background work.
+- Keep production recovery out of scope. PPO self-development and production lifecycle statuses continue to return bounded out-of-scope results and do not expose Phase 6H deployment, Phase 6I production verification, or Phase 6J rollback reconciliation.
+- Keep OpenClaw deterministic: do not add a new OpenClaw tool or model turn. The bridge maps only `/ppo recover <run-id>` to fixed wrapper argv `["recover", "<run-id>"]` with `shell: false` and bounded output.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add a controlled `/ppo recover <run-id>` route only after Phase 6L receives independent review.
 - Add broader `/ppo` recovery and run-management workflows only after separate review.

@@ -16,7 +16,7 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts the approved PPO command surface through Phase 6K
+- accepts the approved PPO command surface through Phase 6M
 - accepts the Phase 5B approval commands `issue-create` and `issue-confirm`
 - accepts the Phase 5D approval commands `note-add` and `note-confirm`
 - invokes only `local-operator/ppo-command.mjs`
@@ -28,12 +28,13 @@ The plugin:
 - routes `/ppo note-add` to local pending-request staging only; staging never appends a note
 - routes `/ppo note-confirm` to atomically claim one unexpired local request before invoking the Phase 5C note writer
 - routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary five-project runs only
+- routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary five-project runs only
 - does not call Telegram APIs
 - does not use secrets
-- mutates only the private local pending stores for Phase 5B issue and Phase 5D note approval requests, plus the approved local note store after `/ppo note-confirm`
+- mutates only the private local pending stores for Phase 5B issue and Phase 5D note approval requests, plus the approved local note store after `/ppo note-confirm`; Phase 6M recovery is read-only
 - does not add generic GitHub tools or arbitrary GitHub endpoints
 - accepts `codex ...`, `codex-budget ...`, `prompt-size ...`, and `split-task ...` through OpenClaw/Telegram in Phase 3C as text-only direct routes
-- parses only the command envelope; task, draft, title, body, and note text is inert data
+- parses only the command envelope; task, draft, title, body, note text, and run id are inert data
 - does not accept or expose terminal write confirmation environment values through chat
 - does not mutate `projects/*.md` or update project-state files
 - does not route PPO production deployment, production verification, rollback, rollback reconciliation, service control, or VPS mutation
@@ -75,6 +76,7 @@ issue-confirm <request-id>
 note-add khlim-assist Record owner-visible project context
 note-confirm <request-id>
 continue <run-id>
+recover <run-id>
 ```
 
 The bridge also accepts full `/ppo ...` payloads for local validation, but OpenClaw `command-arg-mode: raw` normally forwards only the text after `/ppo`.
@@ -103,6 +105,10 @@ Phase 5C adds `node local-operator/ppo-command.mjs note-add <project> <note...>`
 ## Phase 6K development continue
 
 Phase 6K adds `/ppo continue <run-id>` through this same plugin. The bridge accepts only the exact opaque run id and maps to wrapper argv `["continue", "<run-id>"]`. The wrapper reads the durable Phase 6A run and delegates to at most one existing Phase 6B-6G child operation. It does not accept project, status, SHA, action, workspace, service, deployment, rollback, or confirmation input from chat.
+
+## Phase 6M development recovery
+
+Phase 6M adds `/ppo recover <run-id>` through this same plugin. The bridge accepts only the exact opaque run id and maps to wrapper argv `["recover", "<run-id>"]`. The wrapper invokes the reviewed Phase 6L read-only recovery coordinator once and returns only bounded formatted diagnostics. It does not accept project, status, SHA, action, workspace, policy, service, deployment, rollback, confirmation, command, executable, or environment input from chat, and it never calls `/ppo continue`.
 
 ## Local Tests
 
