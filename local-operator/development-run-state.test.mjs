@@ -14,6 +14,7 @@ import {
   MAX_DEVELOPMENT_RUN_TASK_CHARS,
   createDevelopmentRun,
   formatDevelopmentRunStateError,
+  inspectDevelopmentRunReadOnly,
   makeDevelopmentRunId,
   recordDevelopmentRunProgress,
   readDevelopmentRun,
@@ -512,6 +513,34 @@ test("run state recovers safely from durable version markers after restart", asy
 
   assert.equal(recovered.status, "planned")
   assert.equal(recovered.version, fixture.record.version)
+  assert.equal(modeBits(await stat(paths.recordPath)), 0o600)
+})
+
+test("read-only run inspection reports lagging canonical state without recovery", async () => {
+  const fixture = await runToStatus("planned")
+  const paths = runPaths(fixture.writeDataDir, fixture.record.runId)
+  const oldCanonical = await readFile(join(paths.versionDir, "000000.json"), "utf8")
+
+  await writeFile(paths.recordPath, oldCanonical, { mode: 0o600 })
+  const before = await readFile(paths.recordPath, "utf8")
+  const snapshot = await inspectDevelopmentRunReadOnly(fixture.record.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(snapshot.ok, true)
+  assert.equal(snapshot.canonicalState, "canonical_behind")
+  assert.equal(snapshot.recoveryRequired, true)
+  assert.equal(snapshot.record.version, fixture.record.version)
+  assert.equal(await readFile(paths.recordPath, "utf8"), before)
+
+  const recovered = await readDevelopmentRun(fixture.record.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  const after = await readFile(paths.recordPath, "utf8")
+
+  assert.equal(recovered.version, fixture.record.version)
+  assert.notEqual(after, before)
+  assert.equal(JSON.parse(after).version, fixture.record.version)
   assert.equal(modeBits(await stat(paths.recordPath)), 0o600)
 })
 

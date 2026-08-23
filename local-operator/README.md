@@ -228,6 +228,20 @@ node local-operator/ppo-command.mjs recover <run-id>
 
 The route accepts only the existing opaque run id, invokes Phase 6L once, returns `formatDevelopmentRecoveryResult(...)`, and performs no repair, retry, state mutation, `/ppo continue`, Codex/test/reviewer execution, GitHub write, deployment, production verification, rollback, new OpenClaw tool, or model interpretation. PPO self-development production recovery remains local-only and out of scope for the route.
 
+### Phase 6N - Read-Only Development Run Catalog Foundation
+
+Phase 6N adds a local-only ordinary-run catalog foundation:
+
+```text
+local-operator/development-run-catalog.mjs
+```
+
+It lists and inspects only existing ordinary Phase 6 runs for the fixed five-project registry. It uses a new non-mutating run-state snapshot reader, performs only bounded local filesystem reads under the fixed `development-runs` store layout, and never calls the existing `readDevelopmentRun(...)` recovery path. Missing stores are empty for listing and bounded not-found for exact inspection; lagging or missing canonical records are reported with explicit canonical-state classifications and are never repaired by the catalog.
+
+Catalog summaries include only metadata: opaque run id, ordinary project id, status, stage, version, safe SHA fields, timestamps, terminal flag, and canonical-state classification. They exclude task text, filesystem paths, evidence, transition history, prompts, review findings, test details, PR raw state, GitHub responses, production metadata, stdout/stderr, raw errors, environment data, credentials, tokens, and secrets. PPO self-development runs are out of scope for the ordinary catalog and are omitted without exposing their run id, status, SHA, or production lifecycle metadata.
+
+Phase 6N adds no `/ppo` route, no OpenClaw tool, no recovery invocation, no continue invocation, no cancellation, no retry, no repair, no run-state mutation, no subprocess/network execution, and no production inspection/deployment/verification/rollback. Controlled `/ppo runs` and `/ppo run <run-id>` routes require separate review after this foundation.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -268,6 +282,7 @@ The route accepts only the existing opaque run id, invokes Phase 6L once, return
 - `development-continue-orchestrator.mjs`: Phase 6K controlled `/ppo continue <run-id>` orchestrator for ordinary five-project runs.
 - `development-recovery-coordinator.mjs`: Phase 6L local-only read-only development recovery coordinator for ordinary five-project runs.
 - `development-recovery-route.mjs`: Phase 6M controlled `/ppo recover <run-id>` route adapter around the Phase 6L coordinator.
+- `development-run-catalog.mjs`: Phase 6N local-only read-only development run catalog foundation for ordinary five-project runs.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -291,6 +306,7 @@ The route accepts only the existing opaque run id, invokes Phase 6L once, return
 - `development-continue-orchestrator.test.mjs`: Phase 6K tests for one-boundary dispatch, run-id parsing, caller-option refusal, stale-state handling, open-attempt refusal, production cutoff, bounded output, concurrency, and static production exclusions.
 - `development-recovery-coordinator.test.mjs`: Phase 6L tests for status recovery dispatch, read-only child composition, policy identity reuse, durable-state change detection, bounded output, and static mutation/production exclusions.
 - `development-recovery-route.test.mjs`: Phase 6M tests for strict recover routing, bounded output, Phase 6L single invocation, terminal parser rejection, self-development out-of-scope handling, and static continue/production exclusions.
+- `development-run-catalog.test.mjs`: Phase 6N tests for run-id discovery, exact bounded summaries, terminal status derivation, self-development exclusion, canonical-state classifications, corrupt/unsafe store handling, fixed catalog bounds, formatter boundaries, static no-route/no-mutation exclusions, and zero filesystem mutation sentinels.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -424,7 +440,7 @@ node local-operator/ppo-command.mjs /ppo continue <run-id>
 node local-operator/ppo-command.mjs /ppo recover <run-id>
 ```
 
-Phase 6K adds `/ppo continue <run-id>` for existing ordinary development runs. Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.
+Phase 6K adds `/ppo continue <run-id>` for existing ordinary development runs. Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation. Phase 6N adds only a local library catalog foundation and no route. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.
 
 Then through OpenClaw/Telegram after review:
 
@@ -450,7 +466,7 @@ Requirements:
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
-Phase 6M `/ppo recover <run-id>` is diagnostic/read-only and never calls `/ppo continue`. Do not add `/ppo start`, `/ppo develop`, run listing, run search, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
+Phase 6M `/ppo recover <run-id>` is diagnostic/read-only and never calls `/ppo continue`. Phase 6N run discovery is not exposed as `/ppo runs` or `/ppo run <run-id>` yet. Do not add `/ppo start`, `/ppo develop`, run listing, run search, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
 
 ## OpenClaw handoff shape
 

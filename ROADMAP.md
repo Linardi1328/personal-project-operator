@@ -468,8 +468,24 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Keep production recovery out of scope. PPO self-development and production lifecycle statuses continue to return bounded out-of-scope results and do not expose Phase 6H deployment, Phase 6I production verification, or Phase 6J rollback reconciliation.
 - Keep OpenClaw deterministic: do not add a new OpenClaw tool or model turn. The bridge maps only `/ppo recover <run-id>` to fixed wrapper argv `["recover", "<run-id>"]` with `shell: false` and bounded output.
 
+### Phase 6N - Read-Only Development Run Catalog Foundation
+
+- Add a local-only `development-run-catalog.mjs` for discovering and summarizing existing ordinary Phase 6 development runs.
+- Scope the catalog to the existing ordinary five-project registry only. Do not expand the registry and do not expose PPO self-development runs through the ordinary catalog.
+- Add a separate non-mutating run-state snapshot reader that reuses the Phase 6A validated record parser but does not call `ensureStore`, create directories, chmod paths, refresh canonical records, or invoke any run-state mutation API.
+- Read only fixed `records/<run-id>.json` and `versions/<run-id>/<version>.json` locations under `${PPO_WRITE_DATA_DIR}/development-runs`. Require regular files, no symlinks, valid run-id filenames, valid version-marker filenames, bounded file sizes, and no scans outside the fixed store.
+- Return explicit canonical-state classifications such as current, behind, missing, conflict, invalid, missing store, unavailable store, or stale observation. Never silently repair lagging canonical records or missing canonical records.
+- Return only bounded metadata summaries: run id, ordinary project id, status, stage, version, safe SHA fields, timestamps, terminal flag, and canonical state. Do not expose task text, branch filesystem paths, evidence, transition history, prompts, review findings, test details, raw PR/GitHub state, production metadata, paths, stdout/stderr, raw errors, environment data, credentials, tokens, or secrets.
+- Bound each catalog call to at most 100 inspected canonical run records and at most 20 summaries. Use a fixed active-first, updated-at-descending, run-id-ascending ordering with no caller-selected filters or sort expressions.
+- Treat a missing development-run store as an empty catalog for listing and a bounded not-found result for exact inspection. Treat corrupt entries as invalid diagnostics without compromising valid entries.
+- Do not add `/ppo runs`, `/ppo run`, `/ppo run-status`, `/ppo list-runs`, `/ppo cancel`, `/ppo retry`, `/ppo resume`, a new OpenClaw tool, or bridge exposure in this phase.
+- Do not invoke recovery, continuation, cancellation, retry, repair, deployment, production verification, rollback, subprocesses, network tools, GitHub APIs, service control, or any production filesystem inspection.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
+- Expose the reviewed Phase 6N run catalog through controlled `/ppo runs` and `/ppo run <run-id>` routes only after separate review.
+- Add cancellation or other run-state mutation only after a separate explicit approval and review.
+- Do not combine run discovery with retry, continue, recovery, cancellation, or repair mutation.
 - Add broader `/ppo` recovery and run-management workflows only after separate review.
