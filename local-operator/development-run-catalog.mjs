@@ -592,7 +592,10 @@ function validCatalogResult(result) {
     !Array.isArray(result.summaries) ||
     result.summaries.length > MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES ||
     !Array.isArray(result.active) ||
-    !Array.isArray(result.terminal)
+    result.active.length > MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES ||
+    !Array.isArray(result.terminal) ||
+    result.terminal.length > MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES ||
+    result.active.length + result.terminal.length !== result.summaries.length
   ) {
     return false
   }

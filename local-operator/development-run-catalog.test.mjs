@@ -312,6 +312,14 @@ function assertUnavailableOutput(output, forbiddenPattern = /CATALOG_TEST|SENSIT
   assert.doesNotMatch(output, forbiddenPattern)
 }
 
+function assertCatalogUnavailableOutput(output, forbiddenPattern = /CATALOG_TEST|SENSITIVE|personal-project-operator|\/tmp|token|secret|evidence|history|task/iu) {
+  assert.equal(output, [
+    "PPO Development Runs",
+    "Status: unavailable"
+  ].join("\n"))
+  assert.doesNotMatch(output, forbiddenPattern)
+}
+
 test("Phase 6N discovers ordinary opaque run ids and returns bounded metadata only", async () => {
   const writeDataDir = await tempWriteDataDir()
   const runs = [
@@ -1057,7 +1065,9 @@ test("Phase 6N formatters validate hostile caller input before rendering", async
   const summary = inspected.summary
 
   assert.match(formatDevelopmentRunSummary(inspected), new RegExp(run.runId, "u"))
-  assert.match(formatDevelopmentRunCatalog(catalog), new RegExp(run.runId, "u"))
+  const validCatalogOutput = formatDevelopmentRunCatalog(catalog)
+  assert.match(validCatalogOutput, new RegExp(run.runId, "u"))
+  assert.doesNotMatch(validCatalogOutput, /Status: unavailable/u)
 
   const invalidSummaries = [
     { ...summary, runId: ` ${summary.runId}` },
@@ -1157,6 +1167,41 @@ test("Phase 6N formatters validate hostile caller input before rendering", async
   })
 
   assertUnavailableOutput(hugeOutput)
+
+  const terminalSummary = {
+    ...summary,
+    runId: runIdForSeed(121),
+    status: "failed",
+    stage: "closed",
+    terminal: true
+  }
+  const hostilePartitionEntry = {
+    ...summary,
+    project: "personal-project-operator",
+    task: `${TASK_SENTINEL} active terminal partition`
+  }
+
+  assertCatalogUnavailableOutput(formatDevelopmentRunCatalog({
+    ...validCatalogListForSummaries([summary]),
+    active: Array.from({ length: 10_000 }, () => hostilePartitionEntry),
+    terminal: []
+  }))
+  assertCatalogUnavailableOutput(formatDevelopmentRunCatalog({
+    ...validCatalogListForSummaries([summary]),
+    active: [],
+    terminal: Array.from({ length: 10_000 }, () => hostilePartitionEntry)
+  }))
+  assertCatalogUnavailableOutput(formatDevelopmentRunCatalog({
+    ...validCatalogListForSummaries([summary]),
+    active: [summary],
+    terminal: [summary]
+  }))
+  assertCatalogUnavailableOutput(formatDevelopmentRunCatalog({
+    ...validCatalogListForSummaries([summary, terminalSummary]),
+    active: [terminalSummary],
+    terminal: [summary]
+  }))
+  assert.equal(formatDevelopmentRunCatalog(catalog), validCatalogOutput)
 
   for (const malformed of [null, undefined, [], ["x"], "x", 1, true, { ok: true }, { ...catalog, policy: { id: "wrong", hash: PHASE_6N_RUN_CATALOG_POLICY_HASH } }]) {
     assertUnavailableOutput(formatDevelopmentRunCatalog(malformed))
