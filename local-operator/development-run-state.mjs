@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
+import { constants as fsConstants } from "node:fs"
 import {
   chmod,
   link,
@@ -182,6 +183,7 @@ const prePhase6JEvidenceKindKeys = Object.freeze([
   "verification"
 ])
 const stageSet = new Set(DEVELOPMENT_RUN_STAGES)
+const terminalStatusSet = new Set(["verified", "cancelled", "failed"])
 const shaPattern = /^[a-f0-9]{40}$/iu
 const actorPattern = /^[A-Za-z0-9_.:-]{1,80}$/u
 const metadataKeyPattern = /^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/u
@@ -571,6 +573,14 @@ function stageForStatus(status) {
   }
 
   return stage
+}
+
+export function stageForDevelopmentRunStatus(status) {
+  return stageForStatus(normalizeDevelopmentRunStatus(status))
+}
+
+export function isDevelopmentRunTerminalStatus(status) {
+  return terminalStatusSet.has(normalizeDevelopmentRunStatus(status))
 }
 
 function assertAllowedTransition(fromStatus, toStatus) {
@@ -1100,7 +1110,7 @@ function applyTransition(record, {
     attempts: nextAttempts,
     previousHistoryHash: record.historyHash
   })
-  const terminalAt = ["verified", "cancelled", "failed"].includes(toStatus)
+  const terminalAt = isDevelopmentRunTerminalStatus(toStatus)
     ? updatedAt
     : null
 
@@ -1535,7 +1545,7 @@ function validateHistory(record) {
     record.timestamps.createdAt !== record.history[0].timestamp ||
     record.timestamps.updatedAt !== lastEvent.timestamp ||
     record.timestamps.statusChangedAt !== lastEvent.timestamp ||
-    record.timestamps.terminalAt !== (["verified", "cancelled", "failed"].includes(record.status) ? lastEvent.timestamp : null) ||
+    record.timestamps.terminalAt !== (isDevelopmentRunTerminalStatus(record.status) ? lastEvent.timestamp : null) ||
     stableStringify(record.attempts) !== stableStringify(normalizeAttemptShape(lastEvent.attempts)) ||
     stableStringify(record.evidence) !== stableStringify(evidence)
   ) {
@@ -1635,6 +1645,638 @@ function parseRunRecord(payload, expectedRunId = null, options = {}) {
   validateHistory(parsed)
 
   return cloneJson(parsed)
+}
+
+export function parseDevelopmentRunRecord(payload, expectedRunId = null, options = {}) {
+  return parseRunRecord(payload, expectedRunId, options)
+}
+
+function sameReadOnlyObservation(before, after) {
+  return (
+    before.dev === after.dev &&
+    before.ino === after.ino &&
+    before.mode === after.mode &&
+    before.size === after.size &&
+    before.mtimeMs === after.mtimeMs &&
+    before.ctimeMs === after.ctimeMs
+  )
+}
+
+function readOnlyFileIdentity(info, payload) {
+  return {
+    dev: info.dev,
+    ino: info.ino,
+    mode: info.mode,
+    size: info.size,
+    mtimeMs: info.mtimeMs,
+    ctimeMs: info.ctimeMs,
+    hash: sha256Text(payload)
+  }
+}
+
+function readOnlyDirectoryIdentity(info) {
+  return {
+    dev: info.dev,
+    ino: info.ino,
+    mode: info.mode,
+    size: info.size,
+    mtimeMs: info.mtimeMs,
+    ctimeMs: info.ctimeMs
+  }
+}
+
+function sameReadOnlyIdentity(left, right) {
+  return stableStringify(left) === stableStringify(right)
+}
+
+function staleReadOnlyObservation() {
+  return runStateError(
+    "RUN_STALE_OBSERVATION",
+    "Development run state changed while it was being inspected."
+  )
+}
+
+async function lstatReadOnly(path) {
+  try {
+    return await lstat(path)
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null
+    }
+
+    throw error
+  }
+}
+
+async function assertReadOnlyDirectoryIfPresent(path, description) {
+  const before = await lstatReadOnly(path)
+
+  if (before === null) {
+    return null
+  }
+
+  if (!before.isDirectory() || before.isSymbolicLink()) {
+    throw runStateError(
+      "UNSAFE_LOCAL_PATH",
+      `${description} is not a regular private directory.`
+    )
+  }
+
+  return before
+}
+
+async function readReadOnlyDirectoryEntries(path, description) {
+  const before = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (before === null) {
+    return null
+  }
+
+  let entries
+
+  try {
+    entries = await readdir(path)
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw staleReadOnlyObservation()
+    }
+
+    throw error
+  }
+
+  const after = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (after === null || !sameReadOnlyObservation(before, after)) {
+    throw staleReadOnlyObservation()
+  }
+
+  return entries
+}
+
+async function readReadOnlyDirectorySnapshot(path, description) {
+  const before = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (before === null) {
+    return null
+  }
+
+  let entries
+
+  try {
+    entries = await readdir(path)
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw staleReadOnlyObservation()
+    }
+
+    throw error
+  }
+
+  const after = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (after === null || !sameReadOnlyObservation(before, after)) {
+    throw staleReadOnlyObservation()
+  }
+
+  return {
+    identity: readOnlyDirectoryIdentity(after),
+    entries: [...entries].sort()
+  }
+}
+
+async function readRegularFileReadOnlySnapshotIfPresent(path, description) {
+  const before = await lstatReadOnly(path)
+
+  if (before === null) {
+    return null
+  }
+
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw runStateError(
+      "UNSAFE_LOCAL_PATH",
+      `${description} is not a regular private file.`
+    )
+  }
+
+  if (before.size > MAX_DEVELOPMENT_RUN_RECORD_BYTES) {
+    throw runStateError(
+      "RUN_RECORD_TOO_LARGE",
+      `${description} is too large.`
+    )
+  }
+
+  let file
+  let payload
+
+  try {
+    file = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0))
+    payload = await file.readFile("utf8")
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw staleReadOnlyObservation()
+    }
+
+    if (error?.code === "ELOOP") {
+      throw runStateError(
+        "UNSAFE_LOCAL_PATH",
+        `${description} is not a regular private file.`
+      )
+    }
+
+    throw error
+  } finally {
+    await file?.close()
+  }
+
+  const after = await lstatReadOnly(path)
+
+  if (after === null || !sameReadOnlyObservation(before, after)) {
+    throw staleReadOnlyObservation()
+  }
+
+  if (Buffer.byteLength(payload, "utf8") > MAX_DEVELOPMENT_RUN_RECORD_BYTES) {
+    throw runStateError(
+      "RUN_RECORD_TOO_LARGE",
+      `${description} is too large.`
+    )
+  }
+
+  return {
+    payload,
+    identity: readOnlyFileIdentity(after, payload)
+  }
+}
+
+async function readRegularFileReadOnlyIfPresent(path, description) {
+  const snapshot = await readRegularFileReadOnlySnapshotIfPresent(path, description)
+
+  return snapshot?.payload ?? null
+}
+
+async function readVersionMarkersReadOnly(paths, runId, options = {}) {
+  const versionDirectorySnapshot = await readReadOnlyDirectorySnapshot(paths.versionDir, "Development run version directory")
+
+  if (versionDirectorySnapshot === null) {
+    return {
+      latest: null,
+      observation: {
+        versionDir: null,
+        markerFileNames: [],
+        latestMarker: null
+      }
+    }
+  }
+
+  let latest = null
+  let latestMarker = null
+  const markerFileNames = []
+
+  for (const entry of versionDirectorySnapshot.entries) {
+    if (entry.endsWith(".tmp")) {
+      continue
+    }
+
+    const match = entry.match(versionFilePattern)
+
+    if (!match) {
+      continue
+    }
+
+    markerFileNames.push(entry)
+    const markerPath = join(paths.versionDir, entry)
+    const snapshot = await readRegularFileReadOnlySnapshotIfPresent(markerPath, "Development run version marker")
+
+    if (snapshot === null) {
+      throw staleReadOnlyObservation()
+    }
+
+    const record = parseRunRecord(snapshot.payload, runId, options)
+    const version = Number.parseInt(match[1], 10)
+
+    if (record.version !== version) {
+      throw runStateError(
+        "RUN_HISTORY_INVALID",
+        "Stored development run transition history is invalid."
+      )
+    }
+
+    if (!latest || record.version > latest.version) {
+      latest = record
+      latestMarker = {
+        fileName: entry,
+        identity: snapshot.identity
+      }
+    }
+  }
+
+  return {
+    latest,
+    observation: {
+      versionDir: versionDirectorySnapshot.identity,
+      markerFileNames,
+      latestMarker
+    }
+  }
+}
+
+async function readLatestVersionMarkerReadOnly(paths, runId, options = {}) {
+  const markers = await readVersionMarkersReadOnly(paths, runId, options)
+
+  return markers.latest
+}
+
+async function maybeAwaitReadOnlyFinalCheckSeam(options = {}) {
+  const seam = options.__readOnlyBeforeFinalCheck
+
+  if (typeof seam === "function") {
+    await seam()
+  }
+}
+
+function staleIfChanged(stable) {
+  if (!stable) {
+    throw staleReadOnlyObservation()
+  }
+}
+
+async function assertReadOnlyFileObservationStable(path, description, observed) {
+  const current = await readRegularFileReadOnlySnapshotIfPresent(path, description)
+
+  if (observed === null) {
+    if (current !== null) {
+      throw staleReadOnlyObservation()
+    }
+
+    return
+  }
+
+  staleIfChanged(current !== null && sameReadOnlyIdentity(current.identity, observed.identity))
+}
+
+async function assertReadOnlyDirectoryObservationStable(path, description, observed) {
+  const current = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (observed === null) {
+    if (current !== null) {
+      throw staleReadOnlyObservation()
+    }
+
+    return
+  }
+
+  staleIfChanged(current !== null && sameReadOnlyIdentity(readOnlyDirectoryIdentity(current), observed))
+}
+
+async function readVersionMarkerObservationOnly(paths) {
+  const versionDirectorySnapshot = await readReadOnlyDirectorySnapshot(paths.versionDir, "Development run version directory")
+
+  if (versionDirectorySnapshot === null) {
+    return {
+      versionDir: null,
+      markerFileNames: [],
+      latestMarker: null
+    }
+  }
+
+  const markerFileNames = versionDirectorySnapshot.entries
+    .filter((entry) => !entry.endsWith(".tmp") && versionFilePattern.test(entry))
+  let latestMarker = null
+
+  if (markerFileNames.length > 0) {
+    const latestFileName = markerFileNames.at(-1)
+    const snapshot = await readRegularFileReadOnlySnapshotIfPresent(
+      join(paths.versionDir, latestFileName),
+      "Development run version marker"
+    )
+
+    if (snapshot === null) {
+      throw staleReadOnlyObservation()
+    }
+
+    latestMarker = {
+      fileName: latestFileName,
+      identity: snapshot.identity
+    }
+  }
+
+  return {
+    versionDir: versionDirectorySnapshot.identity,
+    markerFileNames,
+    latestMarker
+  }
+}
+
+async function assertVersionMarkerObservationStable(paths, runId, observed, options = {}) {
+  const current = await readVersionMarkerObservationOnly(paths)
+
+  staleIfChanged(
+    sameReadOnlyIdentity(current.versionDir, observed.versionDir) &&
+    stableStringify(current.markerFileNames) === stableStringify(observed.markerFileNames) &&
+    sameReadOnlyIdentity(current.latestMarker, observed.latestMarker)
+  )
+}
+
+async function assertReadOnlyObservationStable(paths, runId, observed, options = {}) {
+  await maybeAwaitReadOnlyFinalCheckSeam(options)
+  await assertReadOnlyDirectoryObservationStable(paths.runRoot, "Development run store", observed.runRoot)
+  await assertReadOnlyDirectoryObservationStable(paths.recordsDir, "Development run records directory", observed.recordsDir)
+  await assertReadOnlyFileObservationStable(paths.recordPath, "Development run record", observed.canonical)
+  await assertVersionMarkerObservationStable(paths, runId, observed.versionMarkers, options)
+  await assertReadOnlyDirectoryObservationStable(paths.versionsRoot, "Development run versions directory", observed.versionsRoot)
+}
+
+function readOnlySnapshotResult({
+  ok,
+  runId,
+  code,
+  canonicalState,
+  record = null,
+  canonicalRecord = null,
+  latestRecord = null,
+  recoveryRequired = false
+}) {
+  return {
+    schemaVersion: 1,
+    ok,
+    runId,
+    code,
+    canonicalState,
+    recoveryRequired,
+    record: record ? cloneJson(record) : null,
+    canonicalRecord: canonicalRecord ? cloneJson(canonicalRecord) : null,
+    latestRecord: latestRecord ? cloneJson(latestRecord) : null
+  }
+}
+
+function readOnlyFailureFromError(error, runId) {
+  if (error instanceof DevelopmentRunStateError) {
+    const recordInvalidCodes = new Set([
+      "ATTEMPT_LIMIT_REACHED",
+      "EVIDENCE_LIMIT_REACHED",
+      "INVALID_ACTOR",
+      "INVALID_BRANCH",
+      "INVALID_EVIDENCE",
+      "INVALID_PROJECT",
+      "INVALID_REASON",
+      "INVALID_RUN_STATUS",
+      "INVALID_SHA",
+      "INVALID_TASK",
+      "UNKNOWN_PROJECT"
+    ])
+
+    if (error.code === "INVALID_RUN_ID") {
+      return readOnlySnapshotResult({
+        ok: false,
+        runId: null,
+        code: "invalid_run_id",
+        canonicalState: "run_not_found"
+      })
+    }
+
+    if (error.code === "INVALID_RUN_TRANSITION") {
+      return readOnlySnapshotResult({
+        ok: false,
+        runId,
+        code: "history_invalid",
+        canonicalState: "history_invalid"
+      })
+    }
+
+    if (error.code === "RUN_RECORD_INVALID" || error.code === "RUN_RECORD_TOO_LARGE") {
+      return readOnlySnapshotResult({
+        ok: false,
+        runId,
+        code: "record_invalid",
+        canonicalState: "record_invalid"
+      })
+    }
+
+    if (recordInvalidCodes.has(error.code)) {
+      return readOnlySnapshotResult({
+        ok: false,
+        runId,
+        code: "record_invalid",
+        canonicalState: "record_invalid"
+      })
+    }
+
+    if (error.code === "RUN_HISTORY_INVALID") {
+      return readOnlySnapshotResult({
+        ok: false,
+        runId,
+        code: "history_invalid",
+        canonicalState: "history_invalid"
+      })
+    }
+
+    if (error.code === "RUN_STALE_OBSERVATION") {
+      return readOnlySnapshotResult({
+        ok: false,
+        runId,
+        code: "stale_observation",
+        canonicalState: "stale_observation"
+      })
+    }
+
+    if (error.code === "UNSAFE_LOCAL_PATH") {
+      return readOnlySnapshotResult({
+        ok: false,
+        runId,
+        code: "store_unavailable",
+        canonicalState: "store_unavailable"
+      })
+    }
+  }
+
+  if (error?.code === "EACCES" || error?.code === "EPERM" || error?.code === "EROFS") {
+    return readOnlySnapshotResult({
+      ok: false,
+      runId,
+      code: "store_unavailable",
+      canonicalState: "store_unavailable"
+    })
+  }
+
+  return readOnlySnapshotResult({
+    ok: false,
+    runId,
+    code: "store_unavailable",
+    canonicalState: "store_unavailable"
+  })
+}
+
+async function inspectDevelopmentRunReadOnlyInternal(runId, options = {}) {
+  const normalizedRunId = normalizeDevelopmentRunId(runId)
+  const paths = storePaths(normalizedRunId, options)
+  const runRoot = await assertReadOnlyDirectoryIfPresent(paths.runRoot, "Development run store")
+
+  if (runRoot === null) {
+    return readOnlySnapshotResult({
+      ok: false,
+      runId: normalizedRunId,
+      code: "store_missing",
+      canonicalState: "store_missing"
+    })
+  }
+
+  const recordsDir = await assertReadOnlyDirectoryIfPresent(paths.recordsDir, "Development run records directory")
+  const versionsRoot = await assertReadOnlyDirectoryIfPresent(paths.versionsRoot, "Development run versions directory")
+
+  if (recordsDir === null || versionsRoot === null) {
+    return readOnlySnapshotResult({
+      ok: false,
+      runId: normalizedRunId,
+      code: "store_missing",
+      canonicalState: "store_missing"
+    })
+  }
+
+  const canonicalSnapshot = await readRegularFileReadOnlySnapshotIfPresent(paths.recordPath, "Development run record")
+  const canonical = canonicalSnapshot === null
+    ? null
+    : parseRunRecord(canonicalSnapshot.payload, normalizedRunId, options)
+  const versionMarkers = await readVersionMarkersReadOnly(paths, normalizedRunId, options)
+  const latest = versionMarkers.latest
+  const observation = {
+    runRoot: readOnlyDirectoryIdentity(runRoot),
+    recordsDir: readOnlyDirectoryIdentity(recordsDir),
+    versionsRoot: readOnlyDirectoryIdentity(versionsRoot),
+    canonical: canonicalSnapshot === null
+      ? null
+      : {
+          identity: canonicalSnapshot.identity
+        },
+    versionMarkers: versionMarkers.observation
+  }
+
+  await assertReadOnlyObservationStable(paths, normalizedRunId, observation, options)
+
+  if (!canonical && !latest) {
+    return readOnlySnapshotResult({
+      ok: false,
+      runId: normalizedRunId,
+      code: "run_not_found",
+      canonicalState: "run_not_found"
+    })
+  }
+
+  if (canonical && !latest) {
+    return readOnlySnapshotResult({
+      ok: false,
+      runId: normalizedRunId,
+      code: "canonical_conflict",
+      canonicalState: "canonical_conflict",
+      canonicalRecord: canonical
+    })
+  }
+
+  if (canonical && latest && latest.version < canonical.version) {
+    return readOnlySnapshotResult({
+      ok: false,
+      runId: normalizedRunId,
+      code: "canonical_conflict",
+      canonicalState: "canonical_conflict",
+      canonicalRecord: canonical,
+      latestRecord: latest
+    })
+  }
+
+  if (canonical && latest && latest.version === canonical.version && latest.historyHash !== canonical.historyHash) {
+    return readOnlySnapshotResult({
+      ok: false,
+      runId: normalizedRunId,
+      code: "canonical_conflict",
+      canonicalState: "canonical_conflict",
+      canonicalRecord: canonical,
+      latestRecord: latest
+    })
+  }
+
+  if (!canonical && latest) {
+    return readOnlySnapshotResult({
+      ok: true,
+      runId: normalizedRunId,
+      code: "canonical_missing",
+      canonicalState: "canonical_missing",
+      record: latest,
+      latestRecord: latest,
+      recoveryRequired: true
+    })
+  }
+
+  if (latest.version > canonical.version) {
+    return readOnlySnapshotResult({
+      ok: true,
+      runId: normalizedRunId,
+      code: "canonical_behind",
+      canonicalState: "canonical_behind",
+      record: latest,
+      canonicalRecord: canonical,
+      latestRecord: latest,
+      recoveryRequired: true
+    })
+  }
+
+  return readOnlySnapshotResult({
+    ok: true,
+    runId: normalizedRunId,
+    code: "canonical_current",
+    canonicalState: "canonical_current",
+    record: canonical,
+    canonicalRecord: canonical,
+    latestRecord: latest
+  })
+}
+
+export async function inspectDevelopmentRunReadOnly(runId, options = {}) {
+  let normalizedRunId = null
+
+  try {
+    normalizedRunId = normalizeDevelopmentRunId(runId)
+    return await inspectDevelopmentRunReadOnlyInternal(normalizedRunId, options)
+  } catch (error) {
+    return readOnlyFailureFromError(error, normalizedRunId)
+  }
 }
 
 async function readLatestVersionMarker(paths, runId, options = {}) {
