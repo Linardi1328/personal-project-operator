@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
+import { CANCELLATION_REQUEST_ID_PATTERN } from "../../../local-operator/development-run-cancellation-approval.mjs";
 import { DEVELOPMENT_RUN_ID_PATTERN } from "../../../local-operator/development-run-id.mjs";
 import {
   parsePpoIssueConfirmRequest,
@@ -58,6 +59,8 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo note-confirm <request-id>",
     "- /ppo runs",
     "- /ppo run <run-id>",
+    "- /ppo cancel <run-id>",
+    "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
     "- /ppo recover <run-id>"
   ].join("\n");
@@ -230,6 +233,32 @@ function parseRunCatalogCommand(commandText, rawCommand) {
   return null;
 }
 
+function parseCancellationCommand(commandText, rawCommand) {
+  if (rawCommand !== rawCommand.trim() || /[\u0000-\u001F\u007F-\u009F]/u.test(rawCommand)) {
+    return null;
+  }
+
+  const parts = commandText.split(" ");
+
+  if (
+    parts.length === 2 &&
+    parts[0] === "cancel" &&
+    DEVELOPMENT_RUN_ID_PATTERN.test(parts[1])
+  ) {
+    return ["cancel", parts[1]];
+  }
+
+  if (
+    parts.length === 2 &&
+    parts[0] === "cancel-confirm" &&
+    CANCELLATION_REQUEST_ID_PATTERN.test(parts[1])
+  ) {
+    return ["cancel-confirm", parts[1]];
+  }
+
+  return null;
+}
+
 export function toPpoWrapperArgs(rawCommand) {
   if (typeof rawCommand !== "string") {
     return null;
@@ -254,6 +283,10 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "runs" || commandName === "run") {
     return parseRunCatalogCommand(commandText, rawCommand);
+  }
+
+  if (commandName === "cancel" || commandName === "cancel-confirm") {
+    return parseCancellationCommand(commandText, rawCommand);
   }
 
   const staticCommand = allowedCommands.get(normalizedCommand.toLowerCase());

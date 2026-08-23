@@ -492,10 +492,27 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Keep OpenClaw deterministic. Do not add a new OpenClaw tool or model turn. The bridge maps only `/ppo runs` to `["runs"]` and `/ppo run <run-id>` to `["run", "<run-id>"]` with `shell: false`, bounded output, and strict malformed-input rejection before wrapper execution.
 - Do not add cancellation, retry, repair, resume, run creation, arbitrary filters/search/sort, automatic recovery, automatic continue, deployment, production verification, rollback, subprocess/network/model calls, background work, or any run-state mutation.
 
+### Phase 6P - Controlled Quiescent Development Run Cancellation
+
+- Add a local cancellation engine with fixed identity `phase-6p-quiescent-development-run-cancellation` and a deterministic policy hash. The policy binds the ordinary five-project allowlist, exact eligible status allowlist, `canonical_current` requirement, expected-version requirement, target status `cancelled`, fixed actor `phase-6p-quiescent-cancellation`, fixed reason `owner_requested_quiescent_cancellation`, no evidence, no cleanup, no process interruption, no GitHub actions, and no production actions.
+- Allow cancellation only from `created`, `planned`, `implementation_ready`, `tests_failed`, `tests_passed`, and `review_changes_requested`. Refuse `planning_in_progress`, `implementation_in_progress`, `tests_in_progress`, and `review_in_progress` as `state_not_quiescent`; refuse `review_passed`, `merge_ready`, and `merged` as delivery out of scope; refuse deployment, verification, and rollback states as production out of scope; refuse terminal states as terminal.
+- Stage `/ppo cancel <run-id>` through a cancellation-specific approval store under `${PPO_WRITE_DATA_DIR}/pending-development-run-cancellations/{pending,claimed}`. Store only request id, timestamps, policy id/hash, run id, expected version, project id, and before status. Use 43-character random request ids, 10-minute TTL, private modes, regular files only, no symlink following, exclusive creation, and atomic pending-to-claimed consumption.
+- Confirm `/ppo cancel-confirm <request-id>` by claiming the request before mutation, reinspecting the run once through the reviewed Phase 6N exact read-only path, requiring the same project, status, version, and `canonical_current`, then performing exactly one `transitionDevelopmentRun` to `cancelled` with the fixed actor and reason.
+- Do not accept caller-controlled project, status, version, SHA, branch, path, evidence, actor, reason, target status, action, cleanup option, service, production profile, command, executable, or confirmation value.
+- Do not interrupt Codex/tests/review, remove worktrees, delete local or remote branches, close PRs, revert merges, reset repositories, delete run records or history, remove version markers, invoke recovery, invoke continue, retry, repair, deploy, verify production, roll back production, add a new OpenClaw tool, or use model interpretation.
+
+### Phase 6Q - Full Phase 6 Integrated Acceptance and Closure Validation
+
+- Add no new feature by default.
+- Validate Phases 6A-6P together with complete automated regression, durable run-state behavior, planning, workspace creation, Codex execution, automated tests, independent review, bounded hardening, GitHub delivery, exact-SHA merge, deployment, production verification, rollback, `/ppo continue`, `/ppo recover`, `/ppo runs`, `/ppo run`, `/ppo cancel`, and `/ppo cancel-confirm`.
+- Include disposable GitHub end-to-end coverage and production tests only after explicit owner approval.
+- Produce a PASS/FAIL acceptance matrix and close Phase 6 only after the required acceptance tests pass.
+- Do not deploy anything or execute production acceptance checks without separate explicit owner approval.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Add cancellation or other run-state mutation only after a separate explicit approval and review.
+- Add broader run-state mutation only after a separate explicit approval and review.
 - Do not combine run discovery with retry, continue, recovery, cancellation, or repair mutation.
 - Add broader `/ppo` recovery and run-management workflows only after separate review.

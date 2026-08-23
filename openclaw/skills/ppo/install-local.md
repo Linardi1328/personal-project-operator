@@ -157,11 +157,11 @@ OpenClaw forwards the raw `/ppo` argument string to `ppo_local` as:
 }
 ```
 
-The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` confirmation through the same existing tool. Phase 6K adds `/ppo continue <run-id>` for one existing ordinary Phase 6 development run. Phase 6M adds `/ppo recover <run-id>` for one reviewed Phase 6L read-only recovery observation. Phase 6O adds `/ppo runs` and `/ppo run <run-id>` for the reviewed Phase 6N read-only ordinary-run catalog.
+The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` confirmation through the same existing tool. Phase 6K adds `/ppo continue <run-id>` for one existing ordinary Phase 6 development run. Phase 6M adds `/ppo recover <run-id>` for one reviewed Phase 6L read-only recovery observation. Phase 6O adds `/ppo runs` and `/ppo run <run-id>` for the reviewed Phase 6N read-only ordinary-run catalog. Phase 6P adds `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` for confirmation-gated quiescent cancellation of eligible ordinary runs only.
 
 Phase 5C bare terminal `note-add` remains terminal-only. Do not configure `PPO_NOTE_WRITE_CONFIRM` in Telegram/OpenClaw chat; `/ppo note-confirm <request-id>` supplies the Phase 5C confirmation internally after atomically claiming a pending request.
 
-Phase 6K continue, Phase 6M recover, and Phase 6O exact-run catalog inspection accept only the existing opaque run id from chat. Phase 6O run listing accepts no caller input after `runs`. Do not configure or paste expected versions, projects, statuses, actions, SHAs, repositories, workspaces, filters, search text, sort fields, recovery options, commands, executables, deployment targets, services, rollback targets, or rollback confirmations into Telegram/OpenClaw.
+Phase 6K continue, Phase 6M recover, Phase 6O exact-run catalog inspection, and Phase 6P cancellation staging accept only the existing opaque run id from chat. Phase 6O run listing accepts no caller input after `runs`. Phase 6P cancellation confirmation accepts only the 43-character staged request id. Do not configure or paste expected versions, projects, statuses, actions, SHAs, repositories, workspaces, filters, search text, sort fields, recovery options, cleanup options, commands, executables, deployment targets, services, rollback targets, or rollback confirmations into Telegram/OpenClaw.
 
 ## Local Phase 5B/5C/5D write-data paths
 
@@ -308,6 +308,8 @@ Manual Telegram/OpenClaw mapping:
 /ppo menu system  -> ppo_local raw "menu system"  -> local-operator/ppo-command.mjs menu system
 /ppo runs -> ppo_local raw "runs" -> local-operator/ppo-command.mjs runs
 /ppo run <run-id> -> ppo_local raw "run <run-id>" -> local-operator/ppo-command.mjs run <run-id>
+/ppo cancel <run-id> -> ppo_local raw "cancel <run-id>" -> local-operator/ppo-command.mjs cancel <run-id>
+/ppo cancel-confirm <request-id> -> ppo_local raw "cancel-confirm <request-id>" -> local-operator/ppo-command.mjs cancel-confirm <request-id>
 /ppo continue <run-id> -> ppo_local raw "continue <run-id>" -> local-operator/ppo-command.mjs continue <run-id>
 /ppo recover <run-id> -> ppo_local raw "recover <run-id>" -> local-operator/ppo-command.mjs recover <run-id>
 ```
@@ -409,6 +411,8 @@ If those pass, test:
 /ppo note-add khlim-assist owner review staged note
 /ppo runs
 /ppo run <run-id>
+/ppo cancel <run-id>
+/ppo cancel-confirm <request-id>
 /ppo continue <run-id>
 /ppo recover <run-id>
 ```
@@ -432,3 +436,4 @@ Do not add:
 - project note writes beyond Phase 5D `/ppo note-add` staging plus `/ppo note-confirm` single-use note creation
 - PPO production deployment, production verification, rollback, rollback reconciliation, service control, or owner rollback confirmation through `/ppo continue` or `/ppo recover`
 - recovery, continuation, cancellation, retry, repair, filters, search, sort, or production action through `/ppo runs` or `/ppo run`
+- process interruption, cleanup, recovery, continuation, retry, repair, or production action through `/ppo cancel` or `/ppo cancel-confirm`

@@ -20,6 +20,8 @@ It exists because OpenClaw owns built-in commands such as `/status`, `/menu`, an
 /ppo note-confirm <request-id>
 /ppo runs
 /ppo run <run-id>
+/ppo cancel <run-id>
+/ppo cancel-confirm <request-id>
 /ppo continue <run-id>
 /ppo recover <run-id>
 /ppo menu
@@ -47,6 +49,8 @@ node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note tex
 node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
 node local-operator/ppo-command.mjs /ppo runs
 node local-operator/ppo-command.mjs /ppo run <run-id>
+node local-operator/ppo-command.mjs /ppo cancel <run-id>
+node local-operator/ppo-command.mjs /ppo cancel-confirm <request-id>
 node local-operator/ppo-command.mjs /ppo continue <run-id>
 node local-operator/ppo-command.mjs /ppo recover <run-id>
 ```
@@ -64,6 +68,8 @@ Phase 6K `/ppo continue <run-id>` accepts only an existing ordinary Phase 6 deve
 Phase 6M `/ppo recover <run-id>` accepts only an existing ordinary Phase 6 development run id, invokes one reviewed Phase 6L read-only recovery boundary, and never repairs, retries, continues, mutates state, or routes production recovery.
 
 Phase 6O `/ppo runs` and `/ppo run <run-id>` expose only the reviewed Phase 6N read-only ordinary-run catalog. They accept no filters, search, sort, limits, cancellation, retry, repair, recovery, continue, production action, or model interpretation.
+
+Phase 6P `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` are confirmation-gated quiescent cancellation routes for ordinary runs only. They stage first, bind run id/project/status/version, use a 10-minute single-use request id, and never interrupt processes, clean workspaces, retry, repair, recover, continue, or route production cancellation.
 
 OpenClaw direct command dispatch uses the local plugin tool:
 
@@ -111,6 +117,7 @@ This scaffold does not:
 - route PPO production deployment, verification, or rollback through `/ppo continue`
 - route PPO production deployment, verification, rollback, rollback reconciliation, or service control through `/ppo recover`
 - route recovery, continuation, cancellation, retry, repair, or production action through `/ppo runs` or `/ppo run`
+- route process interruption, cleanup, recovery, continuation, retry, repair, or production action through `/ppo cancel` or `/ppo cancel-confirm`
 - mutate project-state files from stored notes
 
 Use it as the local routing contract for OpenClaw.
