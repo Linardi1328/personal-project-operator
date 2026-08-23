@@ -58,6 +58,7 @@ const inProgressStatusSet = new Set(DEVELOPMENT_RUN_CANCELLATION_IN_PROGRESS_STA
 const deliveryStatusSet = new Set(DEVELOPMENT_RUN_CANCELLATION_DELIVERY_STATUSES)
 const productionStatusSet = new Set(DEVELOPMENT_RUN_CANCELLATION_PRODUCTION_STATUSES)
 const statusSet = new Set(DEVELOPMENT_RUN_STATUSES)
+const terminalStatuses = Object.freeze(DEVELOPMENT_RUN_STATUSES.filter((status) => isDevelopmentRunTerminalStatus(status)))
 const shaPattern = /^[a-f0-9]{40}$/u
 const cancellationRequestIdPattern = /^[A-Za-z0-9_-]{43}$/u
 const policyHashPattern = /^[a-f0-9]{64}$/u
@@ -114,7 +115,19 @@ const cancellationContract = Object.freeze({
   policy: PHASE_6P_RUN_CANCELLATION_POLICY_ID,
   schemaVersion: 1,
   ordinaryProjects: listPhase2GitHubProjects().map((project) => project.id).sort(),
-  eligibleStatuses: DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES,
+  statusClassification: {
+    eligible: DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES,
+    refusedInProgress: DEVELOPMENT_RUN_CANCELLATION_IN_PROGRESS_STATUSES,
+    refusedDelivery: DEVELOPMENT_RUN_CANCELLATION_DELIVERY_STATUSES,
+    refusedProduction: DEVELOPMENT_RUN_CANCELLATION_PRODUCTION_STATUSES,
+    refusedTerminal: terminalStatuses,
+    refusalCodes: {
+      inProgress: "state_not_quiescent",
+      delivery: "delivery_state_out_of_scope",
+      production: "production_state_out_of_scope",
+      terminal: "terminal_state"
+    }
+  },
   canonicalStateRequired: "canonical_current",
   expectedVersionRequired: true,
   targetStatus: "cancelled",
@@ -123,6 +136,7 @@ const cancellationContract = Object.freeze({
   evidence: false,
   cleanup: false,
   processInterruption: false,
+  githubActions: false,
   hostedSourceActions: false,
   productionActions: false,
   engine: {
@@ -188,6 +202,14 @@ function isSafeScalar(value, maxChars = 120) {
   )
 }
 
+function isNullableHeadSha(value) {
+  return value === null || (typeof value === "string" && shaPattern.test(value))
+}
+
+function formatHeadShaLine(headSha) {
+  return `Head: ${headSha === null ? "(none)" : headSha}`
+}
+
 function safeCode(code) {
   return typeof code === "string" && safeCancellationCodes.has(code)
     ? code
@@ -218,8 +240,7 @@ function validateSummaryForCancellation(summary) {
     stageForDevelopmentRunStatus(summary.status) === summary.stage &&
     Number.isInteger(summary.version) &&
     summary.version >= 0 &&
-    typeof summary.headSha === "string" &&
-    shaPattern.test(summary.headSha) &&
+    isNullableHeadSha(summary.headSha) &&
     summary.canonicalState === "canonical_current"
   )
 }
@@ -524,8 +545,7 @@ function validReadyResult(result) {
     eligibleStatusSet.has(result.beforeStatus) &&
     Number.isInteger(result.expectedVersion) &&
     result.expectedVersion >= 0 &&
-    typeof result.headSha === "string" &&
-    shaPattern.test(result.headSha) &&
+    isNullableHeadSha(result.headSha) &&
     result.canonicalState === "canonical_current"
   )
 }
@@ -560,8 +580,7 @@ function validStagedResult(result) {
     eligibleStatusSet.has(result.beforeStatus) &&
     Number.isInteger(result.expectedVersion) &&
     result.expectedVersion >= 0 &&
-    typeof result.headSha === "string" &&
-    shaPattern.test(result.headSha) &&
+    isNullableHeadSha(result.headSha) &&
     typeof result.requestId === "string" &&
     cancellationRequestIdPattern.test(result.requestId) &&
     isSafeScalar(result.requestId, 43) &&
@@ -603,8 +622,7 @@ function validCancelledResult(result) {
     Number.isInteger(result.beforeVersion) &&
     Number.isInteger(result.afterVersion) &&
     result.afterVersion === result.beforeVersion + 1 &&
-    typeof result.headSha === "string" &&
-    shaPattern.test(result.headSha) &&
+    isNullableHeadSha(result.headSha) &&
     result.reason === DEVELOPMENT_RUN_CANCELLATION_REASON
   )
 }
@@ -634,7 +652,7 @@ export function formatDevelopmentRunCancellation(result) {
         `Project: ${result.project}`,
         `Before: ${result.beforeStatus}`,
         `Version: ${result.expectedVersion}`,
-        `Head: ${result.headSha}`
+        formatHeadShaLine(result.headSha)
       ].join("\n")
     }
 
@@ -646,7 +664,7 @@ export function formatDevelopmentRunCancellation(result) {
         `Project: ${result.project}`,
         `Before: ${result.beforeStatus}`,
         `Version: ${result.expectedVersion}`,
-        `Head: ${result.headSha}`,
+        formatHeadShaLine(result.headSha),
         `Request: ${result.requestId}`,
         `Expires: ${result.expiresAt}`,
         `Confirm: /ppo cancel-confirm ${result.requestId}`
@@ -662,7 +680,7 @@ export function formatDevelopmentRunCancellation(result) {
         `Before: ${result.beforeStatus}`,
         `After: ${result.afterStatus}`,
         `Version: ${result.beforeVersion} -> ${result.afterVersion}`,
-        `Head: ${result.headSha}`,
+        formatHeadShaLine(result.headSha),
         `Reason: ${result.reason}`
       ].join("\n")
     }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -13,6 +14,8 @@ import {
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
+  CANCELLATION_REQUEST_ID_BYTES,
+  DEVELOPMENT_RUN_CANCELLATION_APPROVAL_ID,
   DEVELOPMENT_RUN_CANCELLATION_APPROVAL_STORE_DIR,
   DEVELOPMENT_RUN_CANCELLATION_APPROVAL_TTL_MS,
   CANCELLATION_REQUEST_ID_PATTERN,
@@ -26,6 +29,7 @@ import {
   stageDevelopmentRunCancellationApproval
 } from "./development-run-cancellation-approval.mjs"
 import {
+  DEVELOPMENT_RUN_CANCELLATION_ID,
   DEVELOPMENT_RUN_CANCELLATION_REASON,
   PHASE_6P_RUN_CANCELLATION_POLICY_HASH,
   PHASE_6P_RUN_CANCELLATION_POLICY_ID
@@ -47,6 +51,63 @@ function makeClock(start = "2026-08-23T00:00:00.000Z") {
     const next = new Date(startMs + tick * 1000)
     tick += 1
     return next
+  }
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`
+  }
+
+  return JSON.stringify(value)
+}
+
+function policyHashFor(contract) {
+  return createHash("sha256").update(stableStringify(contract)).digest("hex")
+}
+
+function approvalPolicyContract(overrides = {}) {
+  return {
+    approval: DEVELOPMENT_RUN_CANCELLATION_APPROVAL_ID,
+    policy: PHASE_6P_RUN_CANCELLATION_APPROVAL_POLICY_ID,
+    schemaVersion: 1,
+    cancellation: {
+      id: DEVELOPMENT_RUN_CANCELLATION_ID,
+      policy: {
+        id: PHASE_6P_RUN_CANCELLATION_POLICY_ID,
+        hash: PHASE_6P_RUN_CANCELLATION_POLICY_HASH
+      }
+    },
+    requestTtlMs: DEVELOPMENT_RUN_CANCELLATION_APPROVAL_TTL_MS,
+    requestIdBytes: CANCELLATION_REQUEST_ID_BYTES,
+    requestIdPattern: CANCELLATION_REQUEST_ID_PATTERN.source,
+    requestStore: {
+      root: DEVELOPMENT_RUN_CANCELLATION_APPROVAL_STORE_DIR,
+      pending: "pending",
+      claimed: "claimed"
+    },
+    requestBinding: ["runId", "expectedVersion", "projectId", "beforeStatus"],
+    pendingToClaimedSingleUse: true,
+    claimOperation: "pending-to-claimed",
+    commands: {
+      stage: "/ppo cancel",
+      confirm: "/ppo cancel-confirm"
+    },
+    callerInput: {
+      stage: ["runId"],
+      confirm: ["requestId"]
+    },
+    callerSelectedAction: false,
+    callerSelectedStatus: false,
+    callerSelectedActor: false,
+    callerSelectedReason: false,
+    callerSelectedVersion: false,
+    automaticRetry: false,
+    ...overrides
   }
 }
 
@@ -229,11 +290,13 @@ function runPpo(args, writeDataDir) {
 }
 
 test("Phase 6P approval policy binds cancellation policy, ttl, request id format, and single-use design", () => {
+  assert.equal(DEVELOPMENT_RUN_CANCELLATION_APPROVAL_ID, "phase-6p-development-run-cancellation-approval")
   assert.equal(PHASE_6P_RUN_CANCELLATION_APPROVAL_POLICY_ID, "phase-6p-development-run-cancellation-approval-policy")
   assert.match(PHASE_6P_RUN_CANCELLATION_APPROVAL_POLICY_HASH, /^[a-f0-9]{64}$/u)
   assert.equal(PHASE_6P_RUN_CANCELLATION_POLICY_ID, "phase-6p-quiescent-development-run-cancellation-policy")
   assert.match(PHASE_6P_RUN_CANCELLATION_POLICY_HASH, /^[a-f0-9]{64}$/u)
   assert.equal(DEVELOPMENT_RUN_CANCELLATION_APPROVAL_TTL_MS, 10 * 60 * 1000)
+  assert.equal(policyHashFor(approvalPolicyContract()), PHASE_6P_RUN_CANCELLATION_APPROVAL_POLICY_HASH)
   assert.equal(CANCELLATION_REQUEST_ID_PATTERN.test(makeDevelopmentRunCancellationRequestId({
     randomBytesImpl: randomBytesForSeed(9)
   })), true)
@@ -244,6 +307,80 @@ test("Phase 6P approval policy binds cancellation policy, ttl, request id format
   assert.equal(policy.cancellationPolicy.id, PHASE_6P_RUN_CANCELLATION_POLICY_ID)
   assert.equal(policy.cancellationPolicy.hash, PHASE_6P_RUN_CANCELLATION_POLICY_HASH)
   assert.equal(policy.ttlMs, DEVELOPMENT_RUN_CANCELLATION_APPROVAL_TTL_MS)
+
+  const baseContract = approvalPolicyContract()
+  const policySignificantMutations = [
+    ["cancellation policy id", {
+      ...baseContract,
+      cancellation: {
+        ...baseContract.cancellation,
+        policy: {
+          ...baseContract.cancellation.policy,
+          id: "different-cancellation-policy"
+        }
+      }
+    }],
+    ["cancellation policy hash", {
+      ...baseContract,
+      cancellation: {
+        ...baseContract.cancellation,
+        policy: {
+          ...baseContract.cancellation.policy,
+          hash: "0".repeat(64)
+        }
+      }
+    }],
+    ["ttl", { ...baseContract, requestTtlMs: 60 * 1000 }],
+    ["request id format", { ...baseContract, requestIdPattern: "^[a-z]+$" }],
+    ["request store identity", {
+      ...baseContract,
+      requestStore: {
+        ...baseContract.requestStore,
+        claimed: "used"
+      }
+    }],
+    ["request binding", { ...baseContract, requestBinding: ["runId", "expectedVersion"] }],
+    ["single-use claim", { ...baseContract, pendingToClaimedSingleUse: false }],
+    ["claim operation", { ...baseContract, claimOperation: "copy" }],
+    ["cancel command", {
+      ...baseContract,
+      commands: {
+        ...baseContract.commands,
+        stage: "/ppo stop"
+      }
+    }],
+    ["cancel-confirm command", {
+      ...baseContract,
+      commands: {
+        ...baseContract.commands,
+        confirm: "/ppo stop-confirm"
+      }
+    }],
+    ["stage caller input", {
+      ...baseContract,
+      callerInput: {
+        ...baseContract.callerInput,
+        stage: ["runId", "expectedVersion"]
+      }
+    }],
+    ["confirmation caller input", {
+      ...baseContract,
+      callerInput: {
+        ...baseContract.callerInput,
+        confirm: ["requestId", "action"]
+      }
+    }],
+    ["caller action", { ...baseContract, callerSelectedAction: true }],
+    ["caller status", { ...baseContract, callerSelectedStatus: true }],
+    ["caller actor", { ...baseContract, callerSelectedActor: true }],
+    ["caller reason", { ...baseContract, callerSelectedReason: true }],
+    ["caller version", { ...baseContract, callerSelectedVersion: true }],
+    ["automatic retry", { ...baseContract, automaticRetry: true }]
+  ]
+
+  for (const [label, mutated] of policySignificantMutations) {
+    assert.notEqual(policyHashFor(mutated), PHASE_6P_RUN_CANCELLATION_APPROVAL_POLICY_HASH, label)
+  }
 })
 
 test("Phase 6P staging writes only a bounded cancellation approval record and does not mutate the run", async () => {

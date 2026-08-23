@@ -16,13 +16,17 @@ import {
   DEVELOPMENT_RUN_STATUSES,
   createDevelopmentRun,
   createPersonalProjectOperatorSelfDevelopmentRun,
+  isDevelopmentRunTerminalStatus,
   readDevelopmentRun,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
   DEVELOPMENT_RUN_CANCELLATION_ACTOR,
   DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES,
+  DEVELOPMENT_RUN_CANCELLATION_DELIVERY_STATUSES,
   DEVELOPMENT_RUN_CANCELLATION_ID,
+  DEVELOPMENT_RUN_CANCELLATION_IN_PROGRESS_STATUSES,
+  DEVELOPMENT_RUN_CANCELLATION_PRODUCTION_STATUSES,
   DEVELOPMENT_RUN_CANCELLATION_REASON,
   PHASE_6P_RUN_CANCELLATION_POLICY_HASH,
   PHASE_6P_RUN_CANCELLATION_POLICY_ID,
@@ -39,7 +43,13 @@ import {
   handlePpoDevelopmentRunCommand,
   handlePpoDevelopmentRunsCommand
 } from "./development-run-catalog-route.mjs"
+import {
+  DEVELOPMENT_RUN_CATALOG_ID,
+  PHASE_6N_RUN_CATALOG_POLICY_HASH,
+  PHASE_6N_RUN_CATALOG_POLICY_ID
+} from "./development-run-catalog.mjs"
 import { handlePpoDevelopmentContinueCommand } from "./development-continue-orchestrator.mjs"
+import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
 
 const BASE_SHA = "a".repeat(40)
 const HEAD_SHA = "b".repeat(40)
@@ -108,6 +118,7 @@ async function makeRun({
   seed,
   status = "created",
   projectId = "khlim-assist",
+  headSha = HEAD_SHA,
   task = `${TASK_TEXT} ${seed}`
 }) {
   const now = makeClock()
@@ -115,7 +126,7 @@ async function makeRun({
     projectId,
     task,
     baseSha: BASE_SHA,
-    headSha: HEAD_SHA,
+    headSha,
     actor: "phase-6p-test"
   }, {
     writeDataDir,
@@ -135,6 +146,65 @@ async function makeRun({
   }
 
   return record
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`
+  }
+
+  return JSON.stringify(value)
+}
+
+function policyHashFor(contract) {
+  return createHash("sha256").update(stableStringify(contract)).digest("hex")
+}
+
+function cancellationPolicyContract(overrides = {}) {
+  const statusClassification = {
+    eligible: DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES,
+    refusedInProgress: DEVELOPMENT_RUN_CANCELLATION_IN_PROGRESS_STATUSES,
+    refusedDelivery: DEVELOPMENT_RUN_CANCELLATION_DELIVERY_STATUSES,
+    refusedProduction: DEVELOPMENT_RUN_CANCELLATION_PRODUCTION_STATUSES,
+    refusedTerminal: DEVELOPMENT_RUN_STATUSES.filter((status) => isDevelopmentRunTerminalStatus(status)),
+    refusalCodes: {
+      inProgress: "state_not_quiescent",
+      delivery: "delivery_state_out_of_scope",
+      production: "production_state_out_of_scope",
+      terminal: "terminal_state"
+    }
+  }
+
+  return {
+    cancellation: DEVELOPMENT_RUN_CANCELLATION_ID,
+    policy: PHASE_6P_RUN_CANCELLATION_POLICY_ID,
+    schemaVersion: 1,
+    ordinaryProjects: listPhase2GitHubProjects().map((project) => project.id).sort(),
+    statusClassification,
+    canonicalStateRequired: "canonical_current",
+    expectedVersionRequired: true,
+    targetStatus: "cancelled",
+    fixedActor: DEVELOPMENT_RUN_CANCELLATION_ACTOR,
+    fixedReason: DEVELOPMENT_RUN_CANCELLATION_REASON,
+    evidence: false,
+    cleanup: false,
+    processInterruption: false,
+    githubActions: false,
+    hostedSourceActions: false,
+    productionActions: false,
+    engine: {
+      catalog: DEVELOPMENT_RUN_CATALOG_ID,
+      policy: {
+        id: PHASE_6N_RUN_CATALOG_POLICY_ID,
+        hash: PHASE_6N_RUN_CATALOG_POLICY_HASH
+      }
+    },
+    ...overrides
+  }
 }
 
 async function snapshotTree(root) {
@@ -214,6 +284,7 @@ test("Phase 6P cancellation policy has fixed identity and exact status classific
   assert.equal(DEVELOPMENT_RUN_CANCELLATION_ID, "phase-6p-quiescent-development-run-cancellation")
   assert.equal(PHASE_6P_RUN_CANCELLATION_POLICY_ID, "phase-6p-quiescent-development-run-cancellation-policy")
   assert.match(PHASE_6P_RUN_CANCELLATION_POLICY_HASH, /^[a-f0-9]{64}$/u)
+  assert.equal(policyHashFor(cancellationPolicyContract()), PHASE_6P_RUN_CANCELLATION_POLICY_HASH)
 
   const expected = {
     created: "eligible",
@@ -251,9 +322,110 @@ test("Phase 6P cancellation policy has fixed identity and exact status classific
     "tests_passed",
     "review_changes_requested"
   ])
+  assert.deepEqual(DEVELOPMENT_RUN_CANCELLATION_IN_PROGRESS_STATUSES, [
+    "planning_in_progress",
+    "implementation_in_progress",
+    "tests_in_progress",
+    "review_in_progress"
+  ])
+  assert.deepEqual(DEVELOPMENT_RUN_CANCELLATION_DELIVERY_STATUSES, [
+    "review_passed",
+    "merge_ready",
+    "merged"
+  ])
+  assert.deepEqual(DEVELOPMENT_RUN_CANCELLATION_PRODUCTION_STATUSES, [
+    "deploy_in_progress",
+    "deploy_failed",
+    "deployed",
+    "verification_in_progress",
+    "verification_failed",
+    "rollback_in_progress",
+    "rollback_failed",
+    "rolled_back"
+  ])
+
+  const observed = {
+    eligible: [],
+    state_not_quiescent: [],
+    delivery_state_out_of_scope: [],
+    production_state_out_of_scope: [],
+    terminal_state: [],
+    cancellation_unavailable: []
+  }
 
   for (const status of DEVELOPMENT_RUN_STATUSES) {
-    assert.equal(classifyDevelopmentRunCancellationStatus(status), expected[status], status)
+    const classification = classifyDevelopmentRunCancellationStatus(status)
+    assert.equal(classification, expected[status], status)
+    observed[classification].push(status)
+  }
+
+  const observedStatuses = Object.values(observed).flat()
+  assert.equal(observedStatuses.length, DEVELOPMENT_RUN_STATUSES.length)
+  assert.equal(new Set(observedStatuses).size, DEVELOPMENT_RUN_STATUSES.length)
+  assert.deepEqual(observed.eligible, DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES)
+  assert.deepEqual(observed.state_not_quiescent, DEVELOPMENT_RUN_CANCELLATION_IN_PROGRESS_STATUSES)
+  assert.deepEqual(observed.delivery_state_out_of_scope, DEVELOPMENT_RUN_CANCELLATION_DELIVERY_STATUSES)
+  assert.deepEqual(observed.production_state_out_of_scope, DEVELOPMENT_RUN_CANCELLATION_PRODUCTION_STATUSES)
+  assert.deepEqual(
+    observed.terminal_state,
+    DEVELOPMENT_RUN_STATUSES.filter((status) => isDevelopmentRunTerminalStatus(status))
+  )
+  assert.deepEqual(observed.cancellation_unavailable, [])
+
+  const baseContract = cancellationPolicyContract()
+  const mutateClassification = (key, value) => ({
+    ...baseContract,
+    statusClassification: {
+      ...baseContract.statusClassification,
+      [key]: value
+    }
+  })
+  const policySignificantMutations = [
+    ["ordinary projects", { ...baseContract, ordinaryProjects: baseContract.ordinaryProjects.slice(1) }],
+    ["eligible statuses", mutateClassification("eligible", baseContract.statusClassification.eligible.slice(1))],
+    ["in-progress refused statuses", mutateClassification("refusedInProgress", baseContract.statusClassification.refusedInProgress.slice(1))],
+    ["delivery refused statuses", mutateClassification("refusedDelivery", baseContract.statusClassification.refusedDelivery.slice(1))],
+    ["production refused statuses", mutateClassification("refusedProduction", baseContract.statusClassification.refusedProduction.slice(1))],
+    ["terminal refused statuses", mutateClassification("refusedTerminal", baseContract.statusClassification.refusedTerminal.slice(1))],
+    ["terminal refusal code", mutateClassification("refusalCodes", {
+      ...baseContract.statusClassification.refusalCodes,
+      terminal: "production_state_out_of_scope"
+    })],
+    ["canonical state", { ...baseContract, canonicalStateRequired: "canonical_behind" }],
+    ["expected version", { ...baseContract, expectedVersionRequired: false }],
+    ["target status", { ...baseContract, targetStatus: "failed" }],
+    ["fixed actor", { ...baseContract, fixedActor: "different-actor" }],
+    ["fixed reason", { ...baseContract, fixedReason: "different_reason" }],
+    ["evidence", { ...baseContract, evidence: true }],
+    ["cleanup", { ...baseContract, cleanup: true }],
+    ["process interruption", { ...baseContract, processInterruption: true }],
+    ["GitHub actions", { ...baseContract, githubActions: true }],
+    ["hosted source actions", { ...baseContract, hostedSourceActions: true }],
+    ["production actions", { ...baseContract, productionActions: true }],
+    ["Phase 6N policy id", {
+      ...baseContract,
+      engine: {
+        ...baseContract.engine,
+        policy: {
+          ...baseContract.engine.policy,
+          id: "different-policy"
+        }
+      }
+    }],
+    ["Phase 6N policy hash", {
+      ...baseContract,
+      engine: {
+        ...baseContract.engine,
+        policy: {
+          ...baseContract.engine.policy,
+          hash: "0".repeat(64)
+        }
+      }
+    }]
+  ]
+
+  for (const [label, mutated] of policySignificantMutations) {
+    assert.notEqual(policyHashFor(mutated), PHASE_6P_RUN_CANCELLATION_POLICY_HASH, label)
   }
 })
 
@@ -326,6 +498,67 @@ test("Phase 6P successfully cancels every eligible quiescent status with one tra
     })
     assert.equal(continued.ok, false)
     assert.doesNotMatch(continued.output, /continue child must not run/u)
+  }
+})
+
+test("Phase 6P preserves nullable headSha through eligibility, staging, and cancellation", async () => {
+  let seed = 170
+
+  for (const status of ["created", "planned"]) {
+    const writeDataDir = await tempWriteDataDir()
+    const before = await makeRun({
+      writeDataDir,
+      seed,
+      status,
+      headSha: null
+    })
+    seed += 1
+
+    assert.equal(before.headSha, null)
+
+    const ready = await inspectDevelopmentRunCancellationEligibility(before.runId, { writeDataDir })
+    const readyOutput = formatDevelopmentRunCancellation(ready)
+
+    assert.equal(ready.ok, true)
+    assert.equal(ready.code, "cancellation_ready")
+    assert.equal(ready.headSha, null)
+    assert.match(readyOutput, /Status: ready/u)
+    assert.match(readyOutput, /Head: \(none\)/u)
+
+    const staged = await stageDevelopmentRunCancellationApproval(before.runId, {
+      writeDataDir,
+      now: () => new Date("2026-08-24T06:00:00.000Z"),
+      randomBytesImpl: randomBytesForSeed(seed)
+    })
+    const stagedOutput = formatDevelopmentRunCancellation(staged)
+    const afterStage = await readDevelopmentRun(before.runId, { writeDataDir })
+
+    assert.equal(staged.ok, true)
+    assert.equal(staged.code, "cancellation_staged")
+    assert.equal(staged.headSha, null)
+    assert.equal(afterStage.headSha, null)
+    assert.equal(afterStage.version, before.version)
+    assert.match(stagedOutput, /Status: staged/u)
+    assert.match(stagedOutput, /Head: \(none\)/u)
+
+    const confirmed = await confirmDevelopmentRunCancellationApproval(staged.requestId, {
+      writeDataDir,
+      now: () => new Date("2026-08-24T06:01:00.000Z")
+    })
+    const confirmedOutput = formatDevelopmentRunCancellation(confirmed)
+    const final = await readDevelopmentRun(before.runId, { writeDataDir })
+
+    assert.equal(confirmed.ok, true)
+    assert.equal(confirmed.code, "cancelled")
+    assert.equal(confirmed.headSha, null)
+    assert.equal(confirmed.beforeVersion, before.version)
+    assert.equal(confirmed.afterVersion, before.version + 1)
+    assert.equal(final.status, "cancelled")
+    assert.equal(final.headSha, null)
+    assert.equal(final.version, before.version + 1)
+    assert.equal(final.history.filter((event) => event.toStatus === "cancelled").length, 1)
+    assert.match(confirmedOutput, /Status: cancelled/u)
+    assert.match(confirmedOutput, /Head: \(none\)/u)
   }
 })
 

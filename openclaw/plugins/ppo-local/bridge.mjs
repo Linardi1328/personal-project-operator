@@ -245,6 +245,11 @@ function parseCancellationCommand(commandText, rawCommand) {
     parts[0] === "cancel" &&
     DEVELOPMENT_RUN_ID_PATTERN.test(parts[1])
   ) {
+    const canonical = `cancel ${parts[1]}`;
+    if (![canonical, `/ppo ${canonical}`, `ppo ${canonical}`].includes(rawCommand)) {
+      return null;
+    }
+
     return ["cancel", parts[1]];
   }
 
@@ -253,6 +258,11 @@ function parseCancellationCommand(commandText, rawCommand) {
     parts[0] === "cancel-confirm" &&
     CANCELLATION_REQUEST_ID_PATTERN.test(parts[1])
   ) {
+    const canonical = `cancel-confirm ${parts[1]}`;
+    if (![canonical, `/ppo ${canonical}`, `ppo ${canonical}`].includes(rawCommand)) {
+      return null;
+    }
+
     return ["cancel-confirm", parts[1]];
   }
 

@@ -40,6 +40,8 @@ export const CANCELLATION_REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/u
 export const DEVELOPMENT_RUN_CANCELLATION_APPROVAL_STORE_DIR = "pending-development-run-cancellations"
 
 const MAX_CANCELLATION_REQUEST_RECORD_BYTES = 4096
+const CANCELLATION_PENDING_DIR_NAME = "pending"
+const CANCELLATION_CLAIMED_DIR_NAME = "claimed"
 const versionBound = MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES
 const claimedRequestFilePattern = /^([A-Za-z0-9_-]{43})\.[0-9]+\.[a-f0-9]{16}\.json$/u
 const eligibleStatusSet = new Set(DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES)
@@ -83,10 +85,27 @@ const approvalContract = Object.freeze({
   requestTtlMs: DEVELOPMENT_RUN_CANCELLATION_APPROVAL_TTL_MS,
   requestIdBytes: CANCELLATION_REQUEST_ID_BYTES,
   requestIdPattern: CANCELLATION_REQUEST_ID_PATTERN.source,
-  requestStore: DEVELOPMENT_RUN_CANCELLATION_APPROVAL_STORE_DIR,
+  requestStore: {
+    root: DEVELOPMENT_RUN_CANCELLATION_APPROVAL_STORE_DIR,
+    pending: CANCELLATION_PENDING_DIR_NAME,
+    claimed: CANCELLATION_CLAIMED_DIR_NAME
+  },
   requestBinding: ["runId", "expectedVersion", "projectId", "beforeStatus"],
   pendingToClaimedSingleUse: true,
-  commands: ["/ppo cancel", "/ppo cancel-confirm"],
+  claimOperation: "pending-to-claimed",
+  commands: {
+    stage: "/ppo cancel",
+    confirm: "/ppo cancel-confirm"
+  },
+  callerInput: {
+    stage: ["runId"],
+    confirm: ["requestId"]
+  },
+  callerSelectedAction: false,
+  callerSelectedStatus: false,
+  callerSelectedActor: false,
+  callerSelectedReason: false,
+  callerSelectedVersion: false,
   automaticRetry: false
 })
 
@@ -142,8 +161,8 @@ function storePaths(options = {}) {
   return {
     root,
     approvalRoot,
-    pendingDir: join(approvalRoot, "pending"),
-    claimedDir: join(approvalRoot, "claimed")
+    pendingDir: join(approvalRoot, CANCELLATION_PENDING_DIR_NAME),
+    claimedDir: join(approvalRoot, CANCELLATION_CLAIMED_DIR_NAME)
   }
 }
 
