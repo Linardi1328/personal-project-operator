@@ -8,13 +8,11 @@ import {
 import { planExistingDevelopmentRun } from "./development-next-stage-planner.mjs"
 import { prepareImplementationWorkspace } from "./development-workspace-manager.mjs"
 import {
-  CODEX_EXECUTION_ADAPTER_ID,
-  CODEX_EXECUTION_SANDBOX_ID,
+  classifyCodexExecutionAttemptEvidence,
   executeCodexImplementation
 } from "./development-codex-execution-adapter.mjs"
 import {
-  AUTOMATED_TEST_RUNNER_ID,
-  AUTOMATED_TEST_SANDBOX_ID,
+  classifyAutomatedTestAttemptEvidence,
   executeAutomatedTests,
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
@@ -181,7 +179,6 @@ const defaultChildHandlers = Object.freeze({
 const safeReasonPattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const safeOutcomePattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const shaPattern = /^[a-f0-9]{40}$/u
-const sha256Pattern = /^[a-f0-9]{64}$/u
 
 export class DevelopmentContinueOrchestratorError extends Error {
   constructor(code, safeMessage) {
@@ -236,27 +233,6 @@ function safeHeadSha(value) {
   return normalized && shaPattern.test(normalized) ? normalized : null
 }
 
-function currentRunSha(run) {
-  return safeHeadSha(run?.headSha) || safeHeadSha(run?.baseSha)
-}
-
-function isPositiveInteger(value) {
-  return Number.isInteger(value) && value > 0
-}
-
-function isNonNegativeInteger(value) {
-  return Number.isInteger(value) && value >= 0
-}
-
-function isBoundedSafeString(value, maxChars = 200) {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= maxChars &&
-    !/[\u0000-\u001F\u007F-\u009F]/u.test(value)
-  )
-}
-
 function projectIdFor(run) {
   return typeof run?.project?.id === "string" ? run.project.id : "unknown"
 }
@@ -284,205 +260,22 @@ function projectRefusedResult(run) {
   })
 }
 
-function latestMatchingEvidence(run, kind, predicate) {
-  const entries = run?.evidence?.[kind]
-
-  if (!Array.isArray(entries)) {
-    throw continueError(
-      "CONTINUE_DURABLE_EVIDENCE_INVALID",
-      "Development continue could not validate durable attempt evidence."
-    )
-  }
-
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]
-
-    if (predicate(entry)) {
-      return entry
-    }
-  }
-
-  return null
-}
-
-function branchMatches(run, metadata) {
-  return !run.branch || metadata.branch === undefined || metadata.branch === run.branch
-}
-
-function isCodexAttemptLooking(entry) {
-  const outcome = entry?.metadata?.outcome
-
-  return (
-    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
-    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID ||
-    outcome === "execution_started" ||
-    outcome === "execution_failed"
-  )
-}
-
-function claimsCurrentCodexAttempt(run, entry) {
-  if (!isCodexAttemptLooking(entry)) {
-    return false
-  }
-
-  const attempt = entry?.metadata?.attempt
-
-  if (attempt === run?.attempts?.implementation) {
-    return true
-  }
-
-  if (attempt === undefined && (
-    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
-    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID
-  )) {
-    return true
-  }
-
-  return false
-}
-
-function isTrustedCodexAttemptEvidence(run, entry) {
-  const metadata = entry?.metadata || {}
-  const expectedSha = currentRunSha(run)
-  const attempt = run?.attempts?.implementation
-
-  if (!expectedSha || !isPositiveInteger(attempt)) {
-    return false
-  }
-
-  if (
-    entry?.kind !== "implementation" ||
-    entry?.source !== CODEX_EXECUTION_ADAPTER_ID ||
-    safeHeadSha(entry?.sha) !== expectedSha ||
-    metadata.adapter !== CODEX_EXECUTION_ADAPTER_ID ||
-    metadata.project !== projectIdFor(run) ||
-    metadata.attempt !== attempt ||
-    metadata.sandbox !== CODEX_EXECUTION_SANDBOX_ID ||
-    metadata.network !== "none" ||
-    metadata.remotePolicy !== "deny" ||
-    !branchMatches(run, metadata) ||
-    !sha256Pattern.test(String(metadata.promptHash || "")) ||
-    !isBoundedSafeString(metadata.startedAt, 80)
-  ) {
-    return false
-  }
-
-  if (!isBoundedSafeString(metadata.workspaceId, 120) || !isBoundedSafeString(metadata.workspaceRef, 160)) {
-    return false
-  }
-
-  if (metadata.backend !== undefined && !isBoundedSafeString(metadata.backend, 80)) {
-    return false
-  }
-
-  if (metadata.platform !== undefined && !isBoundedSafeString(metadata.platform, 40)) {
-    return false
-  }
-
-  if (metadata.outcome === "execution_started") {
-    return metadata.endedAt === undefined
-  }
-
-  if (metadata.outcome === "execution_failed") {
-    return isBoundedSafeString(metadata.endedAt, 80)
-  }
-
-  return false
-}
-
 function validateImplementationAttemptBoundary(run, action) {
-  const latestAttempt = latestMatchingEvidence(run, "implementation", (entry) => claimsCurrentCodexAttempt(run, entry))
+  const classification = classifyCodexExecutionAttemptEvidence(run)
 
-  if (!latestAttempt) {
-    return null
-  }
-
-  if (!isTrustedCodexAttemptEvidence(run, latestAttempt)) {
+  if (classification === "invalid") {
     return ownerActionResult(run, action, "codex_evidence_invalid")
   }
 
-  if (latestAttempt.metadata.outcome === "execution_started") {
+  if (classification === "open") {
     return ownerActionResult(run, action, "codex_reconciliation_required")
   }
 
-  if (latestAttempt.metadata.outcome === "execution_failed") {
+  if (classification === "none" || classification === "definitive_failed") {
     return null
   }
 
   return ownerActionResult(run, action, "codex_evidence_invalid")
-}
-
-function isAutomatedTestAttemptLooking(entry) {
-  const outcome = entry?.metadata?.outcome
-
-  return (
-    entry?.source === AUTOMATED_TEST_RUNNER_ID ||
-    entry?.metadata?.runner === AUTOMATED_TEST_RUNNER_ID ||
-    outcome === "testing_started" ||
-    outcome === "failed"
-  )
-}
-
-function hasTrustedTestEvidenceBase(run, entry, policyIdentity) {
-  const metadata = entry?.metadata || {}
-  const expectedSha = safeHeadSha(run?.headSha)
-  const attempt = run?.attempts?.test
-
-  return (
-    Boolean(expectedSha) &&
-    isPositiveInteger(attempt) &&
-    entry?.kind === "test" &&
-    entry?.source === AUTOMATED_TEST_RUNNER_ID &&
-    safeHeadSha(entry?.sha) === expectedSha &&
-    metadata.runner === AUTOMATED_TEST_RUNNER_ID &&
-    metadata.project === projectIdFor(run) &&
-    metadata.attempt === attempt &&
-    safeHeadSha(metadata.implSha) === expectedSha &&
-    metadata.sandbox === AUTOMATED_TEST_SANDBOX_ID &&
-    metadata.network === "none" &&
-    metadata.policyId === policyIdentity?.policyId &&
-    metadata.policyHash === policyIdentity?.policyHash &&
-    branchMatches(run, metadata) &&
-    isBoundedSafeString(metadata.startedAt, 80)
-  )
-}
-
-function isTrustedOpenTestingEvidence(run, entry, policyIdentity) {
-  const metadata = entry?.metadata || {}
-
-  return (
-    hasTrustedTestEvidenceBase(run, entry, policyIdentity) &&
-    metadata.outcome === "testing_started" &&
-    metadata.endedAt === undefined &&
-    isBoundedSafeString(metadata.workspaceId, 120) &&
-    isBoundedSafeString(metadata.workspaceRef, 160)
-  )
-}
-
-function isTrustedDefinitiveTestFailureEvidence(run, entry, policyIdentity) {
-  const metadata = entry?.metadata || {}
-
-  if (!hasTrustedTestEvidenceBase(run, entry, policyIdentity) || metadata.outcome !== "failed") {
-    return false
-  }
-
-  if (metadata.testId !== undefined || !isBoundedSafeString(metadata.endedAt, 80)) {
-    return false
-  }
-
-  if (
-    !isPositiveInteger(metadata.total) ||
-    !isNonNegativeInteger(metadata.passed) ||
-    !isNonNegativeInteger(metadata.failed) ||
-    !isNonNegativeInteger(metadata.ambiguous)
-  ) {
-    return false
-  }
-
-  return (
-    metadata.total === policyIdentity.requiredTestCount &&
-    metadata.passed + metadata.failed + metadata.ambiguous <= metadata.total
-  )
 }
 
 function resolveCurrentTestPolicyIdentity(run, action, runtimeOptions) {
@@ -506,17 +299,17 @@ function validateAutomatedTestRetryBoundary(run, action, runtimeOptions) {
     return policy.result
   }
 
-  const latestAttempt = latestMatchingEvidence(run, "test", isAutomatedTestAttemptLooking)
+  const classification = classifyAutomatedTestAttemptEvidence(run, policy.identity)
 
-  if (!latestAttempt) {
+  if (classification === "none") {
     return ownerActionResult(run, action, "automated_test_reconciliation_required")
   }
 
-  if (isTrustedOpenTestingEvidence(run, latestAttempt, policy.identity)) {
+  if (classification === "open") {
     return ownerActionResult(run, action, "automated_test_reconciliation_required")
   }
 
-  if (isTrustedDefinitiveTestFailureEvidence(run, latestAttempt, policy.identity)) {
+  if (classification === "definitive_failed") {
     return null
   }
 

@@ -799,7 +799,7 @@ test("Phase 6K refuses malformed durable evidence instead of dispatching", async
 
   assert.equal(result.ok, false)
   assert.equal(result.outcome, "owner_action_required")
-  assert.equal(result.reason, "continue_durable_evidence_invalid")
+  assert.equal(result.reason, "codex_evidence_invalid")
   assert.equal(children.calls.length, 0)
 })
 

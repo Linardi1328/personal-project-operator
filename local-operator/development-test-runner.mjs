@@ -1162,6 +1162,158 @@ function latestPassedAggregateEvidence(run) {
   return null
 }
 
+function safeEvidenceSha(value) {
+  const normalized = typeof value === "string" ? value.toLowerCase() : null
+
+  return normalized && shaPattern.test(normalized) ? normalized : null
+}
+
+function boundedEvidenceText(value, maxChars = 160) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxChars &&
+    !unsafeControlPattern.test(value) &&
+    !sensitiveTextPattern.test(value)
+  )
+}
+
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0
+}
+
+function testEvidenceLooksRelevant(entry) {
+  const outcome = entry?.metadata?.outcome
+
+  return (
+    entry?.source === AUTOMATED_TEST_RUNNER_ID ||
+    entry?.metadata?.runner === AUTOMATED_TEST_RUNNER_ID ||
+    outcome === "testing_started" ||
+    outcome === "failed" ||
+    outcome === "passed" ||
+    outcome === "workspace_dirty" ||
+    outcome === "workspace_changed"
+  )
+}
+
+function latestRelevantAutomatedTestEvidence(run) {
+  const entries = run?.evidence?.test
+
+  if (!Array.isArray(entries)) {
+    return { malformed: true, entry: null }
+  }
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+
+    if (testEvidenceLooksRelevant(entry)) {
+      return { malformed: false, entry }
+    }
+  }
+
+  return { malformed: false, entry: null }
+}
+
+function hasTrustedAutomatedTestEvidenceBase(run, entry, policyIdentity) {
+  const metadata = entry?.metadata || {}
+  const expectedSha = safeEvidenceSha(run?.headSha)
+
+  return (
+    Boolean(expectedSha) &&
+    Number.isInteger(run?.attempts?.test) &&
+    run.attempts.test > 0 &&
+    entry?.kind === "test" &&
+    entry?.source === AUTOMATED_TEST_RUNNER_ID &&
+    safeEvidenceSha(entry?.sha) === expectedSha &&
+    metadata.runner === AUTOMATED_TEST_RUNNER_ID &&
+    metadata.project === run?.project?.id &&
+    metadata.attempt === run.attempts.test &&
+    safeEvidenceSha(metadata.implSha) === expectedSha &&
+    metadata.sandbox === AUTOMATED_TEST_SANDBOX_ID &&
+    metadata.network === "none" &&
+    metadata.policyId === policyIdentity?.policyId &&
+    metadata.policyHash === policyIdentity?.policyHash &&
+    (!run.branch || metadata.branch === undefined || metadata.branch === run.branch) &&
+    boundedEvidenceText(metadata.startedAt, 80)
+  )
+}
+
+function hasValidAggregateCounts(metadata, policyIdentity, expectedOutcome) {
+  if (
+    !Number.isInteger(policyIdentity?.requiredTestCount) ||
+    policyIdentity.requiredTestCount <= 0 ||
+    !Number.isInteger(metadata.total) ||
+    metadata.total !== policyIdentity.requiredTestCount ||
+    !isNonNegativeInteger(metadata.passed) ||
+    !isNonNegativeInteger(metadata.failed) ||
+    !isNonNegativeInteger(metadata.ambiguous) ||
+    metadata.passed + metadata.failed + metadata.ambiguous > metadata.total
+  ) {
+    return false
+  }
+
+  if (expectedOutcome === "passed") {
+    return metadata.passed === metadata.total && metadata.failed === 0 && metadata.ambiguous === 0
+  }
+
+  if (expectedOutcome === "failed") {
+    return metadata.failed > 0 || metadata.ambiguous > 0
+  }
+
+  return false
+}
+
+export function classifyAutomatedTestAttemptEvidence(run, policyIdentity) {
+  const latest = latestRelevantAutomatedTestEvidence(run)
+
+  if (latest.malformed) {
+    return "invalid"
+  }
+
+  if (!latest.entry) {
+    return "none"
+  }
+
+  const entry = latest.entry
+  const metadata = entry?.metadata || {}
+
+  if (!hasTrustedAutomatedTestEvidenceBase(run, entry, policyIdentity)) {
+    return "invalid"
+  }
+
+  if (metadata.outcome === "testing_started") {
+    return (
+      metadata.endedAt === undefined &&
+      boundedEvidenceText(metadata.workspaceId, 120) &&
+      boundedEvidenceText(metadata.workspaceRef, 160)
+    )
+      ? "open"
+      : "invalid"
+  }
+
+  if (metadata.outcome === "failed") {
+    return (
+      metadata.testId === undefined &&
+      boundedEvidenceText(metadata.endedAt, 80) &&
+      hasValidAggregateCounts(metadata, policyIdentity, "failed")
+    )
+      ? "definitive_failed"
+      : "invalid"
+  }
+
+  if (metadata.outcome === "passed") {
+    return (
+      metadata.testId === undefined &&
+      boundedEvidenceText(metadata.endedAt, 80) &&
+      hasValidAggregateCounts(metadata, policyIdentity, "passed")
+    )
+      ? "passed"
+      : "invalid"
+  }
+
+  return "invalid"
+}
+
 function assertNoOpenTestAttempt(run) {
   const latest = latestAutomatedTestEvidence(run)
 
