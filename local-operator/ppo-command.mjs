@@ -8,6 +8,11 @@ import {
   handlePromptSizeCommand,
   handleSplitTaskCommand
 } from "./codex-planning-tools.mjs";
+import {
+  CANCELLATION_REQUEST_ID_PATTERN,
+  handlePpoDevelopmentCancelCommand,
+  handlePpoDevelopmentCancelConfirmCommand
+} from "./development-run-cancellation-approval.mjs";
 import { handlePpoDevelopmentContinueCommand } from "./development-continue-orchestrator.mjs";
 import { loadDevelopmentContinueRuntimeProfile } from "./development-continue-runtime-profile.mjs";
 import {
@@ -117,6 +122,78 @@ function parseStrictRunIdCommandArgs(rawArgs, command, options = {}) {
   return { ok: false, attempted: true };
 }
 
+function parseStrictRequestIdCommandArgs(rawArgs, command, options = {}) {
+  const args = rawArgs.map((arg) => String(arg));
+  const unsafe = args.some((arg) => arg !== arg.trim() || /[\u0000-\u001F\u007F-\u009F]/u.test(arg));
+  const lower0 = args[0]?.toLowerCase();
+  const lower1 = args[1]?.toLowerCase();
+  const firstLooksLikeCommand = lower0 === command || lower0?.startsWith(`${command} `);
+  const envelopeLooksLikeCommand = (
+    (lower0 === "/ppo" || lower0 === "ppo") &&
+    (lower1 === command || lower1?.startsWith(`${command} `))
+  );
+  const combinedEnvelopeLooksLikeCommand = (
+    (lower0?.startsWith("/ppo") || lower0?.startsWith("ppo")) &&
+    new RegExp(`(?:^|[\\s\\r\\n\\t])${command}(?:$|[\\s\\r\\n\\t])`, "iu").test(args[0])
+  );
+  const exactCombinedText = args.length === 1 ? args[0] : "";
+  const exactCombinedParts = exactCombinedText.split(" ");
+  const exactCombinedLooksLikeCommand = (
+    exactCombinedText === command ||
+    exactCombinedText.startsWith(`${command} `) ||
+    exactCombinedText.startsWith(`/ppo ${command} `) ||
+    exactCombinedText.startsWith(`ppo ${command} `)
+  );
+  const attempted = (
+    firstLooksLikeCommand ||
+    envelopeLooksLikeCommand ||
+    combinedEnvelopeLooksLikeCommand ||
+    exactCombinedLooksLikeCommand
+  );
+
+  if (!attempted) {
+    return null;
+  }
+
+  if (unsafe) {
+    return { ok: false, attempted: true };
+  }
+
+  if (args.length === 2 && args[0] === command && CANCELLATION_REQUEST_ID_PATTERN.test(args[1])) {
+    return { ok: true, attempted: true, requestId: args[1] };
+  }
+
+  if (
+    args.length === 3 &&
+    (args[0] === "/ppo" || args[0] === "ppo") &&
+    args[1] === command &&
+    CANCELLATION_REQUEST_ID_PATTERN.test(args[2])
+  ) {
+    return { ok: true, attempted: true, requestId: args[2] };
+  }
+
+  if (options.allowExactCombined === true && args.length === 1) {
+    if (
+      exactCombinedParts.length === 2 &&
+      exactCombinedParts[0] === command &&
+      CANCELLATION_REQUEST_ID_PATTERN.test(exactCombinedParts[1])
+    ) {
+      return { ok: true, attempted: true, requestId: exactCombinedParts[1] };
+    }
+
+    if (
+      exactCombinedParts.length === 3 &&
+      (exactCombinedParts[0] === "/ppo" || exactCombinedParts[0] === "ppo") &&
+      exactCombinedParts[1] === command &&
+      CANCELLATION_REQUEST_ID_PATTERN.test(exactCombinedParts[2])
+    ) {
+      return { ok: true, attempted: true, requestId: exactCombinedParts[2] };
+    }
+  }
+
+  return { ok: false, attempted: true };
+}
+
 function parseStrictZeroArgCommandArgs(rawArgs, command, options = {}) {
   const args = rawArgs.map((arg) => String(arg));
   const unsafe = args.some((arg) => arg !== arg.trim() || /[\u0000-\u001F\u007F-\u009F]/u.test(arg));
@@ -160,6 +237,18 @@ function parseStrictContinueArgs(rawArgs) {
 
 function parseStrictRecoverArgs(rawArgs) {
   return parseStrictRunIdCommandArgs(rawArgs, "recover");
+}
+
+function parseStrictCancelArgs(rawArgs) {
+  return parseStrictRunIdCommandArgs(rawArgs, "cancel", {
+    allowExactCombined: true
+  });
+}
+
+function parseStrictCancelConfirmArgs(rawArgs) {
+  return parseStrictRequestIdCommandArgs(rawArgs, "cancel-confirm", {
+    allowExactCombined: true
+  });
 }
 
 function parseStrictRunArgs(rawArgs) {
@@ -357,6 +446,8 @@ function usage() {
     "  node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase",
     "  node local-operator/ppo-command.mjs runs",
     "  node local-operator/ppo-command.mjs run <run-id>",
+    "  node local-operator/ppo-command.mjs cancel <run-id>",
+    "  node local-operator/ppo-command.mjs cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs continue <run-id>",
     "  node local-operator/ppo-command.mjs recover <run-id>",
     "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
@@ -376,6 +467,8 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo note-confirm <request-id>\"",
     "  node local-operator/ppo-command.mjs /ppo runs",
     "  node local-operator/ppo-command.mjs /ppo run <run-id>",
+    "  node local-operator/ppo-command.mjs /ppo cancel <run-id>",
+    "  node local-operator/ppo-command.mjs /ppo cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
     "  node local-operator/ppo-command.mjs /ppo recover <run-id>",
     "",
@@ -398,6 +491,8 @@ function usage() {
     "  /ppo note-confirm <request-id>",
     "  /ppo runs",
     "  /ppo run <run-id>",
+    "  /ppo cancel <run-id>",
+    "  /ppo cancel-confirm <request-id>",
     "  /ppo continue <run-id>",
     "  /ppo recover <run-id>",
     "",
@@ -407,6 +502,7 @@ function usage() {
     "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append.",
     "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported.",
     "Phase 6O boundary: /ppo runs and /ppo run <run-id> expose the Phase 6N read-only ordinary-run catalog only; no filters, recovery, continue, cancellation, retry, repair, or production action.",
+    "Phase 6P boundary: /ppo cancel stages a single-use quiescent cancellation request and /ppo cancel-confirm consumes it; no process interruption, cleanup, recovery, continue, retry, or production action.",
     "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only.",
     "Phase 6M boundary: /ppo recover accepts only an existing ordinary development run id and exposes one Phase 6L read-only recovery observation; it performs no repair, retry, continue, deployment, verification, or rollback."
   ].join("\n");
@@ -436,6 +532,8 @@ function unsupported(command) {
     "- /ppo note-confirm <request-id>",
     "- /ppo runs",
     "- /ppo run <run-id>",
+    "- /ppo cancel <run-id>",
+    "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
     "- /ppo recover <run-id>",
     "",
@@ -524,6 +622,10 @@ function applyPpoNamespace(output) {
       "Phase 6O PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, one-boundary ordinary development continue, read-only development recovery, and the read-only ordinary-run catalog."
     )
     .replace(
+      "Phase 6O PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, one-boundary ordinary development continue, read-only development recovery, and the read-only ordinary-run catalog.",
+      "Phase 6P PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, one-boundary ordinary development continue, read-only development recovery, the read-only ordinary-run catalog, and confirmation-gated quiescent run cancellation."
+    )
+    .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
       "- /ppo status - Show live GitHub project status. [github read-only]"
     )
@@ -560,6 +662,10 @@ function applyPpoNamespace(output) {
       "Phase 6O boundary: /ppo runs and /ppo run expose the Phase 6N read-only ordinary-run catalog; /ppo continue remains one-boundary Phase 6B-6G development continuation; /ppo recover exposes one Phase 6L read-only recovery observation; production deployment, verification, and rollback remain unrouted."
     )
     .replace(
+      "Phase 6O boundary: /ppo runs and /ppo run expose the Phase 6N read-only ordinary-run catalog; /ppo continue remains one-boundary Phase 6B-6G development continuation; /ppo recover exposes one Phase 6L read-only recovery observation; production deployment, verification, and rollback remain unrouted.",
+      "Phase 6P boundary: /ppo cancel stages and /ppo cancel-confirm consumes a single-use quiescent cancellation request; /ppo runs and /ppo run remain read-only catalog routes; /ppo continue and /ppo recover keep their separate reviewed boundaries; production deployment, verification, and rollback remain unrouted."
+    )
+    .replace(
       [
         "Supported locally through /ppo in Phase 1.5:",
         "- /ppo status",
@@ -570,7 +676,7 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 6O:",
+        "Supported through /ppo in Phase 6P:",
         "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
@@ -589,13 +695,15 @@ function applyPpoNamespace(output) {
         "- /ppo note-confirm <request-id> [approved write]",
         "- /ppo runs [read-only development catalog]",
         "- /ppo run <run-id> [read-only development summary]",
+        "- /ppo cancel <run-id> [approval stage]",
+        "- /ppo cancel-confirm <request-id> [approved quiescent cancellation]",
         "- /ppo continue <run-id> [development]",
         "- /ppo recover <run-id> [read-only development recovery]"
       ].join("\n")
     )
     .replace(
       "Supported through /ppo in Phase 3B:",
-      "Supported through /ppo in Phase 6O:"
+      "Supported through /ppo in Phase 6P:"
     )
     .replace(
       "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt. [future]",
@@ -634,6 +742,7 @@ function applyPpoNamespace(output) {
         "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation",
         "- /ppo note-add stages locally; /ppo note-confirm can append one approved local project note after single-use confirmation",
         "- /ppo runs and /ppo run expose only bounded Phase 6N ordinary-run catalog metadata",
+        "- /ppo cancel stages only; /ppo cancel-confirm can cancel one eligible quiescent run after single-use confirmation",
         "- /ppo continue advances one existing ordinary development run through at most one reviewed Phase 6B-6G boundary",
         "- /ppo recover reports one read-only Phase 6L development recovery observation and never repairs, retries, or continues the run"
       ].join("\n")
@@ -656,6 +765,8 @@ async function main() {
   const rawProcessArgs = process.argv.slice(2);
   const strictRuns = parseStrictRunsArgs(rawProcessArgs);
   const strictRun = parseStrictRunArgs(rawProcessArgs);
+  const strictCancelConfirm = parseStrictCancelConfirmArgs(rawProcessArgs);
+  const strictCancel = parseStrictCancelArgs(rawProcessArgs);
   const strictContinue = parseStrictContinueArgs(rawProcessArgs);
   const strictRecover = parseStrictRecoverArgs(rawProcessArgs);
 
@@ -668,6 +779,20 @@ async function main() {
 
   if (strictRun?.ok === true) {
     const result = await handlePpoDevelopmentRunCommand(strictRun.runId);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictCancelConfirm?.ok === true) {
+    const result = await handlePpoDevelopmentCancelConfirmCommand(strictCancelConfirm.requestId);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictCancel?.ok === true) {
+    const result = await handlePpoDevelopmentCancelCommand(strictCancel.runId);
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;
@@ -697,6 +822,18 @@ async function main() {
 
   if (strictRun?.attempted === true) {
     console.log(unsupported("run"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictCancelConfirm?.attempted === true) {
+    console.log(unsupported("cancel-confirm"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictCancel?.attempted === true) {
+    console.log(unsupported("cancel"));
     process.exitCode = 1;
     return;
   }

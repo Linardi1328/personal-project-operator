@@ -16,7 +16,7 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts the approved PPO command surface through Phase 6O
+- accepts the approved PPO command surface through Phase 6P
 - accepts the Phase 5B approval commands `issue-create` and `issue-confirm`
 - accepts the Phase 5D approval commands `note-add` and `note-confirm`
 - invokes only `local-operator/ppo-command.mjs`
@@ -28,15 +28,16 @@ The plugin:
 - routes `/ppo note-add` to local pending-request staging only; staging never appends a note
 - routes `/ppo note-confirm` to atomically claim one unexpired local request before invoking the Phase 5C note writer
 - routes `/ppo runs` and `/ppo run <run-id>` to the controlled Phase 6O read-only catalog routes for ordinary five-project runs only
+- routes `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` to the controlled Phase 6P quiescent cancellation approval path for ordinary five-project runs only
 - routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary five-project runs only
 - routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary five-project runs only
 - does not call Telegram APIs
 - does not use secrets
-- mutates only the private local pending stores for Phase 5B issue and Phase 5D note approval requests, plus the approved local note store after `/ppo note-confirm`; Phase 6M recovery and Phase 6O catalog routes are read-only
+- mutates only the private local pending stores for Phase 5B issue, Phase 5D note, and Phase 6P cancellation approval requests, plus the approved local note store after `/ppo note-confirm` and the single confirmed Phase 6P `cancelled` run transition; Phase 6M recovery and Phase 6O catalog routes are read-only
 - does not add generic GitHub tools or arbitrary GitHub endpoints
 - accepts `codex ...`, `codex-budget ...`, `prompt-size ...`, and `split-task ...` through OpenClaw/Telegram in Phase 3C as text-only direct routes
 - parses only the command envelope; task, draft, title, body, note text, and run id are inert data
-- accepts no catalog filters, search text, sort fields, limits, offsets, actions, confirmations, or production inputs
+- accepts no catalog filters, search text, sort fields, limits, offsets, actions, cleanup options, confirmations, or production inputs
 - does not accept or expose terminal write confirmation environment values through chat
 - does not mutate `projects/*.md` or update project-state files
 - does not route PPO production deployment, production verification, rollback, rollback reconciliation, service control, or VPS mutation
@@ -79,6 +80,8 @@ note-add khlim-assist Record owner-visible project context
 note-confirm <request-id>
 runs
 run <run-id>
+cancel <run-id>
+cancel-confirm <request-id>
 continue <run-id>
 recover <run-id>
 ```
@@ -117,6 +120,10 @@ Phase 6M adds `/ppo recover <run-id>` through this same plugin. The bridge accep
 ## Phase 6O development run catalog
 
 Phase 6O adds `/ppo runs` and `/ppo run <run-id>` through this same plugin. The bridge maps only `/ppo runs` to wrapper argv `["runs"]` and only `/ppo run <run-id>` to wrapper argv `["run", "<run-id>"]`. The wrapper invokes the reviewed Phase 6N catalog once and returns only bounded metadata summaries for ordinary five-project development runs. It accepts no project, status, stage, filter, search, sort, limit, offset, expected version, SHA, branch, path, action, service, production, confirmation, command, executable, or environment input from chat, and it never calls `/ppo continue` or `/ppo recover`.
+
+## Phase 6P development run cancellation
+
+Phase 6P adds `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` through this same plugin. The bridge maps only `/ppo cancel <run-id>` to wrapper argv `["cancel", "<run-id>"]` and only `/ppo cancel-confirm <request-id>` to wrapper argv `["cancel-confirm", "<request-id>"]`. The wrapper stages a 10-minute single-use cancellation request for an eligible quiescent ordinary run, then confirms by atomically claiming the request and performing one fixed `cancelled` transition after expected-version revalidation. It accepts no project, status, SHA, branch, path, action, cleanup, service, production, confirmation, command, executable, or environment input from chat, and it never interrupts processes, removes workspaces, calls `/ppo continue`, calls `/ppo recover`, retries, repairs, deploys, verifies production, or rolls back.
 
 ## Local Tests
 

@@ -260,6 +260,27 @@ The routes remain read-only and metadata-only. They preserve Phase 6N's ordinary
 
 Phase 6O does not add cancellation, retry, repair, resume, run creation, arbitrary filters/search/sort, recovery invocation, continue invocation, deployment, production verification, rollback, a new OpenClaw tool, or model interpretation.
 
+### Phase 6P - Controlled Quiescent Development Run Cancellation
+
+Phase 6P adds confirmation-gated cancellation for existing ordinary five-project development runs:
+
+```text
+local-operator/development-run-cancellation.mjs
+local-operator/development-run-cancellation-approval.mjs
+node local-operator/ppo-command.mjs cancel <run-id>
+node local-operator/ppo-command.mjs cancel-confirm <request-id>
+/ppo cancel <run-id>
+/ppo cancel-confirm <request-id>
+```
+
+`/ppo cancel <run-id>` stages only. It validates the raw 43-character Phase 6A run id, inspects the run once through the reviewed Phase 6N exact summary path, requires `canonical_current`, and stores a private single-use approval request bound to run id, ordinary project id, current status, and expected version. Requests use 43-character random ids, a fixed 10-minute TTL, and the cancellation-specific `${PPO_WRITE_DATA_DIR}/pending-development-run-cancellations/{pending,claimed}` store.
+
+Cancellation is eligible only from `created`, `planned`, `implementation_ready`, `tests_failed`, `tests_passed`, and `review_changes_requested`. In-progress, delivery, production, terminal, stale, missing, corrupt, unsafe, or self-development runs fail closed with bounded output.
+
+`/ppo cancel-confirm <request-id>` atomically claims the request before mutation, reinspects the run once, requires the same project/status/version and `canonical_current`, and then performs exactly one fixed `transitionDevelopmentRun` to `cancelled` with actor `phase-6p-quiescent-cancellation` and reason `owner_requested_quiescent_cancellation`.
+
+Phase 6P does not interrupt Codex/tests/review, remove worktrees, delete branches, close PRs, reset repositories, delete run records/history/version markers, invoke recovery, invoke continue, retry, repair, deploy, verify production, roll back production, add a new OpenClaw tool, or use model interpretation.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -302,6 +323,8 @@ Phase 6O does not add cancellation, retry, repair, resume, run creation, arbitra
 - `development-recovery-route.mjs`: Phase 6M controlled `/ppo recover <run-id>` route adapter around the Phase 6L coordinator.
 - `development-run-catalog.mjs`: Phase 6N local-only read-only development run catalog foundation for ordinary five-project runs.
 - `development-run-catalog-route.mjs`: Phase 6O controlled `/ppo runs` and `/ppo run <run-id>` route adapter around the Phase 6N catalog.
+- `development-run-cancellation.mjs`: Phase 6P quiescent cancellation engine for exactly eligible ordinary-run statuses.
+- `development-run-cancellation-approval.mjs`: Phase 6P single-use `/ppo cancel` and `/ppo cancel-confirm` approval store and handlers.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.
 - `codex-planning-tools.mjs`: Phase 3B deterministic Codex planning helpers, routed through `/ppo` in Phase 3C.
 - `audit/`: local credential-free GitHub write audit records; JSONL files are ignored by git.
@@ -327,6 +350,8 @@ Phase 6O does not add cancellation, retry, repair, resume, run creation, arbitra
 - `development-recovery-route.test.mjs`: Phase 6M tests for strict recover routing, bounded output, Phase 6L single invocation, terminal parser rejection, self-development out-of-scope handling, and static continue/production exclusions.
 - `development-run-catalog.test.mjs`: Phase 6N tests for run-id discovery, exact bounded summaries, terminal status derivation, self-development exclusion, canonical-state classifications, corrupt/unsafe store handling, fixed catalog bounds, formatter boundaries, static no-route/no-mutation exclusions, and zero filesystem mutation sentinels.
 - `development-run-catalog-route.test.mjs`: Phase 6O tests for route adapter composition, strict wrapper parsing, bridge-safe command exposure, real catalog invariants through `/ppo runs` and `/ppo run <run-id>`, bounded output, stale/fail-closed behavior, and static recovery/continue/production exclusions.
+- `development-run-cancellation.test.mjs`: Phase 6P tests for exact status eligibility, read-only preflight, successful cancellation invariants, formatter hardening, self-development exclusion, and static recovery/continue/production exclusions.
+- `development-run-cancellation-approval.test.mjs`: Phase 6P tests for request TTL/id policy, private pending/claimed store safety, single-use and concurrent confirmation, stale-state handling, wrapper parsing, and self-development confidentiality.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
@@ -458,11 +483,13 @@ node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist owner review
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist owner review staged note"
 node local-operator/ppo-command.mjs /ppo runs
 node local-operator/ppo-command.mjs /ppo run <run-id>
+node local-operator/ppo-command.mjs /ppo cancel <run-id>
+node local-operator/ppo-command.mjs /ppo cancel-confirm <request-id>
 node local-operator/ppo-command.mjs /ppo continue <run-id>
 node local-operator/ppo-command.mjs /ppo recover <run-id>
 ```
 
-Phase 6K adds `/ppo continue <run-id>` for existing ordinary development runs. Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation. Phase 6O adds `/ppo runs` and `/ppo run <run-id>` for the reviewed Phase 6N read-only ordinary-run catalog. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.
+Phase 6K adds `/ppo continue <run-id>` for existing ordinary development runs. Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation. Phase 6O adds `/ppo runs` and `/ppo run <run-id>` for the reviewed Phase 6N read-only ordinary-run catalog. Phase 6P adds confirmation-gated `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` for quiescent ordinary-run cancellation only. Phase 6H deployment, Phase 6I production verification, and Phase 6J rollback remain local-only and are not routed through OpenClaw/Telegram.
 
 Then through OpenClaw/Telegram after review:
 
@@ -484,13 +511,15 @@ Requirements:
 /ppo note-confirm <request-id>
 /ppo runs
 /ppo run <run-id>
+/ppo cancel <run-id>
+/ppo cancel-confirm <request-id>
 /ppo continue <run-id>
 /ppo recover <run-id>
 ```
 
 Phase 5E remains terminal-only; do not add `/ppo state-promote` to the OpenClaw/Telegram owner test until a later separately reviewed phase.
 
-Phase 6M `/ppo recover <run-id>` is diagnostic/read-only and never calls `/ppo continue`. Phase 6O `/ppo runs` and `/ppo run <run-id>` are read-only catalog routes and never call `/ppo recover` or `/ppo continue`. Do not add `/ppo start`, `/ppo develop`, run search, arbitrary run filters/sorts, cancellation, retry, repair, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
+Phase 6M `/ppo recover <run-id>` is diagnostic/read-only and never calls `/ppo continue`. Phase 6O `/ppo runs` and `/ppo run <run-id>` are read-only catalog routes and never call `/ppo recover` or `/ppo continue`. Phase 6P `/ppo cancel <run-id>` stages only and `/ppo cancel-confirm <request-id>` performs only one confirmed quiescent cancellation; they never interrupt processes, clean workspaces, recover, continue, retry, repair, or touch production. Do not add `/ppo start`, `/ppo develop`, run search, arbitrary run filters/sorts, process-interruption cancellation, retry, repair, production deployment, production verification, rollback, or broader recovery workflows to the OpenClaw/Telegram owner test until later separately reviewed phases.
 
 ## OpenClaw handoff shape
 

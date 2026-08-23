@@ -12,6 +12,7 @@ It should help the user:
 - stage and confirm tightly scoped GitHub issue creation after approval
 - keep project note creation terminal-only until a later reviewed chat workflow exists
 - inspect bounded read-only ordinary development run catalog metadata
+- stage and confirm quiescent ordinary development run cancellation
 - continue one existing ordinary development run through one reviewed boundary
 - generate compact Codex prompts
 - track Codex usage manually
@@ -32,6 +33,8 @@ Project Control:
 - `/ppo issue-confirm <request-id>`
 - `/ppo runs`
 - `/ppo run <run-id>`
+- `/ppo cancel <run-id>`
+- `/ppo cancel-confirm <request-id>`
 - `/ppo continue <run-id>`
 - `/ppo handoff <project>`
 
@@ -106,6 +109,8 @@ Phase 5D permits only the listed `/ppo note-add` staging command and `/ppo note-
 Phase 6K permits only `/ppo continue <run-id>` for existing ordinary five-project Phase 6 development runs. It advances at most one reviewed Phase 6B-6G boundary per invocation and does not route PPO production deployment, verification, rollback, rollback reconciliation, services, or owner confirmations through OpenClaw.
 
 Phase 6O permits `/ppo runs` and `/ppo run <run-id>` only as read-only Phase 6N ordinary-run catalog routes. They expose bounded metadata summaries only and do not accept filters, search, sort, recovery, continue, cancellation, retry, repair, production action, or model interpretation.
+
+Phase 6P permits `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` only as confirmation-gated quiescent cancellation routes for eligible ordinary five-project Phase 6 development runs. It does not interrupt processes, clean workspaces, retry, repair, recover, continue, cancel production, or route PPO production deployment, verification, rollback, services, or owner rollback confirmations through OpenClaw.
 
 ## Expected future tool integrations
 

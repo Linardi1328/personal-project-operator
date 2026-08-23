@@ -35,6 +35,7 @@ const multilineDraft = "Goal: keep line structure\nRequirements:\n- preserve new
 const validIssueRequestId = "A".repeat(43);
 const validNoteRequestId = "B".repeat(43);
 const validDevelopmentRunId = "C".repeat(43);
+const validCancellationRequestId = "D".repeat(43);
 
 for (const projectId of currentProjectIds) {
   expectedMappings.set(
@@ -56,6 +57,8 @@ expectedMappings.set("note-add khlim-assist Add project note", ["/ppo", "note-ad
 expectedMappings.set(`note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]);
 expectedMappings.set("runs", ["runs"]);
 expectedMappings.set(`run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]);
+expectedMappings.set(`cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]);
+expectedMappings.set(`cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]);
 expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
 expectedMappings.set(`recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]);
 
@@ -199,6 +202,72 @@ assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo pay
 }
 
 {
+  const safeCancelOutput = [
+    "PPO Development Run Cancellation",
+    "Status: staged",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Before: created",
+    "Version: 0",
+    "Head: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    `Request: ${validCancellationRequestId}`,
+    "Expires: 2026-08-24T00:10:00.000Z",
+    `Confirm: /ppo cancel-confirm ${validCancellationRequestId}`,
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo cancel ${validDevelopmentRunId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["cancel", validDevelopmentRunId]);
+        return {
+          stdout: safeCancelOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw cancel stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "cancel output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["cancel", validDevelopmentRunId]);
+  assert.match(result.stdout, /PPO Development Run Cancellation/);
+  assert.match(result.stdout, /Status: staged/);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw cancel stderr|token|secret|stack/i);
+}
+
+{
+  const safeCancelConfirmOutput = [
+    "PPO Development Run Cancellation",
+    "Status: cancelled",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Before: created",
+    "After: cancelled",
+    "Version: 0 -> 1",
+    "Head: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "Reason: owner_requested_quiescent_cancellation",
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo cancel-confirm ${validCancellationRequestId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["cancel-confirm", validCancellationRequestId]);
+        return {
+          stdout: safeCancelConfirmOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw cancel-confirm stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "cancel-confirm output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["cancel-confirm", validCancellationRequestId]);
+  assert.match(result.stdout, /Status: cancelled/);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw cancel-confirm stderr|token|secret|stack/i);
+}
+
+{
   const safeRecoverOutput = [
     "PPO Development Recovery",
     `Run: ${validDevelopmentRunId}`,
@@ -246,6 +315,8 @@ for (const [input, expected] of [
   [`/ppo note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]],
   ["/ppo runs", ["runs"]],
   [`/ppo run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]],
+  [`/ppo cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]],
+  [`/ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`/ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
@@ -271,6 +342,8 @@ for (const [input, expected] of [
   [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]],
   ["ppo runs", ["runs"]],
   [`ppo run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]],
+  [`ppo cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]],
+  [`ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
@@ -505,6 +578,59 @@ const rejectedInputs = [
   "/ppo list-runs",
   "/ppo runs-all",
   "/ppo run-search",
+  "cancel",
+  "/ppo cancel",
+  "ppo cancel",
+  "cancel malformed",
+  "/ppo cancel malformed",
+  "cancel " + "E".repeat(42),
+  "cancel " + "E".repeat(44),
+  `cancel ${validDevelopmentRunId} extra`,
+  `/ppo cancel ${validDevelopmentRunId} extra`,
+  `ppo cancel ${validDevelopmentRunId} extra`,
+  `cancel  ${validDevelopmentRunId}`,
+  `/ppo  cancel ${validDevelopmentRunId}`,
+  `ppo  cancel ${validDevelopmentRunId}`,
+  `/ppo cancel  ${validDevelopmentRunId}`,
+  `ppo cancel  ${validDevelopmentRunId}`,
+  `cancel ${validDevelopmentRunId} `,
+  ` cancel ${validDevelopmentRunId}`,
+  `cancel ${validDevelopmentRunId}\nanything`,
+  `cancel ${validDevelopmentRunId}\ranything`,
+  `cancel ${validDevelopmentRunId}\tanything`,
+  `cancel ${validDevelopmentRunId}\u0000`,
+  `/ppo cancel ${validDevelopmentRunId} --force`,
+  `/ppo cancel ${validDevelopmentRunId} --cleanup`,
+  `/ppo cancel ${validDevelopmentRunId} --project khlim-assist`,
+  `/ppo cancel ${validDevelopmentRunId} --expectedVersion 0`,
+  "cancel-confirm",
+  "/ppo cancel-confirm",
+  "ppo cancel-confirm",
+  "cancel-confirm malformed",
+  "/ppo cancel-confirm malformed",
+  "cancel-confirm " + "E".repeat(42),
+  "cancel-confirm " + "E".repeat(44),
+  `cancel-confirm ${validCancellationRequestId} extra`,
+  `/ppo cancel-confirm ${validCancellationRequestId} extra`,
+  `ppo cancel-confirm ${validCancellationRequestId} extra`,
+  `cancel-confirm  ${validCancellationRequestId}`,
+  `/ppo  cancel-confirm ${validCancellationRequestId}`,
+  `ppo  cancel-confirm ${validCancellationRequestId}`,
+  `/ppo cancel-confirm  ${validCancellationRequestId}`,
+  `ppo cancel-confirm  ${validCancellationRequestId}`,
+  `cancel-confirm ${validCancellationRequestId} `,
+  ` cancel-confirm ${validCancellationRequestId}`,
+  `cancel-confirm ${validCancellationRequestId}\nanything`,
+  `cancel-confirm ${validCancellationRequestId}\ranything`,
+  `cancel-confirm ${validCancellationRequestId}\tanything`,
+  `cancel-confirm ${validCancellationRequestId}\u0000`,
+  `/ppo cancel-confirm ${validCancellationRequestId} --retry`,
+  `/ppo stop ${validDevelopmentRunId}`,
+  `/ppo abort ${validDevelopmentRunId}`,
+  `/ppo kill ${validDevelopmentRunId}`,
+  `/ppo run-cancel ${validDevelopmentRunId}`,
+  `/ppo cancel-run ${validDevelopmentRunId}`,
+  `/ppo cancel-force ${validDevelopmentRunId}`,
   "continue",
   "/ppo continue",
   "continue malformed",

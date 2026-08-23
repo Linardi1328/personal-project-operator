@@ -1245,6 +1245,6 @@ test("Phase 6N catalog engine stays route-free and mutation-free after Phase 6O 
     assert.equal(catalogSource.includes(forbidden), false, forbidden)
   }
 
-  assert.doesNotMatch(commandSource, /run-status|list-runs|\/ppo cancel|\/ppo retry|\/ppo resume/u)
-  assert.doesNotMatch(bridgeSource, /development-run-catalog\.mjs|run-status|list-runs|\/ppo cancel|\/ppo retry|\/ppo resume/u)
+  assert.doesNotMatch(commandSource, /run-status|list-runs|\/ppo retry|\/ppo resume/u)
+  assert.doesNotMatch(bridgeSource, /development-run-catalog\.mjs|run-status|list-runs|\/ppo retry|\/ppo resume/u)
 })
