@@ -48,8 +48,7 @@ const safeCatalogCodes = new Set([
 const contentFailureCodes = new Set([
   "record_invalid",
   "history_invalid",
-  "canonical_conflict",
-  "stale_observation"
+  "canonical_conflict"
 ])
 const catalogSummaryCanonicalStates = new Set([
   "canonical_current",
@@ -149,8 +148,12 @@ function hasOnlyKeys(value, keys) {
 }
 
 function isIsoTimestamp(value) {
+  if (typeof value !== "string") {
+    return false
+  }
+
   const parsed = Date.parse(value)
-  return typeof value === "string" && Number.isFinite(parsed) && new Date(parsed).toISOString() === value
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
 }
 
 function isSafeCatalogScalar(value, maxChars = 120) {
@@ -312,10 +315,16 @@ async function readCatalogRecordRunIds(options = {}) {
 }
 
 function catalogStateOptions(options = {}) {
-  return {
+  const stateOptions = {
     writeDataDir: options.writeDataDir,
     allowPersonalProjectOperatorSelfDevelopmentProject: true
   }
+
+  if (typeof options.__readOnlyBeforeFinalCheck === "function") {
+    stateOptions.__readOnlyBeforeFinalCheck = options.__readOnlyBeforeFinalCheck
+  }
+
+  return stateOptions
 }
 
 function summaryFromSnapshot(snapshot) {
@@ -452,7 +461,7 @@ export async function listDevelopmentRunSummaries(options = {}) {
       continue
     }
 
-    return catalogFailure("store_unavailable", {
+    return catalogFailure(inspected.code === "stale_observation" ? "stale_observation" : "store_unavailable", {
       diagnostics
     })
   }
@@ -555,8 +564,9 @@ function validSummaryResult(result) {
     result.schemaVersion === 1 &&
     result.catalog === DEVELOPMENT_RUN_CATALOG_ID &&
     result.ok === true &&
-    safeCode(result.code) === result.code &&
     validSummary(result.summary) &&
+    catalogSummaryCanonicalStates.has(result.code) &&
+    result.code === result.summary.canonicalState &&
     validDiagnostics(result.diagnostics, 1)
   )
 }
@@ -625,57 +635,65 @@ function unavailableCatalogOutput() {
 }
 
 export function formatDevelopmentRunSummary(result) {
-  const summary = validSummaryResult(result)
-    ? result.summary
-    : validSummary(result)
-      ? result
-      : null
+  try {
+    const summary = validSummaryResult(result)
+      ? result.summary
+      : validSummary(result)
+        ? result
+        : null
 
-  if (!summary) {
+    if (!summary) {
+      return unavailableSummaryOutput()
+    }
+
+    return [
+      "PPO Development Run",
+      `Run: ${summary.runId}`,
+      `Project: ${summary.project}`,
+      `Status: ${summary.status}`,
+      `Stage: ${summary.stage}`,
+      `Version: ${summary.version}`,
+      `Updated: ${summary.updatedAt}`,
+      `Canonical: ${summary.canonicalState}`
+    ].join("\n")
+  } catch {
     return unavailableSummaryOutput()
   }
-
-  return [
-    "PPO Development Run",
-    `Run: ${summary.runId}`,
-    `Project: ${summary.project}`,
-    `Status: ${summary.status}`,
-    `Stage: ${summary.stage}`,
-    `Version: ${summary.version}`,
-    `Updated: ${summary.updatedAt}`,
-    `Canonical: ${summary.canonicalState}`
-  ].join("\n")
 }
 
 export function formatDevelopmentRunCatalog(result) {
-  if (!validCatalogResult(result)) {
+  try {
+    if (!validCatalogResult(result)) {
+      return unavailableCatalogOutput()
+    }
+
+    const lines = [
+      "PPO Development Runs",
+      `Runs: ${result.summaries.length}`,
+      `Invalid: ${result.diagnostics.invalid}`
+    ]
+
+    if (result.diagnostics.outOfScope > 0) {
+      lines.push(`Out of scope: ${result.diagnostics.outOfScope}`)
+    }
+
+    if (result.diagnostics.truncated) {
+      lines.push("Truncated: yes")
+    }
+
+    result.summaries.forEach((summary, index) => {
+      lines.push(
+        "",
+        `${index + 1}. ${summary.runId}`,
+        `   Project: ${summary.project}`,
+        `   Status: ${summary.status}`,
+        `   Stage: ${summary.stage}`,
+        `   Updated: ${summary.updatedAt}`
+      )
+    })
+
+    return lines.join("\n")
+  } catch {
     return unavailableCatalogOutput()
   }
-
-  const lines = [
-    "PPO Development Runs",
-    `Runs: ${result.summaries.length}`,
-    `Invalid: ${result.diagnostics.invalid}`
-  ]
-
-  if (result.diagnostics.outOfScope > 0) {
-    lines.push(`Out of scope: ${result.diagnostics.outOfScope}`)
-  }
-
-  if (result.diagnostics.truncated) {
-    lines.push("Truncated: yes")
-  }
-
-  result.summaries.forEach((summary, index) => {
-    lines.push(
-      "",
-      `${index + 1}. ${summary.runId}`,
-      `   Project: ${summary.project}`,
-      `   Status: ${summary.status}`,
-      `   Stage: ${summary.stage}`,
-      `   Updated: ${summary.updatedAt}`
-    )
-  })
-
-  return lines.join("\n")
 }

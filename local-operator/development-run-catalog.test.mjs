@@ -683,6 +683,55 @@ test("Phase 6N read-only inspection performs one final whole-observation stabili
   assert.equal(snapshot.code, "store_unavailable")
 })
 
+test("Phase 6N list fails closed when an ordinary run becomes stale during observation", async () => {
+  const writeDataDir = await tempWriteDataDir("ppo-6n-list-stale-")
+  const healthy = await makeRun({
+    writeDataDir,
+    seed: 1,
+    status: "created"
+  })
+  const changing = await makeRun({
+    writeDataDir,
+    seed: 2,
+    status: "planned"
+  })
+
+  assert.equal([healthy.runId, changing.runId].sort()[0], healthy.runId)
+
+  let finalCheckCalls = 0
+  let afterConcurrentWriter = null
+
+  const catalog = await listDevelopmentRunSummaries({
+    writeDataDir,
+    __readOnlyBeforeFinalCheck: async () => {
+      finalCheckCalls += 1
+
+      if (finalCheckCalls === 2) {
+        await transitionDevelopmentRun(changing.runId, {
+          expectedVersion: changing.version,
+          status: "implementation_in_progress",
+          actor: "concurrent-test"
+        }, {
+          writeDataDir,
+          now: makeClock("2026-08-22T00:00:00.000Z")
+        })
+        afterConcurrentWriter = await snapshotTree(join(writeDataDir, "development-runs"))
+      }
+    }
+  })
+  const afterCatalog = await snapshotTree(join(writeDataDir, "development-runs"))
+
+  assert.equal(finalCheckCalls, 2)
+  assert.equal(catalog.ok, false)
+  assert.equal(catalog.code, "stale_observation")
+  assert.equal(catalog.outcome, "stale_observation")
+  assert.deepEqual(catalog.summaries, [])
+  assert.equal(catalog.diagnostics.invalid, 0)
+  assert.equal(catalog.diagnostics.scanned, 2)
+  assert.deepEqual(afterCatalog, afterConcurrentWriter)
+  assert.doesNotMatch(JSON.stringify(catalog), new RegExp(TASK_SENTINEL, "u"))
+})
+
 test("Phase 6N corrupt entries and malformed filenames do not compromise ordinary catalog listing", async () => {
   const writeDataDir = await tempWriteDataDir()
   const validA = await makeRun({
@@ -1021,6 +1070,8 @@ test("Phase 6N formatters validate hostile caller input before rendering", async
     { ...summary, stage: "review" },
     { ...summary, baseSha: "x".repeat(40) },
     { ...summary, headSha: "z".repeat(40) },
+    { ...summary, createdAt: Symbol("bad") },
+    { ...summary, updatedAt: Symbol("bad") },
     { ...summary, createdAt: "not-a-timestamp" },
     { ...summary, updatedAt: "2026-08-21T00:00:00.000Z\nInjected: yes" },
     { ...summary, terminal: !summary.terminal },
@@ -1037,6 +1088,51 @@ test("Phase 6N formatters validate hostile caller input before rendering", async
     assertUnavailableOutput(formatDevelopmentRunSummary(validCatalogResultForSummary(invalid)))
     assertUnavailableOutput(formatDevelopmentRunSummary(invalid))
     assertUnavailableOutput(formatDevelopmentRunCatalog(validCatalogListForSummaries([invalid])))
+  }
+
+  const summaryWithThrowingCreatedAt = { ...summary }
+  Object.defineProperty(summaryWithThrowingCreatedAt, "createdAt", {
+    enumerable: true,
+    get() {
+      throw new Error(`${TASK_SENTINEL} getter`)
+    }
+  })
+
+  assertUnavailableOutput(formatDevelopmentRunSummary(summaryWithThrowingCreatedAt))
+  assertUnavailableOutput(formatDevelopmentRunSummary(validCatalogResultForSummary(summaryWithThrowingCreatedAt)))
+  assertUnavailableOutput(formatDevelopmentRunCatalog(validCatalogListForSummaries([summaryWithThrowingCreatedAt])))
+
+  const resultWithThrowingSummaries = { ...validCatalogListForSummaries([summary]) }
+  Object.defineProperty(resultWithThrowingSummaries, "summaries", {
+    enumerable: true,
+    get() {
+      throw new Error(`${TASK_SENTINEL} summaries`)
+    }
+  })
+
+  const resultWithThrowingDiagnostics = { ...validCatalogListForSummaries([summary]) }
+  Object.defineProperty(resultWithThrowingDiagnostics, "diagnostics", {
+    enumerable: true,
+    get() {
+      throw new Error(`${TASK_SENTINEL} diagnostics`)
+    }
+  })
+
+  assertUnavailableOutput(formatDevelopmentRunCatalog(resultWithThrowingSummaries))
+  assertUnavailableOutput(formatDevelopmentRunCatalog(resultWithThrowingDiagnostics))
+
+  const contradictorySummaryResults = [
+    validCatalogResultForSummary(summary, { code: "store_unavailable" }),
+    validCatalogResultForSummary(summary, { code: "record_invalid" }),
+    validCatalogResultForSummary(summary, { code: "stale_observation" }),
+    validCatalogResultForSummary({ ...summary, canonicalState: "canonical_behind", recoveryRequired: true }, {
+      code: "canonical_current"
+    }),
+    validCatalogResultForSummary(summary, { code: "canonical_behind" })
+  ]
+
+  for (const contradictory of contradictorySummaryResults) {
+    assertUnavailableOutput(formatDevelopmentRunSummary(contradictory))
   }
 
   const fakeSummaries = Array.from({ length: 10_000 }, (_, index) => ({
