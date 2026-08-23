@@ -575,6 +575,10 @@ function stageForStatus(status) {
   return stage
 }
 
+export function stageForDevelopmentRunStatus(status) {
+  return stageForStatus(normalizeDevelopmentRunStatus(status))
+}
+
 export function isDevelopmentRunTerminalStatus(status) {
   return terminalStatusSet.has(normalizeDevelopmentRunStatus(status))
 }
@@ -1658,6 +1662,33 @@ function sameReadOnlyObservation(before, after) {
   )
 }
 
+function readOnlyFileIdentity(info, payload) {
+  return {
+    dev: info.dev,
+    ino: info.ino,
+    mode: info.mode,
+    size: info.size,
+    mtimeMs: info.mtimeMs,
+    ctimeMs: info.ctimeMs,
+    hash: sha256Text(payload)
+  }
+}
+
+function readOnlyDirectoryIdentity(info) {
+  return {
+    dev: info.dev,
+    ino: info.ino,
+    mode: info.mode,
+    size: info.size,
+    mtimeMs: info.mtimeMs,
+    ctimeMs: info.ctimeMs
+  }
+}
+
+function sameReadOnlyIdentity(left, right) {
+  return stableStringify(left) === stableStringify(right)
+}
+
 function staleReadOnlyObservation() {
   return runStateError(
     "RUN_STALE_OBSERVATION",
@@ -1722,7 +1753,38 @@ async function readReadOnlyDirectoryEntries(path, description) {
   return entries
 }
 
-async function readRegularFileReadOnlyIfPresent(path, description) {
+async function readReadOnlyDirectorySnapshot(path, description) {
+  const before = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (before === null) {
+    return null
+  }
+
+  let entries
+
+  try {
+    entries = await readdir(path)
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw staleReadOnlyObservation()
+    }
+
+    throw error
+  }
+
+  const after = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (after === null || !sameReadOnlyObservation(before, after)) {
+    throw staleReadOnlyObservation()
+  }
+
+  return {
+    identity: readOnlyDirectoryIdentity(after),
+    entries: [...entries].sort()
+  }
+}
+
+async function readRegularFileReadOnlySnapshotIfPresent(path, description) {
   const before = await lstatReadOnly(path)
 
   if (before === null) {
@@ -1779,19 +1841,37 @@ async function readRegularFileReadOnlyIfPresent(path, description) {
     )
   }
 
-  return payload
+  return {
+    payload,
+    identity: readOnlyFileIdentity(after, payload)
+  }
 }
 
-async function readLatestVersionMarkerReadOnly(paths, runId, options = {}) {
-  const entries = await readReadOnlyDirectoryEntries(paths.versionDir, "Development run version directory")
+async function readRegularFileReadOnlyIfPresent(path, description) {
+  const snapshot = await readRegularFileReadOnlySnapshotIfPresent(path, description)
 
-  if (entries === null) {
-    return null
+  return snapshot?.payload ?? null
+}
+
+async function readVersionMarkersReadOnly(paths, runId, options = {}) {
+  const versionDirectorySnapshot = await readReadOnlyDirectorySnapshot(paths.versionDir, "Development run version directory")
+
+  if (versionDirectorySnapshot === null) {
+    return {
+      latest: null,
+      observation: {
+        versionDir: null,
+        markerFileNames: [],
+        latestMarker: null
+      }
+    }
   }
 
   let latest = null
+  let latestMarker = null
+  const markerFileNames = []
 
-  for (const entry of [...entries].sort()) {
+  for (const entry of versionDirectorySnapshot.entries) {
     if (entry.endsWith(".tmp")) {
       continue
     }
@@ -1802,14 +1882,15 @@ async function readLatestVersionMarkerReadOnly(paths, runId, options = {}) {
       continue
     }
 
+    markerFileNames.push(entry)
     const markerPath = join(paths.versionDir, entry)
-    const payload = await readRegularFileReadOnlyIfPresent(markerPath, "Development run version marker")
+    const snapshot = await readRegularFileReadOnlySnapshotIfPresent(markerPath, "Development run version marker")
 
-    if (payload === null) {
+    if (snapshot === null) {
       throw staleReadOnlyObservation()
     }
 
-    const record = parseRunRecord(payload, runId, options)
+    const record = parseRunRecord(snapshot.payload, runId, options)
     const version = Number.parseInt(match[1], 10)
 
     if (record.version !== version) {
@@ -1821,10 +1902,127 @@ async function readLatestVersionMarkerReadOnly(paths, runId, options = {}) {
 
     if (!latest || record.version > latest.version) {
       latest = record
+      latestMarker = {
+        fileName: entry,
+        identity: snapshot.identity
+      }
     }
   }
 
-  return latest
+  return {
+    latest,
+    observation: {
+      versionDir: versionDirectorySnapshot.identity,
+      markerFileNames,
+      latestMarker
+    }
+  }
+}
+
+async function readLatestVersionMarkerReadOnly(paths, runId, options = {}) {
+  const markers = await readVersionMarkersReadOnly(paths, runId, options)
+
+  return markers.latest
+}
+
+async function maybeAwaitReadOnlyFinalCheckSeam(options = {}) {
+  const seam = options.__readOnlyBeforeFinalCheck
+
+  if (typeof seam === "function") {
+    await seam()
+  }
+}
+
+function staleIfChanged(stable) {
+  if (!stable) {
+    throw staleReadOnlyObservation()
+  }
+}
+
+async function assertReadOnlyFileObservationStable(path, description, observed) {
+  const current = await readRegularFileReadOnlySnapshotIfPresent(path, description)
+
+  if (observed === null) {
+    if (current !== null) {
+      throw staleReadOnlyObservation()
+    }
+
+    return
+  }
+
+  staleIfChanged(current !== null && sameReadOnlyIdentity(current.identity, observed.identity))
+}
+
+async function assertReadOnlyDirectoryObservationStable(path, description, observed) {
+  const current = await assertReadOnlyDirectoryIfPresent(path, description)
+
+  if (observed === null) {
+    if (current !== null) {
+      throw staleReadOnlyObservation()
+    }
+
+    return
+  }
+
+  staleIfChanged(current !== null && sameReadOnlyIdentity(readOnlyDirectoryIdentity(current), observed))
+}
+
+async function readVersionMarkerObservationOnly(paths) {
+  const versionDirectorySnapshot = await readReadOnlyDirectorySnapshot(paths.versionDir, "Development run version directory")
+
+  if (versionDirectorySnapshot === null) {
+    return {
+      versionDir: null,
+      markerFileNames: [],
+      latestMarker: null
+    }
+  }
+
+  const markerFileNames = versionDirectorySnapshot.entries
+    .filter((entry) => !entry.endsWith(".tmp") && versionFilePattern.test(entry))
+  let latestMarker = null
+
+  if (markerFileNames.length > 0) {
+    const latestFileName = markerFileNames.at(-1)
+    const snapshot = await readRegularFileReadOnlySnapshotIfPresent(
+      join(paths.versionDir, latestFileName),
+      "Development run version marker"
+    )
+
+    if (snapshot === null) {
+      throw staleReadOnlyObservation()
+    }
+
+    latestMarker = {
+      fileName: latestFileName,
+      identity: snapshot.identity
+    }
+  }
+
+  return {
+    versionDir: versionDirectorySnapshot.identity,
+    markerFileNames,
+    latestMarker
+  }
+}
+
+async function assertVersionMarkerObservationStable(paths, runId, observed, options = {}) {
+  const current = await readVersionMarkerObservationOnly(paths)
+
+  staleIfChanged(
+    sameReadOnlyIdentity(current.versionDir, observed.versionDir) &&
+    stableStringify(current.markerFileNames) === stableStringify(observed.markerFileNames) &&
+    sameReadOnlyIdentity(current.latestMarker, observed.latestMarker)
+  )
+}
+
+async function assertReadOnlyObservationStable(paths, runId, observed, options = {}) {
+  await maybeAwaitReadOnlyFinalCheckSeam(options)
+  await assertReadOnlyDirectoryObservationStable(paths.runRoot, "Development run store", observed.runRoot)
+  await assertReadOnlyDirectoryObservationStable(paths.recordsDir, "Development run records directory", observed.recordsDir)
+  await assertReadOnlyFileObservationStable(paths.recordPath, "Development run record", observed.canonical)
+  await assertVersionMarkerObservationStable(paths, runId, observed.versionMarkers, options)
+  await assertReadOnlyDirectoryObservationStable(paths.versionsRoot, "Development run versions directory", observed.versionsRoot)
 }
 
 function readOnlySnapshotResult({
@@ -1973,11 +2171,25 @@ async function inspectDevelopmentRunReadOnlyInternal(runId, options = {}) {
     })
   }
 
-  const canonicalPayload = await readRegularFileReadOnlyIfPresent(paths.recordPath, "Development run record")
-  const canonical = canonicalPayload === null
+  const canonicalSnapshot = await readRegularFileReadOnlySnapshotIfPresent(paths.recordPath, "Development run record")
+  const canonical = canonicalSnapshot === null
     ? null
-    : parseRunRecord(canonicalPayload, normalizedRunId, options)
-  const latest = await readLatestVersionMarkerReadOnly(paths, normalizedRunId, options)
+    : parseRunRecord(canonicalSnapshot.payload, normalizedRunId, options)
+  const versionMarkers = await readVersionMarkersReadOnly(paths, normalizedRunId, options)
+  const latest = versionMarkers.latest
+  const observation = {
+    runRoot: readOnlyDirectoryIdentity(runRoot),
+    recordsDir: readOnlyDirectoryIdentity(recordsDir),
+    versionsRoot: readOnlyDirectoryIdentity(versionsRoot),
+    canonical: canonicalSnapshot === null
+      ? null
+      : {
+          identity: canonicalSnapshot.identity
+        },
+    versionMarkers: versionMarkers.observation
+  }
+
+  await assertReadOnlyObservationStable(paths, normalizedRunId, observation, options)
 
   if (!canonical && !latest) {
     return readOnlySnapshotResult({

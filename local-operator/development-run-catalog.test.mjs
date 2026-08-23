@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -22,12 +23,15 @@ import {
   MAX_DEVELOPMENT_RUN_RECORD_BYTES,
   createDevelopmentRun,
   createPersonalProjectOperatorSelfDevelopmentRun,
+  inspectDevelopmentRunReadOnly,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
   DEVELOPMENT_RUN_CATALOG_ID,
   MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED,
   MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES,
+  PHASE_6N_RUN_CATALOG_POLICY_HASH,
+  PHASE_6N_RUN_CATALOG_POLICY_ID,
   formatDevelopmentRunCatalog,
   formatDevelopmentRunSummary,
   inspectDevelopmentRunSummary,
@@ -260,6 +264,54 @@ async function assertCatalogDoesNotMutate(writeDataDir, operation) {
   assert.deepEqual(after, before)
 }
 
+function validCatalogResultForSummary(summary, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    catalog: DEVELOPMENT_RUN_CATALOG_ID,
+    ok: true,
+    code: summary.canonicalState,
+    summary,
+    diagnostics: {
+      scanned: 1,
+      returned: 1,
+      invalid: 0,
+      outOfScope: 0,
+      truncated: false
+    },
+    ...overrides
+  }
+}
+
+function validCatalogListForSummaries(summaries, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    catalog: DEVELOPMENT_RUN_CATALOG_ID,
+    policy: {
+      id: PHASE_6N_RUN_CATALOG_POLICY_ID,
+      hash: PHASE_6N_RUN_CATALOG_POLICY_HASH
+    },
+    ok: true,
+    code: "ok",
+    summaries,
+    active: summaries.filter((summary) => !summary.terminal),
+    terminal: summaries.filter((summary) => summary.terminal),
+    diagnostics: {
+      scanned: summaries.length,
+      returned: summaries.length,
+      invalid: 0,
+      outOfScope: 0,
+      truncated: false
+    },
+    ...overrides
+  }
+}
+
+function assertUnavailableOutput(output, forbiddenPattern = /CATALOG_TEST|SENSITIVE|personal-project-operator|\/tmp|token|secret|evidence|history|task/iu) {
+  assert.match(output, /Status: unavailable/u)
+  assert.equal(output.length < 120, true)
+  assert.doesNotMatch(output, forbiddenPattern)
+}
+
 test("Phase 6N discovers ordinary opaque run ids and returns bounded metadata only", async () => {
   const writeDataDir = await tempWriteDataDir()
   const runs = [
@@ -352,12 +404,31 @@ test("Phase 6N exact inspection accepts only an opaque run id as logical input",
   assert.equal(inspected.summary.version, run.version)
 
   const invalidRoot = await tempWriteDataDir("ppo-6n-invalid-")
-  const invalid = await inspectDevelopmentRunSummary("../not-a-run", {
-    writeDataDir: invalidRoot
-  })
+  const malformedRunIds = [
+    "../not-a-run",
+    ` ${run.runId}`,
+    `${run.runId} `,
+    `\n${run.runId}`,
+    `${run.runId}\n`,
+    `${run.runId}\r`,
+    `${run.runId}\t`,
+    `${run.runId}\u0000`,
+    run.runId.slice(1),
+    `${run.runId}x`,
+    null,
+    [],
+    123
+  ]
 
-  assert.equal(invalid.ok, false)
-  assert.equal(invalid.code, "invalid_run_id")
+  for (const malformed of malformedRunIds) {
+    const invalid = await inspectDevelopmentRunSummary(malformed, {
+      writeDataDir: invalidRoot
+    })
+
+    assert.equal(invalid.ok, false)
+    assert.equal(invalid.code, "invalid_run_id")
+  }
+
   await assert.rejects(lstat(join(invalidRoot, "development-runs")), { code: "ENOENT" })
 })
 
@@ -483,6 +554,135 @@ test("Phase 6N reports canonical read-only states without repairing records", as
   assert.equal(inspected.canonicalState, "canonical_conflict")
 })
 
+test("Phase 6N read-only inspection performs one final whole-observation stability check", async () => {
+  const currentRoot = await tempWriteDataDir("ppo-6n-final-current-")
+  const current = await makeRun({
+    writeDataDir: currentRoot,
+    seed: 101,
+    status: "planned"
+  })
+  await assertCatalogDoesNotMutate(currentRoot, async () => {
+    const snapshot = await inspectDevelopmentRunReadOnly(current.runId, {
+      writeDataDir: currentRoot
+    })
+
+    assert.equal(snapshot.ok, true)
+    assert.equal(snapshot.canonicalState, "canonical_current")
+  })
+
+  const behindRoot = await tempWriteDataDir("ppo-6n-final-behind-")
+  const behind = await makeRun({
+    writeDataDir: behindRoot,
+    seed: 102,
+    status: "planned"
+  })
+  const behindPaths = runPaths(behindRoot, behind.runId)
+  await writeFile(behindPaths.recordPath, await readFile(join(behindPaths.versionDir, "000000.json"), "utf8"), { mode: 0o600 })
+  await assertCatalogDoesNotMutate(behindRoot, async () => {
+    const snapshot = await inspectDevelopmentRunReadOnly(behind.runId, {
+      writeDataDir: behindRoot
+    })
+
+    assert.equal(snapshot.ok, true)
+    assert.equal(snapshot.canonicalState, "canonical_behind")
+  })
+
+  const missingRoot = await tempWriteDataDir("ppo-6n-final-missing-")
+  const missing = await makeRun({
+    writeDataDir: missingRoot,
+    seed: 103,
+    status: "planned"
+  })
+  await unlink(runPaths(missingRoot, missing.runId).recordPath)
+  await assertCatalogDoesNotMutate(missingRoot, async () => {
+    const snapshot = await inspectDevelopmentRunReadOnly(missing.runId, {
+      writeDataDir: missingRoot
+    })
+
+    assert.equal(snapshot.ok, true)
+    assert.equal(snapshot.canonicalState, "canonical_missing")
+  })
+
+  const newVersionRoot = await tempWriteDataDir("ppo-6n-final-new-version-")
+  const newVersion = await makeRun({
+    writeDataDir: newVersionRoot,
+    seed: 104,
+    status: "planned"
+  })
+  let snapshot = await inspectDevelopmentRunReadOnly(newVersion.runId, {
+    writeDataDir: newVersionRoot,
+    __readOnlyBeforeFinalCheck: async () => {
+      await transitionDevelopmentRun(newVersion.runId, {
+        expectedVersion: newVersion.version,
+        status: "implementation_in_progress",
+        actor: "concurrent-test"
+      }, {
+        writeDataDir: newVersionRoot,
+        now: makeClock("2026-08-22T00:00:00.000Z")
+      })
+    }
+  })
+
+  assert.equal(snapshot.ok, false)
+  assert.equal(snapshot.code, "stale_observation")
+
+  const refreshRoot = await tempWriteDataDir("ppo-6n-final-refresh-")
+  const refresh = await makeRun({
+    writeDataDir: refreshRoot,
+    seed: 105,
+    status: "planned"
+  })
+  const refreshPaths = runPaths(refreshRoot, refresh.runId)
+  const latestPayload = await readFile(refreshPaths.recordPath, "utf8")
+  await writeFile(refreshPaths.recordPath, await readFile(join(refreshPaths.versionDir, "000000.json"), "utf8"), { mode: 0o600 })
+  snapshot = await inspectDevelopmentRunReadOnly(refresh.runId, {
+    writeDataDir: refreshRoot,
+    __readOnlyBeforeFinalCheck: async () => {
+      await writeFile(refreshPaths.recordPath, latestPayload, { mode: 0o600 })
+    }
+  })
+
+  assert.equal(snapshot.ok, false)
+  assert.equal(snapshot.code, "stale_observation")
+
+  const deleteRoot = await tempWriteDataDir("ppo-6n-final-delete-")
+  const deleted = await makeRun({
+    writeDataDir: deleteRoot,
+    seed: 106,
+    status: "planned"
+  })
+  const deletePaths = runPaths(deleteRoot, deleted.runId)
+  snapshot = await inspectDevelopmentRunReadOnly(deleted.runId, {
+    writeDataDir: deleteRoot,
+    __readOnlyBeforeFinalCheck: async () => {
+      await unlink(deletePaths.recordPath)
+    }
+  })
+
+  assert.equal(snapshot.ok, false)
+  assert.equal(snapshot.code, "stale_observation")
+
+  const symlinkRoot = await tempWriteDataDir("ppo-6n-final-version-symlink-")
+  const symlinked = await makeRun({
+    writeDataDir: symlinkRoot,
+    seed: 107,
+    status: "planned"
+  })
+  const symlinkPaths = runPaths(symlinkRoot, symlinked.runId)
+  snapshot = await inspectDevelopmentRunReadOnly(symlinked.runId, {
+    writeDataDir: symlinkRoot,
+    __readOnlyBeforeFinalCheck: async () => {
+      const target = join(symlinkRoot, "outside-version-dir")
+      await mkdir(target, { recursive: true })
+      await rm(symlinkPaths.versionDir, { recursive: true, force: true })
+      await symlink(target, symlinkPaths.versionDir, "dir")
+    }
+  })
+
+  assert.equal(snapshot.ok, false)
+  assert.equal(snapshot.code, "store_unavailable")
+})
+
 test("Phase 6N corrupt entries and malformed filenames do not compromise ordinary catalog listing", async () => {
   const writeDataDir = await tempWriteDataDir()
   const validA = await makeRun({
@@ -605,8 +805,8 @@ test("Phase 6N marks terminal statuses and safely summarizes every existing run 
   }
 })
 
-test("Phase 6N fails closed on unsafe filesystem layout without following symlinks", async () => {
-  async function expectUnsafe(name, setup) {
+test("Phase 6N list fails closed on unsafe filesystem trust failures without following paths", async () => {
+  async function expectUnsafeListFailure(name, setup) {
     const writeDataDir = await tempWriteDataDir(`ppo-6n-unsafe-${name.replaceAll(" ", "-")}-`)
     const run = await makeRun({
       writeDataDir,
@@ -617,39 +817,45 @@ test("Phase 6N fails closed on unsafe filesystem layout without following symlin
 
     await setup({ writeDataDir, run, paths })
 
-    const exact = await inspectDevelopmentRunSummary(run.runId, {
-      writeDataDir
-    })
-    const catalog = await listDevelopmentRunSummaries({ writeDataDir })
-    const serialized = `${JSON.stringify(exact)}\n${JSON.stringify(catalog)}`
+    await assertCatalogDoesNotMutate(writeDataDir, async () => {
+      const exact = await inspectDevelopmentRunSummary(run.runId, {
+        writeDataDir
+      })
+      const catalog = await listDevelopmentRunSummaries({ writeDataDir })
+      const serialized = `${JSON.stringify(exact)}\n${JSON.stringify(catalog)}`
 
-    assert.equal(exact.ok, false, name)
-    assert.match(exact.code, /store_unavailable|record_invalid|history_invalid/u, name)
-    assert.doesNotMatch(serialized, new RegExp(TASK_SENTINEL, "u"), name)
+      assert.equal(exact.ok, false, name)
+      assert.equal(exact.code, "store_unavailable", name)
+      assert.equal(catalog.ok, false, name)
+      assert.equal(catalog.code, "store_unavailable", name)
+      assert.deepEqual(catalog.summaries, [], name)
+      assert.doesNotMatch(serialized, new RegExp(run.runId, "u"), name)
+      assert.doesNotMatch(serialized, new RegExp(TASK_SENTINEL, "u"), name)
+    })
   }
 
-  await expectUnsafe("records directory symlink", async ({ writeDataDir, paths }) => {
+  await expectUnsafeListFailure("records directory symlink", async ({ writeDataDir, paths }) => {
     const target = join(writeDataDir, "outside-records")
     await mkdir(target, { recursive: true })
     await rm(paths.recordsDir, { recursive: true, force: true })
     await symlink(target, paths.recordsDir, "dir")
   })
 
-  await expectUnsafe("versions directory symlink", async ({ writeDataDir, paths }) => {
+  await expectUnsafeListFailure("versions directory symlink", async ({ writeDataDir, paths }) => {
     const target = join(writeDataDir, "outside-versions")
     await mkdir(target, { recursive: true })
     await rm(paths.versionsRoot, { recursive: true, force: true })
     await symlink(target, paths.versionsRoot, "dir")
   })
 
-  await expectUnsafe("canonical run record symlink", async ({ writeDataDir, paths }) => {
+  await expectUnsafeListFailure("canonical run record symlink", async ({ writeDataDir, paths }) => {
     const target = join(writeDataDir, "outside-record.json")
     await writeFile(target, await readFile(paths.recordPath, "utf8"), { mode: 0o600 })
     await rm(paths.recordPath, { force: true })
     await symlink(target, paths.recordPath)
   })
 
-  await expectUnsafe("run-specific version directory symlink", async ({ writeDataDir, paths }) => {
+  await expectUnsafeListFailure("run-specific version directory symlink", async ({ writeDataDir, paths }) => {
     const target = join(writeDataDir, "outside-version-dir")
     await mkdir(target, { recursive: true })
     await writeFile(join(target, "000000.json"), await readFile(paths.recordPath, "utf8"), { mode: 0o600 })
@@ -657,25 +863,76 @@ test("Phase 6N fails closed on unsafe filesystem layout without following symlin
     await symlink(target, paths.versionDir, "dir")
   })
 
-  await expectUnsafe("version marker symlink", async ({ writeDataDir, paths }) => {
+  await expectUnsafeListFailure("version marker symlink", async ({ writeDataDir, paths }) => {
     const target = join(writeDataDir, "outside-marker.json")
     await writeFile(target, await readFile(paths.recordPath, "utf8"), { mode: 0o600 })
     await rm(join(paths.versionDir, "000000.json"), { force: true })
     await symlink(target, join(paths.versionDir, "000000.json"))
   })
 
-  await expectUnsafe("oversized canonical record", async ({ paths }) => {
-    await writeFile(paths.recordPath, `${"x".repeat(MAX_DEVELOPMENT_RUN_RECORD_BYTES + 1)}\n`, { mode: 0o600 })
-  })
-
-  await expectUnsafe("oversized marker", async ({ paths }) => {
-    await writeFile(join(paths.versionDir, "000000.json"), `${"x".repeat(MAX_DEVELOPMENT_RUN_RECORD_BYTES + 1)}\n`, { mode: 0o600 })
-  })
-
-  await expectUnsafe("unexpected non-regular file", async ({ paths }) => {
+  await expectUnsafeListFailure("canonical non-regular directory", async ({ paths }) => {
     await rm(paths.recordPath, { force: true })
     await mkdir(paths.recordPath)
   })
+
+  await expectUnsafeListFailure("version marker non-regular directory", async ({ paths }) => {
+    await rm(join(paths.versionDir, "000000.json"), { force: true })
+    await mkdir(join(paths.versionDir, "000000.json"))
+  })
+})
+
+test("Phase 6N list fails closed on permission read failure without changing the file", async () => {
+  const writeDataDir = await tempWriteDataDir("ppo-6n-permission-")
+  const run = await makeRun({
+    writeDataDir,
+    seed: 82,
+    status: "created"
+  })
+  const paths = runPaths(writeDataDir, run.runId)
+  const beforeContent = await readFile(paths.recordPath, "utf8")
+
+  await chmod(paths.recordPath, 0o000)
+  const beforeInfo = await lstat(paths.recordPath)
+  const catalog = await listDevelopmentRunSummaries({ writeDataDir })
+  const exact = await inspectDevelopmentRunSummary(run.runId, { writeDataDir })
+  const afterInfo = await lstat(paths.recordPath)
+
+  assert.equal(catalog.ok, false)
+  assert.equal(catalog.code, "store_unavailable")
+  assert.deepEqual(catalog.summaries, [])
+  assert.equal(exact.ok, false)
+  assert.equal(exact.code, "store_unavailable")
+  assert.equal(afterInfo.mode & 0o777, beforeInfo.mode & 0o777)
+  assert.equal(afterInfo.size, beforeInfo.size)
+
+  await chmod(paths.recordPath, 0o600)
+  assert.equal(await readFile(paths.recordPath, "utf8"), beforeContent)
+})
+
+test("Phase 6N oversized trusted records remain content-invalid rather than store-unavailable", async () => {
+  const writeDataDir = await tempWriteDataDir("ppo-6n-oversized-")
+  const healthy = await makeRun({
+    writeDataDir,
+    seed: 83,
+    status: "created"
+  })
+  const oversized = await makeRun({
+    writeDataDir,
+    seed: 84,
+    status: "created"
+  })
+  const paths = runPaths(writeDataDir, oversized.runId)
+
+  await writeFile(paths.recordPath, `${"x".repeat(MAX_DEVELOPMENT_RUN_RECORD_BYTES + 1)}\n`, { mode: 0o600 })
+
+  const catalog = await listDevelopmentRunSummaries({ writeDataDir })
+  const exact = await inspectDevelopmentRunSummary(oversized.runId, { writeDataDir })
+
+  assert.equal(catalog.ok, true)
+  assert.equal(catalog.diagnostics.invalid, 1)
+  assert.deepEqual(catalog.summaries.map((summary) => summary.runId), [healthy.runId])
+  assert.equal(exact.ok, false)
+  assert.equal(exact.code, "record_invalid")
 })
 
 test("Phase 6N catalog operations leave the development-runs tree byte-for-byte unchanged", async () => {
@@ -736,6 +993,79 @@ test("Phase 6N catalog operations leave the development-runs tree byte-for-byte 
     assert.equal(exact.ok, false)
     assert.equal(exact.code, "run_not_found")
   })
+})
+
+test("Phase 6N formatters validate hostile caller input before rendering", async () => {
+  const writeDataDir = await tempWriteDataDir("ppo-6n-formatters-")
+  const run = await makeRun({
+    writeDataDir,
+    seed: 120,
+    projectId: "khlim-assist",
+    status: "planned"
+  })
+  const inspected = await inspectDevelopmentRunSummary(run.runId, { writeDataDir })
+  const catalog = await listDevelopmentRunSummaries({ writeDataDir })
+  const summary = inspected.summary
+
+  assert.match(formatDevelopmentRunSummary(inspected), new RegExp(run.runId, "u"))
+  assert.match(formatDevelopmentRunCatalog(catalog), new RegExp(run.runId, "u"))
+
+  const invalidSummaries = [
+    { ...summary, runId: ` ${summary.runId}` },
+    { ...summary, runId: `${summary.runId}\n` },
+    { ...summary, project: `${summary.project}\u001B[2J` },
+    { ...summary, project: "personal-project-operator" },
+    { ...summary, project: "unknown-project" },
+    { ...summary, status: "surprise_status" },
+    { ...summary, stage: "surprise_stage" },
+    { ...summary, stage: "review" },
+    { ...summary, baseSha: "x".repeat(40) },
+    { ...summary, headSha: "z".repeat(40) },
+    { ...summary, createdAt: "not-a-timestamp" },
+    { ...summary, updatedAt: "2026-08-21T00:00:00.000Z\nInjected: yes" },
+    { ...summary, terminal: !summary.terminal },
+    { ...summary, canonicalState: "unknown_canonical_state" },
+    { ...summary, task: TASK_SENTINEL },
+    { ...summary, evidence: [{ secret: "SENSITIVE_TEST_SENTINEL" }] },
+    { ...summary, history: [{ status: "created" }] },
+    { ...summary, path: "/tmp/secret-path" },
+    { ...summary, project: "khlim-assist ghp_fake_token" },
+    { ...summary, project: "x".repeat(5000) }
+  ]
+
+  for (const invalid of invalidSummaries) {
+    assertUnavailableOutput(formatDevelopmentRunSummary(validCatalogResultForSummary(invalid)))
+    assertUnavailableOutput(formatDevelopmentRunSummary(invalid))
+    assertUnavailableOutput(formatDevelopmentRunCatalog(validCatalogListForSummaries([invalid])))
+  }
+
+  const fakeSummaries = Array.from({ length: 10_000 }, (_, index) => ({
+    ...summary,
+    runId: runIdForSeed((index % 200) + 1),
+    project: "personal-project-operator",
+    task: `${TASK_SENTINEL} ${index}`,
+    evidence: [{ token: "ghp_fake_token" }]
+  }))
+  const hugeOutput = formatDevelopmentRunCatalog({
+    ...validCatalogListForSummaries([summary]),
+    summaries: fakeSummaries,
+    active: fakeSummaries,
+    terminal: [],
+    diagnostics: {
+      scanned: 100,
+      returned: 10_000,
+      invalid: 0,
+      outOfScope: 0,
+      truncated: true
+    }
+  })
+
+  assertUnavailableOutput(hugeOutput)
+
+  for (const malformed of [null, undefined, [], ["x"], "x", 1, true, { ok: true }, { ...catalog, policy: { id: "wrong", hash: PHASE_6N_RUN_CATALOG_POLICY_HASH } }]) {
+    assertUnavailableOutput(formatDevelopmentRunCatalog(malformed))
+    assertUnavailableOutput(formatDevelopmentRunSummary(malformed))
+  }
 })
 
 test("Phase 6N catalog module has no route, mutation, recovery, continuation, production, subprocess, or network surface", async () => {

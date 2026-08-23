@@ -6,12 +6,17 @@ import {
   PPO_WRITE_DATA_DIR_ENV
 } from "./project-note-add.mjs"
 import {
+  DEVELOPMENT_RUN_STATUSES,
+  DEVELOPMENT_RUN_STAGES,
   DEVELOPMENT_RUN_ID_PATTERN,
   DEVELOPMENT_RUN_STORE_DIR,
+  MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES,
   PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
   inspectDevelopmentRunReadOnly,
-  isDevelopmentRunTerminalStatus
+  isDevelopmentRunTerminalStatus,
+  stageForDevelopmentRunStatus
 } from "./development-run-state.mjs"
+import { getPhase2GitHubProject } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_RUN_CATALOG_ID = "phase-6n-readonly-development-run-catalog"
 export const PHASE_6N_RUN_CATALOG_POLICY_ID = "phase-6n-readonly-development-run-catalog-policy"
@@ -19,6 +24,11 @@ export const MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED = 100
 export const MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES = 20
 
 const canonicalRunRecordFilePattern = /^([A-Za-z0-9_-]{43})\.json$/u
+const shaPattern = /^[a-f0-9]{40}$/u
+const policyHashPattern = /^[a-f0-9]{64}$/u
+const unsafeTextPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u001F\u007F-\u009F])/u
+const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
+const pathLikeTextPattern = /(?:^\.{1,2}(?:\/|$)|\/|\\|[A-Za-z]:\\|~\/)/u
 const safeCatalogCodes = new Set([
   "ok",
   "invalid_run_id",
@@ -35,6 +45,29 @@ const safeCatalogCodes = new Set([
   "stale_observation",
   "catalog_truncated"
 ])
+const contentFailureCodes = new Set([
+  "record_invalid",
+  "history_invalid",
+  "canonical_conflict",
+  "stale_observation"
+])
+const catalogSummaryCanonicalStates = new Set([
+  "canonical_current",
+  "canonical_behind",
+  "canonical_missing"
+])
+const catalogFailureCanonicalStates = new Set([
+  "run_not_found",
+  "project_out_of_scope",
+  "store_missing",
+  "store_unavailable",
+  "record_invalid",
+  "history_invalid",
+  "canonical_conflict",
+  "stale_observation"
+])
+const statusSet = new Set(DEVELOPMENT_RUN_STATUSES)
+const stageSet = new Set(DEVELOPMENT_RUN_STAGES)
 
 const catalogContract = Object.freeze({
   catalog: DEVELOPMENT_RUN_CATALOG_ID,
@@ -104,6 +137,33 @@ function safeCode(code) {
   return safeCatalogCodes.has(code) ? code : "store_unavailable"
 }
 
+function hasOnlyKeys(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false
+  }
+
+  const allowed = new Set(keys)
+  const actual = Object.keys(value)
+
+  return actual.length === keys.length && actual.every((key) => allowed.has(key))
+}
+
+function isIsoTimestamp(value) {
+  const parsed = Date.parse(value)
+  return typeof value === "string" && Number.isFinite(parsed) && new Date(parsed).toISOString() === value
+}
+
+function isSafeCatalogScalar(value, maxChars = 120) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxChars &&
+    !unsafeTextPattern.test(value) &&
+    !sensitiveTextPattern.test(value) &&
+    !pathLikeTextPattern.test(value)
+  )
+}
+
 function emptyDiagnostics(overrides = {}) {
   return {
     scanned: 0,
@@ -125,15 +185,19 @@ function catalogFailure(code, {
     catalog: DEVELOPMENT_RUN_CATALOG_ID,
     ok: false,
     code: safeCode(code),
+    outcome: safeCode(code),
     summary: null,
+    summaries: [],
+    active: [],
+    terminal: [],
     diagnostics
   }
 
-  if (runId && code !== "project_out_of_scope") {
+  if (runId && code !== "project_out_of_scope" && code !== "store_unavailable") {
     result.runId = runId
   }
 
-  if (canonicalState) {
+  if (canonicalState && catalogFailureCanonicalStates.has(canonicalState)) {
     result.canonicalState = canonicalState
   }
 
@@ -307,19 +371,17 @@ function orderSummaries(summaries) {
 }
 
 export async function inspectDevelopmentRunSummary(runId, options = {}) {
-  const normalizedRunId = String(runId ?? "").trim()
-
-  if (!DEVELOPMENT_RUN_ID_PATTERN.test(normalizedRunId)) {
+  if (typeof runId !== "string" || !DEVELOPMENT_RUN_ID_PATTERN.test(runId)) {
     return catalogFailure("invalid_run_id")
   }
 
-  const snapshot = await inspectDevelopmentRunReadOnly(normalizedRunId, catalogStateOptions(options))
+  const snapshot = await inspectDevelopmentRunReadOnly(runId, catalogStateOptions(options))
 
   if (!snapshot.ok) {
     const code = snapshot.code === "store_missing" ? "run_not_found" : snapshot.code
 
     return catalogFailure(code, {
-      runId: code === "project_out_of_scope" ? null : normalizedRunId,
+      runId: code === "project_out_of_scope" || code === "store_unavailable" ? null : runId,
       canonicalState: snapshot.canonicalState
     })
   }
@@ -385,20 +447,192 @@ export async function listDevelopmentRunSummaries(options = {}) {
       continue
     }
 
-    diagnostics.invalid += 1
+    if (contentFailureCodes.has(inspected.code)) {
+      diagnostics.invalid += 1
+      continue
+    }
+
+    return catalogFailure("store_unavailable", {
+      diagnostics
+    })
   }
 
   return catalogSuccess(summaries, diagnostics)
 }
 
+function validSummary(summary) {
+  if (!hasOnlyKeys(summary, [
+    "schemaVersion",
+    "catalog",
+    "runId",
+    "project",
+    "status",
+    "stage",
+    "version",
+    "baseSha",
+    "headSha",
+    "createdAt",
+    "updatedAt",
+    "terminal",
+    "canonicalState",
+    "recoveryRequired"
+  ])) {
+    return false
+  }
+
+  if (
+    summary.schemaVersion !== 1 ||
+    summary.catalog !== DEVELOPMENT_RUN_CATALOG_ID ||
+    !DEVELOPMENT_RUN_ID_PATTERN.test(summary.runId) ||
+    !isSafeCatalogScalar(summary.runId, 43) ||
+    !isSafeCatalogScalar(summary.project, 80) ||
+    !getPhase2GitHubProject(summary.project) ||
+    !statusSet.has(summary.status) ||
+    !stageSet.has(summary.stage) ||
+    stageForDevelopmentRunStatus(summary.status) !== summary.stage ||
+    !Number.isInteger(summary.version) ||
+    summary.version < 0 ||
+    summary.version >= MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES ||
+    typeof summary.baseSha !== "string" ||
+    !shaPattern.test(summary.baseSha) ||
+    !(summary.headSha === null || (typeof summary.headSha === "string" && shaPattern.test(summary.headSha))) ||
+    !isIsoTimestamp(summary.createdAt) ||
+    !isIsoTimestamp(summary.updatedAt) ||
+    typeof summary.terminal !== "boolean" ||
+    isDevelopmentRunTerminalStatus(summary.status) !== summary.terminal ||
+    !catalogSummaryCanonicalStates.has(summary.canonicalState) ||
+    typeof summary.recoveryRequired !== "boolean"
+  ) {
+    return false
+  }
+
+  if (summary.project === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id) {
+    return false
+  }
+
+  if (
+    (summary.canonicalState === "canonical_current" && summary.recoveryRequired !== false) ||
+    (summary.canonicalState !== "canonical_current" && summary.recoveryRequired !== true)
+  ) {
+    return false
+  }
+
+  return true
+}
+
+function validDiagnostics(diagnostics, expectedReturned) {
+  return (
+    hasOnlyKeys(diagnostics, ["scanned", "returned", "invalid", "outOfScope", "truncated"]) &&
+    Number.isInteger(diagnostics.scanned) &&
+    diagnostics.scanned >= 0 &&
+    diagnostics.scanned <= MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED &&
+    Number.isInteger(diagnostics.returned) &&
+    diagnostics.returned === expectedReturned &&
+    diagnostics.returned >= 0 &&
+    diagnostics.returned <= MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES &&
+    Number.isInteger(diagnostics.invalid) &&
+    diagnostics.invalid >= 0 &&
+    diagnostics.invalid <= MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED &&
+    Number.isInteger(diagnostics.outOfScope) &&
+    diagnostics.outOfScope >= 0 &&
+    diagnostics.outOfScope <= MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED &&
+    typeof diagnostics.truncated === "boolean"
+  )
+}
+
+function validPolicy(policy) {
+  return (
+    hasOnlyKeys(policy, ["id", "hash"]) &&
+    policy.id === PHASE_6N_RUN_CATALOG_POLICY_ID &&
+    policy.hash === PHASE_6N_RUN_CATALOG_POLICY_HASH &&
+    policyHashPattern.test(policy.hash)
+  )
+}
+
+function validSummaryResult(result) {
+  return (
+    hasOnlyKeys(result, ["schemaVersion", "catalog", "ok", "code", "summary", "diagnostics"]) &&
+    result.schemaVersion === 1 &&
+    result.catalog === DEVELOPMENT_RUN_CATALOG_ID &&
+    result.ok === true &&
+    safeCode(result.code) === result.code &&
+    validSummary(result.summary) &&
+    validDiagnostics(result.diagnostics, 1)
+  )
+}
+
+function validCatalogResult(result) {
+  if (
+    !hasOnlyKeys(result, [
+      "schemaVersion",
+      "catalog",
+      "policy",
+      "ok",
+      "code",
+      "summaries",
+      "active",
+      "terminal",
+      "diagnostics"
+    ]) ||
+    result.schemaVersion !== 1 ||
+    result.catalog !== DEVELOPMENT_RUN_CATALOG_ID ||
+    result.ok !== true ||
+    !(result.code === "ok" || result.code === "catalog_truncated") ||
+    !validPolicy(result.policy) ||
+    !Array.isArray(result.summaries) ||
+    result.summaries.length > MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES ||
+    !Array.isArray(result.active) ||
+    !Array.isArray(result.terminal)
+  ) {
+    return false
+  }
+
+  if (!result.summaries.every(validSummary)) {
+    return false
+  }
+
+  if (!validDiagnostics(result.diagnostics, result.summaries.length)) {
+    return false
+  }
+
+  if (result.code === "catalog_truncated" && result.diagnostics.truncated !== true) {
+    return false
+  }
+
+  if (result.code === "ok" && result.diagnostics.truncated !== false) {
+    return false
+  }
+
+  const active = result.summaries.filter((summary) => !summary.terminal)
+  const terminal = result.summaries.filter((summary) => summary.terminal)
+
+  return stableStringify(result.active) === stableStringify(active) &&
+    stableStringify(result.terminal) === stableStringify(terminal)
+}
+
+function unavailableSummaryOutput() {
+  return [
+    "PPO Development Run",
+    "Status: unavailable"
+  ].join("\n")
+}
+
+function unavailableCatalogOutput() {
+  return [
+    "PPO Development Runs",
+    "Status: unavailable"
+  ].join("\n")
+}
+
 export function formatDevelopmentRunSummary(result) {
-  const summary = result?.summary || (result?.runId && result?.catalog === DEVELOPMENT_RUN_CATALOG_ID ? result : null)
+  const summary = validSummaryResult(result)
+    ? result.summary
+    : validSummary(result)
+      ? result
+      : null
 
   if (!summary) {
-    return [
-      "PPO Development Run",
-      `Status: ${safeCode(result?.code || "store_unavailable")}`
-    ].join("\n")
+    return unavailableSummaryOutput()
   }
 
   return [
@@ -414,11 +648,8 @@ export function formatDevelopmentRunSummary(result) {
 }
 
 export function formatDevelopmentRunCatalog(result) {
-  if (!result?.ok) {
-    return [
-      "PPO Development Runs",
-      `Status: ${safeCode(result?.code || "store_unavailable")}`
-    ].join("\n")
+  if (!validCatalogResult(result)) {
+    return unavailableCatalogOutput()
   }
 
   const lines = [
