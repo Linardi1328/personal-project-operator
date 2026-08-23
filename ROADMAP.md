@@ -481,11 +481,21 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Do not add `/ppo runs`, `/ppo run`, `/ppo run-status`, `/ppo list-runs`, `/ppo cancel`, `/ppo retry`, `/ppo resume`, a new OpenClaw tool, or bridge exposure in this phase.
 - Do not invoke recovery, continuation, cancellation, retry, repair, deployment, production verification, rollback, subprocesses, network tools, GitHub APIs, service control, or any production filesystem inspection.
 
+### Phase 6O - Controlled Read-Only Development Run Catalog Routes
+
+- Expose the reviewed Phase 6N catalog through the existing terminal PPO wrapper and existing `ppo_local` direct-tool route as `/ppo runs` and `/ppo run <run-id>`.
+- Keep Phase 6N as the sole catalog engine. Reuse its policy identity/hash, read-only snapshot reader, self-development exclusion, canonical-state reconciliation, sorting, fixed bounds, summary schema, and formatters without duplicating catalog traversal or record validation logic.
+- `/ppo runs` accepts no caller-controlled values: no project, status, stage, limit, offset, filter, search text, sort, terminal/active flag, expected version, SHA, branch, repository, path, action, confirmation, or extra token.
+- `/ppo run <run-id>` accepts exactly one caller-controlled value: the existing opaque 43-character Phase 6A run id. Reject missing ids, extra arguments, control characters, leading/trailing run-id whitespace, malformed ids, option syntax, project/status/SHA/action/path inputs, and arbitrary values before catalog access.
+- Keep output metadata-only and bounded by both Phase 6N formatters and a Phase 6O route ceiling. Do not expose task text, evidence, transition history, workspace paths, raw Git/GitHub state, test output, review findings, production metadata, stdout/stderr, raw errors, environment data, credentials, tokens, or secrets.
+- Preserve Phase 6N behavior through the routes: ordinary five-project scope, at most 100 inspected records, at most 20 summaries, active-first ordering, corrupt-content isolation, unsafe-filesystem fail-closed behavior, stale-observation fail-closed behavior, zero canonical repair, and PPO self-development omission.
+- Keep OpenClaw deterministic. Do not add a new OpenClaw tool or model turn. The bridge maps only `/ppo runs` to `["runs"]` and `/ppo run <run-id>` to `["run", "<run-id>"]` with `shell: false`, bounded output, and strict malformed-input rejection before wrapper execution.
+- Do not add cancellation, retry, repair, resume, run creation, arbitrary filters/search/sort, automatic recovery, automatic continue, deployment, production verification, rollback, subprocess/network/model calls, background work, or any run-state mutation.
+
 ### Later Phase 6 work
 
 Only after separate explicit approval:
 
-- Expose the reviewed Phase 6N run catalog through controlled `/ppo runs` and `/ppo run <run-id>` routes only after separate review.
 - Add cancellation or other run-state mutation only after a separate explicit approval and review.
 - Do not combine run discovery with retry, continue, recovery, cancellation, or repair mutation.
 - Add broader `/ppo` recovery and run-management workflows only after separate review.

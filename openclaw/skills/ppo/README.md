@@ -18,6 +18,8 @@ It exists because OpenClaw owns built-in commands such as `/status`, `/menu`, an
 /ppo issue-confirm <request-id>
 /ppo note-add <project> <note...>
 /ppo note-confirm <request-id>
+/ppo runs
+/ppo run <run-id>
 /ppo continue <run-id>
 /ppo recover <run-id>
 /ppo menu
@@ -43,6 +45,8 @@ node local-operator/ppo-command.mjs pr khlim-assist
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note text"
 node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
+node local-operator/ppo-command.mjs /ppo runs
+node local-operator/ppo-command.mjs /ppo run <run-id>
 node local-operator/ppo-command.mjs /ppo continue <run-id>
 node local-operator/ppo-command.mjs /ppo recover <run-id>
 ```
@@ -58,6 +62,8 @@ Phase 5D `/ppo note-add` is staging only and rejects `PPO_NOTE_WRITE_CONFIRM` in
 Phase 6K `/ppo continue <run-id>` accepts only an existing ordinary Phase 6 development run id, advances at most one reviewed Phase 6B-6G boundary, and never routes PPO production deployment, verification, rollback, rollback reconciliation, services, or owner confirmations.
 
 Phase 6M `/ppo recover <run-id>` accepts only an existing ordinary Phase 6 development run id, invokes one reviewed Phase 6L read-only recovery boundary, and never repairs, retries, continues, mutates state, or routes production recovery.
+
+Phase 6O `/ppo runs` and `/ppo run <run-id>` expose only the reviewed Phase 6N read-only ordinary-run catalog. They accept no filters, search, sort, limits, cancellation, retry, repair, recovery, continue, production action, or model interpretation.
 
 OpenClaw direct command dispatch uses the local plugin tool:
 
@@ -104,6 +110,7 @@ This scaffold does not:
 - create notes outside terminal-only `note-add` or the Phase 5D `/ppo note-add` plus `/ppo note-confirm` approval path
 - route PPO production deployment, verification, or rollback through `/ppo continue`
 - route PPO production deployment, verification, rollback, rollback reconciliation, or service control through `/ppo recover`
+- route recovery, continuation, cancellation, retry, repair, or production action through `/ppo runs` or `/ppo run`
 - mutate project-state files from stored notes
 
 Use it as the local routing contract for OpenClaw.

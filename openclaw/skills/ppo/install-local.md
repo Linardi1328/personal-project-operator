@@ -157,11 +157,11 @@ OpenClaw forwards the raw `/ppo` argument string to `ppo_local` as:
 }
 ```
 
-The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` confirmation through the same existing tool. Phase 6K adds `/ppo continue <run-id>` for one existing ordinary Phase 6 development run. Phase 6M adds `/ppo recover <run-id>` for one reviewed Phase 6L read-only recovery observation.
+The tool validates that raw command against the approved command surface before invoking the wrapper. Phase 5B adds `/ppo issue-create <project> <title> [--body <body>]` and `/ppo issue-confirm <request-id>` to that surface. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` confirmation through the same existing tool. Phase 6K adds `/ppo continue <run-id>` for one existing ordinary Phase 6 development run. Phase 6M adds `/ppo recover <run-id>` for one reviewed Phase 6L read-only recovery observation. Phase 6O adds `/ppo runs` and `/ppo run <run-id>` for the reviewed Phase 6N read-only ordinary-run catalog.
 
 Phase 5C bare terminal `note-add` remains terminal-only. Do not configure `PPO_NOTE_WRITE_CONFIRM` in Telegram/OpenClaw chat; `/ppo note-confirm <request-id>` supplies the Phase 5C confirmation internally after atomically claiming a pending request.
 
-Phase 6K continue and Phase 6M recover accept only the existing opaque run id from chat. Do not configure or paste expected versions, projects, actions, SHAs, repositories, workspaces, recovery options, commands, executables, deployment targets, services, rollback targets, or rollback confirmations into Telegram/OpenClaw.
+Phase 6K continue, Phase 6M recover, and Phase 6O exact-run catalog inspection accept only the existing opaque run id from chat. Phase 6O run listing accepts no caller input after `runs`. Do not configure or paste expected versions, projects, statuses, actions, SHAs, repositories, workspaces, filters, search text, sort fields, recovery options, commands, executables, deployment targets, services, rollback targets, or rollback confirmations into Telegram/OpenClaw.
 
 ## Local Phase 5B/5C/5D write-data paths
 
@@ -306,6 +306,8 @@ Manual Telegram/OpenClaw mapping:
 /ppo menu project -> ppo_local raw "menu project" -> local-operator/ppo-command.mjs menu project
 /ppo menu codex   -> ppo_local raw "menu codex"   -> local-operator/ppo-command.mjs menu codex
 /ppo menu system  -> ppo_local raw "menu system"  -> local-operator/ppo-command.mjs menu system
+/ppo runs -> ppo_local raw "runs" -> local-operator/ppo-command.mjs runs
+/ppo run <run-id> -> ppo_local raw "run <run-id>" -> local-operator/ppo-command.mjs run <run-id>
 /ppo continue <run-id> -> ppo_local raw "continue <run-id>" -> local-operator/ppo-command.mjs continue <run-id>
 /ppo recover <run-id> -> ppo_local raw "recover <run-id>" -> local-operator/ppo-command.mjs recover <run-id>
 ```
@@ -405,6 +407,8 @@ If those pass, test:
 /ppo codex khlim-assist add provider validation tests
 /ppo issue-create khlim-assist owner review test issue --body created only after confirmation
 /ppo note-add khlim-assist owner review staged note
+/ppo runs
+/ppo run <run-id>
 /ppo continue <run-id>
 /ppo recover <run-id>
 ```
@@ -427,3 +431,4 @@ Do not add:
 - GitHub writes beyond Phase 5B `/ppo issue-create` staging plus `/ppo issue-confirm` single-use issue creation
 - project note writes beyond Phase 5D `/ppo note-add` staging plus `/ppo note-confirm` single-use note creation
 - PPO production deployment, production verification, rollback, rollback reconciliation, service control, or owner rollback confirmation through `/ppo continue` or `/ppo recover`
+- recovery, continuation, cancellation, retry, repair, filters, search, sort, or production action through `/ppo runs` or `/ppo run`

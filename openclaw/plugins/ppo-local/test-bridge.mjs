@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { runPpoLocalTool, toPpoWrapperArgs } from "./bridge.mjs";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
@@ -53,6 +54,8 @@ expectedMappings.set("issue-create khlim-assist Add issue title --body Body text
 expectedMappings.set(`issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]);
 expectedMappings.set("note-add khlim-assist Add project note", ["/ppo", "note-add", "khlim-assist", "Add project note"]);
 expectedMappings.set(`note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]);
+expectedMappings.set("runs", ["runs"]);
+expectedMappings.set(`run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]);
 expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
 expectedMappings.set(`recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]);
 
@@ -97,6 +100,71 @@ const fullPayload = await runPpoLocalTool({ command: "/ppo menu project" });
 assert.equal(fullPayload.ok, true, "full /ppo payload succeeds");
 assert.deepEqual(fullPayload.wrapperArgs, ["menu", "project"]);
 assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo payload returns exact wrapper output");
+
+{
+  const safeRunsOutput = [
+    "PPO Development Runs",
+    "Runs: 1",
+    "Invalid: 0",
+    "",
+    `1. ${validDevelopmentRunId}`,
+    "   Project: khlim-assist",
+    "   Status: created",
+    "   Stage: planning",
+    "   Updated: 2026-08-22T00:00:00.000Z",
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: "/ppo runs" },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["runs"]);
+        return {
+          stdout: safeRunsOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw runs stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "runs output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["runs"]);
+  assert.match(result.stdout, /PPO Development Runs/);
+  assert.match(result.stdout, new RegExp(validDevelopmentRunId, "u"));
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw runs stderr|token|secret|stack/i);
+}
+
+{
+  const safeRunOutput = [
+    "PPO Development Run",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Status: created",
+    "Stage: planning",
+    "Version: 0",
+    "Updated: 2026-08-22T00:00:00.000Z",
+    "Canonical: canonical_current",
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo run ${validDevelopmentRunId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["run", validDevelopmentRunId]);
+        return {
+          stdout: safeRunOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw run stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "run output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["run", validDevelopmentRunId]);
+  assert.match(result.stdout, /PPO Development Run/);
+  assert.match(result.stdout, new RegExp(validDevelopmentRunId, "u"));
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw run stderr|token|secret|stack/i);
+}
 
 {
   const safeContinueOutput = [
@@ -176,6 +244,8 @@ for (const [input, expected] of [
   [`/ppo issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]],
   ["/ppo note-add khlim-assist Full payload project note", ["/ppo", "note-add", "khlim-assist", "Full payload project note"]],
   [`/ppo note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]],
+  ["/ppo runs", ["runs"]],
+  [`/ppo run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]],
   [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`/ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
@@ -199,6 +269,8 @@ for (const [input, expected] of [
   [`ppo codex-budget rbl-content-engine ${phase3cTask}`, ["codex-budget", "rbl-content-engine", phase3cTask]],
   [`ppo prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]],
   [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]],
+  ["ppo runs", ["runs"]],
+  [`ppo run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]],
   [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
@@ -402,6 +474,37 @@ const rejectedInputs = [
   "note-confirm",
   "note-confirm short-id",
   `note-confirm ${validNoteRequestId} extra`,
+  "runs extra",
+  "/ppo runs extra",
+  "ppo runs extra",
+  "runs\t",
+  "runs\n",
+  "runs\u0000",
+  "run",
+  "/ppo run",
+  "ppo run",
+  "run malformed",
+  "/ppo run malformed",
+  "run " + "E".repeat(42),
+  "run " + "E".repeat(44),
+  `run ${validDevelopmentRunId} extra`,
+  `/ppo run ${validDevelopmentRunId} extra`,
+  `ppo run ${validDevelopmentRunId} extra`,
+  `run  ${validDevelopmentRunId}`,
+  `run ${validDevelopmentRunId} `,
+  ` run ${validDevelopmentRunId}`,
+  `run ${validDevelopmentRunId}\nanything`,
+  `run ${validDevelopmentRunId}\ranything`,
+  `run ${validDevelopmentRunId}\tanything`,
+  `run ${validDevelopmentRunId}\u0000`,
+  `/ppo run ${validDevelopmentRunId} --project khlim-assist`,
+  `/ppo run ${validDevelopmentRunId} --status created`,
+  `/ppo run ${validDevelopmentRunId} --expectedVersion 0`,
+  `/ppo run ${validDevelopmentRunId} ${"d".repeat(40)}`,
+  "/ppo run-status",
+  "/ppo list-runs",
+  "/ppo runs-all",
+  "/ppo run-search",
   "continue",
   "/ppo continue",
   "continue malformed",
@@ -473,5 +576,8 @@ for (const input of rejectedInputs) {
   assert.equal(fakeResult.ok, false, `${input} fake wrapper fails safely`);
   assert.equal(wrapperCalls, 0, `${input} executes zero fake wrapper calls`);
 }
+
+const bridgeSource = await readFile(new URL("bridge.mjs", import.meta.url), "utf8");
+assert.equal(bridgeSource.includes("shell: false"), true, "bridge wrapper execution keeps shell disabled");
 
 console.log("ppo_local bridge tests passed: existing commands, status/repo/pr routing, full payloads, and rejection safety.");
