@@ -11,7 +11,7 @@ Danger levels:
 - `dangerous`: would mutate external systems and requires strict approval.
 - `disabled`: not available in the current phase.
 
-In Phase 6K, `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output. `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` are direct-routed deterministic text commands through `ppo_local`. Phase 5A keeps the terminal-only GitHub issue creation path, `node local-operator/ppo-command.mjs issue-create <project> <title> [body...]`. Phase 5B adds approval-gated chat issue creation through the same existing `ppo_local` tool: `/ppo issue-create <project> <title> [--body <body>]` stages only, and `/ppo issue-confirm <request-id>` atomically claims one unexpired request before invoking the Phase 5A writer with internal confirmation. Phase 5C adds terminal-only local project notes with `node local-operator/ppo-command.mjs note-add <project> <note...>`. Phase 5D adds approval-gated chat project notes through the same existing `ppo_local` tool: `/ppo note-add <project> <note...>` stages only, and `/ppo note-confirm <request-id>` atomically claims one unexpired request before invoking the Phase 5C writer with internal confirmation. Phase 6K adds `/ppo continue <run-id>` for one existing ordinary Phase 6 development run, advancing at most one reviewed Phase 6B-6G boundary and never routing production deployment, verification, or rollback.
+In Phase 6M, `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use GitHub read-only direct tool routing; `/ppo menu` and `/ppo help` remain fixture-backed wrapper output. `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` are direct-routed deterministic text commands through `ppo_local`. Phase 5A keeps the terminal-only GitHub issue creation path, `node local-operator/ppo-command.mjs issue-create <project> <title> [body...]`. Phase 5B adds approval-gated chat issue creation through the same existing `ppo_local` tool: `/ppo issue-create <project> <title> [--body <body>]` stages only, and `/ppo issue-confirm <request-id>` atomically claims one unexpired request before invoking the Phase 5A writer with internal confirmation. Phase 5C adds terminal-only local project notes with `node local-operator/ppo-command.mjs note-add <project> <note...>`. Phase 5D adds approval-gated chat project notes through the same existing `ppo_local` tool: `/ppo note-add <project> <note...>` stages only, and `/ppo note-confirm <request-id>` atomically claims one unexpired request before invoking the Phase 5C writer with internal confirmation. Phase 6K adds `/ppo continue <run-id>` for one existing ordinary Phase 6 development run, advancing at most one reviewed Phase 6B-6G boundary and never routing production deployment, verification, or rollback. Phase 6M adds `/ppo recover <run-id>` as a read-only route to the reviewed Phase 6L recovery coordinator; it never repairs, retries, continues, or routes production recovery.
 
 | command | category | description | arguments | enabled_in_phase_0 | requires_auth | write_action | danger_level | notes |
 |---|---|---|---|---|---|---|---|---|
@@ -24,6 +24,7 @@ In Phase 6K, `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use G
 | `/ppo note-add` | Project Control | Stage one local project note request for approval. | `<project> <note...>` | Phase 5D approval gate | No | Stage only | dangerous | Validates through the five-project registry and Phase 5C note limits, writes one private pending request, and returns `/ppo note-confirm <request-id>`. It never appends a note. |
 | `/ppo note-confirm` | Project Control | Confirm one staged local project note request. | `<request-id>` | Phase 5D approval gate | No | Yes | dangerous | Atomically claims and consumes one unexpired request before calling the Phase 5C writer with internal confirmation. Unknown, expired, malformed, consumed, or replayed ids write nothing. |
 | `/ppo continue` | Project Control | Continue one existing ordinary development run through one reviewed boundary. | `<run-id>` | Phase 6K controlled continue | Child phase dependent | Child phase dependent | dangerous | Accepts only the existing 43-character run id, reads project/status/version from durable Phase 6A state, delegates to one Phase 6B-6G API, stops at `merged`, and refuses PPO production deployment, verification, and rollback statuses. |
+| `/ppo recover` | Project Control | Inspect one existing ordinary development run through one read-only recovery boundary. | `<run-id>` | Phase 6M controlled recovery | Child phase dependent read-only auth | No | safe | Accepts only the existing 43-character run id, invokes the reviewed Phase 6L coordinator once, returns bounded diagnostics, and never repairs, retries, continues, deploys, verifies production, or rolls back. |
 | `/ppo handoff` | Project Control | Create compact handoff for ChatGPT or Codex. | `<project>` | Yes, docs only | No | No | safe | Text output only. |
 | `/ppo codex` | Codex Workflow | Generate compact Codex prompt text. | `<project> <phase-or-task>` | Phase 3C direct route | Local `gh` auth for read-only context | No | safe | Does not run Codex automatically; uses approved read-only context only. |
 | `/ppo codex-budget` | Codex Workflow | Estimate expected Codex task size. | `<project> <task>` | Phase 3C direct route | No | No | safe | Deterministic heuristic only; no model or usage scraping. |
@@ -65,14 +66,21 @@ In Phase 6K, `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use G
 
 The continue orchestrator reads the durable run, captures the current version, re-reads before mutation, and passes that version internally to the existing reviewed child API for the current status. One invocation advances at most one outer boundary and never exposes Phase 6H deployment, Phase 6I production verification, Phase 6J rollback, service control, rollback confirmation, or production recovery through chat.
 
+## Phase 6M controlled development recover path
+
+`/ppo recover <run-id>` is available through `ppo_local` for existing ordinary Phase 6 development runs only. The bridge maps only the exact command shape to wrapper argv `["recover", "<run-id>"]`; malformed ids, extra tokens, caller-selected projects, statuses, actions, SHAs, policies, commands, deployment targets, rollback targets, or environment overrides are rejected before execution.
+
+The route invokes the reviewed Phase 6L recovery coordinator once and prints only bounded recovery output. It performs no retry, repair, state transition, background polling, automatic `/ppo continue`, production deployment, production verification, rollback, service control, or production recovery.
+
 ## Disabled write actions
 
-These actions are not available in Phase 6K:
+These actions are not available in Phase 6M:
 
 - creating GitHub issues outside terminal-only `issue-create` or Phase 5B `/ppo issue-create` plus `/ppo issue-confirm`
 - creating project notes outside terminal-only `note-add` or Phase 5D `/ppo note-add` plus `/ppo note-confirm`
-- `/ppo start`, `/ppo develop`, `/ppo run`, run listing, run search, or background autonomous continuation
-- PPO production deployment, production verification, rollback, or rollback reconciliation through `/ppo continue`
+- `/ppo start`, `/ppo develop`, `/ppo run`, run listing, run search, automatic recovery, repair, retry, or background autonomous continuation
+- `/ppo recovery`, `/ppo reconcile`, `/ppo repair`, `/ppo retry`, or `/ppo resume`
+- PPO production deployment, production verification, rollback, or rollback reconciliation through `/ppo continue` or `/ppo recover`
 - editing, deleting, replacing, or promoting project notes into `projects/*.md` or project-state files
 - commenting on PRs
 - commenting on issues

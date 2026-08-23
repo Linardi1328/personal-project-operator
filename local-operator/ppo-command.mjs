@@ -10,6 +10,7 @@ import {
 } from "./codex-planning-tools.mjs";
 import { handlePpoDevelopmentContinueCommand } from "./development-continue-orchestrator.mjs";
 import { loadDevelopmentContinueRuntimeProfile } from "./development-continue-runtime-profile.mjs";
+import { handlePpoDevelopmentRecoverCommand } from "./development-recovery-route.mjs";
 import {
   handlePpoIssueConfirmCommand,
   handlePpoIssueCreateApprovalCommand
@@ -40,24 +41,24 @@ function normalizeArgs(rawArgs) {
   return args;
 }
 
-function parseStrictContinueArgs(rawArgs) {
+function parseStrictRunIdCommandArgs(rawArgs, command) {
   const args = rawArgs.map((arg) => String(arg));
   const unsafe = args.some((arg) => arg !== arg.trim() || /[\r\n\t]/u.test(arg));
   const lower0 = args[0]?.toLowerCase();
   const lower1 = args[1]?.toLowerCase();
-  const firstLooksLikeContinue = lower0 === "continue" || lower0?.startsWith("continue ");
-  const envelopeLooksLikeContinue = (
+  const firstLooksLikeCommand = lower0 === command || lower0?.startsWith(`${command} `);
+  const envelopeLooksLikeCommand = (
     (lower0 === "/ppo" || lower0 === "ppo") &&
-    (lower1 === "continue" || lower1?.startsWith("continue "))
+    (lower1 === command || lower1?.startsWith(`${command} `))
   );
-  const combinedEnvelopeLooksLikeContinue = (
+  const combinedEnvelopeLooksLikeCommand = (
     (lower0?.startsWith("/ppo") || lower0?.startsWith("ppo")) &&
-    /(?:^|[\s\r\n\t])continue(?:$|[\s\r\n\t])/iu.test(args[0])
+    new RegExp(`(?:^|[\\s\\r\\n\\t])${command}(?:$|[\\s\\r\\n\\t])`, "iu").test(args[0])
   );
   const attempted = (
-    firstLooksLikeContinue ||
-    envelopeLooksLikeContinue ||
-    combinedEnvelopeLooksLikeContinue
+    firstLooksLikeCommand ||
+    envelopeLooksLikeCommand ||
+    combinedEnvelopeLooksLikeCommand
   );
 
   if (!attempted) {
@@ -68,20 +69,28 @@ function parseStrictContinueArgs(rawArgs) {
     return { ok: false, attempted: true };
   }
 
-  if (args.length === 2 && args[0] === "continue" && DEVELOPMENT_RUN_ID_PATTERN.test(args[1])) {
+  if (args.length === 2 && args[0] === command && DEVELOPMENT_RUN_ID_PATTERN.test(args[1])) {
     return { ok: true, attempted: true, runId: args[1] };
   }
 
   if (
     args.length === 3 &&
     (args[0] === "/ppo" || args[0] === "ppo") &&
-    args[1] === "continue" &&
+    args[1] === command &&
     DEVELOPMENT_RUN_ID_PATTERN.test(args[2])
   ) {
     return { ok: true, attempted: true, runId: args[2] };
   }
 
   return { ok: false, attempted: true };
+}
+
+function parseStrictContinueArgs(rawArgs) {
+  return parseStrictRunIdCommandArgs(rawArgs, "continue");
+}
+
+function parseStrictRecoverArgs(rawArgs) {
+  return parseStrictRunIdCommandArgs(rawArgs, "recover");
 }
 
 function terminalArgsAfterCommand(rawArgs, command) {
@@ -266,6 +275,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs note-add khlim-assist \"project note text\"",
     "  node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase",
     "  node local-operator/ppo-command.mjs continue <run-id>",
+    "  node local-operator/ppo-command.mjs recover <run-id>",
     "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
     "  node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai \"add invoice import workflow\"",
     "  node local-operator/ppo-command.mjs prompt-size \"Goal: build one focused feature\"",
@@ -282,6 +292,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo note-add khlim-assist project note text\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-confirm <request-id>\"",
     "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
+    "  node local-operator/ppo-command.mjs /ppo recover <run-id>",
     "",
     "Supported Telegram messages:",
     "  /ppo status",
@@ -301,13 +312,15 @@ function usage() {
     "  /ppo note-add <project> <note...>",
     "  /ppo note-confirm <request-id>",
     "  /ppo continue <run-id>",
+    "  /ppo recover <run-id>",
     "",
     "Phase 5A boundary: terminal issue-create requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>.",
     "Phase 5B boundary: /ppo issue-create only stages a pending request; /ppo issue-confirm performs the approved single-use write.",
     "Phase 5C boundary: terminal note-add requires PPO_NOTE_WRITE_CONFIRM=add-note:<project>.",
     "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append.",
     "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported.",
-    "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only."
+    "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only.",
+    "Phase 6M boundary: /ppo recover accepts only an existing ordinary development run id and exposes one Phase 6L read-only recovery observation; it performs no repair, retry, continue, deployment, verification, or rollback."
   ].join("\n");
 }
 
@@ -334,6 +347,7 @@ function unsupported(command) {
     "- /ppo note-add <project> <note...>",
     "- /ppo note-confirm <request-id>",
     "- /ppo continue <run-id>",
+    "- /ppo recover <run-id>",
     "",
     "Terminal-only additions:",
     "- issue-create <project> <title> [body...]",
@@ -413,7 +427,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B PPO-routed commands are marked [local] or [github read-only]. Terminal Codex prompt/planning commands are local-only.",
-      "Phase 6K PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, and one-boundary ordinary development continue."
+      "Phase 6M PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, one-boundary ordinary development continue, and read-only development recovery."
     )
     .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
@@ -445,7 +459,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 3B boundary: /ppo status, /ppo repo, and /ppo pr use GitHub read-only; terminal Codex prompt/planning commands are local-only; no writes.",
-      "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id, invokes at most one reviewed Phase 6B-6G boundary, and never routes production deployment, verification, or rollback."
+      "Phase 6M boundary: /ppo continue remains one-boundary Phase 6B-6G development continuation; /ppo recover exposes one Phase 6L read-only recovery observation and never routes production deployment, verification, or rollback."
     )
     .replace(
       [
@@ -458,7 +472,7 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 6K:",
+        "Supported through /ppo in Phase 6M:",
         "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
@@ -475,12 +489,13 @@ function applyPpoNamespace(output) {
         "- /ppo issue-confirm <request-id> [approved write]",
         "- /ppo note-add <project> <note...> [approval stage]",
         "- /ppo note-confirm <request-id> [approved write]",
-        "- /ppo continue <run-id> [development]"
+        "- /ppo continue <run-id> [development]",
+        "- /ppo recover <run-id> [read-only development recovery]"
       ].join("\n")
     )
     .replace(
       "Supported through /ppo in Phase 3B:",
-      "Supported through /ppo in Phase 6K:"
+      "Supported through /ppo in Phase 6M:"
     )
     .replace(
       "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt. [future]",
@@ -518,7 +533,8 @@ function applyPpoNamespace(output) {
         "- No VPS deployment",
         "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation",
         "- /ppo note-add stages locally; /ppo note-confirm can append one approved local project note after single-use confirmation",
-        "- /ppo continue advances one existing ordinary development run through at most one reviewed Phase 6B-6G boundary"
+        "- /ppo continue advances one existing ordinary development run through at most one reviewed Phase 6B-6G boundary",
+        "- /ppo recover reports one read-only Phase 6L development recovery observation and never repairs, retries, or continues the run"
       ].join("\n")
     );
 }
@@ -538,6 +554,7 @@ async function runSimulator(args) {
 async function main() {
   const rawProcessArgs = process.argv.slice(2);
   const strictContinue = parseStrictContinueArgs(rawProcessArgs);
+  const strictRecover = parseStrictRecoverArgs(rawProcessArgs);
 
   if (strictContinue?.ok === true) {
     const result = await handlePpoDevelopmentContinueCommand(strictContinue.runId, {
@@ -548,8 +565,21 @@ async function main() {
     return;
   }
 
+  if (strictRecover?.ok === true) {
+    const result = await handlePpoDevelopmentRecoverCommand(strictRecover.runId);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
   if (strictContinue?.attempted === true) {
     console.log(unsupported(rawProcessArgs[0] || "continue"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictRecover?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "recover"));
     process.exitCode = 1;
     return;
   }

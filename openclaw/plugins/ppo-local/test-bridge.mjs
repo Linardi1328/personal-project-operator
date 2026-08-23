@@ -54,6 +54,7 @@ expectedMappings.set(`issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-con
 expectedMappings.set("note-add khlim-assist Add project note", ["/ppo", "note-add", "khlim-assist", "Add project note"]);
 expectedMappings.set(`note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]);
 expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
+expectedMappings.set(`recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]);
 
 for (const [input, expected] of expectedMappings) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} maps to approved wrapper argv`);
@@ -129,6 +130,38 @@ assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo pay
   assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw continue stderr|token|secret|stack/i);
 }
 
+{
+  const safeRecoverOutput = [
+    "PPO Development Recovery",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Status: implementation_in_progress",
+    "Phase: 6D",
+    "Observation: codex_attempt_open",
+    "Outcome: recovery_observed",
+    "Owner action: required",
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo recover ${validDevelopmentRunId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["recover", validDevelopmentRunId]);
+        return {
+          stdout: safeRecoverOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw recover stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "recover output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["recover", validDevelopmentRunId]);
+  assert.match(result.stdout, /PPO Development Recovery/);
+  assert.match(result.stdout, /Observation: codex_attempt_open/);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw recover stderr|token|secret|stack/i);
+}
+
 for (const [input, expected] of [
   ["/ppo status", ["status"]],
   ["/ppo repo khlim-assist", ["repo", "khlim-assist"]],
@@ -143,7 +176,8 @@ for (const [input, expected] of [
   [`/ppo issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]],
   ["/ppo note-add khlim-assist Full payload project note", ["/ppo", "note-add", "khlim-assist", "Full payload project note"]],
   [`/ppo note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]],
-  [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]]
+  [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
+  [`/ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
   const result = await runPpoLocalTool(
     { command: input },
@@ -165,7 +199,8 @@ for (const [input, expected] of [
   [`ppo codex-budget rbl-content-engine ${phase3cTask}`, ["codex-budget", "rbl-content-engine", phase3cTask]],
   [`ppo prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]],
   [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]],
-  [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]]
+  [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
+  [`ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} raw ppo envelope maps correctly`);
 }
@@ -383,6 +418,33 @@ const rejectedInputs = [
   `/ppo continue ${validDevelopmentRunId}\nanything`,
   `/ppo continue ${validDevelopmentRunId} --action merge`,
   `/ppo continue ${validDevelopmentRunId} ${"d".repeat(40)}`,
+  "recover",
+  "/ppo recover",
+  "recover malformed",
+  "/ppo recover malformed",
+  "recover " + "E".repeat(42),
+  "recover " + "E".repeat(44),
+  `recover\n${validDevelopmentRunId}`,
+  `/ppo recover\n${validDevelopmentRunId}`,
+  `ppo recover\n${validDevelopmentRunId}`,
+  `recover ${validDevelopmentRunId}\n`,
+  `/ppo recover ${validDevelopmentRunId}\r\n`,
+  `/ppo recover\t${validDevelopmentRunId}`,
+  `/ppo\nrecover ${validDevelopmentRunId}`,
+  "recover ../...",
+  "/ppo recover khlim-assist",
+  `/ppo recover ${validDevelopmentRunId} extra`,
+  `/ppo recover ${validDevelopmentRunId}\nanything`,
+  `/ppo recover ${validDevelopmentRunId} --expectedVersion 7`,
+  `/ppo recover ${validDevelopmentRunId} --project khlim-assist`,
+  `/ppo recover ${validDevelopmentRunId} --status review_passed`,
+  `/ppo recover ${validDevelopmentRunId} --action merge`,
+  `/ppo recover ${validDevelopmentRunId} ${"d".repeat(40)}`,
+  `/ppo recovery ${validDevelopmentRunId}`,
+  `/ppo reconcile ${validDevelopmentRunId}`,
+  `/ppo repair ${validDevelopmentRunId}`,
+  `/ppo retry ${validDevelopmentRunId}`,
+  `/ppo resume ${validDevelopmentRunId}`,
   "$(whoami)",
   "`whoami`",
   "../../something"
