@@ -1008,6 +1008,79 @@ test("read-only delivery reconciliation fails closed on wrong PR head, duplicate
   }), "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID")
 })
 
+test("read-only delivery reconciliation requires coherent current remote-review evidence", async () => {
+  const cases = [
+    {
+      name: "approved-decision-contradiction",
+      metadata: {
+        decision: REVIEW_DECISIONS.CHANGES_REQUESTED
+      }
+    },
+    {
+      name: "approved-merge-not-allowed",
+      metadata: {
+        mergeAllowed: false
+      }
+    },
+    {
+      name: "approved-with-blockers",
+      metadata: {
+        blockers: 1
+      }
+    },
+    {
+      name: "wrong-reviewed-sha",
+      metadata: {
+        reviewedSha: "e".repeat(40)
+      }
+    },
+    {
+      name: "wrong-policy-hash",
+      metadata: {
+        policyHash: "f".repeat(64)
+      }
+    }
+  ]
+
+  for (const entry of cases) {
+    const fixture = await makeReviewPassedFixture()
+    const pr = makePr(fixture.project, fixture.run.branch, fixture.headSha)
+    const run = await appendDeliveryProgress(fixture.run, remoteReviewProgressEvidence(fixture.run, pr, "approved", entry.metadata), fixture, REMOTE_PR_REVIEW_AGENT_ID)
+
+    await assertRejectsCode(reconcileGitHubDelivery(run.runId, {
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      gitRunner: makeGitRunner({ branchSha: fixture.headSha }),
+      githubClient: readOnlyGithubClient(makeGitHubClient(fixture.project, fixture.run.branch, fixture.headSha, {
+        prs: [pr]
+      }))
+    }), "GITHUB_DELIVERY_RECONCILE_REVIEW_EVIDENCE_INVALID")
+  }
+
+  const wrongPrNumber = await makeReviewPassedFixture()
+  const pr = makePr(wrongPrNumber.project, wrongPrNumber.run.branch, wrongPrNumber.headSha, { number: 1 })
+  let run = await appendDeliveryProgress(wrongPrNumber.run, deliveryProgressEvidence(wrongPrNumber.run, "pr_created", {
+    branch: wrongPrNumber.run.branch,
+    base: "main",
+    prNumber: pr.number,
+    prHeadSha: wrongPrNumber.run.headSha,
+    reconciledAt: "2026-08-21T12:00:01.000Z"
+  }), wrongPrNumber)
+  run = await appendDeliveryProgress(run, remoteReviewProgressEvidence(run, {
+    ...pr,
+    number: 2
+  }), wrongPrNumber, REMOTE_PR_REVIEW_AGENT_ID)
+
+  await assertRejectsCode(reconcileGitHubDelivery(run.runId, {
+    writeDataDir: wrongPrNumber.writeDataDir,
+    workspaceRegistry: wrongPrNumber.registry,
+    gitRunner: makeGitRunner({ branchSha: wrongPrNumber.headSha }),
+    githubClient: readOnlyGithubClient(makeGitHubClient(wrongPrNumber.project, wrongPrNumber.run.branch, wrongPrNumber.headSha, {
+      prs: [pr]
+    }))
+  }), "GITHUB_DELIVERY_RECONCILE_REVIEW_CONFLICT")
+})
+
 test("acceptance gate requires exact review_passed state, SHA equality, clean workspace, and no open attempts", async () => {
   const fixture = await makeReviewPassedFixture()
 

@@ -707,7 +707,9 @@ function mapGitHubDelivery(run, childResult) {
   const delivery = childResult.delivery || {}
   let observation = "delivery_state_unavailable"
 
-  if (delivery.mergeStatus === "merged_remote") {
+  if (delivery.mergeStatus === "not_started" && delivery.latestOutcome === null) {
+    observation = "delivery_not_started"
+  } else if (delivery.mergeStatus === "merged_remote") {
     observation = "delivery_remote_merged"
   } else if (delivery.mergeStatus === "merge_ready") {
     observation = "delivery_merge_ready"
@@ -719,8 +721,6 @@ function mapGitHubDelivery(run, childResult) {
     observation = "delivery_pr_observed"
   } else if (safeHeadSha(delivery.remoteBranchSha)) {
     observation = "delivery_branch_observed"
-  } else if (delivery.mergeStatus === "not_started" && delivery.latestOutcome === null) {
-    observation = "delivery_not_started"
   }
 
   return baseResult({
@@ -854,10 +854,6 @@ async function runChildRecovery(run, boundary, options = {}) {
     childThrew = true
   }
 
-  if (!childThrew && childRunClaimsStateChange(run, childResult)) {
-    return stateChangedResult(run, boundary)
-  }
-
   let after
 
   try {
@@ -878,6 +874,10 @@ async function runChildRecovery(run, boundary, options = {}) {
 
   if (childThrew) {
     return unavailableResult(run, boundary.phase, boundary.operation)
+  }
+
+  if (childRunClaimsStateChange(run, childResult)) {
+    return stateChangedResult(run, boundary)
   }
 
   if (boundary.operation === "inspect-implementation-workspace") {

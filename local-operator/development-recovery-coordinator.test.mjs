@@ -510,6 +510,18 @@ function makePhase6GDeliveryEvidence(run, outcome, metadata = {}) {
   }
 }
 
+function makePhase6GDeliveryEvidenceForSha(run, sha, outcome, metadata = {}) {
+  return {
+    ...makePhase6GDeliveryEvidence(run, outcome, metadata),
+    sha,
+    metadata: {
+      ...makePhase6GDeliveryEvidence(run, outcome, metadata).metadata,
+      implementationSha: sha,
+      ...metadata
+    }
+  }
+}
+
 function makePhase6GRemoteReviewEvidence(run, pr, metadata = {}) {
   return {
     kind: "review",
@@ -532,6 +544,18 @@ function makePhase6GRemoteReviewEvidence(run, pr, metadata = {}) {
       testsRequired: 0,
       outcome: "approved",
       endedAt: ENDED_AT,
+      ...metadata
+    }
+  }
+}
+
+function makePhase6GRemoteReviewEvidenceForSha(run, pr, sha, metadata = {}) {
+  return {
+    ...makePhase6GRemoteReviewEvidence(run, pr, metadata),
+    sha,
+    metadata: {
+      ...makePhase6GRemoteReviewEvidence(run, pr, metadata).metadata,
+      reviewedSha: sha,
       ...metadata
     }
   }
@@ -577,6 +601,26 @@ function makeReadOnlyDeliveryGithubClient(run, options = {}) {
   const writes = []
   const prs = options.prs || []
   const mainSha = options.mainSha || "m".repeat(40)
+  const workflowRuns = options.runs || [{
+    id: 100,
+    name: "PPO PR validation",
+    event: "pull_request",
+    status: "completed",
+    conclusion: "success",
+    headSha: run.headSha,
+    headBranch: run.branch
+  }]
+  const workflowJobs = options.jobs || [{
+    id: 101,
+    name: "validate",
+    status: "completed",
+    conclusion: "success",
+    steps: REQUIRED_PPO_PR_VALIDATION_STEPS.map((name) => ({
+      name,
+      status: "completed",
+      conclusion: "success"
+    }))
+  }]
 
   return {
     writes,
@@ -595,28 +639,10 @@ function makeReadOnlyDeliveryGithubClient(run, options = {}) {
       return pr
     },
     async listWorkflowRuns() {
-      return [{
-        id: 100,
-        name: "PPO PR validation",
-        event: "pull_request",
-        status: "completed",
-        conclusion: "success",
-        headSha: run.headSha,
-        headBranch: run.branch
-      }]
+      return workflowRuns
     },
     async listWorkflowRunJobs() {
-      return [{
-        id: 101,
-        name: "validate",
-        status: "completed",
-        conclusion: "success",
-        steps: REQUIRED_PPO_PR_VALIDATION_STEPS.map((name) => ({
-          name,
-          status: "completed",
-          conclusion: "success"
-        }))
-      }]
+      return workflowJobs
     },
     async getBranchRef() {
       return { sha: mainSha }
@@ -645,12 +671,233 @@ function makePr(run, overrides = {}) {
     mergeable: overrides.mergeable ?? true,
     mergeableState: "clean",
     mergeCommitSha: overrides.mergeCommitSha || null,
-    baseRef: "main",
-    baseRepoFullName: run.project.fullName,
-    headRef: run.branch,
+    baseRef: overrides.baseRef || "main",
+    baseRepoFullName: overrides.baseRepoFullName || run.project.fullName,
+    headRef: overrides.headRef || run.branch,
     headSha: overrides.headSha || run.headSha,
-    headRepoFullName: run.project.fullName,
+    headRepoFullName: overrides.headRepoFullName || run.project.fullName,
     nodeId: "PR_node"
+  }
+}
+
+async function advanceReviewPassedRunToNewSha(fixture, run) {
+  await writeFile(join(fixture.location.workspacePath, "hardened.txt"), "hardened\n", "utf8")
+  await git(["add", "hardened.txt"], fixture.location.workspacePath)
+  await git(["commit", "-m", "phase 6l hardened implementation"], fixture.location.workspacePath)
+  const newSha = await git(["rev-parse", "HEAD"], fixture.location.workspacePath)
+  const implementing = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status: "implementation_in_progress",
+    branch: run.branch,
+    headSha: run.headSha,
+    actor: "phase-6f-bounded-hardening-orchestrator",
+    evidence: [{
+      kind: "implementation",
+      sha: run.headSha,
+      source: "phase-6f-bounded-hardening-orchestrator",
+      metadata: {
+        project: run.project.id,
+        orchestrator: "phase-6f-bounded-hardening-orchestrator",
+        sourceReviewSha: run.headSha,
+        outcome: "hardening_started",
+        round: 1
+      }
+    }]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+  const ready = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: implementing.version,
+    status: "implementation_ready",
+    branch: run.branch,
+    headSha: newSha,
+    actor: CODEX_EXECUTION_ADAPTER_ID,
+    evidence: [{
+      kind: "implementation",
+      sha: newSha,
+      source: CODEX_EXECUTION_ADAPTER_ID,
+      metadata: {
+        project: run.project.id,
+        adapter: CODEX_EXECUTION_ADAPTER_ID,
+        attempt: implementing.attempts.implementation,
+        promptHash: PROMPT_HASH,
+        outcome: "implementation_ready",
+        changedFiles: 1
+      }
+    }]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+  const testing = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: ready.version,
+    status: "tests_in_progress",
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    evidence: [{
+      kind: "test",
+      sha: newSha,
+      source: AUTOMATED_TEST_RUNNER_ID,
+      metadata: {
+        project: run.project.id,
+        runner: AUTOMATED_TEST_RUNNER_ID,
+        attempt: ready.attempts.test + 1,
+        policyId: "phase-6e-local-node-policy",
+        policyHash: "b".repeat(64),
+        implSha: newSha,
+        outcome: "testing_started",
+        sandbox: AUTOMATED_TEST_SANDBOX_ID,
+        network: "none"
+      }
+    }]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+  const testsPassed = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: testing.version,
+    status: "tests_passed",
+    branch: run.branch,
+    headSha: newSha,
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    evidence: [{
+      kind: "test",
+      sha: newSha,
+      source: AUTOMATED_TEST_RUNNER_ID,
+      metadata: {
+        project: run.project.id,
+        runner: AUTOMATED_TEST_RUNNER_ID,
+        attempt: testing.attempts.test,
+        policyId: "phase-6e-local-node-policy",
+        policyHash: "b".repeat(64),
+        implSha: newSha,
+        outcome: "passed",
+        total: 1,
+        passed: 1,
+        failed: 0,
+        ambiguous: 0
+      }
+    }]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+  const reviewing = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: testsPassed.version,
+    status: "review_in_progress",
+    actor: INDEPENDENT_REVIEW_AGENT_ID,
+    evidence: [{
+      kind: "review",
+      sha: newSha,
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      metadata: {
+        project: run.project.id,
+        reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: testsPassed.attempts.review + 1,
+        reviewedSha: newSha,
+        promptHash: "c".repeat(64),
+        outcome: "review_started",
+        sandbox: "phase-6f-no-outbound-network-review-sandbox",
+        network: "none"
+      }
+    }]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+
+  return await transitionDevelopmentRun(run.runId, {
+    expectedVersion: reviewing.version,
+    status: "review_passed",
+    branch: run.branch,
+    headSha: newSha,
+    actor: INDEPENDENT_REVIEW_AGENT_ID,
+    evidence: [{
+      kind: "review",
+      sha: newSha,
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      metadata: {
+        project: run.project.id,
+        reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: reviewing.attempts.review,
+        reviewedSha: newSha,
+        promptHash: "c".repeat(64),
+        decision: REVIEW_DECISIONS.APPROVED,
+        mergeAllowed: true,
+        blockers: 0,
+        securityFindings: 0,
+        testsRequired: 0,
+        summaryHash: "e".repeat(64),
+        outcome: "approved",
+        sandbox: "phase-6f-no-outbound-network-review-sandbox",
+        network: "none"
+      }
+    }]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+}
+
+async function makeRecoveryMergeReadyFixture() {
+  const fixture = await makeDurableReviewPassedFixture()
+  const pr = makePr(fixture.run)
+  let run = fixture.run
+
+  for (const entry of [
+    makePhase6GDeliveryEvidence(run, "branch_pushed", {
+      branch: run.branch,
+      pushedSha: run.headSha,
+      previousRemoteSha: "",
+      remoteBranchSha: run.headSha,
+      pushedAt: STARTED_AT
+    }),
+    makePhase6GDeliveryEvidence(run, "pr_created", {
+      branch: run.branch,
+      base: "main",
+      prNumber: pr.number,
+      prHeadSha: run.headSha,
+      reconciledAt: ENDED_AT
+    }),
+    makePhase6GDeliveryEvidence(run, "ci_passed", {
+      prNumber: pr.number,
+      workflowName: "PPO PR validation",
+      workflowRunId: 100,
+      workflowConclusion: "success",
+      requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+      checkedAt: ENDED_AT
+    }),
+    makePhase6GRemoteReviewEvidence(run, pr)
+  ]) {
+    const actor = entry.source === REMOTE_PR_REVIEW_AGENT_ID ? REMOTE_PR_REVIEW_AGENT_ID : GITHUB_DELIVERY_AGENT_ID
+    run = await appendPhase6GProgress(run, fixture, entry, actor)
+  }
+
+  const mergeReady = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status: "merge_ready",
+    branch: run.branch,
+    headSha: run.headSha,
+    actor: GITHUB_DELIVERY_AGENT_ID,
+    evidence: [makePhase6GDeliveryEvidence(run, "merge_ready", {
+      prNumber: pr.number,
+      branch: run.branch,
+      base: "main",
+      prHeadSha: run.headSha,
+      workflowRunId: 100,
+      remoteReviewedSha: run.headSha,
+      remoteDecision: REVIEW_DECISIONS.APPROVED,
+      preparedAt: ENDED_AT
+    })]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+
+  return {
+    fixture,
+    pr,
+    run: mergeReady
   }
 }
 
@@ -966,6 +1213,65 @@ test("Phase 6L recovery-only profile matches Phase 6K policy identity without mu
   }
 })
 
+test("Phase 6L Linux recovery-only profile matches Phase 6K policy identity without readiness probes", async () => {
+  const directoryPaths = new Set([
+    "/var/lib/personal-project-operator/development-workspaces",
+    "/var/lib/personal-project-operator/source-repos/khlim-assist",
+    "/var/lib/personal-project-operator/source-repos/ledgerpilot-ai",
+    "/var/lib/personal-project-operator/source-repos/spy-market-agent",
+    "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
+    "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
+    "/var/lib/personal-project-operator/phase6-sandbox"
+  ])
+  const fakeInfo = (path) => ({
+    uid: 0,
+    gid: 0,
+    mode: 0o755,
+    isFile: () => !directoryPaths.has(path),
+    isDirectory: () => directoryPaths.has(path),
+    isSymbolicLink: () => false
+  })
+  const fakeStat = async (path) => fakeInfo(path)
+  const fakeIdentity = async () => ({
+    uid: 4242,
+    gid: 4243,
+    userName: "ppo",
+    groupName: "ppo"
+  })
+  const fakeExec = async () => ({ stdout: "ok\n", stderr: "" })
+
+  for (const project of PROJECTS) {
+    const run = runFor("tests_in_progress", {
+      project,
+      attempts: { test: 1 }
+    })
+    const continueProfile = await loadDevelopmentContinueRuntimeProfile({ run }, {
+      platform: "linux",
+      statImpl: fakeStat,
+      lstatImpl: fakeStat,
+      accessImpl: async () => {},
+      execFileImpl: fakeExec,
+      identityLookup: fakeIdentity,
+      linuxSandboxCapabilityProbe: async () => true
+    })
+    const recoveryProfile = await loadDevelopmentRecoveryRuntimeProfile({ run }, {
+      platform: "linux",
+      includeTestPolicy: true,
+      identityLookup: fakeIdentity,
+      execFileImpl: async () => {
+        throw new Error("SENSITIVE_TEST_SENTINEL recovery must not probe mutation runtime")
+      },
+      linuxSandboxCapabilityProbe: async () => {
+        throw new Error("SENSITIVE_TEST_SENTINEL recovery must not probe sandbox readiness")
+      }
+    })
+    const continueIdentity = resolveAutomatedTestPolicyIdentity(run, continueProfile)
+    const recoveryIdentity = resolveAutomatedTestPolicyIdentity(run, recoveryProfile)
+
+    assert.deepEqual(recoveryIdentity, continueIdentity, project.id)
+  }
+})
+
 test("Phase 6L review recovery invokes only independent review reconciliation", async () => {
   for (const [status, observation] of [
     ["open_attempt", "review_attempt_open"],
@@ -1172,6 +1478,201 @@ test("Phase 6L maps real Phase 6G read-only delivery reconciliation states", asy
   }
 })
 
+test("Phase 6L real Phase 6G recovery ignores trusted historical delivery from prior hardening SHA", async () => {
+  const fixture = await makeDurableReviewPassedFixture()
+  const shaA = fixture.run.headSha
+  const prA = makePr(fixture.run, { number: 44 })
+  let run = fixture.run
+
+  for (const entry of [
+    makePhase6GDeliveryEvidenceForSha(run, shaA, "branch_pushed", {
+      branch: run.branch,
+      pushedSha: shaA,
+      previousRemoteSha: "",
+      remoteBranchSha: shaA,
+      pushedAt: STARTED_AT
+    }),
+    makePhase6GDeliveryEvidenceForSha(run, shaA, "pr_created", {
+      branch: run.branch,
+      base: "main",
+      prNumber: prA.number,
+      prHeadSha: shaA,
+      reconciledAt: ENDED_AT
+    }),
+    makePhase6GDeliveryEvidenceForSha(run, shaA, "ci_passed", {
+      prNumber: prA.number,
+      workflowName: "PPO PR validation",
+      workflowRunId: 100,
+      workflowConclusion: "success",
+      requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+      checkedAt: ENDED_AT
+    })
+  ]) {
+    run = await appendPhase6GProgress(run, fixture, entry)
+  }
+
+  run = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status: "review_changes_requested",
+    branch: run.branch,
+    headSha: shaA,
+    actor: REMOTE_PR_REVIEW_AGENT_ID,
+    evidence: [makePhase6GRemoteReviewEvidenceForSha(run, prA, shaA, {
+      decision: REVIEW_DECISIONS.CHANGES_REQUESTED,
+      mergeAllowed: false,
+      blockers: 1,
+      securityFindings: 0,
+      testsRequired: 0,
+      outcome: "changes_requested"
+    })]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+
+  const runB = await advanceReviewPassedRunToNewSha(fixture, run)
+  assert.notEqual(runB.headSha, shaA)
+
+  const historicalClient = makeReadOnlyDeliveryGithubClient(runB, {
+    prs: [makePr(runB, { number: prA.number, headSha: shaA })]
+  })
+  const historical = await executeDevelopmentRecovery(runB.runId, {
+    writeDataDir: fixture.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: fixture.workspaceRegistry
+    }),
+    gitRunner: makeReadOnlyDeliveryGitRunner(shaA),
+    githubClient: historicalClient
+  })
+
+  assert.equal(historical.observation, "delivery_not_started")
+  assert.equal(historical.outcome, "recovery_not_required")
+  assert.equal(historical.ownerActionRequired, false)
+  assert.equal(historical.continuationCandidate, true)
+  assert.equal(historical.run.headSha, runB.headSha)
+  assert.deepEqual(historicalClient.writes, [])
+
+  const currentBranchRun = await appendPhase6GProgress(runB, fixture, makePhase6GDeliveryEvidenceForSha(runB, runB.headSha, "branch_pushed", {
+    branch: runB.branch,
+    pushedSha: runB.headSha,
+    previousRemoteSha: shaA,
+    remoteBranchSha: runB.headSha,
+    pushedAt: ENDED_AT
+  }))
+  const currentClient = makeReadOnlyDeliveryGithubClient(currentBranchRun, {
+    prs: []
+  })
+  const current = await executeDevelopmentRecovery(currentBranchRun.runId, {
+    writeDataDir: fixture.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: fixture.workspaceRegistry
+    }),
+    gitRunner: makeReadOnlyDeliveryGitRunner(currentBranchRun.headSha),
+    githubClient: currentClient
+  })
+
+  assert.equal(current.observation, "delivery_branch_observed")
+  assert.equal(current.outcome, "recovery_observed")
+  assert.deepEqual(currentClient.writes, [])
+})
+
+test("Phase 6L real Phase 6G recovery fails closed for contradictory historical and malformed current evidence", async () => {
+  const cases = [
+    {
+      name: "historical-contradictory-sha-fields",
+      entry: (run, shaA) => makePhase6GDeliveryEvidenceForSha(run, shaA, "branch_pushed", {
+        branch: run.branch,
+        pushedSha: shaA,
+        remoteBranchSha: run.headSha,
+        pushedAt: STARTED_AT
+      }),
+      branchSha: (run, shaA) => shaA
+    },
+    {
+      name: "historical-partially-current-pr-head",
+      entry: (run, shaA) => makePhase6GDeliveryEvidenceForSha(run, shaA, "pr_created", {
+        branch: run.branch,
+        base: "main",
+        prNumber: 77,
+        prHeadSha: run.headSha,
+        reconciledAt: ENDED_AT
+      }),
+      branchSha: (run, shaA) => shaA
+    },
+    {
+      name: "current-malformed-policy",
+      entry: (run) => makePhase6GDeliveryEvidenceForSha(run, run.headSha, "branch_pushed", {
+        branch: run.branch,
+        pushedSha: run.headSha,
+        remoteBranchSha: run.headSha,
+        policyHash: "0".repeat(64),
+        pushedAt: STARTED_AT
+      }),
+      branchSha: (run) => run.headSha
+    },
+    {
+      name: "current-malformed-pr-head",
+      entry: (run, shaA) => makePhase6GDeliveryEvidenceForSha(run, run.headSha, "pr_created", {
+        branch: run.branch,
+        base: "main",
+        prNumber: 77,
+        prHeadSha: shaA,
+        reconciledAt: ENDED_AT
+      }),
+      branchSha: (run) => run.headSha
+    }
+  ]
+
+  for (const entry of cases) {
+    const fixture = await makeDurableReviewPassedFixture()
+    const shaA = fixture.run.headSha
+    const requested = await transitionDevelopmentRun(fixture.run.runId, {
+      expectedVersion: fixture.run.version,
+      status: "review_changes_requested",
+      branch: fixture.run.branch,
+      headSha: shaA,
+      actor: REMOTE_PR_REVIEW_AGENT_ID,
+      evidence: [makePhase6GRemoteReviewEvidenceForSha(fixture.run, makePr(fixture.run), shaA, {
+        decision: REVIEW_DECISIONS.CHANGES_REQUESTED,
+        mergeAllowed: false,
+        blockers: 1,
+        securityFindings: 0,
+        testsRequired: 0,
+        outcome: "changes_requested"
+      })]
+    }, {
+      writeDataDir: fixture.writeDataDir,
+      now: fixture.now
+    })
+    let runB = await advanceReviewPassedRunToNewSha(fixture, requested)
+    runB = await appendPhase6GProgress(runB, fixture, entry.entry(runB, shaA))
+    const client = makeReadOnlyDeliveryGithubClient(runB)
+    const result = await executeDevelopmentRecovery(runB.runId, {
+      writeDataDir: fixture.writeDataDir,
+      recoveryRuntimeProfileProvider: async () => ({
+        workspaceRegistry: fixture.workspaceRegistry
+      }),
+      gitRunner: makeReadOnlyDeliveryGitRunner(entry.branchSha(runB, shaA)),
+      githubClient: client
+    })
+
+    assert.equal(result.outcome, "recovery_unavailable", entry.name)
+    assert.deepEqual(client.writes, [], entry.name)
+  }
+
+  const unknown = await makeDurableReviewPassedFixture()
+  const unknownResult = await executeDevelopmentRecovery(unknown.run.runId, {
+    writeDataDir: unknown.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: unknown.workspaceRegistry
+    }),
+    gitRunner: makeReadOnlyDeliveryGitRunner("9".repeat(40)),
+    githubClient: makeReadOnlyDeliveryGithubClient(unknown.run)
+  })
+
+  assert.equal(unknownResult.outcome, "recovery_unavailable", "unknown-third-remote-branch")
+})
+
 test("Phase 6L real Phase 6G recovery observes merge-ready and remote-merged state without writes", async () => {
   const fixture = await makeDurableReviewPassedFixture()
   const pr = makePr(fixture.run)
@@ -1265,6 +1766,125 @@ test("Phase 6L real Phase 6G recovery observes merge-ready and remote-merged sta
   assert.deepEqual(mergedClient.writes, [])
 })
 
+test("Phase 6L real Phase 6G merge-ready recovery fails closed when proof is incomplete", async () => {
+  const cases = [
+    {
+      name: "wrong-pr-head",
+      pr: (run, pr) => ({ ...pr, headSha: "8".repeat(40) })
+    },
+    {
+      name: "wrong-pr-base",
+      pr: (_run, pr) => ({ ...pr, baseRef: "develop" })
+    },
+    {
+      name: "wrong-pr-repository",
+      pr: (_run, pr) => ({ ...pr, baseRepoFullName: "Linardi1328/wrong-repo" })
+    },
+    {
+      name: "not-mergeable",
+      pr: (_run, pr) => ({ ...pr, mergeable: false })
+    },
+    {
+      name: "ci-pending",
+      client: (run, pr) => makeReadOnlyDeliveryGithubClient(run, {
+        prs: [pr],
+        runs: [{
+          id: 100,
+          name: "PPO PR validation",
+          event: "pull_request",
+          status: "in_progress",
+          conclusion: null,
+          headSha: run.headSha,
+          headBranch: run.branch
+        }]
+      })
+    },
+    {
+      name: "ci-failed",
+      client: (run, pr) => makeReadOnlyDeliveryGithubClient(run, {
+        prs: [pr],
+        runs: [{
+          id: 100,
+          name: "PPO PR validation",
+          event: "pull_request",
+          status: "completed",
+          conclusion: "failure",
+          headSha: run.headSha,
+          headBranch: run.branch
+        }]
+      })
+    },
+    {
+      name: "stale-workflow-head",
+      client: (run, pr) => makeReadOnlyDeliveryGithubClient(run, {
+        prs: [pr],
+        runs: [{
+          id: 100,
+          name: "PPO PR validation",
+          event: "pull_request",
+          status: "completed",
+          conclusion: "success",
+          headSha: "7".repeat(40),
+          headBranch: run.branch
+        }]
+      })
+    },
+    {
+      name: "merged-main-mismatch",
+      pr: (_run, pr) => ({
+        ...pr,
+        state: "closed",
+        merged: true,
+        mergeCommitSha: OTHER_SHA
+      }),
+      mainSha: "6".repeat(40)
+    }
+  ]
+
+  for (const entry of cases) {
+    const { fixture, run, pr } = await makeRecoveryMergeReadyFixture()
+    const prState = entry.pr ? entry.pr(run, pr) : pr
+    const client = entry.client
+      ? entry.client(run, prState)
+      : makeReadOnlyDeliveryGithubClient(run, {
+        prs: [prState],
+        mainSha: entry.mainSha || OTHER_SHA
+      })
+    const result = await executeDevelopmentRecovery(run.runId, {
+      writeDataDir: fixture.writeDataDir,
+      recoveryRuntimeProfileProvider: async () => ({
+        workspaceRegistry: fixture.workspaceRegistry
+      }),
+      githubClient: client
+    })
+
+    assert.equal(result.outcome, "recovery_unavailable", entry.name)
+    assert.deepEqual(client.writes, [], entry.name)
+  }
+
+  const malformed = await makeRecoveryMergeReadyFixture()
+  const malformedRun = await appendPhase6GProgress(malformed.run, malformed.fixture, makePhase6GDeliveryEvidenceForSha(malformed.run, malformed.run.headSha, "merge_started", {
+    prNumber: malformed.pr.number,
+    expectedHeadSha: "5".repeat(40),
+    mergeMethod: "squash",
+    mergeAttemptedAt: ENDED_AT
+  }))
+  const malformedClient = makeReadOnlyDeliveryGithubClient(malformedRun, {
+    prs: [malformed.pr],
+    mainSha: OTHER_SHA
+  })
+  const malformedResult = await executeDevelopmentRecovery(malformedRun.runId, {
+    writeDataDir: malformed.fixture.writeDataDir,
+    recoveryRuntimeProfileProvider: async () => ({
+      workspaceRegistry: malformed.fixture.workspaceRegistry
+    }),
+    githubClient: malformedClient
+  })
+
+  assert.equal(malformedResult.outcome, "recovery_unavailable", "malformed-merge-started")
+  assert.deepEqual(malformedClient.writes, [])
+})
+
 test("Phase 6L real Phase 6G recovery fails closed for wrong or conflicting remote delivery state", async () => {
   const wrongHead = await makeDurableReviewPassedFixture()
   const wrongPr = makePr(wrongHead.run, { headSha: "f".repeat(40) })
@@ -1351,6 +1971,66 @@ test("Phase 6L detects concurrent durable state changes after read-only observat
   assert.equal(reader.reads.length, 2)
 })
 
+test("Phase 6L performs the durable post-read before mapping successful child results", async () => {
+  const run = runFor("implementation_in_progress", {
+    version: 7
+  })
+  const normalReader = makeReader([run, run])
+  const normalChildren = makeReconcilers({
+    reconcileCodexExecution: {
+      ok: true,
+      outcome: "codex_execution_reconciled",
+      status: "advanced"
+    }
+  })
+  const normal = await executeDevelopmentRecovery(RUN_ID, {
+    readRun: normalReader.readRun,
+    reconcilers: normalChildren.reconcilers,
+    recoveryRuntimeProfileProvider: recoveryProfileProvider
+  })
+
+  assert.equal(normal.observation, "codex_workspace_advanced")
+  assert.equal(normalReader.reads.length, 2)
+
+  const claimedReader = makeReader([run, run])
+  const claimedChildren = makeReconcilers({
+    reconcileCodexExecution: {
+      ok: true,
+      outcome: "codex_execution_reconciled",
+      status: "advanced",
+      run: {
+        ...run,
+        version: run.version + 1,
+        status: "implementation_ready"
+      }
+    }
+  })
+  const claimed = await executeDevelopmentRecovery(RUN_ID, {
+    readRun: claimedReader.readRun,
+    reconcilers: claimedChildren.reconcilers,
+    recoveryRuntimeProfileProvider: recoveryProfileProvider
+  })
+
+  assert.equal(claimed.outcome, "recovery_state_changed")
+  assert.equal(claimed.observation, "state_changed")
+  assert.equal(claimedReader.reads.length, 2)
+
+  const childMutated = runFor("implementation_ready", {
+    version: 8,
+    history: [{ actor: CODEX_EXECUTION_ADAPTER_ID }]
+  })
+  const childMutationReader = makeReader([run, childMutated])
+  const childMutation = await executeDevelopmentRecovery(RUN_ID, {
+    readRun: childMutationReader.readRun,
+    reconcilers: claimedChildren.reconcilers,
+    recoveryRuntimeProfileProvider: recoveryProfileProvider
+  })
+
+  assert.equal(childMutation.outcome, "recovery_state_changed")
+  assert.equal(childMutation.observation, "state_changed")
+  assert.equal(childMutationReader.reads.length, 2)
+})
+
 test("Phase 6L still re-reads durable state when a child reconciler throws", async () => {
   const run = runFor("implementation_in_progress", {
     version: 7
@@ -1405,6 +2085,7 @@ test("Phase 6L still re-reads durable state when a child reconciler throws", asy
 
 test("Phase 6L detects child reconciler state-write regressions from claimed child run", async () => {
   const run = runFor("implementation_in_progress")
+  const reader = makeReader([run, run])
   const children = makeReconcilers({
     reconcileCodexExecution: {
       ok: true,
@@ -1417,10 +2098,15 @@ test("Phase 6L detects child reconciler state-write regressions from claimed chi
       }
     }
   })
-  const result = await executeDevelopmentRecovery(RUN_ID, await recoveryOptions(run, children))
+  const result = await executeDevelopmentRecovery(RUN_ID, {
+    readRun: reader.readRun,
+    reconcilers: children.reconcilers,
+    recoveryRuntimeProfileProvider: recoveryProfileProvider
+  })
 
   assert.equal(result.outcome, "recovery_state_changed")
   assert.equal(result.observation, "state_changed")
+  assert.equal(reader.reads.length, 2)
 })
 
 test("Phase 6L malformed child results and unsafe values collapse to bounded recovery_unavailable", async () => {
