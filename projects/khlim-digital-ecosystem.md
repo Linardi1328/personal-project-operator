@@ -50,4 +50,3 @@ Good fit for small, reviewable foundation tasks after the first scaffold is expl
 - Role and relationship mistakes could expose private athlete or family data.
 - A broad initial scaffold could prematurely couple mobile, admin, API, data, and infrastructure concerns.
 - Future notification, reward, event, and AI features need explicit consent, audit, and abuse-prevention boundaries.
-
