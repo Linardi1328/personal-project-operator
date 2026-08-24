@@ -49,7 +49,7 @@ import {
   PHASE_6N_RUN_CATALOG_POLICY_ID
 } from "./development-run-catalog.mjs"
 import { handlePpoDevelopmentContinueCommand } from "./development-continue-orchestrator.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 const BASE_SHA = "a".repeat(40)
 const HEAD_SHA = "b".repeat(40)
@@ -183,7 +183,7 @@ function cancellationPolicyContract(overrides = {}) {
     cancellation: DEVELOPMENT_RUN_CANCELLATION_ID,
     policy: PHASE_6P_RUN_CANCELLATION_POLICY_ID,
     schemaVersion: 1,
-    ordinaryProjects: listPhase2GitHubProjects().map((project) => project.id).sort(),
+    ordinaryProjects: listOrdinaryDevelopmentProjects().map((project) => project.id).sort(),
     statusClassification,
     canonicalStateRequired: "canonical_current",
     expectedVersionRequired: true,

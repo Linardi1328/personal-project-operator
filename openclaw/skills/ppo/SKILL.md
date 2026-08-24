@@ -47,6 +47,8 @@ Personal Project Operator must use:
 /ppo recover <run-id>
 ```
 
+Connected read-only and planning project ids include `khlim-assist`, `ledgerpilot-ai`, `spy-market-agent`, `portfolio`, `rbl-content-engine`, and `khlim-digital-ecosystem`. The ordinary-development registry used by `/ppo start` remains the reviewed first five projects; KHLIM Super App is excluded until fixed source paths and test policies are approved.
+
 Phase 5C bare terminal `note-add` remains terminal-only. Phase 5D adds `/ppo note-add` staging and `/ppo note-confirm` approval through the existing `ppo_local` path.
 Phase 6K adds `/ppo continue <run-id>` for existing ordinary five-project Phase 6 development runs only. It does not route PPO production deployment, verification, rollback, or rollback reconciliation.
 Phase 6M adds `/ppo recover <run-id>` for one read-only Phase 6L recovery observation on an existing ordinary five-project Phase 6 development run. It does not repair, retry, continue, or route production recovery.

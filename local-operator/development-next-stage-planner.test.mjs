@@ -20,7 +20,7 @@ import {
   planExistingDevelopmentRun,
   planNextDevelopmentStage
 } from "./development-next-stage-planner.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 import {
   handleProjectNoteAddCommand,
   readProjectNoteRecords
@@ -28,7 +28,7 @@ import {
 
 const BASE_SHA = "a".repeat(40)
 const NEXT_SHA = "b".repeat(40)
-const PROJECTS = listPhase2GitHubProjects()
+const PROJECTS = listOrdinaryDevelopmentProjects()
 const PROJECTS_BY_ID = new Map(PROJECTS.map((project) => [project.id, {
   ...project,
   fullName: `${project.owner}/${project.repo}`

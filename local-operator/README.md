@@ -440,7 +440,7 @@ Phase 3C routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo
 
 Phase 5A allows exactly one write action from the terminal wrapper: `issue-create <project> <title> [body...]`. The command:
 
-- resolves projects through the existing five-project registry only
+- resolves projects through the six-project connected registry only
 - permits only `POST /repos/<approved repo>/issues`
 - sends only `title` and `body` fields
 - invokes `gh` through `execFile` with `shell: false`, fixed argv shape, bounded timeout, and bounded output buffer

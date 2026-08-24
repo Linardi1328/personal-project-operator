@@ -34,11 +34,15 @@ export function listAllowedProjects() {
   return listPhase2GitHubProjects()
 }
 
+function allowedProjectIdList() {
+  return listPhase2GitHubProjects().map((project) => project.id).join(", ")
+}
+
 export function resolveProject(projectId) {
   if (typeof projectId !== "string") {
     throw new GitHubReadOnlyError(
       "INVALID_PROJECT",
-      "Project id is required. Use one of: khlim-assist, ledgerpilot-ai, spy-market-agent, portfolio, rbl-content-engine."
+      `Project id is required. Use one of: ${allowedProjectIdList()}.`
     )
   }
 
@@ -47,7 +51,7 @@ export function resolveProject(projectId) {
   if (!normalizedProjectId) {
     throw new GitHubReadOnlyError(
       "INVALID_PROJECT",
-      "Project id is required. Use one of: khlim-assist, ledgerpilot-ai, spy-market-agent, portfolio, rbl-content-engine."
+      `Project id is required. Use one of: ${allowedProjectIdList()}.`
     )
   }
 

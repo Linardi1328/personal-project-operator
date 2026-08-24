@@ -57,7 +57,7 @@ import {
   loadDevelopmentContinueRuntimeProfile,
   loadDevelopmentRecoveryRuntimeProfile
 } from "./development-continue-runtime-profile.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 const execFileAsync = promisify(execFile)
 const RUN_ID = "L".repeat(43)
@@ -67,7 +67,7 @@ const OTHER_SHA = "c".repeat(40)
 const PROMPT_HASH = "d".repeat(64)
 const STARTED_AT = "2026-08-23T00:00:00.000Z"
 const ENDED_AT = "2026-08-23T00:01:00.000Z"
-const PROJECTS = listPhase2GitHubProjects().map((project) => ({
+const PROJECTS = listOrdinaryDevelopmentProjects().map((project) => ({
   ...project,
   fullName: `${project.owner}/${project.repo}`
 }))

@@ -25,7 +25,7 @@ import {
 import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
 import { runPpoLocalTool, toPpoWrapperArgs } from "../openclaw/plugins/ppo-local/bridge.mjs"
 
-const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine"]
+const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine", "khlim-digital-ecosystem"]
 const fixedNow = () => new Date("2026-08-19T02:00:00.000Z")
 const afterExpiry = () => new Date(fixedNow().getTime() + NOTE_APPROVAL_TTL_MS + 1)
 const validRequestId = "A".repeat(43)

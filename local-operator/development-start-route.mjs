@@ -4,15 +4,15 @@ import {
   createPlannedDevelopmentRun
 } from "./development-next-stage-planner.mjs"
 import {
-  getPhase2GitHubProject,
-  listPhase2GitHubProjects
+  getOrdinaryDevelopmentProject,
+  listOrdinaryDevelopmentProjects
 } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_START_ROUTE_ID = "phase-7a-controlled-ppo-start-route"
 export const PHASE_7A_START_POLICY_ID = "phase-7a-controlled-ppo-start-policy"
 export const MAX_PHASE_7A_START_OUTPUT_CHARS = 4096
 
-const allowedProjects = Object.freeze(listPhase2GitHubProjects().map((project) => project.id))
+const allowedProjects = Object.freeze(listOrdinaryDevelopmentProjects().map((project) => project.id))
 const allowedProjectSet = new Set(allowedProjects)
 const allowedNextStageSet = new Set(["planning", "implementation"])
 const trustedPhase6BOptionKeys = Object.freeze([
@@ -153,7 +153,7 @@ function validateProjectId(projectId) {
     }
   }
 
-  if (!allowedProjectSet.has(projectId) || !getPhase2GitHubProject(projectId)) {
+  if (!allowedProjectSet.has(projectId) || !getOrdinaryDevelopmentProject(projectId)) {
     return {
       ok: false,
       code: "UNKNOWN_PROJECT"

@@ -13,8 +13,8 @@ import {
   createGitHubReadOnlyClient
 } from "./github-readonly.mjs"
 import {
-  getPhase2GitHubProject,
-  listPhase2GitHubProjects
+  getOrdinaryDevelopmentProject,
+  listOrdinaryDevelopmentProjects
 } from "./github-project-registry.mjs"
 
 export const NEXT_STAGE_PLANNER_SCHEMA_VERSION = 1
@@ -55,7 +55,7 @@ const unsafeControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-
 const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
 
 const approvedProjectDocRefs = Object.freeze(Object.fromEntries(
-  listPhase2GitHubProjects().map((project) => [project.id, `projects/${project.id}.md`])
+  listOrdinaryDevelopmentProjects().map((project) => [project.id, `projects/${project.id}.md`])
 ))
 const approvedSourceRefs = new Set([
   "ROADMAP.md",
@@ -94,7 +94,7 @@ function safePlannerFailure(error) {
 }
 
 function allowedProjectIdList() {
-  return listPhase2GitHubProjects().map((project) => project.id).join(", ")
+  return listOrdinaryDevelopmentProjects().map((project) => project.id).join(", ")
 }
 
 function repoFullName(project) {
@@ -110,7 +110,7 @@ function resolvePlannerProject(projectId) {
   }
 
   const normalized = projectId.trim()
-  const project = getPhase2GitHubProject(normalized)
+  const project = getOrdinaryDevelopmentProject(normalized)
 
   if (!project) {
     throw plannerError(

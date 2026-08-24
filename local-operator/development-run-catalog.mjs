@@ -16,7 +16,7 @@ import {
   isDevelopmentRunTerminalStatus,
   stageForDevelopmentRunStatus
 } from "./development-run-state.mjs"
-import { getPhase2GitHubProject } from "./github-project-registry.mjs"
+import { getOrdinaryDevelopmentProject } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_RUN_CATALOG_ID = "phase-6n-readonly-development-run-catalog"
 export const PHASE_6N_RUN_CATALOG_POLICY_ID = "phase-6n-readonly-development-run-catalog-policy"
@@ -495,7 +495,7 @@ function validSummary(summary) {
     !DEVELOPMENT_RUN_ID_PATTERN.test(summary.runId) ||
     !isSafeCatalogScalar(summary.runId, 43) ||
     !isSafeCatalogScalar(summary.project, 80) ||
-    !getPhase2GitHubProject(summary.project) ||
+    !getOrdinaryDevelopmentProject(summary.project) ||
     !statusSet.has(summary.status) ||
     !stageSet.has(summary.stage) ||
     stageForDevelopmentRunStatus(summary.status) !== summary.stage ||

@@ -28,7 +28,7 @@ import {
 import {
   loadDevelopmentContinueRuntimeProfile
 } from "./development-continue-runtime-profile.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 const RUN_ID = "A".repeat(43)
 const BAD_RUN_ID = "short"
@@ -40,8 +40,8 @@ const PROMPT_HASH = "e".repeat(64)
 const STARTED_AT = "2026-08-23T00:00:00.000Z"
 const ENDED_AT = "2026-08-23T00:01:00.000Z"
 const PROJECT = {
-  ...listPhase2GitHubProjects()[0],
-  fullName: `${listPhase2GitHubProjects()[0].owner}/${listPhase2GitHubProjects()[0].repo}`
+  ...listOrdinaryDevelopmentProjects()[0],
+  fullName: `${listOrdinaryDevelopmentProjects()[0].owner}/${listOrdinaryDevelopmentProjects()[0].repo}`
 }
 const TEST_POLICY_ID = "phase-6e-local-node-policy"
 
@@ -325,7 +325,7 @@ function runPpoCommand(args, options = {}) {
 }
 
 function ordinaryProject(projectId) {
-  const project = listPhase2GitHubProjects().find((entry) => entry.id === projectId)
+  const project = listOrdinaryDevelopmentProjects().find((entry) => entry.id === projectId)
 
   assert.ok(project, `ordinary project ${projectId} exists`)
   return project
@@ -1322,7 +1322,7 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
       stepCount: 2
     }]
   ])
-  const projectIds = listPhase2GitHubProjects().map((project) => project.id)
+  const projectIds = listOrdinaryDevelopmentProjects().map((project) => project.id)
 
   assert.deepEqual(projectIds.toSorted(), Array.from(expectedPolicies.keys()).toSorted())
 

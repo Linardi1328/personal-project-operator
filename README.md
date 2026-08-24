@@ -184,6 +184,7 @@ Allowed Phase 2A projects are fixed in the local read-only registry:
 - `spy-market-agent` -> `Linardi1328/spy-market-agent`
 - `portfolio` -> `Linardi1328/richie-linardi-portfolio-website`
 - `rbl-content-engine` -> `Linardi1328/rbl-content-engine`
+- `khlim-digital-ecosystem` -> `Linardi1328/khlim-digital-ecosystem`
 
 Allowed GitHub endpoint families:
 
@@ -216,6 +217,7 @@ Supported projects remain fixed:
 - `spy-market-agent`
 - `portfolio`
 - `rbl-content-engine`
+- `khlim-digital-ecosystem`
 
 `/ppo repo <project>` returns repository metadata and a small bounded recent-commit list. `/ppo pr <project>` returns a bounded open-PR summary. Both use only the Phase 2A endpoint families already listed above.
 
@@ -229,7 +231,7 @@ Phase 2C upgrades `/ppo status` to a live GitHub read-only summary through the s
 /ppo status -> ppo_local -> local-operator/ppo-command.mjs -> GitHub status formatter -> Phase 2A client
 ```
 
-The command covers exactly the five connected project ids in registry order and reports observable GitHub facts only:
+The command covers exactly the six connected project ids in registry order and reports observable GitHub facts only:
 
 - repository full name
 - default branch
@@ -259,7 +261,7 @@ Phase 3A prompt context is split into:
 - curated project documentation from the fixed `projects/` mapping
 - live GitHub read-only facts from the approved Phase 2A endpoint families
 
-The command accepts exactly the five connected project ids, bounds task text to 1000 characters, includes a simple deterministic task-size estimate, and adds hardening emphasis for explicit hardening or error-boundary tasks.
+The command accepts exactly the six connected project ids, bounds task text to 1000 characters, includes a simple deterministic task-size estimate, and adds hardening emphasis for explicit hardening or error-boundary tasks.
 
 Phase 3A originally kept Telegram/OpenClaw exposure deferred. Phase 3C now routes `/ppo codex ...` through `ppo_local` using direct tool dispatch.
 
@@ -303,8 +305,11 @@ Current connected candidates:
 - SPY Market Agent: `Linardi1328/spy-market-agent`
 - Portfolio Website: `Linardi1328/richie-linardi-portfolio-website`
 - RBL Content Engine: `Linardi1328/rbl-content-engine`
+- KHLIM Super App: `Linardi1328/khlim-digital-ecosystem`
 
 See [PROJECTS.md](PROJECTS.md) and the files in [projects/](projects/) for project-level state docs.
+
+The connected registry powers read-only summaries, deterministic planning, issue creation, and project notes. Ordinary development runs use a separate reviewed five-project registry with fixed source paths and test policies; KHLIM Super App is not yet eligible for `/ppo start`.
 
 ## Phase 4A VPS Deployment Foundation
 
@@ -338,7 +343,7 @@ Without exact confirmation, the command prints a deterministic preview and refus
 PPO_GITHUB_WRITE_CONFIRM=create-issue:khlim-assist
 ```
 
-The only permitted network write is `POST /repos/<approved repo>/issues` for the existing five-project registry, with `title` and `body` fields only. The Phase 5A terminal command is not a `/ppo` command.
+The only permitted network write is `POST /repos/<approved repo>/issues` for the six-project connected registry, with `title` and `body` fields only. The Phase 5A terminal command is not a `/ppo` command.
 
 Phase 5A keeps PR writes, comments, labels, branch creation, commits, merges, workflow dispatches, project-state file updates, VPS deployment, and other GitHub writes disabled. Local audit records are stored under `local-operator/audit/` as credential-free JSONL and are ignored by git.
 
@@ -351,7 +356,7 @@ Phase 5B adds two `/ppo` commands through the existing `ppo_local` direct-tool p
 /ppo issue-confirm <request-id>
 ```
 
-`/ppo issue-create` never calls GitHub. It validates against the existing five-project registry and Phase 5A title/body limits, shows the deterministic preview, writes the normalized intent into a private local pending store, and returns `/ppo issue-confirm <request-id>`.
+`/ppo issue-create` never calls GitHub. It validates against the six-project connected registry and Phase 5A title/body limits, shows the deterministic preview, writes the normalized intent into a private local pending store, and returns `/ppo issue-confirm <request-id>`.
 
 `/ppo issue-confirm` atomically claims one matching unexpired request before any network write, deletes the pending content, and then invokes the Phase 5A issue writer with internal confirmation. Request ids are cryptographically random, opaque, single-use, and expire after 10 minutes. Unknown, expired, malformed, already-consumed, or replayed ids perform zero GitHub writes.
 
@@ -371,7 +376,7 @@ Without exact confirmation, the command prints a deterministic preview and refus
 PPO_NOTE_WRITE_CONFIRM=add-note:khlim-assist
 ```
 
-The command resolves projects only through the existing five-project registry, validates note text as inert terminal data, rejects empty, oversized, or terminal-control input, and stores append-only note records under `${PPO_WRITE_DATA_DIR}/project-notes`. Local write data defaults to `local-operator/write-data/`; systemd sets `PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data` for the VPS.
+The command resolves projects only through the six-project connected registry, validates note text as inert terminal data, rejects empty, oversized, or terminal-control input, and stores append-only note records under `${PPO_WRITE_DATA_DIR}/project-notes`. Local write data defaults to `local-operator/write-data/`; systemd sets `PPO_WRITE_DATA_DIR=/var/lib/personal-project-operator/write-data` for the VPS.
 
 Each stored note has a random opaque note id, timestamp, project metadata, and the exact note text. Audit records are metadata-only and must not include note text, confirmation values, tokens, raw failures, or request ids. If the attempted audit record cannot be established, no note is appended. If the append succeeds but success audit fails, the command returns an explicit "note may have been written" result so the store can be inspected before retrying.
 
@@ -386,7 +391,7 @@ Phase 5D adds two `/ppo` commands through the existing `ppo_local` direct-tool p
 /ppo note-confirm <request-id>
 ```
 
-`/ppo note-add` never appends a note. It resolves the project through the existing five-project registry, reuses the Phase 5C note validation and 2000-character limit, rejects chat input containing `PPO_NOTE_WRITE_CONFIRM`, shows project/repo/note length without note text, writes the normalized intent into a private local pending store, and returns `/ppo note-confirm <request-id>`.
+`/ppo note-add` never appends a note. It resolves the project through the six-project connected registry, reuses the Phase 5C note validation and 2000-character limit, rejects chat input containing `PPO_NOTE_WRITE_CONFIRM`, shows project/repo/note length without note text, writes the normalized intent into a private local pending store, and returns `/ppo note-confirm <request-id>`.
 
 `/ppo note-confirm` atomically claims and consumes one unexpired request before invoking the Phase 5C writer with internal `add-note:<project>` confirmation. Request ids are cryptographically random, opaque, single-use, and expire after 10 minutes. Unknown, expired, malformed, already-consumed, or replayed ids perform zero note writes.
 

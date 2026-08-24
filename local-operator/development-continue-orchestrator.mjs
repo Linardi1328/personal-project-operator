@@ -22,7 +22,7 @@ import {
   executePhase6GDelivery,
   executeShaPinnedMerge
 } from "./github-delivery-agent.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_CONTINUE_ORCHESTRATOR_ID = "phase-6k-controlled-ppo-continue-orchestrator"
 export const PHASE_6K_CONTINUE_POLICY_ID = "phase-6k-controlled-ppo-continue"
@@ -31,7 +31,7 @@ const policyBoundary = Object.freeze({
   id: PHASE_6K_CONTINUE_POLICY_ID,
   orchestrator: DEVELOPMENT_CONTINUE_ORCHESTRATOR_ID,
   callerInput: Object.freeze(["runId"]),
-  allowedProjects: Object.freeze(listPhase2GitHubProjects().map((project) => project.id)),
+  allowedProjects: Object.freeze(listOrdinaryDevelopmentProjects().map((project) => project.id)),
   maximumStatus: "merged",
   productionActions: false,
   backgroundExecution: false,

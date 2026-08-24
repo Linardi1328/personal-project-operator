@@ -17,8 +17,8 @@ import {
   PPO_WRITE_DATA_DIR_ENV
 } from "./project-note-add.mjs"
 import {
-  getPhase2GitHubProject,
-  listPhase2GitHubProjects
+  getOrdinaryDevelopmentProject,
+  listOrdinaryDevelopmentProjects
 } from "./github-project-registry.mjs"
 import {
   DEVELOPMENT_RUN_ID_BYTES,
@@ -278,7 +278,7 @@ function safeRunStateFailure(error) {
 }
 
 function allowedProjectIdList() {
-  return listPhase2GitHubProjects().map((project) => project.id).join(", ")
+  return listOrdinaryDevelopmentProjects().map((project) => project.id).join(", ")
 }
 
 function repoFullName(project) {
@@ -534,7 +534,7 @@ export function resolveDevelopmentRunProject(projectId) {
   }
 
   const normalized = projectId.trim()
-  const project = getPhase2GitHubProject(normalized)
+  const project = getOrdinaryDevelopmentProject(normalized)
 
   if (!project) {
     throw runStateError(

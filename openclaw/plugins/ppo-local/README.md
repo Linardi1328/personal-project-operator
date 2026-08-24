@@ -57,21 +57,25 @@ repo ledgerpilot-ai
 repo spy-market-agent
 repo portfolio
 repo rbl-content-engine
+repo khlim-digital-ecosystem
 pr khlim-assist
 pr ledgerpilot-ai
 pr spy-market-agent
 pr portfolio
 pr rbl-content-engine
+pr khlim-digital-ecosystem
 codex khlim-assist add provider validation tests
 codex ledgerpilot-ai add invoice import workflow
 codex spy-market-agent harden research error handling
 codex portfolio harden contact form error handling
 codex rbl-content-engine organize source asset workflow
+codex khlim-digital-ecosystem review the Phase 1 scaffold plan
 codex-budget khlim-assist add provider validation tests
 codex-budget ledgerpilot-ai add invoice import workflow
 codex-budget spy-market-agent harden research error handling
 codex-budget portfolio harden contact form error handling
 codex-budget rbl-content-engine organize source asset workflow
+codex-budget khlim-digital-ecosystem review the Phase 1 scaffold plan
 prompt-size Goal: build one focused feature
 split-task add GitHub integration and Telegram routing
 issue-create khlim-assist Add provider validation issue
@@ -93,6 +97,8 @@ recover <run-id>
 ```
 
 The bridge also accepts full `/ppo ...` payloads for local validation, but OpenClaw `command-arg-mode: raw` normally forwards only the text after `/ppo`.
+
+`khlim-digital-ecosystem` is connected for read-only and deterministic planning commands. It is intentionally absent from the `start` list until fixed source paths and automated-test policies are reviewed.
 
 ## Phase 5B/5D write-data
 

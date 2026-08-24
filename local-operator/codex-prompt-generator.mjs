@@ -21,7 +21,8 @@ const projectDocumentUrls = new Map([
   ["ledgerpilot-ai", new URL("../projects/ledgerpilot-ai.md", import.meta.url)],
   ["spy-market-agent", new URL("../projects/spy-market-agent.md", import.meta.url)],
   ["portfolio", new URL("../projects/portfolio.md", import.meta.url)],
-  ["rbl-content-engine", new URL("../projects/rbl-content-engine.md", import.meta.url)]
+  ["rbl-content-engine", new URL("../projects/rbl-content-engine.md", import.meta.url)],
+  ["khlim-digital-ecosystem", new URL("../projects/khlim-digital-ecosystem.md", import.meta.url)]
 ])
 
 const projectContextFields = [

@@ -72,6 +72,9 @@ Current connected candidates:
 - `spy-market-agent`: `Linardi1328/spy-market-agent`
 - `portfolio`: `Linardi1328/richie-linardi-portfolio-website`
 - `rbl-content-engine`: `Linardi1328/rbl-content-engine`
+- `khlim-digital-ecosystem`: `Linardi1328/khlim-digital-ecosystem`
+
+KHLIM Super App is connected for read-only summaries and deterministic planning. It is not yet in the narrower ordinary-development registry used by `/ppo start`.
 
 ## Safety boundaries
 

@@ -32,7 +32,8 @@ const PROJECT_IDS = [
   "ledgerpilot-ai",
   "spy-market-agent",
   "portfolio",
-  "rbl-content-engine"
+  "rbl-content-engine",
+  "khlim-digital-ecosystem"
 ]
 
 function projectDocument(eol = "\n") {
@@ -179,7 +180,7 @@ function sectionBytes(buffer, heading) {
   return buffer.subarray(start, end)
 }
 
-test("Phase 5E uses the fixed five-project allowlist", () => {
+test("Phase 5E uses the fixed connected-project allowlist", () => {
   assert.deepEqual(
     PROJECT_IDS.map((projectId) => resolveProjectStateProject(projectId).id),
     PROJECT_IDS
@@ -554,7 +555,7 @@ test("same note cannot be promoted into the same field again after a prior succe
   assert.deepEqual(await readFile(fixture.projectPath), fixture.original)
 })
 
-test("all five allowed projects can use the same controlled promotion primitive", async () => {
+test("all connected projects can use the same controlled promotion primitive", async () => {
   for (const projectId of PROJECT_IDS) {
     const fixture = await createFixture({
       projectId,

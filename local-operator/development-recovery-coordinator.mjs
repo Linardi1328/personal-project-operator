@@ -32,12 +32,12 @@ import {
   reconcileGitHubDelivery
 } from "./github-delivery-agent.mjs"
 import { loadDevelopmentRecoveryRuntimeProfile } from "./development-continue-runtime-profile.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_RECOVERY_COORDINATOR_ID = "phase-6l-readonly-development-recovery-coordinator"
 export const PHASE_6L_RECOVERY_POLICY_ID = "phase-6l-readonly-development-recovery-policy"
 
-const ordinaryProjects = listPhase2GitHubProjects()
+const ordinaryProjects = listOrdinaryDevelopmentProjects()
 const ordinaryProjectById = new Map(ordinaryProjects.map((project) => [project.id, project]))
 const productionStatuses = new Set([
   "deploy_in_progress",

@@ -30,7 +30,7 @@ import {
   MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES,
   PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
 } from "./development-run-state.mjs"
-import { getPhase2GitHubProject } from "./github-project-registry.mjs"
+import { getOrdinaryDevelopmentProject } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_RUN_CANCELLATION_APPROVAL_ID = "phase-6p-development-run-cancellation-approval"
 export const PHASE_6P_RUN_CANCELLATION_APPROVAL_POLICY_ID = "phase-6p-development-run-cancellation-approval-policy"
@@ -364,7 +364,7 @@ function normalizeStoredProjectId(projectId) {
     return projectId
   }
 
-  if (!getPhase2GitHubProject(projectId)) {
+  if (!getOrdinaryDevelopmentProject(projectId)) {
     throw approvalError(
       "INVALID_PENDING_REQUEST",
       "Stored development run cancellation request is invalid."
