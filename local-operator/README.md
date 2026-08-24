@@ -291,9 +291,9 @@ node local-operator/ppo-command.mjs start <project>
 /ppo start <project>
 ```
 
-The route accepts exactly one project id from the existing five-project registry and rejects missing projects, unknown projects, repo names, paths, task text, SHAs, versions, branches, policies, runtime options, confirmations, actions, extra arguments, malformed whitespace, and control-character input before planning. It calls `createPlannedDevelopmentRun(projectId)` once. A planned outcome creates one Phase 6A run through the Phase 6B lifecycle and returns bounded output with project, run id, status, next stage, base SHA, and `/ppo continue <run-id>` as the next command.
+The route accepts exactly one project id from the existing five-project registry and rejects missing projects, unknown projects, repo names, paths, task text, SHAs, versions, branches, policies, runtime options, confirmations, actions, extra arguments, malformed whitespace, and control-character input before planning. It calls `createPlannedDevelopmentRun(projectId)` once with only the approved internal Phase 6B invocation. A planned outcome creates one Phase 6A run through the Phase 6B lifecycle and returns bounded output with project, run id, status, next stage, base SHA, and `/ppo continue <run-id>` as the next command only if the child result is internally consistent for project, `planned` status, `planning` or `implementation` next stage, equal plan/run base SHA, and matching run head SHA.
 
-If Phase 6B returns `owner_action_required`, Phase 7A creates no run and returns only bounded planner outcome/reason information. It does not create workspaces, invoke Codex, run tests, run review/hardening, push, create PRs, merge, deploy, verify production, rollback, call `/ppo continue`, add a new OpenClaw tool, or use model interpretation.
+If Phase 6B returns `owner_action_required` or a malformed planned result, Phase 7A returns only bounded owner-action/route-unavailable information and never prints a continuation command for that result. It does not create workspaces, invoke Codex, run tests, run review/hardening, push, create PRs, merge, deploy, verify production, rollback, call `/ppo continue`, add a new OpenClaw tool, or use model interpretation.
 
 ## Files
 

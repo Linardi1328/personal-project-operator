@@ -30,18 +30,21 @@ createPlannedDevelopmentRun(projectId)
 
 It does not create another planner, run-state store, GitHub client, source reader, or planning engine.
 
+The route does not forward caller-controlled route options into Phase 6B. Runtime/test dependencies are separate trusted internals, and the Phase 6B call receives only the approved internal option allowlist.
+
 ## Output
 
-Successful planning creates one run through Phase 6B and returns bounded output with:
+Successful planning creates one run through Phase 6B and returns bounded output only after the child result passes strict validation for:
 
 - project id
 - run id
 - status
 - next stage
 - base SHA
+- run head SHA matching the base SHA
 - `/ppo continue <run-id>` as the next command
 
-If Phase 6B returns `owner_action_required`, no run is created and output is limited to bounded planner outcome/reason information.
+If Phase 6B returns `owner_action_required`, no run is created and output is limited to bounded planner outcome/reason information. If Phase 6B returns a malformed planned result, Phase 7A fails closed with bounded `ROUTE_UNAVAILABLE` owner-action output and no continuation command.
 
 ## Blocked
 

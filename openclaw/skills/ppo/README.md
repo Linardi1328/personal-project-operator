@@ -73,7 +73,7 @@ Phase 6O `/ppo runs` and `/ppo run <run-id>` expose only the reviewed Phase 6N r
 
 Phase 6P `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` are confirmation-gated quiescent cancellation routes for ordinary runs only. They stage first, bind run id/project/status/version, use a 10-minute single-use request id, and never interrupt processes, clean workspaces, retry, repair, recover, continue, or route production cancellation.
 
-Phase 7A `/ppo start <project>` accepts only one existing five-project id, reuses Phase 6B `createPlannedDevelopmentRun(projectId)` once, creates at most one planned run, returns `/ppo continue <run-id>` as the next command, and never continues automatically, creates a workspace, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a tool, or uses model interpretation.
+Phase 7A `/ppo start <project>` accepts only one existing five-project id, reuses Phase 6B `createPlannedDevelopmentRun(projectId)` once with no caller-controlled route options, creates at most one planned run, returns `/ppo continue <run-id>` only after strict planned-result validation, and never continues automatically, creates a workspace, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a tool, or uses model interpretation.
 
 OpenClaw direct command dispatch uses the local plugin tool:
 

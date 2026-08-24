@@ -69,7 +69,7 @@ In Phase 7A, `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` use G
 
 `/ppo start <project>` is available through `ppo_local` for the existing ordinary five-project registry only. The bridge maps only exact command shapes such as `/ppo start khlim-assist` to wrapper argv `["start", "khlim-assist"]`; malformed whitespace/envelopes, repo names, paths, task text, SHAs, versions, branches, policies, runtime options, confirmations, actions, unknown projects, missing projects, and extra tokens are rejected before execution.
 
-The route invokes the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` capability exactly once. On a planned outcome it creates one Phase 6A run through the Phase 6B lifecycle and prints only bounded project/run/status/next-stage/base-SHA output plus `/ppo continue <run-id>` as the next command. On `owner_action_required`, it creates no run and prints only bounded planner outcome/reason information.
+The route invokes the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` capability exactly once with only the approved internal invocation. On a validated planned outcome it creates one Phase 6A run through the Phase 6B lifecycle and prints only bounded project/run/status/next-stage/base-SHA output plus `/ppo continue <run-id>` as the next command. On `owner_action_required` or malformed planned child output, it prints only bounded owner-action/route-unavailable information and no continuation command.
 
 It performs no automatic `/ppo continue`, workspace creation, Codex execution, tests, review/hardening, push, PR creation, merge, deployment, production verification, rollback, production action, new OpenClaw tool, or model interpretation.
 

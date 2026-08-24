@@ -14,10 +14,20 @@ export const MAX_PHASE_7A_START_OUTPUT_CHARS = 4096
 
 const allowedProjects = Object.freeze(listPhase2GitHubProjects().map((project) => project.id))
 const allowedProjectSet = new Set(allowedProjects)
+const allowedNextStageSet = new Set(["planning", "implementation"])
+const trustedPhase6BOptionKeys = Object.freeze([
+  "writeDataDir",
+  "now",
+  "repoRoot",
+  "sources",
+  "sourceReader",
+  "githubClient",
+  "githubOptions",
+  "randomBytesImpl"
+])
 const shaPattern = /^[a-f0-9]{40}$/u
 const safeCodePattern = /^[A-Z][A-Z0-9_]{0,79}$/u
 const safeStatusPattern = /^[a-z][a-z0-9_]{0,79}$/u
-const safeStagePattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const unsafeInputTextPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u001F\u007F-\u009F])/u
 const unsafeOutputTextPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]|[\u0000-\u0009\u000B-\u001F\u007F-\u009F])/u
 const sensitiveTextPattern = new RegExp([
@@ -45,9 +55,19 @@ const policyBoundary = Object.freeze({
     api: "createPlannedDevelopmentRun",
     planner: NEXT_STAGE_PLANNER_ID
   }),
+  phase6bInvocation: Object.freeze({
+    callerControlledOptionsForwarded: false,
+    trustedRuntimeInjection: "explicit-internal-allowlist"
+  }),
   runCreation: Object.freeze({
     onPlannedOutcome: "exactly-one-phase-6a-run",
     onOwnerActionRequired: "zero-runs"
+  }),
+  plannedResultValidation: Object.freeze({
+    projectConsistency: "requested-plan-run-match-allowlist",
+    requiredRunStatus: "planned",
+    requiredNextStages: Object.freeze(["planning", "implementation"]),
+    requiredShaConsistency: "plan-base-run-base-run-head-equal"
   }),
   openClaw: Object.freeze({
     existingToolOnly: "ppo_local",
@@ -107,13 +127,8 @@ function safeStatus(value, fallback = "unavailable") {
   return typeof value === "string" && safeStatusPattern.test(value) ? value : fallback
 }
 
-function safeStage(value) {
-  return typeof value === "string" && safeStagePattern.test(value) ? value : null
-}
-
 function safeSha(value) {
-  const normalized = typeof value === "string" ? value.toLowerCase() : null
-  return normalized && shaPattern.test(normalized) ? normalized : null
+  return typeof value === "string" && shaPattern.test(value) ? value : null
 }
 
 function safeReasonCode(value, fallback = "ROUTE_UNAVAILABLE") {
@@ -193,40 +208,103 @@ function ownerActionOutput(projectId, plan) {
   ].join("\n")
 }
 
-function plannedOutput(result) {
-  const runId = safeRunId(result?.run?.runId)
-  const projectId = safeProjectId(result?.run?.project?.id || result?.plan?.project?.id)
-  const status = safeStatus(result?.run?.status)
-  const nextStage = safeStage(result?.plan?.next?.stage)
-  const baseSha = safeSha(result?.run?.baseSha || result?.plan?.baseSha)
-
-  if (!runId || !nextStage || !baseSha) {
-    return [
-      "PPO Development Start",
-      "Status: unavailable",
-      "Outcome: owner_action_required",
-      "Reason: ROUTE_UNAVAILABLE"
-    ].join("\n")
-  }
-
+function routeUnavailableOutput(projectId) {
   return [
     "PPO Development Start",
-    `Project: ${projectId}`,
-    `Run: ${runId}`,
-    `Status: ${status}`,
-    `Next stage: ${nextStage}`,
-    `Base SHA: ${baseSha}`,
-    `Next command: /ppo continue ${runId}`
+    `Project: ${safeProjectId(projectId)}`,
+    "Status: unavailable",
+    "Outcome: owner_action_required",
+    "Reason: ROUTE_UNAVAILABLE",
+    "Run: none"
   ].join("\n")
 }
 
-function plannerApi(options = {}) {
-  return typeof options.createPlannedDevelopmentRun === "function"
-    ? options.createPlannedDevelopmentRun
+function plannedOutput(planned) {
+  return [
+    "PPO Development Start",
+    `Project: ${planned.projectId}`,
+    `Run: ${planned.runId}`,
+    `Status: ${planned.status}`,
+    `Next stage: ${planned.nextStage}`,
+    `Base SHA: ${planned.baseSha}`,
+    `Next command: /ppo continue ${planned.runId}`
+  ].join("\n")
+}
+
+function plannerApi(runtime = {}) {
+  const dependencies = runtime && typeof runtime === "object" && runtime.trustedDependencies &&
+    typeof runtime.trustedDependencies === "object" &&
+    !Array.isArray(runtime.trustedDependencies)
+    ? runtime.trustedDependencies
+    : {}
+
+  return typeof dependencies.createPlannedDevelopmentRun === "function"
+    ? dependencies.createPlannedDevelopmentRun
     : createPlannedDevelopmentRun
 }
 
-export async function handlePpoDevelopmentStartCommand(projectId, options = {}) {
+function buildTrustedPhase6BOptions(runtime = {}) {
+  const trusted = runtime && typeof runtime === "object" && runtime.trustedPhase6BOptions &&
+    typeof runtime.trustedPhase6BOptions === "object" &&
+    !Array.isArray(runtime.trustedPhase6BOptions)
+    ? runtime.trustedPhase6BOptions
+    : {}
+  const phase6bOptions = {}
+
+  for (const key of trustedPhase6BOptionKeys) {
+    if (Object.hasOwn(trusted, key)) {
+      phase6bOptions[key] = trusted[key]
+    }
+  }
+
+  return phase6bOptions
+}
+
+function validatePlannedResult(requestedProjectId, result) {
+  const plan = result?.plan
+  const run = result?.run
+  const planProjectId = plan?.project?.id
+  const runProjectId = run?.project?.id
+  const runId = safeRunId(run?.runId)
+  const planBaseSha = safeSha(plan?.baseSha)
+  const runBaseSha = safeSha(run?.baseSha)
+  const runHeadSha = safeSha(run?.headSha)
+  const nextStage = plan?.next?.stage
+
+  if (
+    result?.ok !== true ||
+    result?.outcome !== "planned" ||
+    plan?.outcome !== "planned" ||
+    !allowedProjectSet.has(requestedProjectId) ||
+    planProjectId !== requestedProjectId ||
+    runProjectId !== requestedProjectId ||
+    !allowedProjectSet.has(planProjectId) ||
+    !allowedProjectSet.has(runProjectId) ||
+    run?.status !== "planned" ||
+    !runId ||
+    !allowedNextStageSet.has(nextStage) ||
+    !planBaseSha ||
+    !runBaseSha ||
+    !runHeadSha ||
+    planBaseSha !== runBaseSha ||
+    runHeadSha !== planBaseSha
+  ) {
+    return {
+      ok: false
+    }
+  }
+
+  return {
+    ok: true,
+    projectId: requestedProjectId,
+    runId,
+    status: safeStatus(run.status),
+    nextStage,
+    baseSha: planBaseSha
+  }
+}
+
+export async function handlePpoDevelopmentStartCommand(projectId, runtime = {}) {
   const validation = validateProjectId(projectId)
 
   if (!validation.ok) {
@@ -239,14 +317,25 @@ export async function handlePpoDevelopmentStartCommand(projectId, options = {}) 
   }
 
   try {
-    const result = await plannerApi(options)(validation.projectId, options)
+    const result = await plannerApi(runtime)(validation.projectId, buildTrustedPhase6BOptions(runtime))
 
     if (result?.ok === true && result?.outcome === "planned") {
+      const planned = validatePlannedResult(validation.projectId, result)
+
+      if (!planned.ok) {
+        return routeResult({
+          ok: false,
+          code: "ROUTE_UNAVAILABLE",
+          outcome: "owner_action_required",
+          output: routeUnavailableOutput(validation.projectId)
+        })
+      }
+
       return routeResult({
         ok: true,
         code: "PLANNED",
         outcome: "planned",
-        output: plannedOutput(result)
+        output: plannedOutput(planned)
       })
     }
 
@@ -261,13 +350,7 @@ export async function handlePpoDevelopmentStartCommand(projectId, options = {}) 
       ok: false,
       code: "ROUTE_UNAVAILABLE",
       outcome: "owner_action_required",
-      output: [
-        "PPO Development Start",
-        `Project: ${validation.projectId}`,
-        "Status: unavailable",
-        "Outcome: owner_action_required",
-        "Reason: ROUTE_UNAVAILABLE"
-      ].join("\n")
+      output: routeUnavailableOutput(validation.projectId)
     })
   }
 }

@@ -117,7 +117,7 @@ Phase 5C adds `node local-operator/ppo-command.mjs note-add <project> <note...>`
 
 ## Phase 7A development start
 
-Phase 7A adds `/ppo start <project>` through this same plugin. The bridge accepts only exact raw command shapes for the existing five project ids and maps to wrapper argv `["start", "<project>"]` with `shell: false`; malformed whitespace, envelopes, repo names, paths, task text, SHAs, branches, versions, policies, runtime options, confirmations, actions, and extra arguments are rejected before wrapper execution. The wrapper invokes the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` once. A planned outcome creates one run and returns `/ppo continue <run-id>` as the next command. Owner-action-required outcomes create no run.
+Phase 7A adds `/ppo start <project>` through this same plugin. The bridge accepts only exact raw command shapes for the existing five project ids and maps to wrapper argv `["start", "<project>"]` with `shell: false`; malformed whitespace, envelopes, repo names, paths, task text, SHAs, branches, versions, policies, runtime options, confirmations, actions, and extra arguments are rejected before wrapper execution. The wrapper invokes the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` once with only the approved internal invocation. A validated planned outcome creates one run and returns `/ppo continue <run-id>` as the next command. Owner-action-required or malformed planned outcomes create no continuation command.
 
 Phase 7A never calls `/ppo continue` automatically, creates workspaces, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a new OpenClaw tool, or uses model interpretation.
 

@@ -147,6 +147,38 @@ function fakeGitHubClient(calls = []) {
   }
 }
 
+function trustedRuntime(phase6bOptions = {}, trustedDependencies = {}) {
+  const runtime = {
+    trustedPhase6BOptions: phase6bOptions
+  }
+
+  if (Object.keys(trustedDependencies).length > 0) {
+    runtime.trustedDependencies = trustedDependencies
+  }
+
+  return runtime
+}
+
+function validPlannedChildResult(projectId = "khlim-assist") {
+  return {
+    ok: true,
+    outcome: "planned",
+    plan: {
+      outcome: "planned",
+      project: { id: projectId },
+      next: { stage: "implementation" },
+      baseSha: BASE_SHA
+    },
+    run: {
+      runId: RUN_ID,
+      project: { id: projectId },
+      status: "planned",
+      baseSha: BASE_SHA,
+      headSha: BASE_SHA
+    }
+  }
+}
+
 async function snapshotTree(root) {
   const rows = []
 
@@ -197,12 +229,12 @@ test("Phase 7A route exposes the fixed five-project registry through Phase 6B ru
   for (const project of PROJECTS) {
     const writeDataDir = await tempWriteDataDir()
     const calls = []
-    const result = await handlePpoDevelopmentStartCommand(project.id, {
+    const result = await handlePpoDevelopmentStartCommand(project.id, trustedRuntime({
       writeDataDir,
       now: makeClock(),
       sources: sourcesFor(project.id),
       githubClient: fakeGitHubClient(calls)
-    })
+    }))
 
     assert.equal(result.ok, true, project.id)
     assert.equal(result.route, DEVELOPMENT_START_ROUTE_ID)
@@ -221,12 +253,12 @@ test("Phase 7A route exposes the fixed five-project registry through Phase 6B ru
 
 test("Phase 7A successful start creates exactly one planned Phase 6A run through Phase 6B", async () => {
   const writeDataDir = await tempWriteDataDir()
-  const result = await handlePpoDevelopmentStartCommand("khlim-assist", {
+  const result = await handlePpoDevelopmentStartCommand("khlim-assist", trustedRuntime({
     writeDataDir,
     now: makeClock(),
     sources: sourcesFor("khlim-assist"),
     githubClient: fakeGitHubClient()
-  })
+  }))
   const runId = result.output.match(/Run: ([A-Za-z0-9_-]{43})/u)?.[1]
 
   assert.equal(result.ok, true)
@@ -247,28 +279,44 @@ test("Phase 7A successful start creates exactly one planned Phase 6A run through
   assert.match(result.output, new RegExp(`Next command: /ppo continue ${runId}`, "u"))
 })
 
-test("Phase 7A route adapter delegates to createPlannedDevelopmentRun exactly once", async () => {
+test("Phase 7A route adapter delegates to createPlannedDevelopmentRun exactly once with isolated trusted options", async () => {
   let calls = 0
+  const trustedPhase6BOptions = {
+    writeDataDir: "/tmp/phase-7a-trusted-write-data",
+    now: makeClock(),
+    sources: sourcesFor("khlim-assist"),
+    githubClient: fakeGitHubClient(),
+    expectedVersion: 99,
+    branch: "main",
+    action: "continue",
+    policy: "phase-6b"
+  }
   const result = await handlePpoDevelopmentStartCommand("khlim-assist", {
     marker: "internal-test-option",
-    createPlannedDevelopmentRun: async (projectId, options) => {
-      calls += 1
-      assert.equal(projectId, "khlim-assist")
-      assert.equal(options.marker, "internal-test-option")
+    createPlannedDevelopmentRun: async () => {
+      assert.fail("top-level route options must not provide the child planner dependency")
+    },
+    trustedPhase6BOptions,
+    trustedDependencies: {
+      createPlannedDevelopmentRun: async (projectId, options) => {
+        calls += 1
+        assert.equal(projectId, "khlim-assist")
+        assert.equal(options.writeDataDir, trustedPhase6BOptions.writeDataDir)
+        assert.equal(options.now, trustedPhase6BOptions.now)
+        assert.equal(options.sources, trustedPhase6BOptions.sources)
+        assert.equal(options.githubClient, trustedPhase6BOptions.githubClient)
+        assert.equal(options.expectedVersion, undefined)
+        assert.equal(options.branch, undefined)
+        assert.equal(options.action, undefined)
+        assert.equal(options.policy, undefined)
+        assert.equal(options.marker, undefined)
 
-      return {
-        ok: true,
-        outcome: "planned",
-        plan: {
-          project: { id: "khlim-assist" },
-          next: { stage: "planning" },
-          baseSha: BASE_SHA
-        },
-        run: {
-          runId: RUN_ID,
-          project: { id: "khlim-assist" },
-          status: "planned",
-          baseSha: BASE_SHA
+        return {
+          ...validPlannedChildResult(),
+          plan: {
+            ...validPlannedChildResult().plan,
+            next: { stage: "planning" }
+          }
         }
       }
     }
@@ -280,17 +328,100 @@ test("Phase 7A route adapter delegates to createPlannedDevelopmentRun exactly on
   assert.match(result.output, /Next stage: planning/u)
 })
 
+test("Phase 7A rejects malformed or inconsistent Phase 6B planned child results", async () => {
+  for (const [label, mutate] of [
+    ["missing plan", (result) => {
+      result.plan = null
+    }],
+    ["missing run", (result) => {
+      result.run = null
+    }],
+    ["plan outcome mismatch", (result) => {
+      result.plan.outcome = "owner_action_required"
+    }],
+    ["plan project mismatch", (result) => {
+      result.plan.project.id = "portfolio"
+    }],
+    ["run project mismatch", (result) => {
+      result.run.project.id = "portfolio"
+    }],
+    ["run status mismatch", (result) => {
+      result.run.status = "created"
+    }],
+    ["bad run id", (result) => {
+      result.run.runId = "short"
+    }],
+    ["unsupported next stage", (result) => {
+      result.plan.next.stage = "deploy"
+    }],
+    ["missing next stage", (result) => {
+      delete result.plan.next.stage
+    }],
+    ["bad plan base SHA", (result) => {
+      result.plan.baseSha = "not-a-sha"
+    }],
+    ["run base SHA mismatch", (result) => {
+      result.run.baseSha = "b".repeat(40)
+    }],
+    ["bad run head SHA", (result) => {
+      result.run.headSha = "not-a-sha"
+    }],
+    ["run head SHA mismatch", (result) => {
+      result.run.headSha = "c".repeat(40)
+    }],
+    ["missing required run head SHA", (result) => {
+      delete result.run.headSha
+    }]
+  ]) {
+    let calls = 0
+    const childResult = validPlannedChildResult()
+    mutate(childResult)
+    const result = await handlePpoDevelopmentStartCommand("khlim-assist", trustedRuntime({}, {
+      createPlannedDevelopmentRun: async (projectId, options) => {
+        calls += 1
+        assert.equal(projectId, "khlim-assist")
+        assert.deepEqual(options, {})
+        return childResult
+      }
+    }))
+
+    assert.equal(calls, 1, label)
+    assert.equal(result.ok, false, label)
+    assert.equal(result.code, "ROUTE_UNAVAILABLE", label)
+    assert.equal(result.outcome, "owner_action_required", label)
+    assert.match(result.output, /Reason: ROUTE_UNAVAILABLE/u, label)
+    assert.match(result.output, /Run: none/u, label)
+    assert.doesNotMatch(result.output, /Next command:|\/ppo continue|Run: C{43}/u, label)
+  }
+})
+
+test("Phase 7A allows only exact planning or implementation child stages", async () => {
+  for (const stage of ["planning", "implementation"]) {
+    const result = await handlePpoDevelopmentStartCommand("khlim-assist", trustedRuntime({}, {
+      createPlannedDevelopmentRun: async () => {
+        const childResult = validPlannedChildResult()
+        childResult.plan.next.stage = stage
+        return childResult
+      }
+    }))
+
+    assert.equal(result.ok, true, stage)
+    assert.match(result.output, new RegExp(`Next stage: ${stage}`, "u"))
+    assert.match(result.output, new RegExp(`Next command: /ppo continue ${RUN_ID}`, "u"))
+  }
+})
+
 test("owner-action-required Phase 6B outcomes create no run and expose only bounded reason data", async () => {
   const writeDataDir = await tempWriteDataDir()
   const before = await snapshotTree(writeDataDir)
-  const result = await handlePpoDevelopmentStartCommand("khlim-assist", {
+  const result = await handlePpoDevelopmentStartCommand("khlim-assist", trustedRuntime({
     writeDataDir,
     now: makeClock(),
     sources: sourcesFor("khlim-assist", {
       nextAction: "Choose the product workflow to implement next."
     }),
     githubClient: fakeGitHubClient()
-  })
+  }))
   const after = await snapshotTree(writeDataDir)
 
   assert.equal(result.ok, false)
@@ -317,11 +448,11 @@ test("unknown, missing, extra, path, repo-name, and option start inputs are reje
     `${"d".repeat(40)}`
   ]) {
     let calls = 0
-    const result = await handlePpoDevelopmentStartCommand(projectId, {
+    const result = await handlePpoDevelopmentStartCommand(projectId, trustedRuntime({}, {
       createPlannedDevelopmentRun: async () => {
         calls += 1
       }
-    })
+    }))
 
     assert.equal(result.ok, false, String(projectId))
     assert.equal(calls, 0, String(projectId))

@@ -19,6 +19,8 @@ The policy hash covers:
 - caller input limited to one project id
 - the fixed ordinary five-project scope
 - reuse of Phase 6B `createPlannedDevelopmentRun(projectId)`
+- no forwarding of caller-controlled route options into Phase 6B
+- strict validation of planned child results before returning a continuation command
 - zero production actions
 - zero model routing
 - zero automatic continuation
@@ -28,11 +30,13 @@ The policy hash covers:
 Phase 7A may:
 
 - validate one exact allowlisted project id
-- call the existing Phase 6B planned-run creator once
-- create exactly one Phase 6A planned run when Phase 6B returns a planned outcome
+- call the existing Phase 6B planned-run creator once with only the approved internal invocation
+- create exactly one Phase 6A planned run when Phase 6B returns a valid planned outcome
 - return bounded project/run/status/next-stage/base-SHA output
 - return `/ppo continue <run-id>` only as the next manual command
 - return bounded `owner_action_required` reason information without creating a run
+
+Before returning success, Phase 7A must require the requested project, plan project, and run project to match the same allowlisted id; `run.status` to equal `planned`; the run id to be a valid 43-character id; the next stage to be exactly `planning` or `implementation`; plan/run base SHA values to be valid and equal; and the run head SHA to be valid and equal to that base SHA. Malformed planned child results fail closed with bounded `ROUTE_UNAVAILABLE` owner-action output and no continuation command.
 
 ## Blocked
 

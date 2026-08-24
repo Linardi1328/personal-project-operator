@@ -561,7 +561,7 @@ function usage() {
     "Phase 5C boundary: terminal note-add requires PPO_NOTE_WRITE_CONFIRM=add-note:<project>.",
     "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append.",
     "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported.",
-    "Phase 7A boundary: /ppo start accepts only one allowlisted project id, creates at most one Phase 6B planned run, and never continues automatically.",
+    "Phase 7A boundary: /ppo start accepts only one allowlisted project id, forwards no caller-controlled route options, returns a continuation command only after strict planned-result validation, and never continues automatically.",
     "Phase 6O boundary: /ppo runs and /ppo run <run-id> expose the Phase 6N read-only ordinary-run catalog only; no filters, recovery, continue, cancellation, retry, repair, or production action.",
     "Phase 6P boundary: /ppo cancel stages a single-use quiescent cancellation request and /ppo cancel-confirm consumes it; no process interruption, cleanup, recovery, continue, retry, or production action.",
     "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only.",
@@ -737,7 +737,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Phase 6P boundary: /ppo cancel stages and /ppo cancel-confirm consumes a single-use quiescent cancellation request; /ppo runs and /ppo run remain read-only catalog routes; /ppo continue and /ppo recover keep their separate reviewed boundaries; production deployment, verification, and rollback remain unrouted.",
-      "Phase 7A boundary: /ppo start creates at most one Phase 6B planned run and never continues automatically; /ppo cancel remains confirmation-gated; /ppo runs and /ppo run remain read-only catalog routes; production deployment, verification, and rollback remain unrouted."
+      "Phase 7A boundary: /ppo start forwards no caller-controlled route options, fails closed on malformed planned results, and never continues automatically; /ppo cancel remains confirmation-gated; /ppo runs and /ppo run remain read-only catalog routes; production deployment, verification, and rollback remain unrouted."
     )
     .replace(
       [
@@ -816,7 +816,7 @@ function applyPpoNamespace(output) {
         "- No VPS deployment",
         "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation",
         "- /ppo note-add stages locally; /ppo note-confirm can append one approved local project note after single-use confirmation",
-        "- /ppo start creates at most one planned Phase 6B development run and never continues automatically",
+        "- /ppo start creates at most one planned Phase 6B development run only after strict result validation and never continues automatically",
         "- /ppo runs and /ppo run expose only bounded Phase 6N ordinary-run catalog metadata",
         "- /ppo cancel stages only; /ppo cancel-confirm can cancel one eligible quiescent run after single-use confirmation",
         "- /ppo continue advances one existing ordinary development run through at most one reviewed Phase 6B-6G boundary",

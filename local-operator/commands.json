@@ -40,7 +40,7 @@
           "arguments": "<project>",
           "description": "Create one planned ordinary development run.",
           "phase1Simulator": false,
-          "safety": "Phase 7A controlled start only; no automatic continuation."
+          "safety": "Phase 7A controlled start only; no caller-controlled route options, malformed planned-result continuation, or automatic continuation."
         },
         {
           "command": "/handoff",

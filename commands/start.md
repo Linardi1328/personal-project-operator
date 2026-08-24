@@ -35,7 +35,7 @@ rbl-content-engine
 
 ## Expected output
 
-On a planned outcome, Phase 7A returns bounded metadata:
+On a validated planned outcome, Phase 7A returns bounded metadata:
 
 ```text
 PPO Development Start
@@ -47,11 +47,13 @@ Base SHA: <base-sha>
 Next command: /ppo continue <run-id>
 ```
 
-If Phase 6B returns `owner_action_required`, no run is created and the output contains only the bounded project/outcome/reason fields.
+If Phase 6B returns `owner_action_required`, no run is created and the output contains only the bounded project/outcome/reason fields. If the Phase 6B planned result is malformed or inconsistent, Phase 7A returns bounded `ROUTE_UNAVAILABLE` owner-action output and does not print a continuation command.
 
 ## Safety boundary
 
-Phase 7A reuses `createPlannedDevelopmentRun(projectId)` and does not create another planner, run-state store, GitHub client, source reader, or planning engine.
+Phase 7A reuses `createPlannedDevelopmentRun(projectId)` with only the approved internal Phase 6B invocation and does not create another planner, run-state store, GitHub client, source reader, or planning engine.
+
+Before returning success, the route requires the requested project, plan project, and run project to match the same allowlisted id; the run status to be exactly `planned`; the next stage to be exactly `planning` or `implementation`; the run id to be a valid 43-character id; the plan and run base SHA to be valid and equal; and the run head SHA to match that base SHA.
 
 It rejects unknown projects, missing projects, extra arguments, malformed whitespace/envelopes, control characters, paths, repo names, task text, SHAs, versions, branches, policies, runtime options, confirmations, and actions.
 
