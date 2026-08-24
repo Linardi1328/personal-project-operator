@@ -57,6 +57,7 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
     "- /ppo note-confirm <request-id>",
+    "- /ppo start <project>",
     "- /ppo runs",
     "- /ppo run <run-id>",
     "- /ppo cancel <run-id>",
@@ -183,6 +184,33 @@ function parseNoteConfirmCommand(rest) {
   }
 }
 
+function parseStartCommand(rawCommand) {
+  if (rawCommand !== rawCommand.trim() || /[\u0000-\u001F\u007F-\u009F]/u.test(rawCommand)) {
+    return null;
+  }
+
+  const parts = rawCommand.split(" ");
+
+  if (
+    parts.length === 2 &&
+    parts[0] === "start" &&
+    allowedGitHubProjectIds.has(parts[1])
+  ) {
+    return ["start", parts[1]];
+  }
+
+  if (
+    parts.length === 3 &&
+    (parts[0] === "/ppo" || parts[0] === "ppo") &&
+    parts[1] === "start" &&
+    allowedGitHubProjectIds.has(parts[2])
+  ) {
+    return ["start", parts[2]];
+  }
+
+  return null;
+}
+
 function parseContinueCommand(commandText, rest, rawHasLineBreak) {
   if (rawHasLineBreak || /[\r\n]/u.test(commandText)) {
     return null;
@@ -272,6 +300,12 @@ function parseCancellationCommand(commandText, rawCommand) {
 export function toPpoWrapperArgs(rawCommand) {
   if (typeof rawCommand !== "string") {
     return null;
+  }
+
+  const startCommand = parseStartCommand(rawCommand);
+
+  if (startCommand) {
+    return startCommand;
   }
 
   const rawHasLineBreak = /[\r\n]/u.test(rawCommand);

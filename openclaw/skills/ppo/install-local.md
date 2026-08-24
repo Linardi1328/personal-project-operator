@@ -409,6 +409,7 @@ If those pass, test:
 /ppo codex khlim-assist add provider validation tests
 /ppo issue-create khlim-assist owner review test issue --body created only after confirmation
 /ppo note-add khlim-assist owner review staged note
+/ppo start khlim-assist
 /ppo runs
 /ppo run <run-id>
 /ppo cancel <run-id>
@@ -434,6 +435,7 @@ Do not add:
 - OpenClaw tools beyond `ppo_local`
 - GitHub writes beyond Phase 5B `/ppo issue-create` staging plus `/ppo issue-confirm` single-use issue creation
 - project note writes beyond Phase 5D `/ppo note-add` staging plus `/ppo note-confirm` single-use note creation
+- automatic continuation, task text, workspace creation, Codex/test/review execution, PR/merge behavior, or production action through `/ppo start`
 - PPO production deployment, production verification, rollback, rollback reconciliation, service control, or owner rollback confirmation through `/ppo continue` or `/ppo recover`
 - recovery, continuation, cancellation, retry, repair, filters, search, sort, or production action through `/ppo runs` or `/ppo run`
 - process interruption, cleanup, recovery, continuation, retry, repair, or production action through `/ppo cancel` or `/ppo cancel-confirm`

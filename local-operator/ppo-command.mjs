@@ -19,6 +19,7 @@ import {
   handlePpoDevelopmentRunCommand,
   handlePpoDevelopmentRunsCommand
 } from "./development-run-catalog-route.mjs";
+import { handlePpoDevelopmentStartCommand } from "./development-start-route.mjs";
 import { handlePpoDevelopmentRecoverCommand } from "./development-recovery-route.mjs";
 import {
   handlePpoIssueConfirmCommand,
@@ -34,9 +35,11 @@ import {
 } from "./project-note-approval.mjs";
 import { handleProjectStatePromoteCommand } from "./project-state-promote.mjs";
 import { DEVELOPMENT_RUN_ID_PATTERN } from "./development-run-id.mjs";
+import { listPhase2GitHubProjects } from "./github-project-registry.mjs";
 
 const execFileAsync = promisify(execFile);
 const simulatorPath = fileURLToPath(new URL("simulate-command.mjs", import.meta.url));
+const startProjectIds = new Set(listPhase2GitHubProjects().map((project) => project.id));
 
 function normalizeArgs(rawArgs) {
   const args = rawArgs
@@ -226,6 +229,60 @@ function parseStrictZeroArgCommandArgs(rawArgs, command, options = {}) {
     args[1] === command
   ) {
     return { ok: true, attempted: true };
+  }
+
+  return { ok: false, attempted: true };
+}
+
+function parseStrictStartArgs(rawArgs) {
+  const args = rawArgs.map((arg) => String(arg));
+  const unsafe = args.some((arg) => arg !== arg.trim() || /[\u0000-\u001F\u007F-\u009F]/u.test(arg));
+  const lower0 = args[0]?.toLowerCase();
+  const lower1 = args[1]?.toLowerCase();
+  const firstLooksLikeStart = lower0 === "start" || /^\s*start(?:$|[\s\r\n\t])/iu.test(args[0] || "");
+  const envelopeLooksLikeStart = (
+    (lower0?.trim() === "/ppo" || lower0?.trim() === "ppo") &&
+    (lower1 === "start" || /^\s*start(?:$|[\s\r\n\t])/iu.test(args[1] || ""))
+  );
+  const combinedEnvelopeLooksLikeStart = /^\s*(?:\/ppo|ppo)[\s\r\n\t]+start(?:$|[\s\r\n\t])/iu.test(args[0] || "");
+  const attempted = firstLooksLikeStart || envelopeLooksLikeStart || combinedEnvelopeLooksLikeStart;
+
+  if (!attempted) {
+    return null;
+  }
+
+  if (unsafe) {
+    return { ok: false, attempted: true };
+  }
+
+  if (args.length === 2 && args[0] === "start" && startProjectIds.has(args[1])) {
+    return { ok: true, attempted: true, projectId: args[1] };
+  }
+
+  if (
+    args.length === 3 &&
+    (args[0] === "/ppo" || args[0] === "ppo") &&
+    args[1] === "start" &&
+    startProjectIds.has(args[2])
+  ) {
+    return { ok: true, attempted: true, projectId: args[2] };
+  }
+
+  if (args.length === 1) {
+    const parts = args[0].split(" ");
+
+    if (parts.length === 2 && parts[0] === "start" && startProjectIds.has(parts[1])) {
+      return { ok: true, attempted: true, projectId: parts[1] };
+    }
+
+    if (
+      parts.length === 3 &&
+      (parts[0] === "/ppo" || parts[0] === "ppo") &&
+      parts[1] === "start" &&
+      startProjectIds.has(parts[2])
+    ) {
+      return { ok: true, attempted: true, projectId: parts[2] };
+    }
   }
 
   return { ok: false, attempted: true };
@@ -430,7 +487,7 @@ function usage() {
   return [
     "Personal Project Operator PPO Wrapper",
     "",
-    "Use this wrapper for approved /ppo routing, local deterministic text commands, approval-gated issue creation, and terminal project notes.",
+    "Use this wrapper for approved /ppo routing, local deterministic text commands, approval-gated issue creation, terminal project notes, and controlled development run routes.",
     "",
     "Terminal usage:",
     "  node local-operator/ppo-command.mjs status",
@@ -444,6 +501,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs issue-create khlim-assist \"issue title\" \"optional body\"",
     "  node local-operator/ppo-command.mjs note-add khlim-assist \"project note text\"",
     "  node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase",
+    "  node local-operator/ppo-command.mjs start khlim-assist",
     "  node local-operator/ppo-command.mjs runs",
     "  node local-operator/ppo-command.mjs run <run-id>",
     "  node local-operator/ppo-command.mjs cancel <run-id>",
@@ -465,6 +523,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo issue-confirm <request-id>\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-add khlim-assist project note text\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-confirm <request-id>\"",
+    "  node local-operator/ppo-command.mjs /ppo start khlim-assist",
     "  node local-operator/ppo-command.mjs /ppo runs",
     "  node local-operator/ppo-command.mjs /ppo run <run-id>",
     "  node local-operator/ppo-command.mjs /ppo cancel <run-id>",
@@ -489,6 +548,7 @@ function usage() {
     "  /ppo issue-confirm <request-id>",
     "  /ppo note-add <project> <note...>",
     "  /ppo note-confirm <request-id>",
+    "  /ppo start <project>",
     "  /ppo runs",
     "  /ppo run <run-id>",
     "  /ppo cancel <run-id>",
@@ -501,6 +561,7 @@ function usage() {
     "Phase 5C boundary: terminal note-add requires PPO_NOTE_WRITE_CONFIRM=add-note:<project>.",
     "Phase 5D boundary: /ppo note-add stages only; /ppo note-confirm performs the approved single-use local note append.",
     "Phase 5E boundary: terminal state-promote requires PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>; /ppo state-promote remains unsupported.",
+    "Phase 7A boundary: /ppo start accepts only one allowlisted project id, creates at most one Phase 6B planned run, and never continues automatically.",
     "Phase 6O boundary: /ppo runs and /ppo run <run-id> expose the Phase 6N read-only ordinary-run catalog only; no filters, recovery, continue, cancellation, retry, repair, or production action.",
     "Phase 6P boundary: /ppo cancel stages a single-use quiescent cancellation request and /ppo cancel-confirm consumes it; no process interruption, cleanup, recovery, continue, retry, or production action.",
     "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only.",
@@ -530,6 +591,7 @@ function unsupported(command) {
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
     "- /ppo note-confirm <request-id>",
+    "- /ppo start <project>",
     "- /ppo runs",
     "- /ppo run <run-id>",
     "- /ppo cancel <run-id>",
@@ -626,6 +688,10 @@ function applyPpoNamespace(output) {
       "Phase 6P PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, one-boundary ordinary development continue, read-only development recovery, the read-only ordinary-run catalog, and confirmation-gated quiescent run cancellation."
     )
     .replace(
+      "Phase 6P PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, one-boundary ordinary development continue, read-only development recovery, the read-only ordinary-run catalog, and confirmation-gated quiescent run cancellation.",
+      "Phase 7A PPO-routed commands include local menus, GitHub read-only summaries, deterministic Codex text planning, approval-gated issue creation, approval-gated project note creation, controlled ordinary-run start, one-boundary ordinary development continue, read-only development recovery, the read-only ordinary-run catalog, and confirmation-gated quiescent run cancellation."
+    )
+    .replace(
       "- /ppo status - Show all active projects and next actions. [local]",
       "- /ppo status - Show live GitHub project status. [github read-only]"
     )
@@ -636,6 +702,10 @@ function applyPpoNamespace(output) {
     .replace(
       "- /ppo pr <project> - Summarize latest project PR state. [future]",
       "- /ppo pr <project> - Summarize latest project PR state. [github read-only]"
+    )
+    .replace(
+      "- /ppo start <project> - Create one planned ordinary development run. [future]",
+      "- /ppo start <project> - Create one planned ordinary development run. [controlled development start]"
     )
     .replace(
       "Phase 1.5 boundary: no live APIs, no secrets, no writes.",
@@ -666,6 +736,10 @@ function applyPpoNamespace(output) {
       "Phase 6P boundary: /ppo cancel stages and /ppo cancel-confirm consumes a single-use quiescent cancellation request; /ppo runs and /ppo run remain read-only catalog routes; /ppo continue and /ppo recover keep their separate reviewed boundaries; production deployment, verification, and rollback remain unrouted."
     )
     .replace(
+      "Phase 6P boundary: /ppo cancel stages and /ppo cancel-confirm consumes a single-use quiescent cancellation request; /ppo runs and /ppo run remain read-only catalog routes; /ppo continue and /ppo recover keep their separate reviewed boundaries; production deployment, verification, and rollback remain unrouted.",
+      "Phase 7A boundary: /ppo start creates at most one Phase 6B planned run and never continues automatically; /ppo cancel remains confirmation-gated; /ppo runs and /ppo run remain read-only catalog routes; production deployment, verification, and rollback remain unrouted."
+    )
+    .replace(
       [
         "Supported locally through /ppo in Phase 1.5:",
         "- /ppo status",
@@ -676,7 +750,7 @@ function applyPpoNamespace(output) {
         "- /ppo help"
       ].join("\n"),
       [
-        "Supported through /ppo in Phase 6P:",
+        "Supported through /ppo in Phase 7A:",
         "- /ppo status [github read-only]",
         "- /ppo menu [local]",
         "- /ppo menu project [local]",
@@ -693,6 +767,7 @@ function applyPpoNamespace(output) {
         "- /ppo issue-confirm <request-id> [approved write]",
         "- /ppo note-add <project> <note...> [approval stage]",
         "- /ppo note-confirm <request-id> [approved write]",
+        "- /ppo start <project> [controlled development start]",
         "- /ppo runs [read-only development catalog]",
         "- /ppo run <run-id> [read-only development summary]",
         "- /ppo cancel <run-id> [approval stage]",
@@ -703,7 +778,7 @@ function applyPpoNamespace(output) {
     )
     .replace(
       "Supported through /ppo in Phase 3B:",
-      "Supported through /ppo in Phase 6P:"
+      "Supported through /ppo in Phase 7A:"
     )
     .replace(
       "- /ppo codex <project> <phase-or-task> - Generate compact Codex prompt. [future]",
@@ -741,6 +816,7 @@ function applyPpoNamespace(output) {
         "- No VPS deployment",
         "- /ppo issue-create stages locally; /ppo issue-confirm can create one approved GitHub issue after single-use confirmation",
         "- /ppo note-add stages locally; /ppo note-confirm can append one approved local project note after single-use confirmation",
+        "- /ppo start creates at most one planned Phase 6B development run and never continues automatically",
         "- /ppo runs and /ppo run expose only bounded Phase 6N ordinary-run catalog metadata",
         "- /ppo cancel stages only; /ppo cancel-confirm can cancel one eligible quiescent run after single-use confirmation",
         "- /ppo continue advances one existing ordinary development run through at most one reviewed Phase 6B-6G boundary",
@@ -763,12 +839,20 @@ async function runSimulator(args) {
 
 async function main() {
   const rawProcessArgs = process.argv.slice(2);
+  const strictStart = parseStrictStartArgs(rawProcessArgs);
   const strictRuns = parseStrictRunsArgs(rawProcessArgs);
   const strictRun = parseStrictRunArgs(rawProcessArgs);
   const strictCancelConfirm = parseStrictCancelConfirmArgs(rawProcessArgs);
   const strictCancel = parseStrictCancelArgs(rawProcessArgs);
   const strictContinue = parseStrictContinueArgs(rawProcessArgs);
   const strictRecover = parseStrictRecoverArgs(rawProcessArgs);
+
+  if (strictStart?.ok === true) {
+    const result = await handlePpoDevelopmentStartCommand(strictStart.projectId);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
 
   if (strictRuns?.ok === true) {
     const result = await handlePpoDevelopmentRunsCommand();
@@ -811,6 +895,12 @@ async function main() {
     const result = await handlePpoDevelopmentRecoverCommand(strictRecover.runId);
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictStart?.attempted === true) {
+    console.log(unsupported("start"));
+    process.exitCode = 1;
     return;
   }
 

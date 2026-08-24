@@ -36,6 +36,13 @@
           "safety": "Future read-only GitHub data; no live calls in Phase 1."
         },
         {
+          "command": "/start",
+          "arguments": "<project>",
+          "description": "Create one planned ordinary development run.",
+          "phase1Simulator": false,
+          "safety": "Phase 7A controlled start only; no automatic continuation."
+        },
+        {
           "command": "/handoff",
           "arguments": "<project>",
           "description": "Create compact handoff for ChatGPT or Codex.",
@@ -165,4 +172,3 @@
     }
   ]
 }
-

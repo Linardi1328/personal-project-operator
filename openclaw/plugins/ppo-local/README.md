@@ -16,7 +16,7 @@ The tool is the deterministic bridge for PPO commands:
 
 The plugin:
 
-- accepts the approved PPO command surface through Phase 6P
+- accepts the approved PPO command surface through Phase 7A
 - accepts the Phase 5B approval commands `issue-create` and `issue-confirm`
 - accepts the Phase 5D approval commands `note-add` and `note-confirm`
 - invokes only `local-operator/ppo-command.mjs`
@@ -27,16 +27,17 @@ The plugin:
 - routes `/ppo issue-confirm` to atomically claim one unexpired local request before invoking the Phase 5A issue writer
 - routes `/ppo note-add` to local pending-request staging only; staging never appends a note
 - routes `/ppo note-confirm` to atomically claim one unexpired local request before invoking the Phase 5C note writer
+- routes `/ppo start <project>` to the controlled Phase 7A planned-run creation path for ordinary five-project runs only
 - routes `/ppo runs` and `/ppo run <run-id>` to the controlled Phase 6O read-only catalog routes for ordinary five-project runs only
 - routes `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` to the controlled Phase 6P quiescent cancellation approval path for ordinary five-project runs only
 - routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary five-project runs only
 - routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary five-project runs only
 - does not call Telegram APIs
 - does not use secrets
-- mutates only the private local pending stores for Phase 5B issue, Phase 5D note, and Phase 6P cancellation approval requests, plus the approved local note store after `/ppo note-confirm` and the single confirmed Phase 6P `cancelled` run transition; Phase 6M recovery and Phase 6O catalog routes are read-only
+- mutates only the private local pending stores for Phase 5B issue, Phase 5D note, and Phase 6P cancellation approval requests, plus the approved local note store after `/ppo note-confirm`, the single confirmed Phase 6P `cancelled` run transition, and the single Phase 7A planned-run creation through Phase 6B; Phase 6M recovery and Phase 6O catalog routes are read-only
 - does not add generic GitHub tools or arbitrary GitHub endpoints
 - accepts `codex ...`, `codex-budget ...`, `prompt-size ...`, and `split-task ...` through OpenClaw/Telegram in Phase 3C as text-only direct routes
-- parses only the command envelope; task, draft, title, body, note text, and run id are inert data
+- parses only the command envelope; task, draft, title, body, note text, project id, and run id are inert data
 - accepts no catalog filters, search text, sort fields, limits, offsets, actions, cleanup options, confirmations, or production inputs
 - does not accept or expose terminal write confirmation environment values through chat
 - does not mutate `projects/*.md` or update project-state files
@@ -78,6 +79,11 @@ issue-create khlim-assist Add provider validation issue --body Include failing f
 issue-confirm <request-id>
 note-add khlim-assist Record owner-visible project context
 note-confirm <request-id>
+start khlim-assist
+start ledgerpilot-ai
+start spy-market-agent
+start portfolio
+start rbl-content-engine
 runs
 run <run-id>
 cancel <run-id>
@@ -109,6 +115,12 @@ Pending directories are created with `0700`, pending files with `0600`, and requ
 
 Phase 5C adds `node local-operator/ppo-command.mjs note-add <project> <note...>` for trusted terminal note appends. Phase 5D adds `/ppo note-add <project> <note...>` staging and `/ppo note-confirm <request-id>` approval through this plugin. Pending note requests use `${PPO_WRITE_DATA_DIR}/pending-project-notes`; confirmed notes use `${PPO_WRITE_DATA_DIR}/project-notes`.
 
+## Phase 7A development start
+
+Phase 7A adds `/ppo start <project>` through this same plugin. The bridge accepts only exact raw command shapes for the existing five project ids and maps to wrapper argv `["start", "<project>"]` with `shell: false`; malformed whitespace, envelopes, repo names, paths, task text, SHAs, branches, versions, policies, runtime options, confirmations, actions, and extra arguments are rejected before wrapper execution. The wrapper invokes the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` once. A planned outcome creates one run and returns `/ppo continue <run-id>` as the next command. Owner-action-required outcomes create no run.
+
+Phase 7A never calls `/ppo continue` automatically, creates workspaces, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a new OpenClaw tool, or uses model interpretation.
+
 ## Phase 6K development continue
 
 Phase 6K adds `/ppo continue <run-id>` through this same plugin. The bridge accepts only the exact opaque run id and maps to wrapper argv `["continue", "<run-id>"]`. The wrapper reads the durable Phase 6A run and delegates to at most one existing Phase 6B-6G child operation. It does not accept project, status, SHA, action, workspace, service, deployment, rollback, or confirmation input from chat.
@@ -134,4 +146,5 @@ node openclaw/plugins/ppo-local/test-bridge.mjs
 node local-operator/github-issue-approval.test.mjs
 node local-operator/project-note-add.test.mjs
 node local-operator/project-note-approval.test.mjs
+node --test --test-concurrency=1 local-operator/development-start-route.test.mjs
 ```

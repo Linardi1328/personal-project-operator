@@ -46,6 +46,10 @@ for (const projectId of currentProjectIds) {
     `codex-budget ${projectId} ${phase3cTask}`,
     ["codex-budget", projectId, phase3cTask]
   );
+  expectedMappings.set(
+    `start ${projectId}`,
+    ["start", projectId]
+  );
 }
 
 expectedMappings.set(`prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]);
@@ -103,6 +107,37 @@ const fullPayload = await runPpoLocalTool({ command: "/ppo menu project" });
 assert.equal(fullPayload.ok, true, "full /ppo payload succeeds");
 assert.deepEqual(fullPayload.wrapperArgs, ["menu", "project"]);
 assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo payload returns exact wrapper output");
+
+{
+  const safeStartOutput = [
+    "PPO Development Start",
+    "Project: khlim-assist",
+    `Run: ${validDevelopmentRunId}`,
+    "Status: planned",
+    "Next stage: implementation",
+    "Base SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    `Next command: /ppo continue ${validDevelopmentRunId}`,
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: "/ppo start khlim-assist" },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["start", "khlim-assist"]);
+        return {
+          stdout: safeStartOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw start stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "start output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["start", "khlim-assist"]);
+  assert.match(result.stdout, /PPO Development Start/);
+  assert.match(result.stdout, /Next command: \/ppo continue /);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw start stderr|token|secret|stack/i);
+}
 
 {
   const safeRunsOutput = [
@@ -313,6 +348,7 @@ for (const [input, expected] of [
   [`/ppo issue-confirm ${validIssueRequestId}`, ["/ppo", "issue-confirm", validIssueRequestId]],
   ["/ppo note-add khlim-assist Full payload project note", ["/ppo", "note-add", "khlim-assist", "Full payload project note"]],
   [`/ppo note-confirm ${validNoteRequestId}`, ["/ppo", "note-confirm", validNoteRequestId]],
+  ["/ppo start khlim-assist", ["start", "khlim-assist"]],
   ["/ppo runs", ["runs"]],
   [`/ppo run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]],
   [`/ppo cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]],
@@ -340,6 +376,7 @@ for (const [input, expected] of [
   [`ppo codex-budget rbl-content-engine ${phase3cTask}`, ["codex-budget", "rbl-content-engine", phase3cTask]],
   [`ppo prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]],
   [`ppo split-task ${phase3cTask}`, ["split-task", phase3cTask]],
+  ["ppo start ledgerpilot-ai", ["start", "ledgerpilot-ai"]],
   ["ppo runs", ["runs"]],
   [`ppo run ${validDevelopmentRunId}`, ["run", validDevelopmentRunId]],
   [`ppo cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]],
@@ -547,6 +584,49 @@ const rejectedInputs = [
   "note-confirm",
   "note-confirm short-id",
   `note-confirm ${validNoteRequestId} extra`,
+  "start",
+  "/ppo start",
+  "ppo start",
+  "start unknown",
+  "/ppo start unknown",
+  "start prooflab",
+  "start jom-jelajah",
+  "start KHLIM-assist",
+  "start Linardi1328/khlim-assist",
+  "start ../../khlim-assist",
+  "start khlim-assist extra",
+  "/ppo start khlim-assist extra",
+  "ppo start khlim-assist extra",
+  "start khlim-assist add provider validation tests",
+  `start khlim-assist ${"d".repeat(40)}`,
+  "start khlim-assist v1.2.3",
+  "start khlim-assist main",
+  "start khlim-assist phase-7a",
+  "start khlim-assist --policy phase-6b",
+  "start khlim-assist --runtime local",
+  "start khlim-assist --confirm",
+  "start khlim-assist --action continue",
+  "start  khlim-assist",
+  "/ppo  start khlim-assist",
+  "ppo  start khlim-assist",
+  "/ppo start  khlim-assist",
+  "ppo start  khlim-assist",
+  "start khlim-assist ",
+  " start khlim-assist",
+  "start khlim-assist\nanything",
+  "start khlim-assist\ranything",
+  "start khlim-assist\tanything",
+  "start khlim-assist\u0000",
+  "/ppo start khlim-assist\n",
+  "/ppo\nstart khlim-assist",
+  "/ppo start\tkhlim-assist",
+  "/ppo start Linardi1328/khlim-assist",
+  "/ppo start khlim-assist --base " + "d".repeat(40),
+  "/ppo start khlim-assist --branch main",
+  "/ppo start khlim-assist --workspace /tmp/work",
+  "/ppo start khlim-assist --continue",
+  "/ppo develop khlim-assist",
+  "/ppo start-run khlim-assist",
   "runs extra",
   "/ppo runs extra",
   "ppo runs extra",
