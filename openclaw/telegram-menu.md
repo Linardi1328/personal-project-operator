@@ -2,7 +2,7 @@
 
 This document describes how Telegram should expose Personal Project Operator commands.
 
-Phase 6P exposes confirmation-gated quiescent cancellation alongside controlled read-only development run catalog routes, controlled development continuation, and read-only recovery through `/ppo` while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`. `/ppo runs` lists bounded ordinary-run catalog summaries. `/ppo run <run-id>` returns one bounded ordinary-run summary. `/ppo cancel <run-id>` stages a single-use cancellation request for eligible quiescent ordinary runs. `/ppo cancel-confirm <request-id>` confirms one staged cancellation. `/ppo continue <run-id>` advances at most one existing reviewed Phase 6B-6G boundary for ordinary runs. `/ppo recover <run-id>` returns one reviewed Phase 6L read-only recovery observation. The catalog and recovery routes do not mutate run state, cancellation does not interrupt processes or clean workspaces, and none of these routes expose production deployment, verification, or rollback.
+Phase 7A exposes controlled ordinary-run start alongside confirmation-gated quiescent cancellation, controlled read-only development run catalog routes, controlled development continuation, and read-only recovery through `/ppo` while OpenClaw still owns built-in commands such as `/status`, `/menu`, and `/help`. `/ppo start <project>` creates at most one planned Phase 6B run and returns `/ppo continue <run-id>` only after strict planned-result validation, without continuing automatically. `/ppo runs` lists bounded ordinary-run catalog summaries. `/ppo run <run-id>` returns one bounded ordinary-run summary. `/ppo cancel <run-id>` stages a single-use cancellation request for eligible quiescent ordinary runs. `/ppo cancel-confirm <request-id>` confirms one staged cancellation. `/ppo continue <run-id>` advances at most one existing reviewed Phase 6B-6G boundary for ordinary runs. `/ppo recover <run-id>` returns one reviewed Phase 6L read-only recovery observation. The start, catalog, and recovery routes do not perform production deployment, verification, or rollback; cancellation does not interrupt processes or clean workspaces.
 
 This repo does not register commands with Telegram and does not call Telegram APIs.
 
@@ -23,6 +23,7 @@ Expected message forms:
 /ppo issue-confirm <request-id> - Confirm one staged issue creation request
 /ppo note-add <project> <note...> - Stage a project note for confirmation
 /ppo note-confirm <request-id> - Confirm one staged project note request
+/ppo start <project> - Create one planned ordinary development run
 /ppo runs - List read-only development catalog summaries
 /ppo run <run-id> - Inspect one read-only development summary
 /ppo cancel <run-id> - Stage a quiescent development run cancellation request
@@ -60,6 +61,7 @@ Expected message forms:
 - `/ppo issue-confirm <request-id>` (Phase 5B single-use confirmation)
 - `/ppo note-add <project> <note...>` (Phase 5D staging only)
 - `/ppo note-confirm <request-id>` (Phase 5D single-use confirmation)
+- `/ppo start <project>` (Phase 7A controlled start only)
 - `/ppo runs` (Phase 6O read-only development catalog)
 - `/ppo run <run-id>` (Phase 6O read-only development summary)
 - `/ppo cancel <run-id>` (Phase 6P staging only)
@@ -98,7 +100,7 @@ Inline buttons may prefill `/ppo issue-create` or `/ppo issue-confirm`, but they
 
 Inline buttons may prefill `/ppo note-add` or `/ppo note-confirm`, but they must not bypass the request id confirmation step.
 
-Phase 6P keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. `note-add` performs no note write; `note-confirm` can append only one approved local note after atomically claiming an unexpired one-time id. `runs` and `run` expose only the Phase 6N read-only ordinary-run catalog with no filters, search, sort, retry, repair, recovery, continue, cancellation, production action, or model interpretation. `cancel` stages only and `cancel-confirm` can cancel exactly one eligible quiescent ordinary run after single-use confirmation; they do not interrupt processes, clean workspaces, retry, repair, recover, continue, or touch production. `continue` accepts only an existing run id and delegates to one reviewed Phase 6B-6G boundary. `recover` accepts only an existing run id and delegates to one reviewed Phase 6L read-only recovery boundary. The chat path must not accept or expose terminal write confirmation environment values, rollback confirmations, production services, deployment targets, actions, branches, repositories, SHAs, recovery options, commands, cleanup options, or executables.
+Phase 7A keeps one OpenClaw tool: `ppo_local`. `issue-create` performs no GitHub write; `issue-confirm` can create only one approved GitHub issue after atomically claiming an unexpired one-time id. `note-add` performs no note write; `note-confirm` can append only one approved local note after atomically claiming an unexpired one-time id. `start` accepts only one allowlisted project id, reuses Phase 6B planned-run creation once with no caller-controlled route options, returns a continuation command only after strict planned-result validation, and never continues automatically. `runs` and `run` expose only the Phase 6N read-only ordinary-run catalog with no filters, search, sort, retry, repair, recovery, continue, cancellation, production action, or model interpretation. `cancel` stages only and `cancel-confirm` can cancel exactly one eligible quiescent ordinary run after single-use confirmation; they do not interrupt processes, clean workspaces, retry, repair, recover, continue, or touch production. `continue` accepts only an existing run id and delegates to one reviewed Phase 6B-6G boundary. `recover` accepts only an existing run id and delegates to one reviewed Phase 6L read-only recovery boundary. The chat path must not accept or expose terminal write confirmation environment values, rollback confirmations, production services, deployment targets, actions, task text, runtime options, branches, repositories, SHAs, recovery options, commands, cleanup options, or executables.
 
 Do not override OpenClaw built-ins:
 

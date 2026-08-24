@@ -501,6 +501,19 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Do not accept caller-controlled project, status, version, SHA, branch, path, evidence, actor, reason, target status, action, cleanup option, service, production profile, command, executable, or confirmation value.
 - Do not interrupt Codex/tests/review, remove worktrees, delete local or remote branches, close PRs, revert merges, reset repositories, delete run records or history, remove version markers, invoke recovery, invoke continue, retry, repair, deploy, verify production, roll back production, add a new OpenClaw tool, or use model interpretation.
 
+### Phase 7A - Controlled `/ppo start <project>` Route
+
+- Expose the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` capability through the existing terminal wrapper and the existing `ppo_local` OpenClaw/Telegram path.
+- Accept exactly one caller-controlled value: one project id from the existing five-project registry (`khlim-assist`, `ledgerpilot-ai`, `spy-market-agent`, `portfolio`, or `rbl-content-engine`).
+- Reject unknown projects, missing project, extra arguments, malformed whitespace/envelopes, control characters, paths, repo names, task text, SHAs, versions, branches, policies, runtime options, confirmations, and actions before planning.
+- Add a separate Phase 7A route/policy id and deterministic policy hash covering caller input, fixed project scope, Phase 6B reuse, no caller-option forwarding, strict planned-result validation, zero production actions, zero model routing, and zero automatic continuation.
+- Reuse the existing Phase 6B planner, Phase 6A run-state store, and Phase 2 GitHub read-only behavior. Do not create another planner, run-state store, GitHub client, source reader, or planning engine.
+- On a valid planned Phase 6B result, create exactly one run through `createPlannedDevelopmentRun` and return bounded output with project, run id, status, next stage, base SHA, and `/ppo continue <run-id>` as the next command.
+- If Phase 6B returns `owner_action_required`, create no run and return only bounded safe planner outcome/reason information.
+- Fail closed on malformed planned Phase 6B results unless requested project, plan project, and run project match; run status is exactly `planned`; the run id is valid; the next stage is exactly `planning` or `implementation`; plan/run base SHA match; and run head SHA matches the base SHA.
+- Keep OpenClaw deterministic. Do not add a new OpenClaw tool or model turn. The bridge maps only exact `/ppo start <project>` command shapes to `["start", "<project>"]` with `shell: false` and rejects malformed start envelopes without normalization.
+- Do not automatically call `/ppo continue`, create a workspace, invoke Codex, run tests, run review/hardening, push, create a PR, merge, deploy, verify production, rollback, run background work, poll, or perform any production action.
+
 ### Phase 6Q - Full Phase 6 Integrated Acceptance and Closure Validation
 
 - Add no new feature by default.

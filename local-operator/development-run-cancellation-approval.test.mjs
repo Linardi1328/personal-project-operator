@@ -713,7 +713,10 @@ test("Phase 6P excludes self-development cancellation through staging and malici
     runId: self.runId,
     projectId: "personal-project-operator"
   }))
-  const confirmed = await handlePpoDevelopmentCancelConfirmCommand(requestId, { writeDataDir })
+  const confirmed = await handlePpoDevelopmentCancelConfirmCommand(requestId, {
+    writeDataDir,
+    now: makeClock("2026-08-24T03:01:00.000Z")
+  })
   const after = await readDevelopmentRun(self.runId, {
     writeDataDir,
     allowPersonalProjectOperatorSelfDevelopmentProject: true
