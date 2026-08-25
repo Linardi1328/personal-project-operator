@@ -579,7 +579,7 @@ function makeGitRunner(remoteState = {}) {
         throw error
       }
 
-      state.branchSha = sha
+      state.branchSha = sha || null
       return {
         stdout: "pushed\n",
         stderr: "",
@@ -705,7 +705,6 @@ async function makeMergeReadyDeliveryFixture(options = {}) {
     reviewRunner: makeReviewRunner(),
     now: fixture.now
   })
-
   return {
     ...fixture,
     githubClient,
@@ -1554,6 +1553,7 @@ test("delivery reaches merge_ready only after push, PR, exact-head CI, remote ap
   const fixture = await makeReviewPassedFixture()
   const gitRunner = makeGitRunner()
   const githubClient = makeGitHubClient(fixture.project, fixture.run.branch, fixture.headSha)
+  assert.match(fixture.run.branch, /^ppo\/[a-z0-9][a-z0-9-]*\/implementation\/[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u)
   const calls = []
   const result = await executeGitHubDeliveryToMergeReady(fixture.run.runId, {
     expectedVersion: fixture.run.version,
@@ -1587,11 +1587,12 @@ test("delivery reaches merge_ready only after push, PR, exact-head CI, remote ap
 test("SHA-pinned merge requires merge_ready, exact current head, mergeability, expected SHA, and verifies merge commit/main", async () => {
   const fixture = await makeReviewPassedFixture()
   const githubClient = makeGitHubClient(fixture.project, fixture.run.branch, fixture.headSha)
+  const gitRunner = makeGitRunner()
   const delivered = await executeGitHubDeliveryToMergeReady(fixture.run.runId, {
     expectedVersion: fixture.run.version,
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
-    gitRunner: makeGitRunner(),
+    gitRunner,
     githubClient,
     reviewConfig: trustedReviewConfig(),
     reviewRunner: makeReviewRunner(),
@@ -1602,6 +1603,7 @@ test("SHA-pinned merge requires merge_ready, exact current head, mergeability, e
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
     githubClient,
+    gitRunner,
     now: fixture.now
   })
 
@@ -1609,6 +1611,10 @@ test("SHA-pinned merge requires merge_ready, exact current head, mergeability, e
   assert.equal(merged.merge.implementationSha, fixture.headSha)
   assert.equal(merged.merge.mergeCommitSha, MERGE_SHA)
   assert.equal(merged.merge.mainSha, MAIN_SHA)
+  assert.equal(gitRunner.state.branchSha, null)
+  assert.equal(merged.run.evidence.merge.at(-1).metadata.branchCleanupOutcome, "branch_deleted")
+  assert.equal(merged.run.evidence.merge.at(-1).metadata.branchDeleted, true)
+  assert.equal(gitRunner.state.pushCalls.at(-1)[4], `:refs/heads/${fixture.run.branch}`)
   assert.equal(githubClient.state.mergeCalls.length, 1)
   assert.deepEqual(githubClient.state.mergeCalls[0], {
     prNumber: 1,
@@ -1655,6 +1661,39 @@ test("SHA-pinned merge requires merge_ready, exact current head, mergeability, e
     workspaceRegistry: blocked.registry,
     githubClient: blockedClient
   }), "GITHUB_DELIVERY_PR_NOT_MERGEABLE")
+})
+
+test("post-merge cleanup preserves an unexpectedly moved branch and reports cleanup required", async () => {
+  const fixture = await makeReviewPassedFixture()
+  const githubClient = makeGitHubClient(fixture.project, fixture.run.branch, fixture.headSha)
+  const gitRunner = makeGitRunner()
+  const delivered = await executeGitHubDeliveryToMergeReady(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    gitRunner,
+    githubClient,
+    reviewConfig: trustedReviewConfig(),
+    reviewRunner: makeReviewRunner(),
+    now: fixture.now
+  })
+
+  const unexpectedSha = "f".repeat(40)
+  gitRunner.state.branchSha = unexpectedSha
+  const merged = await executeShaPinnedMerge(fixture.run.runId, {
+    expectedVersion: delivered.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    githubClient,
+    gitRunner,
+    now: fixture.now
+  })
+
+  assert.equal(merged.run.status, "merged")
+  assert.equal(gitRunner.state.branchSha, unexpectedSha)
+  assert.equal(gitRunner.state.pushCalls.filter((args) => args[4].startsWith(":")).length, 0)
+  assert.equal(merged.run.evidence.merge.at(-1).metadata.branchCleanupOutcome, "cleanup_required")
+  assert.equal(merged.run.evidence.merge.at(-1).metadata.branchDeleted, false)
 })
 
 test("SHA-pinned merge recovers a successful remote merge after process crash without a duplicate merge", async () => {
@@ -1829,7 +1868,6 @@ test("Phase 6G exposes no command route, deployment action, or broad GitHub writ
     "/labels",
     "/releases",
     "workflow_dispatch",
-    "deleteRef",
     "branch protection",
     "force",
     "systemctl",
