@@ -638,9 +638,8 @@ test("Codex native Linux backend keeps the controller online, sandboxes commands
   const probeCalls = sandboxCalls.filter((call) => call.kind === "sandbox-probe")
   assert.ok(probeCalls.length > 0)
   for (const call of probeCalls) {
-    assert.deepEqual(call.sandboxCommand.args.slice(0, 9), [
+    assert.deepEqual(call.sandboxCommand.args.slice(0, 8), [
       "sandbox",
-      "linux",
       "--config",
       `projects."${call.cwd}".trust_level="untrusted"`,
       "--permission-profile",

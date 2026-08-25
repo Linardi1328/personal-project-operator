@@ -1163,9 +1163,8 @@ test("Codex native Linux review sandbox keeps probes read-only and invokes the f
   ])
 
   for (const call of calls.filter((entry) => entry.kind === "sandbox-probe")) {
-    assert.deepEqual(call.sandboxArgs.slice(0, 9), [
+    assert.deepEqual(call.sandboxArgs.slice(0, 8), [
       "sandbox",
-      "linux",
       "--config",
       `projects."${call.cwd}".trust_level="untrusted"`,
       "--permission-profile",

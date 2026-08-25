@@ -123,7 +123,7 @@ sudo -H -u ppo env \
   /home/ppo/.local/bin/codex login --device-auth
 ```
 
-Then rerun the same confirmation-gated preparation command. Runtime readiness requires `codex login status`, the fixed Codex version, the root-owned reviewer wrapper, the fixed workspace/source roots, and a successful `codex sandbox linux` probe. The script installs the Ubuntu 24.04 Bubblewrap AppArmor profile when the packaged profile is available; it never disables the host's unprivileged-user-namespace restriction globally.
+Then rerun the same confirmation-gated preparation command. Runtime readiness requires `codex login status`, the fixed Codex version, the root-owned reviewer wrapper, the fixed workspace/source roots, and a successful `codex sandbox` probe. The script installs the Ubuntu 24.04 Bubblewrap AppArmor profile when the packaged profile is available; it never disables the host's unprivileged-user-namespace restriction globally.
 
 ## Service User
 

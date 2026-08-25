@@ -671,7 +671,6 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
       executablePath: sandbox.executablePath,
       args: [
         "sandbox",
-        "linux",
         "--config",
         projectOverride,
         "--permission-profile",

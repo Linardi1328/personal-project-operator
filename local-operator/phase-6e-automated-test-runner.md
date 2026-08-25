@@ -16,7 +16,7 @@ Automated testing requires:
 - exact expected run-state version
 - a trusted Phase 6C project workspace registry
 - a trusted local per-project test policy registry
-- trusted no-outbound-network command sandbox configuration; production Linux uses the local `codex sandbox linux` helper without a model call
+- trusted no-outbound-network command sandbox configuration; production Linux uses the local `codex sandbox` helper without a model call
 - a Phase 6D implementation evidence record whose SHA equals `run.headSha`
 - a verified clean Phase 6C workspace whose branch and HEAD equal `run.headSha`
 
@@ -84,4 +84,4 @@ If workspace HEAD changes after a pass, the old pass evidence is invalid for the
 
 ## Boundary
 
-Phase 6E does not add a terminal command, `/ppo` route, OpenClaw route, Telegram route, Codex model call, automated review, hardening loop, GitHub write, PR automation, push, merge, deployment, rollback, production verification, service control, or `/ppo continue`. Production Linux may call the local `codex sandbox linux` helper only as a sandbox launcher; it does not call a model.
+Phase 6E does not add a terminal command, `/ppo` route, OpenClaw route, Telegram route, Codex model call, automated review, hardening loop, GitHub write, PR automation, push, merge, deployment, rollback, production verification, service control, or `/ppo continue`. Production Linux may call the local `codex sandbox` helper only as a sandbox launcher; it does not call a model.

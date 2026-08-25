@@ -32,7 +32,7 @@ The reviewer policy contains a fixed reviewer id/version, one trusted absolute e
 
 The agent refuses arbitrary command strings, `shell: true`, shell interpreters, Codex implementation adapters, GitHub write tools, push/merge/deploy tooling, OpenClaw, secret-looking env keys, untrusted executables, unbounded timeouts, and unbounded output.
 
-Reviewer sandbox configuration must also enforce read-only access to the verified workspace, workspace Git state, and canonical source checkout while preserving local read access. On macOS, PPO generates a `sandbox-exec` profile that denies `file-write*` under each verified path. On production Linux, the fixed root-owned reviewer wrapper runs `codex exec --sandbox read-only`; PPO preflights the same `:read-only` boundary through `codex sandbox linux`. Review fails closed if local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, or generated-command network denial cannot be verified before the review attempt is reserved.
+Reviewer sandbox configuration must also enforce read-only access to the verified workspace, workspace Git state, and canonical source checkout while preserving local read access. On macOS, PPO generates a `sandbox-exec` profile that denies `file-write*` under each verified path. On production Linux, the fixed root-owned reviewer wrapper runs `codex exec --sandbox read-only`; PPO preflights the same `:read-only` boundary through `codex sandbox`. Review fails closed if local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, or generated-command network denial cannot be verified before the review attempt is reserved.
 
 ## Prompt
 
