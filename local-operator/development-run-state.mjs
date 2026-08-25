@@ -50,8 +50,11 @@ export const MAX_DEVELOPMENT_RUN_METADATA_ARRAY_ITEMS = 16
 export const MAX_DEVELOPMENT_RUN_STAGE_ATTEMPTS = 20
 export const REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR = "phase-6f-review-runtime-failure-recovery"
 export const REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION = "retry-phase6f-review-runtime-failure-v1"
+export const REVIEW_ORPHAN_RECOVERY_ACTOR = "phase-6f-review-orphan-recovery"
+export const REVIEW_ORPHAN_RECOVERY_CONFIRMATION = "recover-phase6f-review-orphan-v1"
 
 const reviewRuntimeFailureRecoveryToken = Symbol("phase-6f-review-runtime-failure-recovery")
+const reviewOrphanRecoveryToken = Symbol("phase-6f-review-orphan-recovery")
 
 export const DEVELOPMENT_RUN_STATUSES = Object.freeze([
   "created",
@@ -237,6 +240,7 @@ const attemptKeyByEnteringStatus = Object.freeze({
 const sameStatusAttemptStatuses = new Set([
   "implementation_in_progress",
   "tests_in_progress",
+  "review_in_progress",
   "review_changes_requested",
   "review_passed",
   "merge_ready"
@@ -1086,8 +1090,13 @@ function applyTransition(record, {
     record.status === "review_changes_requested" &&
     toStatus === "tests_passed"
   )
+  const approvedOrphanRecovery = (
+    recoveryToken === reviewOrphanRecoveryToken &&
+    record.status === "review_in_progress" &&
+    toStatus === "tests_passed"
+  )
 
-  if (!approvedRuntimeRecovery) {
+  if (!approvedRuntimeRecovery && !approvedOrphanRecovery) {
     assertAllowedTransition(record.status, toStatus)
   }
 
@@ -1490,6 +1499,122 @@ function isReviewRuntimeRecoveryHistoryEvent(event, priorEvidence, attempts, pro
   return true
 }
 
+function latestReviewAttemptForOrphanRecovery(record) {
+  const evidence = Array.isArray(record?.evidence?.review) ? record.evidence.review : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+
+    if (entry?.source === "phase-6f-independent-review-agent") {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function assertReviewOrphanRecoveryCandidate(record, {
+  expectedHeadSha,
+  reviewAttempt,
+  confirmation
+}) {
+  if (confirmation !== REVIEW_ORPHAN_RECOVERY_CONFIRMATION) {
+    throw runStateError(
+      "REVIEW_ORPHAN_RECOVERY_CONFIRMATION_REQUIRED",
+      "Exact confirmation is required for orphaned review recovery."
+    )
+  }
+
+  if (record.status !== "review_in_progress") {
+    throw runStateError(
+      "REVIEW_ORPHAN_RECOVERY_NOT_ALLOWED",
+      "Orphaned review recovery requires review_in_progress status."
+    )
+  }
+
+  if (record.headSha !== expectedHeadSha) {
+    throw runStateError(
+      "REVIEW_ORPHAN_RECOVERY_HEAD_MISMATCH",
+      "Orphaned review recovery head SHA does not match the development run."
+    )
+  }
+
+  if (!Number.isInteger(reviewAttempt) || reviewAttempt <= 0 || record.attempts.review !== reviewAttempt) {
+    throw runStateError(
+      "REVIEW_ORPHAN_RECOVERY_ATTEMPT_MISMATCH",
+      "Orphaned review recovery attempt does not match the development run."
+    )
+  }
+
+  const latest = latestReviewAttemptForOrphanRecovery(record)
+
+  if (
+    !latest ||
+    latest.sha !== expectedHeadSha ||
+    latest.metadata?.reviewedSha !== expectedHeadSha ||
+    latest.metadata?.attempt !== reviewAttempt ||
+    !["review_started", "review_execution_ambiguous"].includes(latest.metadata?.outcome)
+  ) {
+    throw runStateError(
+      "REVIEW_ORPHAN_RECOVERY_NOT_ALLOWED",
+      "Orphaned review recovery requires the exact unfinished or ambiguously ended review attempt."
+    )
+  }
+
+  return latest.metadata.outcome
+}
+
+function isReviewOrphanRecoveryHistoryEvent(event, priorEvidence, attempts, projectId) {
+  if (
+    event.fromStatus !== "review_in_progress" ||
+    event.toStatus !== "tests_passed" ||
+    event.actor !== REVIEW_ORPHAN_RECOVERY_ACTOR ||
+    event.reason !== "phase-6f-review-orphan-retry" ||
+    !Array.isArray(event.evidence) ||
+    event.evidence.length !== 1
+  ) {
+    return false
+  }
+
+  const latest = latestReviewAttemptForOrphanRecovery({ evidence: priorEvidence })
+  const recoveryEvidence = event.evidence[0]
+  const expectedMetadata = {
+    project: projectId,
+    recovery: REVIEW_ORPHAN_RECOVERY_ACTOR,
+    reviewedSha: event.headSha,
+    reviewAttempt: attempts.review,
+    previousOutcome: latest?.metadata?.outcome,
+    outcome: "review_orphan_recovered"
+  }
+
+  if (
+    recoveryEvidence?.kind !== "review" ||
+    recoveryEvidence?.sha !== event.headSha ||
+    recoveryEvidence?.source !== REVIEW_ORPHAN_RECOVERY_ACTOR ||
+    recoveryEvidence?.summary !== "Confirmed orphaned Phase 6F review attempt recovered for one retry." ||
+    stableStringify(recoveryEvidence?.metadata) !== stableStringify(expectedMetadata)
+  ) {
+    return false
+  }
+
+  try {
+    assertReviewOrphanRecoveryCandidate({
+      status: event.fromStatus,
+      headSha: event.headSha,
+      attempts,
+      evidence: priorEvidence
+    }, {
+      expectedHeadSha: event.headSha,
+      reviewAttempt: attempts.review,
+      confirmation: REVIEW_ORPHAN_RECOVERY_CONFIRMATION
+    })
+  } catch {
+    return false
+  }
+
+  return true
+}
+
 function validateHistory(record) {
   if (!Array.isArray(record.history) || record.history.length === 0 || record.history.length > MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES) {
     throw runStateError(
@@ -1543,7 +1668,14 @@ function validateHistory(record) {
         record.project.id
       )
 
-      if (!reviewRuntimeRecovery) {
+      const reviewOrphanRecovery = isReviewOrphanRecoveryHistoryEvent(
+        event,
+        evidence,
+        attempts,
+        record.project.id
+      )
+
+      if (!reviewRuntimeRecovery && !reviewOrphanRecovery) {
         assertAllowedTransition(event.fromStatus, event.toStatus)
       }
 
@@ -2899,6 +3031,65 @@ async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, rec
   return cloneJson(next)
 }
 
+async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, options = {}) {
+  const normalizedRunId = normalizeDevelopmentRunId(runId)
+  const expectedVersion = normalizeExpectedVersion(recovery?.expectedVersion)
+  const expectedHeadSha = normalizeOptionalSha(recovery?.expectedHeadSha, "Expected head SHA")
+  const reviewAttempt = recovery?.reviewAttempt
+  const confirmation = normalizeSafeText(recovery?.confirmation, {
+    fieldName: "Review orphan recovery confirmation",
+    maxChars: 100,
+    code: "REVIEW_ORPHAN_RECOVERY_CONFIRMATION_REQUIRED",
+    safeMessage: "Exact confirmation is required for orphaned review recovery."
+  })
+  const current = await readDevelopmentRunInternal(normalizedRunId, options)
+
+  if (current.version !== expectedVersion) {
+    throw runStateError(
+      "STALE_RUN_VERSION",
+      "Development run state changed; reload before retrying."
+    )
+  }
+
+  const previousOutcome = assertReviewOrphanRecoveryCandidate(current, {
+    expectedHeadSha,
+    reviewAttempt,
+    confirmation
+  })
+  const now = nowDate(options)
+  const evidence = normalizeEvidenceList([{
+    kind: "review",
+    sha: expectedHeadSha,
+    source: REVIEW_ORPHAN_RECOVERY_ACTOR,
+    summary: "Confirmed orphaned Phase 6F review attempt recovered for one retry.",
+    metadata: {
+      project: current.project.id,
+      recovery: REVIEW_ORPHAN_RECOVERY_ACTOR,
+      reviewedSha: expectedHeadSha,
+      reviewAttempt,
+      previousOutcome,
+      outcome: "review_orphan_recovered"
+    }
+  }], {
+    ...options,
+    now: () => now
+  })
+  const next = applyTransition(current, {
+    toStatus: "tests_passed",
+    branch: current.branch,
+    headSha: expectedHeadSha,
+    evidence,
+    actor: REVIEW_ORPHAN_RECOVERY_ACTOR,
+    reason: "phase-6f-review-orphan-retry",
+    now,
+    recoveryToken: reviewOrphanRecoveryToken
+  })
+  const paths = storePaths(normalizedRunId, options)
+
+  await commitRecord(paths, next)
+  return cloneJson(next)
+}
+
 export async function createDevelopmentRun(input, options = {}) {
   try {
     return await createDevelopmentRunInternal(input, options)
@@ -2937,6 +3128,14 @@ export async function readPersonalProjectOperatorSelfDevelopmentRun(runId, optio
 export async function transitionDevelopmentRun(runId, transition, options = {}) {
   try {
     return await transitionDevelopmentRunInternal(runId, transition, options)
+  } catch (error) {
+    throw safeRunStateFailure(error)
+  }
+}
+
+export async function recoverDevelopmentRunReviewOrphanState(runId, recovery, options = {}) {
+  try {
+    return await recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, options)
   } catch (error) {
     throw safeRunStateFailure(error)
   }

@@ -26,6 +26,7 @@ import {
   INDEPENDENT_REVIEW_SANDBOX_ID,
   MAX_INDEPENDENT_REVIEW_ATTEMPTS,
   MAX_REVIEW_OUTPUT_BYTES,
+  MAX_REVIEW_STDERR_BYTES,
   PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
   PHASE_6E_TEST_EVIDENCE_SOURCE,
   REVIEW_DECISIONS,
@@ -54,6 +55,56 @@ function makeClock() {
     return next
   }
 }
+
+test("review sandbox keeps final stdout tight while allowing bounded stderr progress", async () => {
+  const result = await runSandboxedProcess({
+    sandboxCommand: {
+      executablePath: process.execPath,
+      args: [
+        "--eval",
+        "process.stderr.write('x'.repeat(2048)); process.stdout.write('ok')"
+      ]
+    },
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH || "/usr/bin:/bin"
+    },
+    stdin: "",
+    timeoutMs: 5000,
+    maxOutputBytes: 1024,
+    maxStderrBytes: 4096
+  })
+
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.stdout, "ok")
+  assert.equal(result.outputOverflow, false)
+  assert.equal(result.stdoutOverflow, false)
+  assert.equal(result.stderrOverflow, false)
+
+  const overflow = await runSandboxedProcess({
+    sandboxCommand: {
+      executablePath: process.execPath,
+      args: [
+        "--eval",
+        "process.stderr.write('x'.repeat(4097)); setTimeout(() => {}, 1000)"
+      ]
+    },
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH || "/usr/bin:/bin"
+    },
+    stdin: "",
+    timeoutMs: 5000,
+    maxOutputBytes: 1024,
+    maxStderrBytes: 4096
+  })
+
+  assert.equal(overflow.outputOverflow, true)
+  assert.equal(overflow.stdoutOverflow, false)
+  assert.equal(overflow.stderrOverflow, true)
+  assert.equal(overflow.ambiguous, true)
+  assert.equal(MAX_REVIEW_STDERR_BYTES > MAX_REVIEW_OUTPUT_BYTES, true)
+})
 
 test("review sandbox process absorbs child stdin EPIPE and reports the child exit", async () => {
   const result = await runSandboxedProcess({
@@ -777,7 +828,7 @@ test("malformed, contradictory, and reviewedSha-mismatched output fails closed",
   }
 })
 
-test("timeout, signal, and output overflow leave an open review attempt requiring reconciliation", async () => {
+test("timeout, signal, and output overflow record bounded ambiguity requiring recovery", async () => {
   for (const ambiguousResult of [
     { timedOut: true, killed: true, ambiguous: true },
     { exitCode: null, signal: "SIGTERM" },
@@ -800,15 +851,19 @@ test("timeout, signal, and output overflow leave an open review attempt requirin
 
     assert.equal(reloaded.status, "review_in_progress")
     assert.equal(reloaded.attempts.review, 1)
-    assert.equal(latestReviewEvidence(reloaded).metadata.outcome, "review_started")
+    assert.equal(latestReviewEvidence(reloaded).metadata.outcome, "review_execution_ambiguous")
+    assert.equal(typeof latestReviewEvidence(reloaded).metadata.failureClass, "string")
+    assert.equal(latestReviewEvidence(reloaded).metadata.attempt, 1)
+    assert.equal(latestReviewEvidence(reloaded).metadata.reviewedSha, fixture.headSha)
 
     const reconciliation = await reconcileIndependentReview(fixture.run.runId, {
       writeDataDir: fixture.writeDataDir,
       workspaceRegistry: fixture.registry
     })
 
-    assert.equal(reconciliation.openAttempt, true)
-    assert.equal(reconciliation.status, "open_attempt")
+    assert.equal(reconciliation.openAttempt, false)
+    assert.equal(reconciliation.ambiguousAttempt, true)
+    assert.equal(reconciliation.status, "ambiguous_attempt")
     assert.equal(reconciliation.facts.headSha, fixture.headSha)
 
     await assertRejectsCode(executeIndependentReview(fixture.run.runId, {
