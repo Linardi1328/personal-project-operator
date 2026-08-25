@@ -90,6 +90,29 @@ test("sandbox process absorbs child stdin EPIPE and reports the child exit", asy
   assert.equal(result.ambiguous, false)
 })
 
+test("sandbox process accepts bounded output above the legacy 32 KiB limit", async () => {
+  const outputBytes = 64 * 1024
+  const result = await runSandboxedProcess({
+    sandboxCommand: {
+      executablePath: process.execPath,
+      args: ["--eval", `process.stdout.write("x".repeat(${outputBytes}))`]
+    },
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH || "/usr/bin:/bin"
+    },
+    stdin: "",
+    timeoutMs: 5000
+  })
+
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.signal, null)
+  assert.equal(result.killed, false)
+  assert.equal(result.ambiguous, false)
+  assert.equal(Buffer.byteLength(result.stdout, "utf8"), outputBytes)
+  assert.equal(result.stderr, "")
+})
+
 async function canonicalTempRoot(label = "ppo-6d-") {
   return realpath(await mkdtemp(join(tmpdir(), label)))
 }
