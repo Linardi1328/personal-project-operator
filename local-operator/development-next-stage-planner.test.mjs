@@ -549,7 +549,7 @@ test("trusted repository docs can document confirmation placeholders without blo
   assert.equal(plan.next.stage, "implementation")
   assert.equal(
     plan.next.task,
-    "Add one focused shared TypeScript configuration foundation. Populate `packages/typescript-config` with reusable compiler configurations for Node, Next.js, and Expo, add only minimal consumer `tsconfig.json` files proving inheritance, and extend `tests/foundation.test.mjs` with deterministic guardrail checks. Do not add application features, runtime dependencies, authentication, database models, deployment configuration, or production integrations."
+    "Add one focused shared TypeScript configuration foundation. Populate `packages/typescript-config` with reusable compiler configurations for Node, Next.js, and Expo, add only minimal consumer `tsconfig.json` files proving inheritance, and extend `tests/foundation.test.mjs` with deterministic guardrail checks."
   )
   assert.doesNotMatch(JSON.stringify(plan), /PPO_GITHUB_WRITE_CONFIRM|PPO_NOTE_WRITE_CONFIRM/u)
 })
