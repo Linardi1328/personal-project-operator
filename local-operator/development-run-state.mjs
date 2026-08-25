@@ -240,6 +240,7 @@ const attemptKeyByEnteringStatus = Object.freeze({
 const sameStatusAttemptStatuses = new Set([
   "implementation_in_progress",
   "tests_in_progress",
+  "review_in_progress",
   "review_changes_requested",
   "review_passed",
   "merge_ready"
