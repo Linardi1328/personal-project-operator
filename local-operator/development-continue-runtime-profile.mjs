@@ -294,7 +294,6 @@ async function assertLinuxSandboxCapability(paths, options = {}) {
     executablePath: paths.sandboxExecutablePath,
     args: [
       "sandbox",
-      "linux",
       "--config",
       `projects."${paths.workspaceRoot}".trust_level="untrusted"`,
       "--permission-profile",
