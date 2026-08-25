@@ -7,6 +7,7 @@ import { promisify } from "node:util"
 import {
   DevelopmentRunStateError,
   readDevelopmentRun,
+  recordDevelopmentRunProgress,
   resolveDevelopmentRunProject,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
@@ -29,6 +30,7 @@ export const MAX_REVIEW_ENV_KEYS = 16
 export const MAX_REVIEW_ENV_VALUE_CHARS = 1000
 export const MAX_REVIEW_PROMPT_CHARS = 6000
 export const MAX_REVIEW_OUTPUT_BYTES = 32 * 1024
+export const MAX_REVIEW_STDERR_BYTES = 256 * 1024
 export const MAX_REVIEW_TIMEOUT_MS = 5 * 60 * 1000
 export const MIN_REVIEW_TIMEOUT_MS = 1000
 export const MAX_REVIEW_GIT_OUTPUT_BYTES = 32 * 1024
@@ -485,6 +487,19 @@ function normalizeOutputBytes(value) {
   return outputBytes
 }
 
+function normalizeStderrBytes(value) {
+  const stderrBytes = value === undefined ? MAX_REVIEW_STDERR_BYTES : value
+
+  if (!Number.isInteger(stderrBytes) || stderrBytes <= 0 || stderrBytes > MAX_REVIEW_STDERR_BYTES) {
+    throw reviewError(
+      "REVIEW_CONFIG_INVALID",
+      "Reviewer stderr limit configuration is invalid."
+    )
+  }
+
+  return stderrBytes
+}
+
 function normalizeReviewConfig(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw reviewError(
@@ -513,6 +528,7 @@ function normalizeReviewConfig(config) {
     env: normalizeReviewEnv(config.env || {}),
     timeoutMs: normalizeTimeoutMs(config.timeoutMs),
     maxOutputBytes: normalizeOutputBytes(config.maxOutputBytes),
+    maxStderrBytes: normalizeStderrBytes(config.maxStderrBytes),
     sandbox: normalizeExecutionSandbox(config.sandbox)
   }
 }
@@ -533,12 +549,48 @@ function isUncertainExecutionOutcome(value) {
   )
 }
 
-function ambiguousReviewError() {
+function ambiguityClassification(value = {}, maxOutputBytes = MAX_REVIEW_OUTPUT_BYTES) {
+  const stdoutOverflow = (
+    value?.stdoutOverflow === true ||
+    Buffer.byteLength(String(value?.stdout ?? ""), "utf8") > maxOutputBytes
+  )
+  const stderrOverflow = value?.stderrOverflow === true
+  const outputOverflow = value?.outputOverflow === true || stdoutOverflow || stderrOverflow
+  const timedOut = value?.timedOut === true || value?.code === "ETIMEDOUT"
+  const signal = typeof value?.signal === "string" && value.signal.length <= 20
+    ? value.signal
+    : null
+  const killed = value?.killed === true || timedOut || outputOverflow || signal !== null
+  const failureClass = timedOut
+    ? "timeout"
+    : stderrOverflow
+      ? "stderr_overflow"
+      : stdoutOverflow
+        ? "stdout_overflow"
+        : outputOverflow
+          ? "output_overflow"
+          : signal !== null
+            ? "signal"
+            : "uncertain"
+
+  return {
+    failureClass,
+    timedOut,
+    killed,
+    outputOverflow,
+    stdoutOverflow,
+    stderrOverflow,
+    signal
+  }
+}
+
+function ambiguousReviewError(details = {}) {
   const error = reviewError(
     "REVIEW_EXECUTION_AMBIGUOUS",
     "Independent review execution outcome is ambiguous; reconcile workspace state before retrying."
   )
   error.ambiguous = true
+  error.ambiguity = ambiguityClassification(details)
   return error
 }
 
@@ -713,8 +765,11 @@ export async function runSandboxedProcess(invocation) {
     let killed = false
     let timedOut = false
     let outputOverflow = false
+    let stdoutOverflow = false
+    let stderrOverflow = false
     let settled = false
     const outputLimit = invocation.maxOutputBytes
+    const stderrLimit = invocation.maxStderrBytes ?? outputLimit
     const timeoutHandle = setTimeout(() => {
       timedOut = true
       killed = true
@@ -736,6 +791,7 @@ export async function runSandboxedProcess(invocation) {
 
       if (stdoutBytes > outputLimit) {
         outputOverflow = true
+        stdoutOverflow = true
         killed = true
         child.kill("SIGTERM")
         return
@@ -747,8 +803,9 @@ export async function runSandboxedProcess(invocation) {
     child.stderr.on("data", (chunk) => {
       stderrBytes += chunk.length
 
-      if (stderrBytes > outputLimit) {
+      if (stderrBytes > stderrLimit) {
         outputOverflow = true
+        stderrOverflow = true
         killed = true
         child.kill("SIGTERM")
       }
@@ -773,6 +830,8 @@ export async function runSandboxedProcess(invocation) {
         killed,
         timedOut,
         outputOverflow,
+        stdoutOverflow,
+        stderrOverflow,
         ambiguous: killed || timedOut || outputOverflow || typeof signal === "string",
         stdout
       })
@@ -802,7 +861,7 @@ async function runSandboxedCommand(invocation, options = {}) {
     })
   } catch (error) {
     if (isUncertainExecutionOutcome(error)) {
-      throw ambiguousReviewError()
+      throw ambiguousReviewError(error)
     }
 
     if (error instanceof DevelopmentRunStateError) {
@@ -1832,13 +1891,21 @@ function hasOnlyKeys(value, keys) {
 
 function parseReviewerDecision(result, reviewedSha, maxOutputBytes) {
   if (isUncertainExecutionOutcome(result)) {
-    throw ambiguousReviewError()
+    throw ambiguousReviewError(ambiguityClassification(result, maxOutputBytes))
   }
 
   const stdout = String(result?.stdout ?? "")
 
-  if (Buffer.byteLength(stdout, "utf8") > maxOutputBytes || unsafeMultilineOutputPattern.test(stdout)) {
-    throw ambiguousReviewError()
+  if (Buffer.byteLength(stdout, "utf8") > maxOutputBytes) {
+    throw ambiguousReviewError({
+      ...result,
+      outputOverflow: true,
+      stdoutOverflow: true
+    })
+  }
+
+  if (unsafeMultilineOutputPattern.test(stdout)) {
+    throw ambiguousReviewError(result)
   }
 
   if (result?.exitCode !== 0) {
@@ -1945,6 +2012,48 @@ function parseReviewerDecision(result, reviewedSha, maxOutputBytes) {
   return normalized
 }
 
+function buildReviewAmbiguityEvidence(run, execution, ambiguity, endedAt) {
+  return {
+    kind: "review",
+    sha: execution.reviewedSha,
+    source: INDEPENDENT_REVIEW_AGENT_ID,
+    summary: "Independent review execution ended ambiguously with bounded classification.",
+    metadata: {
+      project: run.project.id,
+      reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+      attempt: execution.attempt,
+      reviewedSha: execution.reviewedSha,
+      startedAt: execution.startedAt,
+      endedAt,
+      outcome: "review_execution_ambiguous",
+      failureClass: ambiguity.failureClass,
+      timedOut: ambiguity.timedOut,
+      killed: ambiguity.killed,
+      outputOverflow: ambiguity.outputOverflow,
+      stdoutOverflow: ambiguity.stdoutOverflow,
+      stderrOverflow: ambiguity.stderrOverflow,
+      signal: ambiguity.signal,
+      sandbox: INDEPENDENT_REVIEW_SANDBOX_ID,
+      network: "none"
+    }
+  }
+}
+
+async function recordReviewAmbiguity(run, execution, error, options) {
+  const ambiguity = ambiguityClassification(error?.ambiguity || error)
+  const endedAt = timestamp(nowDate(options))
+
+  return await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: "review_in_progress",
+    actor: INDEPENDENT_REVIEW_AGENT_ID,
+    reason: "phase-6f-independent-review-ambiguous",
+    evidence: [
+      buildReviewAmbiguityEvidence(run, execution, ambiguity, endedAt)
+    ]
+  }, options)
+}
+
 async function reserveReviewAttempt(run, location, execution, config, options) {
   return await transitionDevelopmentRun(run.runId, {
     expectedVersion: run.version,
@@ -1972,6 +2081,7 @@ async function invokeReviewer(config, invocation, options = {}) {
     reviewedSha: invocation.reviewedSha,
     timeoutMs: config.timeoutMs,
     maxOutputBytes: config.maxOutputBytes,
+    maxStderrBytes: config.maxStderrBytes,
     env: config.env,
     readOnlyPaths: invocation.readOnlyPaths
   }, options)
@@ -2132,6 +2242,12 @@ async function executeIndependentReviewInternal(runId, options = {}) {
     }, options)
   } catch (error) {
     if (error?.ambiguous === true || error?.code === "REVIEW_EXECUTION_AMBIGUOUS") {
+      try {
+        await recordReviewAmbiguity(attemptRun, attemptExecution, error, options)
+      } catch {
+        // Preserve the original ambiguity. The reserved attempt remains fail-closed.
+      }
+
       throw error
     }
 
@@ -2216,6 +2332,7 @@ async function reconcileIndependentReviewInternal(runId, options = {}) {
   }
 
   const openAttempt = latest?.metadata?.outcome === "review_started"
+  const ambiguousAttempt = latest?.metadata?.outcome === "review_execution_ambiguous"
   const approvalValid = (
     run.status === "review_passed" &&
     approved?.sha === reviewedSha &&
@@ -2230,13 +2347,16 @@ async function reconcileIndependentReviewInternal(runId, options = {}) {
     ? "approval_valid"
     : openAttempt
       ? "open_attempt"
-      : workspaceStatus
+      : ambiguousAttempt
+        ? "ambiguous_attempt"
+        : workspaceStatus
 
   return {
     ok: true,
     outcome: "independent_review_reconciled",
     status,
     openAttempt,
+    ambiguousAttempt,
     approvalValid,
     implementationEvidenceValid,
     testPassEvidenceValid,
