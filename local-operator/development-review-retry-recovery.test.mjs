@@ -319,3 +319,50 @@ test("recovery CLI refuses malformed invocation before reading run state", () =>
   assert.equal(result.status, 2)
   assert.match(result.stderr, /Usage: recover-phase6f-review-runtime-failure\.mjs/u)
 })
+
+
+test("recovery refuses a stale version or mismatched head without changing state", async () => {
+  for (const requestOverride of [
+    { expectedVersion: 0 },
+    { expectedHeadSha: "b".repeat(40) }
+  ]) {
+    const fixture = await makeReviewFailureRun()
+    const request = {
+      ...recoveryRequest(fixture.run),
+      ...requestOverride
+    }
+
+    await assertRejectsCode(recoverReviewRuntimeFailure(
+      request,
+      recoveryOptions(fixture)
+    ), "REVIEW_RUNTIME_RECOVERY_STATE_MISMATCH")
+
+    const stored = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    assert.equal(stored.version, fixture.run.version)
+    assert.equal(stored.status, "review_changes_requested")
+    assert.equal(stored.headSha, HEAD_SHA)
+  }
+})
+
+test("recovery requires valid implementation and test evidence", async () => {
+  for (const evidenceOverride of [
+    { implementationEvidenceValid: false },
+    { testPassEvidenceValid: false }
+  ]) {
+    const fixture = await makeReviewFailureRun()
+    const reconciliation = matchingReconciliation(fixture.run, evidenceOverride)
+
+    await assertRejectsCode(recoverReviewRuntimeFailure(
+      recoveryRequest(fixture.run),
+      recoveryOptions(fixture, reconciliation)
+    ), "REVIEW_RUNTIME_RECOVERY_RECONCILIATION_FAILED")
+
+    const stored = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    assert.equal(stored.version, fixture.run.version)
+    assert.equal(stored.status, "review_changes_requested")
+  }
+})
