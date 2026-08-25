@@ -85,7 +85,7 @@ Allowed in Phase 6D only as bounded local Codex execution:
 
 - read one `implementation_in_progress` Phase 6A run
 - reconcile one verified Phase 6C workspace
-- establish and verify an explicit no-outbound-network OS/process sandbox before Codex starts, including the Linux network-namespace privilege-drop backend for Ubuntu 24.04 production
+- establish and verify Codex's no-outbound-network command sandbox before implementation starts, including the fixed native Linux `:workspace` profile for Ubuntu 24.04 production
 - invoke trusted locally configured Codex through that sandbox with explicit argv, `shell: false`, and `cwd` set to the verified workspace
 - pass a deterministic bounded prompt without secrets or confirmation values
 - record bounded implementation attempts in the Phase 6A run record
@@ -100,7 +100,7 @@ Allowed in Phase 6E only as deterministic local automated testing:
 - reconcile one verified Phase 6C workspace
 - require workspace branch and HEAD to equal `run.headSha`
 - read test steps only from a trusted local per-project policy registry
-- establish and verify an explicit no-outbound-network OS/process sandbox before tests execute
+- establish and verify the no-outbound-network command sandbox before tests execute
 - invoke trusted test executables through explicit argv with `shell: false` and `cwd` set to the verified workspace
 - record bounded testing attempts in the Phase 6A run record
 - transition the run only through `implementation_ready -> tests_in_progress -> tests_passed`

@@ -31,6 +31,7 @@ export const MAX_CODEX_OUTPUT_BYTES = 32 * 1024
 export const MAX_CODEX_TIMEOUT_MS = 10 * 60 * 1000
 export const MIN_CODEX_TIMEOUT_MS = 1000
 export const MAX_CODEX_IMPLEMENTATION_ATTEMPTS = 10
+export const CODEX_PRODUCTION_MODEL = "gpt-5.6-sol"
 export const CODEX_EXECUTION_POLICY_STORE_DIR = "codex-execution-policy"
 export const CODEX_EXECUTION_SANDBOX_ID = "phase-6d-no-outbound-network-sandbox"
 export const PHASE_6F_HARDENING_ORCHESTRATOR_ID = "phase-6f-bounded-hardening-orchestrator"
@@ -39,7 +40,8 @@ export const PHASE_6G_REMOTE_PR_REVIEW_AGENT_ID = "phase-6g-remote-pr-review-age
 export const PHASE_6F_REVIEW_FINDINGS_OUTCOME = "review_findings"
 export const CODEX_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
-  LINUX_NETWORK_NAMESPACE: "linux-network-namespace"
+  LINUX_NETWORK_NAMESPACE: "linux-network-namespace",
+  CODEX_NATIVE_LINUX: "codex-native-linux"
 })
 
 const shaPattern = /^[a-f0-9]{40}$/u
@@ -500,7 +502,7 @@ export function buildCodexImplementationPrompt(run, workspace) {
     "- Do not deploy, restart services, or change production infrastructure.",
     "- Do not modify credentials, tokens, secrets, authentication settings, or confirmation values.",
     "- Do not run unrelated work, destructive cleanup, broad refactors, or changes outside the task scope.",
-    "- Leave a local commit on the current isolated branch when the implementation is complete.",
+    "- Make the requested edits in the workspace; PPO creates the local commit after sandbox verification.",
     "",
     "Return concise completion notes only. The adapter will independently verify Git state and will ignore prose claims of success."
   ]
@@ -766,6 +768,38 @@ function normalizeExecutionSandbox(sandbox) {
     }
   }
 
+  if (type === CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+    if (platform !== "linux" || enforcement !== "codex-command-sandbox") {
+      throw adapterError(
+        "CODEX_SANDBOX_REQUIRED",
+        "Codex execution requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    const permissionProfile = normalizeSafeText(sandbox.permissionProfile, {
+      code: "CODEX_SANDBOX_REQUIRED",
+      safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
+      maxChars: 40
+    })
+
+    if (permissionProfile !== ":workspace") {
+      throw adapterError(
+        "CODEX_SANDBOX_REQUIRED",
+        "Codex execution requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    return {
+      type,
+      backend: CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+      platform,
+      network,
+      enforcement,
+      executablePath: normalizeSandboxPath(sandbox.executablePath),
+      permissionProfile
+    }
+  }
+
   throw adapterError(
     "CODEX_SANDBOX_REQUIRED",
     "Codex execution requires a trusted no-outbound-network process sandbox."
@@ -780,7 +814,7 @@ function normalizeCodexConfig(config) {
     )
   }
 
-  return {
+  const normalized = {
     executablePath: normalizeExecutablePath(config.executablePath),
     gitExecutablePath: normalizeGitExecutablePath(config.gitExecutablePath),
     args: normalizeCodexArgs(config.args || []),
@@ -789,6 +823,37 @@ function normalizeCodexConfig(config) {
     remoteGitWritePolicy: normalizeRemoteGitWritePolicy(config.remoteGitWritePolicy),
     executionSandbox: normalizeExecutionSandbox(config.executionSandbox)
   }
+
+  if (codexNativeLinuxSandbox(normalized.executionSandbox)) {
+    const expectedArgs = [
+      "exec",
+      "--ephemeral",
+      "--color",
+      "never",
+      "--sandbox",
+      "workspace-write",
+      "-c",
+      "approval_policy=\"never\"",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--strict-config",
+      "--model",
+      CODEX_PRODUCTION_MODEL,
+      "-"
+    ]
+
+    if (
+      normalized.args.length !== expectedArgs.length ||
+      normalized.args.some((entry, index) => entry !== expectedArgs[index])
+    ) {
+      throw adapterError(
+        "CODEX_CONFIG_INVALID",
+        "Codex argv configuration is invalid."
+      )
+    }
+  }
+
+  return normalized
 }
 
 function sandboxError() {
@@ -1071,6 +1136,18 @@ function linuxNetworkNamespaceSandbox(sandbox) {
   return sandbox.type === CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE
 }
 
+function codexNativeLinuxSandbox(sandbox) {
+  return sandbox.type === CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
+}
+
+function codexUntrustedProjectOverride(workspacePath) {
+  const escaped = normalizeSandboxPath(workspacePath)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\"", "\\\"")
+
+  return `projects."${escaped}".trust_level="untrusted"`
+}
+
 async function assertSandboxLinuxPrivilegeBoundary(config, location, policy, options) {
   if (!linuxNetworkNamespaceSandbox(config.executionSandbox)) {
     return
@@ -1142,7 +1219,10 @@ function isDirectNetworkDenied(config, result, connectionCount) {
     return true
   }
 
-  return linuxNetworkNamespaceSandbox(config.executionSandbox) && (
+  return (
+    linuxNetworkNamespaceSandbox(config.executionSandbox) ||
+    codexNativeLinuxSandbox(config.executionSandbox)
+  ) && (
     result?.exitCode === 67 ||
     result?.exitCode === 68
   )
@@ -1359,6 +1439,36 @@ function assertSandboxRuntimePlatform(sandbox, options = {}) {
 function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   assertSandboxRuntimePlatform(sandbox, options)
 
+  if (codexNativeLinuxSandbox(sandbox)) {
+    if (options.kind === "codex") {
+      return {
+        backend: sandbox.backend,
+        executablePath,
+        args: [...args]
+      }
+    }
+
+    const cwd = normalizeSandboxPath(options.cwd)
+
+    return {
+      backend: sandbox.backend,
+      executablePath: sandbox.executablePath,
+      args: [
+        "sandbox",
+        "linux",
+        "--config",
+        codexUntrustedProjectOverride(cwd),
+        "--permission-profile",
+        sandbox.permissionProfile,
+        "--cd",
+        cwd,
+        "--",
+        executablePath,
+        ...args
+      ]
+    }
+  }
+
   if (sandbox.type === CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC) {
     return {
       backend: sandbox.backend,
@@ -1480,7 +1590,11 @@ async function runSandboxedCommand(invocation, options = {}) {
   const runner = options.sandboxRunner || runSandboxedProcess
 
   try {
-    const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, options)
+    const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, {
+      ...options,
+      kind: invocation.kind,
+      cwd: invocation.cwd
+    })
 
     return await runner({
       ...invocation,
@@ -1507,11 +1621,19 @@ async function runSandboxedCommand(invocation, options = {}) {
 }
 
 async function invokeCodex(config, invocation, options = {}) {
+  const args = codexNativeLinuxSandbox(config.executionSandbox)
+    ? [
+        ...config.args.slice(0, -1),
+        "-c",
+        codexUntrustedProjectOverride(invocation.cwd),
+        config.args.at(-1)
+      ]
+    : [...config.args]
   const boundedInvocation = {
     kind: "codex",
     sandbox: config.executionSandbox,
     executablePath: config.executablePath,
-    args: [...config.args],
+    args,
     cwd: invocation.cwd,
     stdin: invocation.prompt,
     prompt: invocation.prompt,
@@ -1562,6 +1684,113 @@ async function invokeCodex(config, invocation, options = {}) {
 
   return {
     exitCode: 0
+  }
+}
+
+async function commitNativeCodexChanges(config, location, expectedStartSha, options = {}) {
+  if (!codexNativeLinuxSandbox(config.executionSandbox)) {
+    return
+  }
+
+  const gitSafetyArgs = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "commit.gpgSign=false"
+  ]
+  const runner = options.codexCommitRunner || (async (args) => {
+    try {
+      const result = await execFileAsync(config.gitExecutablePath, args, {
+        cwd: location.workspacePath,
+        encoding: "utf8",
+        env: {
+          PATH: defaultExecutionPath,
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_TERMINAL_PROMPT: "0"
+        },
+        maxBuffer: MAX_CODEX_OUTPUT_BYTES,
+        timeout: 15000,
+        shell: false
+      })
+
+      return {
+        exitCode: 0,
+        stdout: String(result.stdout || "")
+      }
+    } catch (error) {
+      return {
+        exitCode: Number.isInteger(error?.code) ? error.code : null,
+        stdout: String(error?.stdout || "")
+      }
+    }
+  })
+
+  const runGit = (args) => runner([...gitSafetyArgs, ...args])
+
+  const unsafeFilters = await runGit([
+    "config",
+    "--local",
+    "--name-only",
+    "--get-regexp",
+    "^filter\\."
+  ])
+
+  if (unsafeFilters.exitCode !== 1) {
+    throw adapterError(
+      "CODEX_GIT_VERIFY_FAILED",
+      "Git verification failed; no raw Git output was stored."
+    )
+  }
+
+  const head = await runGit(["rev-parse", "HEAD"])
+
+  if (head.exitCode !== 0 || String(head.stdout || "").trim() !== expectedStartSha) {
+    throw adapterError(
+      "CODEX_WORKSPACE_HEAD_MISMATCH",
+      "Implementation workspace HEAD does not match the run state."
+    )
+  }
+
+  const status = await runGit(["status", "--porcelain=v1", "--untracked-files=all"])
+
+  if (status.exitCode !== 0) {
+    throw adapterError(
+      "CODEX_GIT_VERIFY_FAILED",
+      "Git verification failed; no raw Git output was stored."
+    )
+  }
+
+  if (!String(status.stdout || "").trim()) {
+    return
+  }
+
+  const added = await runGit(["add", "--all"])
+
+  if (added.exitCode !== 0) {
+    throw adapterError(
+      "CODEX_GIT_VERIFY_FAILED",
+      "Git verification failed; no raw Git output was stored."
+    )
+  }
+
+  const committed = await runGit([
+    "-c",
+    "user.name=PPO Codex",
+    "-c",
+    "user.email=ppo-codex@example.invalid",
+    "commit",
+    "-m",
+    "PPO implementation"
+  ])
+
+  if (committed.exitCode !== 0) {
+    throw adapterError(
+      "CODEX_GIT_VERIFY_FAILED",
+      "Git verification failed; no raw Git output was stored."
+    )
   }
 }
 
@@ -2208,6 +2437,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
       remoteGitWritePolicy: executionSandbox.metadata,
       executionSandbox: executionSandbox.metadata
     }, options)
+    await commitNativeCodexChanges(config, postReservation.location, postReservation.expectedStartSha, options)
   } catch (error) {
     if (error?.ambiguous === true || error?.code === "CODEX_EXECUTION_AMBIGUOUS") {
       throw error

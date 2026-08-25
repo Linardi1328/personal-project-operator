@@ -34,7 +34,7 @@ Phase 4A files are server-local bootstrap materials only.
 - `deployment/logrotate/ppo-openclaw`: logrotate template for optional file logs.
 - `deployment/scripts/bootstrap-ubuntu-24.04.sh`: installs OS packages, creates the non-root service user, creates directories, and installs systemd/logrotate templates.
 - `deployment/scripts/preflight-openclaw-runtime.sh`: fail-closed service preflight for the supported local-prefix Node/OpenClaw runtime.
-- `deployment/scripts/prepare-khlim-development-runtime.sh`: confirmation-gated installation of a root-owned Node 24 test runtime plus clone or fast-forward synchronization for the fixed KHLIM Super App ordinary-development source path.
+- `deployment/scripts/prepare-khlim-development-runtime.sh`: confirmation-gated installation of the pinned standalone Codex CLI, Bubblewrap/AppArmor support, root-owned Node 24 test runtime, fixed independent-review wrapper, writable workspace root, and clone or fast-forward synchronization for the fixed KHLIM Super App ordinary-development source path.
 - `deployment/scripts/install-or-update-repo.sh`: installs or updates the PPO checkout from the fixed main branch.
 - `deployment/scripts/deploy-exact-sha.sh`: Phase 6H exact-SHA PPO deployment primitive for a trusted Phase 6G merge commit.
 - `deployment/scripts/verify-production-readonly.sh`: Phase 6I read-only production verification primitive for the exact Phase 6H deployed SHA.
@@ -114,6 +114,16 @@ sudo env PPO_KHLIM_RUNTIME_CONFIRM=prepare-khlim-development-runtime \
 ```
 
 The command refuses an unclean or mismatched checkout and performs only a fast-forward update of `main`. It copies the supported OpenClaw-bundled Node executable into the fixed root-owned Phase 6K tools path; development runs cannot replace that trusted test executable.
+
+The first successful installation can stop with exit status `3` when standalone Codex authentication is still missing. Complete the one-time headless ChatGPT sign-in as the service user:
+
+```bash
+sudo -H -u ppo env \
+  PATH=/home/ppo/.local/bin:/home/ppo/.local/openclaw/tools/node/bin:/usr/local/bin:/usr/bin:/bin \
+  /home/ppo/.local/bin/codex login --device-auth
+```
+
+Then rerun the same confirmation-gated preparation command. Runtime readiness requires `codex login status`, the fixed Codex version, the root-owned reviewer wrapper, the fixed workspace/source roots, and a successful `codex sandbox linux` probe. The script installs the Ubuntu 24.04 Bubblewrap AppArmor profile when the packaged profile is available; it never disables the host's unprivileged-user-namespace restriction globally.
 
 ## Service User
 

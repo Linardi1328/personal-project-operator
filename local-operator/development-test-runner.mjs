@@ -32,7 +32,8 @@ export const MIN_TEST_TIMEOUT_MS = 1000
 export const MAX_TEST_GIT_OUTPUT_BYTES = 24 * 1024
 export const TEST_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
-  LINUX_NETWORK_NAMESPACE: "linux-network-namespace"
+  LINUX_NETWORK_NAMESPACE: "linux-network-namespace",
+  CODEX_NATIVE_LINUX: "codex-native-linux"
 })
 
 const shaPattern = /^[a-f0-9]{40}$/u
@@ -349,6 +350,38 @@ function normalizeExecutionSandbox(sandbox) {
     }
   }
 
+  if (type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+    if (platform !== "linux" || enforcement !== "codex-command-sandbox") {
+      throw testRunnerError(
+        "TEST_SANDBOX_REQUIRED",
+        "Automated testing requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    const permissionProfile = normalizeSafeText(sandbox.permissionProfile, {
+      code: "TEST_SANDBOX_REQUIRED",
+      safeMessage: "Automated testing requires a trusted no-outbound-network process sandbox.",
+      maxChars: 40
+    })
+
+    if (permissionProfile !== ":workspace") {
+      throw testRunnerError(
+        "TEST_SANDBOX_REQUIRED",
+        "Automated testing requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    return {
+      type,
+      backend: TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+      platform,
+      network,
+      enforcement,
+      executablePath: normalizeSandboxPath(sandbox.executablePath),
+      permissionProfile
+    }
+  }
+
   throw testRunnerError(
     "TEST_SANDBOX_REQUIRED",
     "Automated testing requires a trusted no-outbound-network process sandbox."
@@ -629,6 +662,29 @@ function assertSandboxRuntimePlatform(sandbox, options = {}) {
 function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   assertSandboxRuntimePlatform(sandbox, options)
 
+  if (sandbox.type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+    const cwd = normalizeSandboxPath(options.cwd)
+    const projectOverride = `projects."${cwd.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}".trust_level="untrusted"`
+
+    return {
+      backend: sandbox.backend,
+      executablePath: sandbox.executablePath,
+      args: [
+        "sandbox",
+        "linux",
+        "--config",
+        projectOverride,
+        "--permission-profile",
+        sandbox.permissionProfile,
+        "--cd",
+        cwd,
+        "--",
+        executablePath,
+        ...args
+      ]
+    }
+  }
+
   if (sandbox.type === TEST_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC) {
     return {
       backend: sandbox.backend,
@@ -745,7 +801,10 @@ async function runSandboxedCommand(invocation, options = {}) {
   const runner = options.sandboxRunner || runSandboxedProcess
 
   try {
-    const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, options)
+    const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, {
+      ...options,
+      cwd: invocation.cwd
+    })
 
     return await runner({
       ...invocation,
@@ -829,6 +888,10 @@ function linuxNetworkNamespaceSandbox(sandbox) {
   return sandbox.type === TEST_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE
 }
 
+function codexNativeLinuxSandbox(sandbox) {
+  return sandbox.type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
+}
+
 async function assertSandboxLinuxPrivilegeBoundary(policy, location, options) {
   if (!linuxNetworkNamespaceSandbox(policy.sandbox)) {
     return
@@ -898,7 +961,10 @@ function isDirectNetworkDenied(policy, result, connectionCount) {
     return true
   }
 
-  return linuxNetworkNamespaceSandbox(policy.sandbox) && (
+  return (
+    linuxNetworkNamespaceSandbox(policy.sandbox) ||
+    codexNativeLinuxSandbox(policy.sandbox)
+  ) && (
     result?.exitCode === 67 ||
     result?.exitCode === 68
   )

@@ -19,7 +19,7 @@ Independent review requires:
 - exact expected run-state version
 - a trusted Phase 6C project workspace registry
 - trusted local reviewer executable configuration
-- trusted explicit no-outbound-network and read-only-workspace OS/process sandbox configuration
+- trusted no-outbound-network and read-only-workspace command sandbox configuration
 - a Phase 6D implementation evidence record whose SHA equals `run.headSha`
 - a Phase 6E PASS evidence record whose SHA equals `run.headSha`
 - a verified clean Phase 6C workspace whose branch and HEAD equal `run.headSha`
@@ -32,7 +32,7 @@ The reviewer policy contains a fixed reviewer id/version, one trusted absolute e
 
 The agent refuses arbitrary command strings, `shell: true`, shell interpreters, Codex implementation adapters, GitHub write tools, push/merge/deploy tooling, OpenClaw, secret-looking env keys, untrusted executables, unbounded timeouts, and unbounded output.
 
-Reviewer sandbox configuration must also enforce read-only access to the verified workspace, workspace Git state, and canonical source checkout while preserving local read access. On macOS, PPO generates a `sandbox-exec` profile that denies `file-write*` under each verified path. On Linux, PPO requires a trusted read-only workspace/source mount/bind/mount-namespace wrapper before privilege drop. Review fails closed if local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, or no-outbound-network denial cannot be verified before the review attempt is reserved.
+Reviewer sandbox configuration must also enforce read-only access to the verified workspace, workspace Git state, and canonical source checkout while preserving local read access. On macOS, PPO generates a `sandbox-exec` profile that denies `file-write*` under each verified path. On production Linux, the fixed root-owned reviewer wrapper runs `codex exec --sandbox read-only`; PPO preflights the same `:read-only` boundary through `codex sandbox linux`. Review fails closed if local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, or generated-command network denial cannot be verified before the review attempt is reserved.
 
 ## Prompt
 
@@ -67,7 +67,7 @@ The agent:
 - resolves and verifies the Phase 6C workspace from the trusted workspace registry
 - requires workspace branch and HEAD to equal `run.headSha`
 - refuses dirty workspace state before and after review
-- verifies the no-outbound-network and read-only workspace/source process sandbox before reserving an attempt
+- verifies the no-outbound-network and read-only workspace/source command sandbox before reserving an attempt
 - transitions `tests_passed -> review_in_progress` before executing review
 - records bounded durable review attempts in the Phase 6A run record
 - invokes the reviewer with `shell: false`, fixed `cwd` set to the verified workspace, sanitized env, bounded timeout, bounded output capture, and prompt on stdin

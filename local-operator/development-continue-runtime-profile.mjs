@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process"
 import { constants as fsConstants } from "node:fs"
 import { access, lstat, stat } from "node:fs/promises"
-import { dirname, resolve as resolvePath } from "node:path"
+import { resolve as resolvePath } from "node:path"
 import { promisify } from "node:util"
 import {
+  CODEX_PRODUCTION_MODEL,
   CODEX_SANDBOX_BACKENDS,
   MAX_CODEX_TIMEOUT_MS
 } from "./development-codex-execution-adapter.mjs"
@@ -28,6 +29,7 @@ const fixedDarwinPaths = Object.freeze({
   pythonExecutablePath: "/opt/homebrew/bin/python3.12",
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
   sandboxExecutablePath: "/usr/bin/sandbox-exec",
+  executionPath: "/Users/richie/.local/bin:/opt/homebrew/bin:/usr/bin:/bin",
   workspaceRoot: "/Users/richie/.local/share/personal-project-operator/development-workspaces",
   nodeToolPaths: Object.freeze({
     portfolioTypecheck: "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/typescript/bin/tsc",
@@ -49,11 +51,9 @@ const fixedLinuxPaths = Object.freeze({
   nodeExecutablePath: "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
   pythonExecutablePath: "/usr/bin/python3.12",
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
-  sandboxExecutablePath: "/usr/bin/nsenter",
-  idExecutablePath: "/usr/bin/id",
-  setprivPath: "/usr/bin/setpriv",
-  namespacePath: "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns",
-  readOnlyWorkspaceWrapperPath: "/usr/local/bin/ppo-readonly-workspace-wrapper",
+  sandboxExecutablePath: "/home/ppo/.local/bin/codex",
+  bubblewrapExecutablePath: "/usr/bin/bwrap",
+  executionPath: "/home/ppo/.local/bin:/home/ppo/.local/openclaw/tools/node/bin:/usr/local/bin:/usr/bin:/bin",
   workspaceRoot: "/var/lib/personal-project-operator/development-workspaces",
   nodeToolPaths: Object.freeze({
     portfolioTypecheck: "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/typescript/bin/tsc",
@@ -255,7 +255,7 @@ async function runReadOnlyProbe(executablePath, args, options = {}) {
   try {
     await execFileImpl(executablePath, args, {
       encoding: "utf8",
-      env: sanitizedProbeEnv,
+      env: options.probeEnv || sanitizedProbeEnv,
       maxBuffer: 4096,
       shell: false,
       timeout: 5000
@@ -286,113 +286,58 @@ async function assertNodeRuntime(paths, options = {}) {
   await runReadOnlyProbe(paths.nodeExecutablePath, ["--version"], options)
 }
 
-function parsePositiveId(value) {
-  const normalized = String(value ?? "").trim()
+async function assertLinuxSandboxCapability(paths, options = {}) {
+  await assertTrustedLinuxPath(paths.bubblewrapExecutablePath, options)
+  await assertTrustedLinuxPath(paths.reviewExecutablePath, options)
 
-  if (!/^[1-9][0-9]{0,9}$/u.test(normalized)) {
-    throw runtimeError()
-  }
-
-  return Number(normalized)
-}
-
-function validateLinuxPpoIdentity(identity) {
-  const uid = Number(identity?.uid)
-  const gid = Number(identity?.gid)
-  const userName = String(identity?.userName || "")
-  const groupName = String(identity?.groupName || "")
-
-  if (
-    !Number.isInteger(uid) ||
-    !Number.isInteger(gid) ||
-    uid <= 0 ||
-    gid <= 0 ||
-    userName !== "ppo" ||
-    groupName !== "ppo"
-  ) {
-    throw runtimeError()
-  }
-
-  return {
-    uid,
-    gid,
-    userName,
-    groupName
-  }
-}
-
-async function lookupLinuxPpoIdentity(paths, options = {}) {
-  if (typeof options.identityLookup === "function") {
-    return validateLinuxPpoIdentity(await options.identityLookup({
-      user: "ppo",
-      group: "ppo",
-      idExecutablePath: paths.idExecutablePath
-    }))
-  }
-
-  await assertExecutable(paths.idExecutablePath, options)
-
-  const execFileImpl = options.execFileImpl || execFileAsync
-  const readId = async (args) => {
-    try {
-      const result = await execFileImpl(paths.idExecutablePath, args, {
-        encoding: "utf8",
-        env: sanitizedProbeEnv,
-        maxBuffer: 1024,
-        shell: false,
-        timeout: 5000
-      })
-
-      return String(result.stdout || "").trim()
-    } catch {
-      throw runtimeError()
-    }
-  }
-
-  return validateLinuxPpoIdentity({
-    uid: parsePositiveId(await readId(["-u", "ppo"])),
-    gid: parsePositiveId(await readId(["-g", "ppo"])),
-    userName: await readId(["-un", "ppo"]),
-    groupName: await readId(["-gn", "ppo"])
-  })
-}
-
-async function assertLinuxSandboxCapability(paths, identity, options = {}) {
-  await assertTrustedLinuxPath(paths.sandboxExecutablePath, options)
-  await assertTrustedLinuxPath(paths.setprivPath, options)
-  await assertTrustedLinuxPath(paths.readOnlyWorkspaceWrapperPath, options)
-  await assertTrustedLinuxPath(paths.namespacePath, options)
-  await assertDirectory(dirname(paths.namespacePath), options)
-
-  if (typeof options.linuxSandboxCapabilityProbe !== "function") {
-    throw runtimeError()
-  }
-
-  const probe = await options.linuxSandboxCapabilityProbe({
+  const probeRequest = {
     executablePath: paths.sandboxExecutablePath,
     args: [
-      `--net=${paths.namespacePath}`,
-      paths.setprivPath,
-      "--no-new-privs",
-      `--reuid=${identity.uid}`,
-      `--regid=${identity.gid}`,
-      "--clear-groups",
-      "--bounding-set=-all",
-      "--inh-caps=-all",
-      "--ambient-caps=-all",
+      "sandbox",
+      "linux",
+      "--config",
+      `projects."${paths.workspaceRoot}".trust_level="untrusted"`,
+      "--permission-profile",
+      ":read-only",
+      "--cd",
+      paths.workspaceRoot,
       "--",
       paths.nodeExecutablePath,
       "--eval",
-      "process.exit(typeof process.getuid === 'function' && process.getuid() === 0 ? 70 : 0)"
+      "process.exit(0)"
     ],
-    namespacePath: paths.namespacePath,
+    cwd: paths.workspaceRoot,
     runAsUser: "ppo",
-    runAsGroup: "ppo",
-    uid: identity.uid,
-    gid: identity.gid
-  })
+    runAsGroup: "ppo"
+  }
 
-  if (probe !== true && probe?.ok !== true) {
+  if (typeof options.linuxSandboxCapabilityProbe === "function") {
+    const probe = await options.linuxSandboxCapabilityProbe(probeRequest)
+
+    if (probe !== true && probe?.ok !== true) {
+      throw runtimeError()
+    }
+
+    return
+  }
+
+  const execFileImpl = options.execFileImpl || execFileAsync
+
+  try {
+    await execFileImpl(probeRequest.executablePath, probeRequest.args, {
+      cwd: probeRequest.cwd,
+      encoding: "utf8",
+      env: {
+        ...sanitizedProbeEnv,
+        HOME: "/home/ppo",
+        CODEX_HOME: "/home/ppo/.codex",
+        PATH: paths.executionPath
+      },
+      maxBuffer: 4096,
+      shell: false,
+      timeout: 15000
+    })
+  } catch {
     throw runtimeError()
   }
 }
@@ -409,17 +354,12 @@ function buildCodexSandbox(paths, platform, identity = null) {
   }
 
   return {
-    type: CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+    type: CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
     platform: "linux",
     network: "none",
-    enforcement: "os-network-namespace",
+    enforcement: "codex-command-sandbox",
     executablePath: paths.sandboxExecutablePath,
-    namespacePath: paths.namespacePath,
-    setprivPath: paths.setprivPath,
-    runAsUid: identity.uid,
-    runAsGid: identity.gid,
-    requireNoNewPrivileges: true,
-    dropCapabilities: true
+    permissionProfile: ":workspace"
   }
 }
 
@@ -435,17 +375,12 @@ function buildTestSandbox(paths, platform, identity = null) {
   }
 
   return {
-    type: TEST_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+    type: TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
     platform: "linux",
     network: "none",
-    enforcement: "os-network-namespace",
+    enforcement: "codex-command-sandbox",
     executablePath: paths.sandboxExecutablePath,
-    namespacePath: paths.namespacePath,
-    setprivPath: paths.setprivPath,
-    runAsUid: identity.uid,
-    runAsGid: identity.gid,
-    requireNoNewPrivileges: true,
-    dropCapabilities: true
+    permissionProfile: ":workspace"
   }
 }
 
@@ -463,20 +398,14 @@ function buildReviewSandbox(paths, platform, identity = null) {
   }
 
   return {
-    type: REVIEW_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE,
+    type: REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
     platform: "linux",
     network: "none",
-    enforcement: "os-network-namespace",
+    enforcement: "codex-command-sandbox",
     readOnlyWorkspace: true,
-    readOnlyWorkspaceMode: "trusted-read-only-mount-namespace",
+    readOnlyWorkspaceMode: "codex-native-read-only",
     executablePath: paths.sandboxExecutablePath,
-    readOnlyWorkspaceWrapperPath: paths.readOnlyWorkspaceWrapperPath,
-    namespacePath: paths.namespacePath,
-    setprivPath: paths.setprivPath,
-    runAsUid: identity.uid,
-    runAsGid: identity.gid,
-    requireNoNewPrivileges: true,
-    dropCapabilities: true
+    permissionProfile: ":read-only"
   }
 }
 
@@ -487,6 +416,7 @@ function pythonTestPolicy(definition, paths, sandbox) {
     trustedExecutablePaths: [paths.pythonExecutablePath],
     env: {
       PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONNOUSERSITE: "1"
     },
@@ -510,6 +440,7 @@ function pythonCompileUnittestPolicy(definition, paths, sandbox) {
     trustedExecutablePaths: [paths.pythonExecutablePath],
     env: {
       PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONNOUSERSITE: "1"
     },
@@ -532,7 +463,8 @@ function nodeQualityPolicy(definition, paths, sandbox) {
     policyVersion: "1",
     trustedExecutablePaths: [paths.nodeExecutablePath],
     env: {
-      PPO_PHASE6K_TEST_POLICY: "fixed"
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath
     },
     sandbox,
     steps: definition.nodeSteps.map((step) => ({
@@ -553,7 +485,8 @@ function nodeFoundationTestPolicy(definition, paths, sandbox) {
     policyVersion: "1",
     trustedExecutablePaths: [paths.nodeExecutablePath],
     env: {
-      PPO_PHASE6K_TEST_POLICY: "fixed"
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath
     },
     sandbox,
     steps: [{
@@ -664,24 +597,38 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   await assertExecutable(paths.sandboxExecutablePath, options)
   await assertProjectTestRuntime(projectId, paths, options)
 
-  let linuxIdentity = null
-
-  if (platform === "linux") {
-    await assertExecutable(paths.idExecutablePath, options)
-    await assertExecutable(paths.setprivPath, options)
-    await assertExecutable(paths.readOnlyWorkspaceWrapperPath, options)
-    await assertExecutable(paths.nodeExecutablePath, options)
-    await assertTrustedLinuxPath(paths.nodeExecutablePath, options)
-    linuxIdentity = await lookupLinuxPpoIdentity(paths, options)
-    await assertLinuxSandboxCapability(paths, linuxIdentity, options)
-  }
-
   await assertDirectory(sourceRepoPath, options)
   await assertDirectory(paths.workspaceRoot, options)
 
-  const codexSandbox = buildCodexSandbox(paths, platform, linuxIdentity)
-  const testSandbox = buildTestSandbox(paths, platform, linuxIdentity)
-  const reviewSandbox = buildReviewSandbox(paths, platform, linuxIdentity)
+  if (platform === "linux") {
+    await assertExecutable(paths.bubblewrapExecutablePath, options)
+    await assertExecutable(paths.nodeExecutablePath, options)
+    await assertTrustedLinuxPath(paths.nodeExecutablePath, options)
+    await assertTrustedLinuxPath(paths.reviewExecutablePath, options)
+    await runReadOnlyProbe(paths.codexExecutablePath, ["--version"], {
+      ...options,
+      probeEnv: {
+        ...sanitizedProbeEnv,
+        HOME: "/home/ppo",
+        CODEX_HOME: "/home/ppo/.codex",
+        PATH: paths.executionPath
+      }
+    })
+    await runReadOnlyProbe(paths.codexExecutablePath, ["login", "status"], {
+      ...options,
+      probeEnv: {
+        ...sanitizedProbeEnv,
+        HOME: "/home/ppo",
+        CODEX_HOME: "/home/ppo/.codex",
+        PATH: paths.executionPath
+      }
+    })
+    await assertLinuxSandboxCapability(paths, options)
+  }
+
+  const codexSandbox = buildCodexSandbox(paths, platform)
+  const testSandbox = buildTestSandbox(paths, platform)
+  const reviewSandbox = buildReviewSandbox(paths, platform)
 
   return {
     workspaceRegistry: {
@@ -693,9 +640,28 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
     codexConfig: {
       executablePath: paths.codexExecutablePath,
       gitExecutablePath: paths.gitExecutablePath,
-      args: [],
+      args: platform === "linux" ? [
+        "exec",
+        "--ephemeral",
+        "--color",
+        "never",
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        "approval_policy=\"never\"",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--strict-config",
+        "--model",
+        CODEX_PRODUCTION_MODEL,
+        "-"
+      ] : [],
       timeoutMs: MAX_CODEX_TIMEOUT_MS,
-      env: {},
+      env: platform === "linux" ? {
+        HOME: "/home/ppo",
+        CODEX_HOME: "/home/ppo/.codex",
+        PATH: paths.executionPath
+      } : {},
       remoteGitWritePolicy: {
         mode: "deny",
         enforcement: "adapter-git-wrapper"
@@ -747,14 +713,8 @@ export async function loadDevelopmentRecoveryRuntimeProfile(request = {}, option
   }
 
   if (options.includeTestPolicy === true) {
-    let linuxIdentity = null
-
-    if (platform === "linux") {
-      linuxIdentity = await lookupLinuxPpoIdentity(paths, options)
-    }
-
     profile.testPolicyRegistry = {
-      [projectId]: testPolicyForProject(projectId, paths, buildTestSandbox(paths, platform, linuxIdentity))
+      [projectId]: testPolicyForProject(projectId, paths, buildTestSandbox(paths, platform))
     }
   }
 

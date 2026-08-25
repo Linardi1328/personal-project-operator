@@ -20,9 +20,9 @@ Phase 6F may:
 - require Phase 6E PASS evidence SHA to equal `run.headSha`
 - require workspace branch and HEAD to equal `run.headSha`
 - require a clean workspace before and after review
-- establish and verify a trusted explicit no-outbound-network and read-only workspace/source OS/process sandbox before review executes
+- establish and verify a trusted no-outbound-network and read-only workspace/source command sandbox before review executes
 - deny isolated-workspace, workspace Git-state, and canonical source-checkout file writes on macOS with `sandbox-exec`
-- require a trusted read-only workspace/source mount/bind/mount-namespace wrapper or equivalent OS boundary on Linux
+- require the fixed root-owned reviewer wrapper plus Codex's native `:read-only` Linux permission profile
 - preflight local read access, workspace file-write denial, source working-tree file-write denial, local Git mutation denial, and outbound-network denial before reserving a review attempt
 - invoke one trusted locally configured reviewer executable with explicit argv, `shell: false`, and `cwd` set to the verified workspace
 - pass a deterministic bounded review prompt without secrets, raw outputs, arbitrary paths, or credentials
@@ -71,4 +71,4 @@ Phase 6F must not:
 - add `/ppo continue`
 - add Telegram/OpenClaw routes or new OpenClaw tools
 
-The default Phase 6F policy is no outbound network for review and hardening execution, and read-only workspace, workspace Git-state, and source-checkout access for reviewer execution. A network-enabled review or hardening policy is outside this phase unless a later separately reviewed trusted policy and sandbox boundary explicitly approves it.
+The default Phase 6F policy keeps the Codex reviewer controller online only for model access while denying network to generated commands and enforcing read-only workspace, Git-state, and source-checkout access. A network-enabled command policy or writable reviewer policy is outside this phase unless a later separately reviewed trusted boundary explicitly approves it.

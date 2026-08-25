@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import {
+  chmod,
   mkdtemp,
   mkdir,
   readFile,
@@ -233,6 +234,36 @@ function trustedLinuxCodexConfig(overrides = {}) {
   })
 }
 
+function trustedNativeLinuxCodexConfig(overrides = {}) {
+  return trustedCodexConfig({
+    args: [
+      "exec",
+      "--ephemeral",
+      "--color",
+      "never",
+      "--sandbox",
+      "workspace-write",
+      "-c",
+      "approval_policy=\"never\"",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--strict-config",
+      "--model",
+      "gpt-5.6-sol",
+      "-"
+    ],
+    executionSandbox: {
+      type: CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+      platform: "linux",
+      network: "none",
+      enforcement: "codex-command-sandbox",
+      executablePath: process.execPath,
+      permissionProfile: ":workspace"
+    },
+    ...overrides
+  })
+}
+
 function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options = {}) {
   const sandboxCalls = options.sandboxCalls || []
 
@@ -240,7 +271,7 @@ function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options 
     sandboxCalls.push({ ...invocation })
     assert.equal(invocation.shell, false)
     assert.equal(invocation.sandbox.network, "none")
-    assert.ok(new Set(["os-process", "os-network-namespace"]).has(invocation.sandbox.enforcement))
+    assert.ok(new Set(["os-process", "os-network-namespace", "codex-command-sandbox"]).has(invocation.sandbox.enforcement))
     assert.ok(invocation.sandboxCommand)
     assert.equal(invocation.sandboxExecutablePath, invocation.sandboxCommand.executablePath)
     assert.deepEqual(invocation.sandboxArgs, invocation.sandboxCommand.args)
@@ -562,6 +593,93 @@ test("Linux no-outbound-network sandbox backend uses namespace and drops privile
   assert.equal(evidence.metadata.platform, "linux")
   assert.equal(evidence.metadata.network, "none")
   assert.doesNotMatch(JSON.stringify(evidence.metadata), /\/run\/netns|\/usr\/bin\/nsenter|\/usr\/bin\/setpriv/u)
+})
+
+test("Codex native Linux backend keeps the controller online, sandboxes commands, and commits verified edits locally", async () => {
+  const fixture = await makeImplementationFixture()
+  const hooksPath = join(fixture.root, "untrusted-hooks")
+  const hookMarker = join(fixture.root, "hook-ran")
+  await mkdir(hooksPath)
+  await writeFile(
+    join(hooksPath, "pre-commit"),
+    `#!/usr/bin/env bash\nprintf unsafe > ${JSON.stringify(hookMarker)}\n`,
+    "utf8"
+  )
+  await chmod(join(hooksPath, "pre-commit"), 0o755)
+  await git(["config", "core.hooksPath", hooksPath], fixture.location.workspacePath)
+  const sandboxCalls = []
+  const result = await executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedNativeLinuxCodexConfig(),
+    ...sandboxedCodexRunner(async (invocation) => {
+      await writeFile(join(invocation.cwd, "native-runtime.txt"), "implemented\n", "utf8")
+      return { exitCode: 0, stdout: "done", stderr: "" }
+    }, { sandboxCalls }),
+    now: fixture.now
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.run.status, "implementation_ready")
+  assert.equal(result.run.headSha === fixture.baseSha, false)
+
+  const codexCall = sandboxCalls.find((call) => call.kind === "codex")
+  assert.ok(codexCall)
+  assert.equal(codexCall.sandboxCommand.executablePath, process.execPath)
+  assert.deepEqual(codexCall.sandboxCommand.args.slice(-5), [
+    "--model",
+    "gpt-5.6-sol",
+    "-c",
+    `projects."${fixture.location.workspacePath}".trust_level="untrusted"`,
+    "-"
+  ])
+
+  const probeCalls = sandboxCalls.filter((call) => call.kind === "sandbox-probe")
+  assert.ok(probeCalls.length > 0)
+  for (const call of probeCalls) {
+    assert.deepEqual(call.sandboxCommand.args.slice(0, 9), [
+      "sandbox",
+      "linux",
+      "--config",
+      `projects."${call.cwd}".trust_level="untrusted"`,
+      "--permission-profile",
+      ":workspace",
+      "--cd",
+      call.cwd,
+      "--"
+    ])
+  }
+
+  assert.equal(await git(["status", "--porcelain=v1", "--untracked-files=all"], fixture.location.workspacePath), "")
+  assert.equal(await git(["log", "-1", "--pretty=%s"], fixture.location.workspacePath), "PPO implementation")
+  await assert.rejects(readFile(hookMarker, "utf8"), /ENOENT/u)
+})
+
+test("Codex native Linux commit refuses repository-local content filters", async () => {
+  const fixture = await makeImplementationFixture()
+  await git([
+    "config",
+    "filter.unsafe.clean",
+    "/bin/false"
+  ], fixture.location.workspacePath)
+
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedNativeLinuxCodexConfig(),
+    ...sandboxedCodexRunner(async (invocation) => {
+      await writeFile(join(invocation.cwd, "unsafe-filter.txt"), "implemented\n", "utf8")
+      return { exitCode: 0, stdout: "done", stderr: "" }
+    })
+  }), "CODEX_GIT_VERIFY_FAILED")
+
+  const reloaded = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  assert.equal(reloaded.status, "implementation_in_progress")
+  assert.equal(reloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
 })
 
 test("Linux sandbox backend requires explicit namespace and privilege-drop contract", async () => {
@@ -960,7 +1078,7 @@ test("hardening prompt keeps all remediation items and mandatory safety boundari
     "Do not deploy, restart services, or change production infrastructure.",
     "Do not modify credentials, tokens, secrets, authentication settings, or confirmation values.",
     "Do not run unrelated work, destructive cleanup, broad refactors, or changes outside the task scope.",
-    "Leave a local commit on the current isolated branch when the implementation is complete."
+    "Make the requested edits in the workspace; PPO creates the local commit after sandbox verification."
   ]) {
     assert.match(prompt, new RegExp(requiredBoundary.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"))
   }
