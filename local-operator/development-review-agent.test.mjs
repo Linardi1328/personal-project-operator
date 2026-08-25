@@ -12,8 +12,10 @@ import { promisify } from "node:util"
 import test from "node:test"
 import {
   DevelopmentRunStateError,
+  REVIEW_ORPHAN_RECOVERY_CONFIRMATION,
   createDevelopmentRun,
   readDevelopmentRun,
+  recoverDevelopmentRunReviewOrphanState,
   resolveDevelopmentRunProject,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
@@ -500,6 +502,66 @@ async function assertRejectsCode(promise, code) {
 function latestReviewEvidence(run) {
   return run.evidence.review.at(-1)
 }
+
+test("orphan recovery closes the prior review boundary before a fresh attempt", async () => {
+  const fixture = await makeTestsPassedFixture()
+  const started = await transitionDevelopmentRun(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    status: "review_in_progress",
+    branch: fixture.location.branch,
+    headSha: fixture.headSha,
+    actor: INDEPENDENT_REVIEW_AGENT_ID,
+    reason: "phase-6f-independent-review-attempt",
+    evidence: [{
+      kind: "review",
+      sha: fixture.headSha,
+      source: INDEPENDENT_REVIEW_AGENT_ID,
+      summary: "Independent review attempt reserved.",
+      metadata: {
+        project: fixture.project.id,
+        reviewer: INDEPENDENT_REVIEW_AGENT_ID,
+        attempt: 1,
+        reviewedSha: fixture.headSha,
+        startedAt: "2026-08-21T11:10:00.000Z",
+        outcome: "review_started",
+        sandbox: INDEPENDENT_REVIEW_SANDBOX_ID,
+        backend: "codex-native-linux",
+        platform: "linux",
+        network: "none",
+        readOnlyWorkspace: true
+      }
+    }]
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+  const recovered = await recoverDevelopmentRunReviewOrphanState(started.runId, {
+    expectedVersion: started.version,
+    expectedHeadSha: fixture.headSha,
+    reviewAttempt: 1,
+    confirmation: REVIEW_ORPHAN_RECOVERY_CONFIRMATION
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: fixture.now
+  })
+
+  assert.equal(recovered.status, "tests_passed")
+  assert.equal(latestReviewEvidence(recovered).metadata.outcome, "review_orphan_recovered")
+  assert.equal(latestReviewEvidence(recovered).metadata.reviewer, INDEPENDENT_REVIEW_AGENT_ID)
+
+  const reviewed = await executeIndependentReview(recovered.runId, {
+    expectedVersion: recovered.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    reviewConfig: trustedReviewConfig(),
+    reviewRunner: makeReviewRunner(),
+    now: fixture.now
+  })
+
+  assert.equal(reviewed.run.status, "review_passed")
+  assert.equal(reviewed.run.attempts.review, 2)
+  assert.equal(latestReviewEvidence(reviewed.run).metadata.outcome, "approved")
+})
 
 test("independent review requires tests_passed status, exact expected version, and exact Phase 6D/6E evidence", async () => {
   const implementationReady = await makeImplementationReadyFixture()

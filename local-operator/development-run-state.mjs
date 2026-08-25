@@ -1581,6 +1581,7 @@ function isReviewOrphanRecoveryHistoryEvent(event, priorEvidence, attempts, proj
   const expectedMetadata = {
     project: projectId,
     recovery: REVIEW_ORPHAN_RECOVERY_ACTOR,
+    reviewer: "phase-6f-independent-review-agent",
     reviewedSha: event.headSha,
     reviewAttempt: attempts.review,
     previousOutcome: latest?.metadata?.outcome,
@@ -3065,6 +3066,7 @@ async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, o
     metadata: {
       project: current.project.id,
       recovery: REVIEW_ORPHAN_RECOVERY_ACTOR,
+      reviewer: "phase-6f-independent-review-agent",
       reviewedSha: expectedHeadSha,
       reviewAttempt,
       previousOutcome,
