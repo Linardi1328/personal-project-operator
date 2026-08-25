@@ -30,6 +30,7 @@ const fixedDarwinPaths = Object.freeze({
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
   sandboxExecutablePath: "/usr/bin/sandbox-exec",
   executionPath: "/Users/richie/.local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+  reviewExecutionPath: "/opt/homebrew/bin:/usr/bin:/bin",
   workspaceRoot: "/Users/richie/.local/share/personal-project-operator/development-workspaces",
   nodeToolPaths: Object.freeze({
     portfolioTypecheck: "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/typescript/bin/tsc",
@@ -54,6 +55,7 @@ const fixedLinuxPaths = Object.freeze({
   sandboxExecutablePath: "/home/ppo/.local/bin/codex",
   bubblewrapExecutablePath: "/usr/bin/bwrap",
   executionPath: "/home/ppo/.local/bin:/home/ppo/.local/openclaw/tools/node/bin:/usr/local/bin:/usr/bin:/bin",
+  reviewExecutionPath: "/home/ppo/.local/openclaw/tools/node/bin:/usr/bin:/bin",
   workspaceRoot: "/var/lib/personal-project-operator/development-workspaces",
   nodeToolPaths: Object.freeze({
     portfolioTypecheck: "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/typescript/bin/tsc",
@@ -676,7 +678,8 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
       timeoutMs: 300000,
       maxOutputBytes: MAX_REVIEW_OUTPUT_BYTES,
       env: {
-        PPO_PHASE6K_REVIEW_POLICY: "fixed"
+        PPO_PHASE6K_REVIEW_POLICY: "fixed",
+        PATH: paths.reviewExecutionPath
       },
       sandbox: reviewSandbox,
       shell: false

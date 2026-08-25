@@ -1242,6 +1242,7 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
   assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].steps[0].args, ["-m", "pytest", "backend/tests"])
   assert.doesNotMatch(JSON.stringify(profile.testPolicyRegistry[PROJECT.id]), /node --test|package\.json|npm|npx|Makefile/)
   assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
+  assert.equal(profile.reviewConfig.env.PATH, "/opt/homebrew/bin:/usr/bin:/bin")
   assert.equal(profile.reviewConfig.shell, false)
   assert.equal(profile.reviewConfig.sandbox.readOnlyWorkspace, true)
   assert.equal(profile.reviewConfig.sandbox.network, "none")
@@ -1546,6 +1547,10 @@ test("Phase 6K Linux runtime profile uses Codex native command sandboxing", asyn
   assert.equal(profile.testPolicyRegistry["khlim-assist"].steps[0].executablePath, "/usr/bin/python3.12")
   assert.deepEqual(profile.testPolicyRegistry["khlim-assist"].steps[0].args, ["-m", "pytest", "backend/tests"])
   assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
+  assert.equal(
+    profile.reviewConfig.env.PATH,
+    "/home/ppo/.local/openclaw/tools/node/bin:/usr/bin:/bin"
+  )
   assert.equal(profile.reviewConfig.sandbox.permissionProfile, ":read-only")
   assert.doesNotMatch(JSON.stringify(profile), /nsenter|setpriv|no-outbound\.netns/u)
 })
