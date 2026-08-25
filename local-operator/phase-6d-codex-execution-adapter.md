@@ -28,7 +28,7 @@ Supported sandbox backends are explicit and platform-capable:
 - `codex-native-linux` for the supported Ubuntu 24.04 VPS runtime.
 - `linux-network-namespace` remains available only for legacy regression coverage.
 
-The production Linux backend invokes `codex exec` directly so the Codex controller can authenticate and reach OpenAI, while Codex applies its native `:workspace` Linux sandbox to model-generated commands. PPO preflights that boundary through `codex sandbox linux`, requires Bubblewrap, disables command network access, and keeps remote Git operations denied through the adapter Git wrapper. Because Codex protects `.git` in workspace-write mode, PPO creates the fixed local implementation commit only after the Codex process exits successfully and the workspace remains within the verified isolated branch.
+The production Linux backend invokes `codex exec` directly so the Codex controller can authenticate and reach OpenAI, while Codex applies its native `:workspace` Linux sandbox to model-generated commands. PPO preflights that boundary through `codex sandbox`, requires Bubblewrap, disables command network access, and keeps remote Git operations denied through the adapter Git wrapper. Because Codex protects `.git` in workspace-write mode, PPO creates the fixed local implementation commit only after the Codex process exits successfully and the workspace remains within the verified isolated branch.
 
 ## Behavior
 
