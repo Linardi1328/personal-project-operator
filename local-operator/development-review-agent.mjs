@@ -1587,7 +1587,7 @@ function assertReviewAttemptAvailable(run) {
 function assertNoOpenReviewAttempt(run) {
   const latest = latestReviewEvidence(run)
 
-  if (latest?.metadata?.outcome === "review_started") {
+  if (["review_started", "review_execution_ambiguous"].includes(latest?.metadata?.outcome)) {
     throw reviewError(
       "REVIEW_RECONCILIATION_REQUIRED",
       "Previous independent review attempt requires reconciliation before retrying."
