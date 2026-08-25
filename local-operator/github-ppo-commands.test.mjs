@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import * as githubPpoCommands from "./github-ppo-commands.mjs"
 import { GitHubReadOnlyError, listAllowedProjects } from "./github-readonly.mjs"
 
-const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine"]
+const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine", "khlim-digital-ecosystem"]
 
 const repository = {
   fullName: "Linardi1328/khlim-assist",

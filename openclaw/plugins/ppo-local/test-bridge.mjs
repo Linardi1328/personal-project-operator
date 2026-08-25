@@ -4,7 +4,10 @@ import { readFile } from "node:fs/promises";
 import { runPpoLocalTool, toPpoWrapperArgs } from "./bridge.mjs";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
-import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
+import {
+  listOrdinaryDevelopmentProjects,
+  listPhase2GitHubProjects
+} from "../../../local-operator/github-project-registry.mjs";
 
 const runWrapper = (args) => execFileSync(process.execPath, ["local-operator/ppo-command.mjs", ...args], {
   encoding: "utf8"
@@ -22,14 +25,17 @@ const expectedMappings = new Map([
   ["repo spy-market-agent", ["repo", "spy-market-agent"]],
   ["repo portfolio", ["repo", "portfolio"]],
   ["repo rbl-content-engine", ["repo", "rbl-content-engine"]],
+  ["repo khlim-digital-ecosystem", ["repo", "khlim-digital-ecosystem"]],
   ["pr khlim-assist", ["pr", "khlim-assist"]],
   ["pr ledgerpilot-ai", ["pr", "ledgerpilot-ai"]],
   ["pr spy-market-agent", ["pr", "spy-market-agent"]],
   ["pr portfolio", ["pr", "portfolio"]],
-  ["pr rbl-content-engine", ["pr", "rbl-content-engine"]]
+  ["pr rbl-content-engine", ["pr", "rbl-content-engine"]],
+  ["pr khlim-digital-ecosystem", ["pr", "khlim-digital-ecosystem"]]
 ]);
 
 const currentProjectIds = listPhase2GitHubProjects().map((project) => project.id);
+const ordinaryDevelopmentProjectIds = listOrdinaryDevelopmentProjects().map((project) => project.id);
 const phase3cTask = "; rm -rf / $(whoami) `whoami` ../../etc/passwd café 東京";
 const multilineDraft = "Goal: keep line structure\nRequirements:\n- preserve newline one\n- preserve newline two\nExit Criteria: reviewed";
 const validIssueRequestId = "A".repeat(43);
@@ -46,11 +52,14 @@ for (const projectId of currentProjectIds) {
     `codex-budget ${projectId} ${phase3cTask}`,
     ["codex-budget", projectId, phase3cTask]
   );
-  expectedMappings.set(
-    `start ${projectId}`,
-    ["start", projectId]
-  );
 }
+
+for (const projectId of ordinaryDevelopmentProjectIds) {
+  expectedMappings.set(`start ${projectId}`, ["start", projectId]);
+}
+
+assert.equal(toPpoWrapperArgs("start khlim-digital-ecosystem"), null);
+assert.equal(toPpoWrapperArgs("/ppo start khlim-digital-ecosystem"), null);
 
 expectedMappings.set(`prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]);
 expectedMappings.set(`split-task ${phase3cTask}`, ["split-task", phase3cTask]);

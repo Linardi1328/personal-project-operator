@@ -13,7 +13,7 @@ import {
   stageForDevelopmentRunStatus,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
-import { getPhase2GitHubProject, listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { getOrdinaryDevelopmentProject, listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_RUN_CANCELLATION_ID = "phase-6p-quiescent-development-run-cancellation"
 export const PHASE_6P_RUN_CANCELLATION_POLICY_ID = "phase-6p-quiescent-development-run-cancellation-policy"
@@ -114,7 +114,7 @@ const cancellationContract = Object.freeze({
   cancellation: DEVELOPMENT_RUN_CANCELLATION_ID,
   policy: PHASE_6P_RUN_CANCELLATION_POLICY_ID,
   schemaVersion: 1,
-  ordinaryProjects: listPhase2GitHubProjects().map((project) => project.id).sort(),
+  ordinaryProjects: listOrdinaryDevelopmentProjects().map((project) => project.id).sort(),
   statusClassification: {
     eligible: DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES,
     refusedInProgress: DEVELOPMENT_RUN_CANCELLATION_IN_PROGRESS_STATUSES,
@@ -235,7 +235,7 @@ function validateSummaryForCancellation(summary) {
   return (
     summary.schemaVersion === 1 &&
     DEVELOPMENT_RUN_ID_PATTERN.test(summary.runId) &&
-    getPhase2GitHubProject(summary.project) !== null &&
+    getOrdinaryDevelopmentProject(summary.project) !== null &&
     statusSet.has(summary.status) &&
     stageForDevelopmentRunStatus(summary.status) === summary.stage &&
     Number.isInteger(summary.version) &&
@@ -399,7 +399,7 @@ function normalizePreparedCancellation(input) {
     !DEVELOPMENT_RUN_ID_PATTERN.test(input.runId) ||
     !Number.isInteger(input.expectedVersion) ||
     input.expectedVersion < 0 ||
-    !getPhase2GitHubProject(input.projectId) ||
+    !getOrdinaryDevelopmentProject(input.projectId) ||
     !eligibleStatusSet.has(input.beforeStatus)
   ) {
     return null
@@ -541,7 +541,7 @@ function validReadyResult(result) {
     result.outcome === "cancellation_ready" &&
     DEVELOPMENT_RUN_ID_PATTERN.test(result.runId) &&
     isSafeScalar(result.runId, 43) &&
-    getPhase2GitHubProject(result.project) !== null &&
+    getOrdinaryDevelopmentProject(result.project) !== null &&
     eligibleStatusSet.has(result.beforeStatus) &&
     Number.isInteger(result.expectedVersion) &&
     result.expectedVersion >= 0 &&
@@ -576,7 +576,7 @@ function validStagedResult(result) {
     result.outcome === "cancellation_staged" &&
     DEVELOPMENT_RUN_ID_PATTERN.test(result.runId) &&
     isSafeScalar(result.runId, 43) &&
-    getPhase2GitHubProject(result.project) !== null &&
+    getOrdinaryDevelopmentProject(result.project) !== null &&
     eligibleStatusSet.has(result.beforeStatus) &&
     Number.isInteger(result.expectedVersion) &&
     result.expectedVersion >= 0 &&
@@ -616,7 +616,7 @@ function validCancelledResult(result) {
     result.outcome === "cancelled" &&
     DEVELOPMENT_RUN_ID_PATTERN.test(result.runId) &&
     isSafeScalar(result.runId, 43) &&
-    getPhase2GitHubProject(result.project) !== null &&
+    getOrdinaryDevelopmentProject(result.project) !== null &&
     eligibleStatusSet.has(result.beforeStatus) &&
     result.afterStatus === "cancelled" &&
     Number.isInteger(result.beforeVersion) &&

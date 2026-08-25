@@ -21,7 +21,7 @@ import {
 import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
 import { toPpoWrapperArgs } from "../openclaw/plugins/ppo-local/bridge.mjs"
 
-const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine"]
+const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine", "khlim-digital-ecosystem"]
 const fixedNow = () => new Date("2026-08-18T00:00:00.000Z")
 const khlimEndpoint = "/repos/Linardi1328/khlim-assist/issues"
 const khlimConfirmation = "create-issue:khlim-assist"

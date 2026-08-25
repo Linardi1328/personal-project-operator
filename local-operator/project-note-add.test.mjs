@@ -16,7 +16,7 @@ import {
 } from "./project-note-add.mjs"
 import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
 
-const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine"]
+const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine", "khlim-digital-ecosystem"]
 const fixedNow = () => new Date("2026-08-19T01:02:03.000Z")
 const khlimConfirmation = "add-note:khlim-assist"
 const sensitiveNote = "Phase 5C note with SENSITIVE_TEST_SENTINEL gho_fake_token"

@@ -35,11 +35,11 @@ import {
 } from "./project-note-approval.mjs";
 import { handleProjectStatePromoteCommand } from "./project-state-promote.mjs";
 import { DEVELOPMENT_RUN_ID_PATTERN } from "./development-run-id.mjs";
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs";
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs";
 
 const execFileAsync = promisify(execFile);
 const simulatorPath = fileURLToPath(new URL("simulate-command.mjs", import.meta.url));
-const startProjectIds = new Set(listPhase2GitHubProjects().map((project) => project.id));
+const startProjectIds = new Set(listOrdinaryDevelopmentProjects().map((project) => project.id));
 
 function normalizeArgs(rawArgs) {
   const args = rawArgs

@@ -2,7 +2,7 @@
   "schema": "personal-project-operator.local-project-state.v1",
   "phase": "Phase 1 - Local OpenClaw Test foundation",
   "dataSource": "local mock fixture",
-  "lastUpdated": "2026-08-16",
+  "lastUpdated": "2026-08-24",
   "safety": {
     "mode": "read-only",
     "externalCalls": false,
@@ -84,6 +84,21 @@
       "codexNeeded": "Later",
       "phoneSafe": true,
       "notes": "Draft/research/script/asset workflows require approval boundaries; no auto-publishing."
+    },
+    {
+      "id": "khlim-digital-ecosystem",
+      "displayName": "KHLIM Super App",
+      "repo": "Linardi1328/khlim-digital-ecosystem",
+      "active": true,
+      "status": "Connected candidate",
+      "currentRole": "Athlete-development and club-operations platform.",
+      "openclawPriority": "High",
+      "currentPhase": "Phase 1 technology and engineering foundation preparation",
+      "lastKnownStatus": "Documentation foundation is present; application scaffolding has not started.",
+      "nextAction": "Review and approve the Phase 1 monorepo scaffold before enabling ordinary PPO development runs.",
+      "codexNeeded": "Later",
+      "phoneSafe": true,
+      "notes": "Privacy, consent, role-based access, and auditability are mandatory because the platform may handle information about minors."
     }
   ]
 }

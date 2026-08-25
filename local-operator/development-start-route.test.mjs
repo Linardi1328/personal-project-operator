@@ -19,11 +19,11 @@ import {
   PHASE_7A_START_POLICY_ID,
   handlePpoDevelopmentStartCommand
 } from "./development-start-route.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 const BASE_SHA = "a".repeat(40)
 const RUN_ID = "C".repeat(43)
-const PROJECTS = listPhase2GitHubProjects()
+const PROJECTS = listOrdinaryDevelopmentProjects()
 const PROJECTS_BY_ID = new Map(PROJECTS.map((project) => [project.id, project]))
 
 function makeClock(start = "2026-08-25T00:00:00.000Z") {

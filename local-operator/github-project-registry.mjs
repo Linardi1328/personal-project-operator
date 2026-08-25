@@ -43,7 +43,24 @@ const connectedProjects = new Map([
       owner: "Linardi1328",
       repo: "rbl-content-engine"
     }
+  ],
+  [
+    "khlim-digital-ecosystem",
+    {
+      id: "khlim-digital-ecosystem",
+      displayName: "KHLIM Super App",
+      owner: "Linardi1328",
+      repo: "khlim-digital-ecosystem"
+    }
   ]
+])
+
+const ordinaryDevelopmentProjectIds = new Set([
+  "khlim-assist",
+  "ledgerpilot-ai",
+  "spy-market-agent",
+  "portfolio",
+  "rbl-content-engine"
 ])
 
 const blockedProjectStatuses = new Map()
@@ -62,6 +79,20 @@ export function listPhase2GitHubProjects() {
 export function getPhase2GitHubProject(projectId) {
   const project = connectedProjects.get(projectId)
   return project ? cloneProject(project) : null
+}
+
+export function listOrdinaryDevelopmentProjects() {
+  return Array.from(connectedProjects.values())
+    .filter((project) => ordinaryDevelopmentProjectIds.has(project.id))
+    .map(cloneProject)
+}
+
+export function getOrdinaryDevelopmentProject(projectId) {
+  if (!ordinaryDevelopmentProjectIds.has(projectId)) {
+    return null
+  }
+
+  return getPhase2GitHubProject(projectId)
 }
 
 export function getBlockedPhase2GitHubProjectStatus(projectId) {

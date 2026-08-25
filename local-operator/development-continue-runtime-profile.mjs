@@ -15,7 +15,7 @@ import {
   MAX_REVIEW_OUTPUT_BYTES,
   REVIEW_SANDBOX_BACKENDS
 } from "./development-review-agent.mjs"
-import { listPhase2GitHubProjects } from "./github-project-registry.mjs"
+import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -109,7 +109,7 @@ const reviewedProjectTestPolicies = Object.freeze({
   })
 })
 
-const ordinaryProjects = listPhase2GitHubProjects()
+const ordinaryProjects = listOrdinaryDevelopmentProjects()
 const ordinaryProjectIds = new Set(ordinaryProjects.map((project) => project.id))
 const sanitizedProbeEnv = Object.freeze({
   PATH: "/usr/bin:/bin:/usr/sbin:/sbin",

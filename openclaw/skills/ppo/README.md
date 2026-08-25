@@ -45,6 +45,8 @@ node local-operator/ppo-command.mjs menu system
 node local-operator/ppo-command.mjs help
 node local-operator/ppo-command.mjs repo khlim-assist
 node local-operator/ppo-command.mjs pr khlim-assist
+node local-operator/ppo-command.mjs repo khlim-digital-ecosystem
+node local-operator/ppo-command.mjs pr khlim-digital-ecosystem
 node local-operator/ppo-command.mjs "/ppo issue-create khlim-assist issue title --body optional body"
 node local-operator/ppo-command.mjs "/ppo note-add khlim-assist project note text"
 node local-operator/ppo-command.mjs "/ppo note-confirm <request-id>"
@@ -74,6 +76,8 @@ Phase 6O `/ppo runs` and `/ppo run <run-id>` expose only the reviewed Phase 6N r
 Phase 6P `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` are confirmation-gated quiescent cancellation routes for ordinary runs only. They stage first, bind run id/project/status/version, use a 10-minute single-use request id, and never interrupt processes, clean workspaces, retry, repair, recover, continue, or route production cancellation.
 
 Phase 7A `/ppo start <project>` accepts only one existing five-project id, reuses Phase 6B `createPlannedDevelopmentRun(projectId)` once with no caller-controlled route options, creates at most one planned run, returns `/ppo continue <run-id>` only after strict planned-result validation, and never continues automatically, creates a workspace, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a tool, or uses model interpretation.
+
+KHLIM Super App (`khlim-digital-ecosystem`) is available to read-only and deterministic planning commands, but remains outside this five-project ordinary-development start boundary until its source path and test policy are reviewed.
 
 OpenClaw direct command dispatch uses the local plugin tool:
 

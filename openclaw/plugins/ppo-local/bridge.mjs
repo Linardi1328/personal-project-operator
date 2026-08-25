@@ -9,7 +9,10 @@ import {
   parsePpoIssueConfirmRequest,
   parsePpoIssueCreateRequest
 } from "../../../local-operator/github-issue-approval.mjs";
-import { listPhase2GitHubProjects } from "../../../local-operator/github-project-registry.mjs";
+import {
+  listOrdinaryDevelopmentProjects,
+  listPhase2GitHubProjects
+} from "../../../local-operator/github-project-registry.mjs";
 import {
   parsePpoNoteAddRequest,
   parsePpoNoteConfirmRequest
@@ -27,6 +30,9 @@ const allowedCommands = new Map([
 ]);
 
 const allowedGitHubProjectIds = new Set(listPhase2GitHubProjects().map((project) => project.id));
+const allowedDevelopmentProjectIds = new Set(
+  listOrdinaryDevelopmentProjects().map((project) => project.id)
+);
 const unexpectedWrapperFailure = "PPO local wrapper failed: unexpected local failure.";
 
 export const defaultWrapperPath = fileURLToPath(
@@ -194,7 +200,7 @@ function parseStartCommand(rawCommand) {
   if (
     parts.length === 2 &&
     parts[0] === "start" &&
-    allowedGitHubProjectIds.has(parts[1])
+    allowedDevelopmentProjectIds.has(parts[1])
   ) {
     return ["start", parts[1]];
   }
@@ -203,7 +209,7 @@ function parseStartCommand(rawCommand) {
     parts.length === 3 &&
     (parts[0] === "/ppo" || parts[0] === "ppo") &&
     parts[1] === "start" &&
-    allowedGitHubProjectIds.has(parts[2])
+    allowedDevelopmentProjectIds.has(parts[2])
   ) {
     return ["start", parts[2]];
   }

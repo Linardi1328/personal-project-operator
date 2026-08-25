@@ -22,30 +22,29 @@ High.
 
 ## Current phase
 
-Phase 0 documentation foundation.
+KHLIM Assist v0.1 Phase 2 — AI FAQ Engine.
 
 ## Last known status
 
-Documented as an active project candidate. No live GitHub state has been fetched in Phase 0.
+Phase 2 implements multilingual interpretation, approved knowledge retrieval, deterministic GREEN/YELLOW/RED decisions, and draft response generation. AI participant auto-replies remain disabled.
 
 ## Next action
 
-Prepare read-only repository inspection in a future phase so the operator can summarize current branches, commits, PRs, issues, and implementation state.
+Review Phase 2 evaluation results and choose one focused next task without enabling participant auto-replies.
 
 ## Codex fit
 
-Likely useful for focused implementation tasks after the project state is inspected. Prefer small or medium prompts unless the current Codex usage status is confirmed as available.
+Useful for focused Phase 2 tests, provider hardening, knowledge retrieval, or operator tooling. Prefer small or medium prompts and preserve the no-auto-send boundary.
 
 ## Do not change
 
 - Do not modify production admin workflows without review.
 - Do not add credentials.
 - Do not send customer or staff messages automatically.
-- Do not perform GitHub write actions in Phase 0.
+- Do not enable participant auto-replies without explicit review.
 
 ## Known risks
 
 - Admin workflow automation can affect real operations.
 - Future integrations may involve sensitive business data.
 - Permissions must remain explicit and conservative.
-
