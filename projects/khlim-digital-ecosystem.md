@@ -30,9 +30,7 @@ The reviewed TypeScript monorepo foundation is merged. The repository now contai
 
 ## Next action
 
-Add one focused shared TypeScript configuration foundation. Populate `packages/typescript-config` with reviewed reusable compiler configurations for the current Node, Next.js, and Expo boundaries, add only the minimal consumer `tsconfig.json` files needed to prove inheritance, and extend `tests/foundation.test.mjs` to validate the compiler guardrails deterministically.
-
-Do not add application features, runtime framework dependencies, authentication, database models, deployment configuration, or production integrations in this task.
+Add one focused shared TypeScript configuration foundation. Populate `packages/typescript-config` with reusable compiler configurations for Node, Next.js, and Expo, add only minimal consumer `tsconfig.json` files proving inheritance, and extend `tests/foundation.test.mjs` with deterministic guardrail checks. Do not add application features, runtime dependencies, authentication, database models, deployment configuration, or production integrations.
 
 ## Codex fit
 
