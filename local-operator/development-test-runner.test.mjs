@@ -867,7 +867,6 @@ test("Codex native Linux test sandbox uses the fixed workspace permission profil
     assert.equal(call.sandboxCommand.executablePath, process.execPath)
     assert.deepEqual(call.sandboxArgs.slice(0, 9), [
       "sandbox",
-      "linux",
       "--config",
       `projects."${call.cwd}".trust_level="untrusted"`,
       "--permission-profile",
