@@ -1513,7 +1513,6 @@ test("Phase 6K Linux runtime profile uses Codex native command sandboxing", asyn
   assert.equal(probes[0].executablePath, "/home/ppo/.local/bin/codex")
   assert.deepEqual(probes[0].args, [
     "sandbox",
-    "linux",
     "--config",
     "projects.\"/var/lib/personal-project-operator/development-workspaces\".trust_level=\"untrusted\"",
     "--permission-profile",
