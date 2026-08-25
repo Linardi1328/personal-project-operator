@@ -23,7 +23,7 @@ case "$PWD" in
     ;;
 esac
 
-PROJECT_TRUST_OVERRIDE="projects.\\\"${PWD}\\\".trust_level=\\\"untrusted\\\""
+PROJECT_TRUST_OVERRIDE="projects.\"${PWD}\".trust_level=\"untrusted\""
 
 export HOME="/home/ppo"
 export CODEX_HOME="/home/ppo/.codex"
