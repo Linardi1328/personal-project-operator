@@ -145,6 +145,10 @@ function rejectUnsafeText(value) {
   return unsafeControlPattern.test(value) || sensitiveTextPattern.test(value)
 }
 
+function rejectUnsafeDocumentSyntax(value) {
+  return unsafeControlPattern.test(value)
+}
+
 function normalizeSectionText(value) {
   const normalized = String(value ?? "").trim()
 
@@ -242,7 +246,7 @@ async function readApprovedSource(ref, options = {}) {
 }
 
 function parseLevelTwoSections(markdown) {
-  if (typeof markdown !== "string" || !markdown.trim() || rejectUnsafeText(markdown)) {
+  if (typeof markdown !== "string" || !markdown.trim() || rejectUnsafeDocumentSyntax(markdown)) {
     return {
       ok: false,
       reasonCode: "UNSAFE_SOURCE_STATE",
@@ -427,6 +431,24 @@ function withPlanHash(plan) {
 }
 
 function currentStateFromSections(sections) {
+  const rawCurrentFields = [
+    sections.get("Current phase"),
+    sections.get("Last known status"),
+    sections.get("Next action")
+  ]
+
+  if (rawCurrentFields.some((value) => typeof value === "string" && rejectUnsafeText(value))) {
+    return {
+      ok: false,
+      reasonCode: "UNSAFE_SOURCE_STATE",
+      current: {
+        phase: null,
+        status: null,
+        nextAction: null
+      }
+    }
+  }
+
   const currentPhase = requiredSection(sections, "Current phase")
   const lastKnownStatus = requiredSection(sections, "Last known status")
   const nextAction = requiredSection(sections, "Next action")
@@ -644,7 +666,7 @@ async function getReadOnlySnapshot(project, options = {}) {
 }
 
 function validateRoadmap(roadmapText) {
-  if (typeof roadmapText !== "string" || rejectUnsafeText(roadmapText)) {
+  if (typeof roadmapText !== "string" || rejectUnsafeDocumentSyntax(roadmapText)) {
     return {
       ok: false,
       reasonCode: "UNSAFE_SOURCE_STATE"
@@ -737,7 +759,7 @@ async function planNextDevelopmentStageInternal(projectId, options = {}) {
   if (!projectName || !repo || !connectionStatus || !currentResult.ok) {
     return ownerActionPlan({
       project,
-      reasonCode: "MISSING_PROJECT_STATE",
+      reasonCode: currentResult.reasonCode || "MISSING_PROJECT_STATE",
       safeSummary: "Project state is missing a required approved section; owner action is required.",
       current: currentResult.current,
       sourceEvidence: [],

@@ -539,6 +539,21 @@ test("secrets and raw source failures are excluded from plans and safe errors", 
   assert.doesNotMatch(formatted, /SENSITIVE_TEST_SENTINEL|raw reader/u)
 })
 
+test("trusted repository docs can document confirmation placeholders without blocking KHLIM planning", async () => {
+  const plan = await planNextDevelopmentStage("khlim-digital-ecosystem", {
+    githubClient: fakeGitHubClient()
+  })
+
+  assert.equal(plan.outcome, "planned")
+  assert.equal(plan.reasonCode, "READY")
+  assert.equal(plan.next.stage, "implementation")
+  assert.equal(
+    plan.next.task,
+    "Add the reviewed Phase 1 monorepo foundation with pinned root workspace configuration, the planned app and package boundaries, and `tests/foundation.test.mjs` as the deterministic foundation check."
+  )
+  assert.doesNotMatch(JSON.stringify(plan), /PPO_GITHUB_WRITE_CONFIRM|PPO_NOTE_WRITE_CONFIRM/u)
+})
+
 test("malformed source state fails closed", async () => {
   const malformedDoc = `${projectDocument("khlim-assist")}\n## Next action\n\nAdd duplicate next action.\n`
   const plan = await planNextDevelopmentStage("khlim-assist", {
