@@ -39,7 +39,9 @@ No model call can grant acceptance. Any SHA change invalidates the gate and requ
 7. Transition `review_passed -> merge_ready`.
 8. Re-fetch PR, CI, remote approval, and mergeability.
 9. Merge with a fixed method and GitHub expected-head-SHA protection.
-10. Verify the merge commit and `main`, then transition `merge_ready -> merged`.
+10. Verify the merge commit and `main`.
+11. Delete the exact PPO implementation branch only when it still points to the approved SHA.
+12. Transition `merge_ready -> merged`, recording whether cleanup succeeded or requires owner follow-up.
 
 ## Ambiguous Writes
 
@@ -48,8 +50,14 @@ External writes are reconciled before retry:
 - ambiguous push: read remote branch; exact SHA recovers, absent branch may allow one safe retry, unexpected SHA fails closed
 - ambiguous PR creation: re-query open PRs for the exact branch/base; recover only one exact match
 - ambiguous merge: re-fetch PR merged state, merge commit SHA, and `main`; recover only if GitHub proves the expected PR/exact head was merged
+- ambiguous branch deletion: re-read the remote ref; only an absent ref proves cleanup succeeded
 
 The agent never force-pushes, never merges by branch name alone, and never blindly repeats an ambiguous write.
+
+Branch cleanup is shared by every allowlisted project. It is limited to the run's
+`ppo/<project>/implementation/<run>` branch after the exact PR merge is proven. A missing
+branch is already clean, while a branch moved to any other SHA is preserved and recorded
+as `cleanup_required`. Cleanup failure never changes a verified merge into a failed run.
 
 ## Evidence
 
