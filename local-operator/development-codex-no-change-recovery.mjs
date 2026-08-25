@@ -77,9 +77,17 @@ function normalizeExpectedHeadSha(value) {
 }
 
 function runStateOptions(options = {}) {
-  return typeof options.writeDataDir === "string"
-    ? { writeDataDir: options.writeDataDir }
-    : {}
+  const normalized = {}
+
+  if (typeof options.writeDataDir === "string") {
+    normalized.writeDataDir = options.writeDataDir
+  }
+
+  if (typeof options.now === "function") {
+    normalized.now = options.now
+  }
+
+  return normalized
 }
 
 async function loadRecoveryProfile(run, options = {}) {
