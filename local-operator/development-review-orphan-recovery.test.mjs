@@ -137,8 +137,8 @@ async function makeOrphanRun({ classified = false } = {}) {
           timedOut: false,
           killed: true,
           outputOverflow: true,
-          stdoutOverflow: false,
-          stderrOverflow: true,
+          decisionOverflow: false,
+          progressOverflow: true,
           signal: "SIGTERM",
           sandbox: "phase-6f-no-outbound-network-review-sandbox",
           network: "none"
