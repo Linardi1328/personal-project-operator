@@ -22,7 +22,7 @@ Allowed fields only:
 - `last-known-status` → `## Last known status`
 - `next-action` → `## Next action`
 
-The project must be in the existing fixed five-project registry. The note id must be the 43-character opaque id returned by Phase 5C/5D note creation, and the durable note must belong to the selected project.
+The project must be in the fixed six-project connected registry. The note id must be the 43-character opaque id returned by Phase 5C/5D note creation, and the durable note must belong to the selected project.
 
 ## Terminal confirmation
 

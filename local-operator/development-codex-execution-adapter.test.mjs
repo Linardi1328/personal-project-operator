@@ -322,7 +322,7 @@ function makeCommitRunner(calls, options = {}) {
   }
 }
 
-test("Phase 6D uses the fixed five-project allowlist through Phase 6A/6C state", () => {
+test("Phase 6D uses the fixed six-project allowlist through Phase 6A/6C state", () => {
   assert.equal(PROJECT_IDS.length, 5)
 
   for (const projectId of PROJECT_IDS) {

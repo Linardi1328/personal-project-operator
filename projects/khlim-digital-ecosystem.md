@@ -30,15 +30,16 @@ The repository contains the product, architecture, security, UX, roadmap, and de
 
 ## Next action
 
-Review and approve one focused Phase 1 monorepo-scaffolding task, then add reviewed source-path and automated-test policies before enabling ordinary PPO development runs.
+Add the reviewed Phase 1 monorepo foundation with pinned root workspace configuration, the planned app and package boundaries, and `tests/foundation.test.mjs` as the deterministic foundation check.
 
 ## Codex fit
 
-Good fit for small, reviewable foundation tasks after the first scaffold is explicitly approved. Keep mobile, admin, API, data, security, and deployment work split into separate tasks.
+Good fit for the one approved foundation scaffold. After that run merges, refresh this project state and strengthen the test policy before starting product-feature work. Keep mobile, admin, API, data, security, and deployment work split into separate tasks.
 
 ## Do not change
 
-- Do not enable `/ppo start` until fixed source paths and test policies are reviewed.
+- Do not expand the first `/ppo start` run beyond the reviewed monorepo foundation and its deterministic foundation test.
+- Do not start later product-feature runs until this PPO project state and test policy are refreshed after the scaffold merges.
 - Do not expose or deploy production systems without review.
 - Do not weaken parent/guardian, coach, administrator, or athlete authorization boundaries.
 - Do not add credentials or real participant data.

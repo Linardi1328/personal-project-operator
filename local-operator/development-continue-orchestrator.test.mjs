@@ -256,7 +256,7 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/usr/bin/sandbox-exec",
       "/home/ppo/.local/bin/codex",
       "/usr/bin/git",
-      "/usr/bin/node",
+      "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
       "/usr/bin/python3.12",
       "/usr/bin/nsenter",
       "/usr/bin/id",
@@ -275,12 +275,14 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/Users/richie/spy-market-agent",
       "/Users/richie/richie-linardi-portfolio-website",
       "/Users/richie/rbl-content-engine",
+      "/Users/richie/khlim-digital-ecosystem",
       "/Users/richie/.local/share/personal-project-operator/development-workspaces",
       "/var/lib/personal-project-operator/source-repos/khlim-assist",
       "/var/lib/personal-project-operator/source-repos/ledgerpilot-ai",
       "/var/lib/personal-project-operator/source-repos/spy-market-agent",
       "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
       "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
+      "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem",
       "/var/lib/personal-project-operator/development-workspaces",
       "/var/lib/personal-project-operator/phase6-sandbox"
     ])
@@ -1320,6 +1322,12 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
         ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"]
       ],
       stepCount: 2
+    }],
+    ["khlim-digital-ecosystem", {
+      policyId: "phase-6e-khlim-digital-ecosystem-fixed-node-foundation-policy",
+      executablePath: "/opt/homebrew/bin/node",
+      args: ["--test", "tests/foundation.test.mjs"],
+      stepCount: 1
     }]
   ])
   const projectIds = listOrdinaryDevelopmentProjects().map((project) => project.id)
@@ -1524,7 +1532,7 @@ test("Phase 6K Linux runtime profile uses the exact preconfigured namespace back
     "--inh-caps=-all",
     "--ambient-caps=-all",
     "--",
-    "/usr/bin/node"
+    "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node"
   ])
   assert.equal(profile.codexConfig.executionSandbox.executablePath, "/usr/bin/nsenter")
   assert.equal(profile.codexConfig.executionSandbox.namespacePath, "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns")
@@ -1539,8 +1547,34 @@ test("Phase 6K Linux runtime profile uses the exact preconfigured namespace back
   assert.doesNotMatch(JSON.stringify(profile), /unshare/)
 })
 
+test("Phase 6K KHLIM Linux profile binds the fixed source and foundation test", async () => {
+  const profile = await loadFakeRuntimeProfileFor("khlim-digital-ecosystem", {
+    platform: "linux",
+    identityLookup: fakeRuntimeIdentity,
+    linuxSandboxCapabilityProbe: async () => true
+  })
+  const policy = profile.testPolicyRegistry["khlim-digital-ecosystem"]
+
+  assert.equal(
+    profile.workspaceRegistry["khlim-digital-ecosystem"].sourceRepoPath,
+    "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem"
+  )
+  assert.equal(policy.policyId, "phase-6e-khlim-digital-ecosystem-fixed-node-foundation-policy")
+  assert.deepEqual(policy.trustedExecutablePaths, [
+    "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node"
+  ])
+  assert.equal(policy.steps.length, 1)
+  assert.equal(
+    policy.steps[0].executablePath,
+    "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node"
+  )
+  assert.deepEqual(policy.steps[0].args, ["--test", "tests/foundation.test.mjs"])
+  assert.equal(policy.steps[0].shell, false)
+})
+
 test("Phase 6K Linux runtime profile fails closed for missing or unusable namespace boundaries", async () => {
   const namespacePath = "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns"
+  const trustedNodePath = "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node"
 
   await assert.rejects(
     () => loadFakeRuntimeProfileFor("khlim-assist", {
@@ -1565,6 +1599,16 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable namesp
     () => loadFakeRuntimeProfileFor("khlim-assist", {
       platform: "linux",
       statImpl: fakeRuntimeStatFor({ missing: new Set(["/usr/bin/nsenter"]) }),
+      identityLookup: fakeRuntimeIdentity,
+      linuxSandboxCapabilityProbe: async () => true
+    }),
+    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+
+  await assert.rejects(
+    () => loadFakeRuntimeProfileFor("khlim-digital-ecosystem", {
+      platform: "linux",
+      statImpl: fakeRuntimeStatFor({ modeByPath: { [trustedNodePath]: 0o100775 } }),
       identityLookup: fakeRuntimeIdentity,
       linuxSandboxCapabilityProbe: async () => true
     }),
@@ -2129,6 +2173,7 @@ test("Phase 6K output is compact bounded metadata", async () => {
   assert.match(handled.output, /Action: phase-6b-plan/)
   assert.match(handled.output, /Outcome: planned/)
   assert.match(handled.output, /After: planned/)
+  assert.match(handled.output, new RegExp(`Next command: /ppo continue ${RUN_ID}`, "u"))
   assert.doesNotMatch(handled.output, /stdout|stderr|stack|token|secret|SENSITIVE_TEST_SENTINEL/i)
 
   const blockedRun = makeRun("implementation_in_progress", {
@@ -2144,6 +2189,7 @@ test("Phase 6K output is compact bounded metadata", async () => {
   assert.match(blocked.output, /Action: phase-6d-codex-implementation/)
   assert.match(blocked.output, /Outcome: owner_action_required/)
   assert.match(blocked.output, /Reason: codex_reconciliation_required/)
+  assert.match(blocked.output, new RegExp(`Next command: /ppo run ${RUN_ID}`, "u"))
   assert.doesNotMatch(blocked.output, /stdout|stderr|stack|token|secret|SENSITIVE_TEST_SENTINEL|raw/i)
 })
 

@@ -60,7 +60,7 @@ Request ids are cryptographically random, opaque, single-use, and expire after 1
 
 Phase 5A and Phase 5B allow only:
 
-- project ids from the existing five-project registry
+- project ids from the fixed six-project connected registry
 - `POST /repos/<approved repo>/issues`
 - `title` and `body` fields
 - local `gh api` invoked via Node `execFile` with `shell: false`, fixed argv shape, bounded timeout, and bounded output buffer

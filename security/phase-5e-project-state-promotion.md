@@ -16,7 +16,7 @@ The note text is copied verbatim from the local durable note store. No model, su
 
 A confirmed mutation requires all of the following:
 
-- project is in the fixed five-project registry
+- project is in the fixed six-project registry
 - note id has the Phase 5C/5D 43-character opaque format
 - note belongs to the selected project
 - field is one of the three approved fields

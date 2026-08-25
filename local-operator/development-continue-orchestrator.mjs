@@ -668,6 +668,16 @@ export function formatDevelopmentContinueResult(result) {
     }
   }
 
+  const runId = typeof result.runId === "string" && DEVELOPMENT_RUN_ID_PATTERN.test(result.runId)
+    ? result.runId
+    : null
+
+  if (runId && result.ok === true && Object.hasOwn(statusActions, result.after)) {
+    lines.push(`Next command: /ppo continue ${runId}`)
+  } else if (runId && result.ok === false) {
+    lines.push(`Next command: /ppo run ${runId}`)
+  }
+
   return `${lines.join("\n")}\n`
 }
 

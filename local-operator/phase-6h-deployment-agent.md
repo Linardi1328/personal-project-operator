@@ -37,7 +37,7 @@ Personal Project Operator self-development runs use an explicit local-only Phase
 - repo: `personal-project-operator`
 - fullName: `Linardi1328/personal-project-operator`
 
-Ordinary `resolveDevelopmentRunProject()` and ordinary `createDevelopmentRun()` still reject `personal-project-operator`. The shared five-project registry, Telegram project resolution, OpenClaw project resolution, and ordinary PPO project commands are not expanded.
+Ordinary `resolveDevelopmentRunProject()` and ordinary `createDevelopmentRun()` still reject `personal-project-operator`. The shared six-project registry, Telegram project resolution, OpenClaw project resolution, and ordinary PPO project commands are not expanded.
 
 ## Trusted Profile
 
@@ -51,7 +51,7 @@ Phase 6H supports only the `personal-project-operator` deployment profile:
 - runtime preflight: `/opt/personal-project-operator/deployment/scripts/preflight-openclaw-runtime.sh`
 - service control: `/opt/personal-project-operator/deployment/scripts/service-control.sh`
 
-The shared five-project development registry is not expanded by Phase 6H.
+The shared six-project development registry is not expanded by Phase 6H.
 
 ## Deployment Flow
 

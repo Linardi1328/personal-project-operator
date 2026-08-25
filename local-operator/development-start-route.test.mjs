@@ -225,7 +225,7 @@ function assertStartOutputIsBounded(output) {
   assert.doesNotMatch(output, /SENSITIVE_TEST_SENTINEL|token|secret|password|authorization|stack|stderr|stdout/iu)
 }
 
-test("Phase 7A route exposes the fixed five-project registry through Phase 6B run creation", async () => {
+test("Phase 7A route exposes the fixed six-project registry through Phase 6B run creation", async () => {
   for (const project of PROJECTS) {
     const writeDataDir = await tempWriteDataDir()
     const calls = []

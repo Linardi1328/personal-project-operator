@@ -24,7 +24,7 @@ Repository paths do not come from user text, tasks, planner output, project Mark
 
 The manager:
 
-- resolves projects through the existing five-project registry
+- resolves projects through the existing six-project registry
 - refuses any run not in `planned`
 - reloads the run and checks the exact expected version
 - verifies the configured source path is canonical, local, not a symlink, and a Git repository root

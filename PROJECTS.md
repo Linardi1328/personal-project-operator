@@ -9,11 +9,11 @@ This table is the project registry for Personal Project Operator. Phase 2 GitHub
 | SPY Market Agent | `Linardi1328/spy-market-agent` | Connected candidate | SPY market research/trading-system project | Medium | Research and systemization project; trading execution remains blocked. |
 | Portfolio Website | `Linardi1328/richie-linardi-portfolio-website` | Connected candidate | Personal portfolio website | Medium | Useful for public proof of work and project case studies. |
 | RBL Content Engine | `Linardi1328/rbl-content-engine` | Connected candidate | RBL Productions content workflow engine | Medium | Includes research organization, scripts, source/asset workflow, and production approval boundaries. |
-| KHLIM Super App | `Linardi1328/khlim-digital-ecosystem` | Connected candidate | Athlete-development and club-operations platform | High | Documentation-only Phase 1 foundation; ordinary `/ppo start` remains disabled until source and test policies are reviewed. |
+| KHLIM Super App | `Linardi1328/khlim-digital-ecosystem` | Connected candidate | Athlete-development and club-operations platform | High | One bounded Phase 1 monorepo-foundation run is enabled with a fixed source path and Node foundation-test policy. |
 
 ## Status Meanings
 
 - `Connected candidate`: A real repository exists and is in the fixed GitHub read-only project allowlist.
 - `Documentation only`: The project exists in planning docs but should not be treated as actively connected.
 
-Connected projects are not automatically eligible for ordinary development runs. The ordinary-development registry remains a narrower reviewed set with fixed source paths and test policies.
+Connected projects are not automatically eligible for ordinary development runs. The ordinary-development registry remains a separately reviewed set with fixed source paths and test policies.

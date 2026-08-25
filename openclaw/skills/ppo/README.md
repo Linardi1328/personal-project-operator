@@ -75,9 +75,9 @@ Phase 6O `/ppo runs` and `/ppo run <run-id>` expose only the reviewed Phase 6N r
 
 Phase 6P `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` are confirmation-gated quiescent cancellation routes for ordinary runs only. They stage first, bind run id/project/status/version, use a 10-minute single-use request id, and never interrupt processes, clean workspaces, retry, repair, recover, continue, or route production cancellation.
 
-Phase 7A `/ppo start <project>` accepts only one existing five-project id, reuses Phase 6B `createPlannedDevelopmentRun(projectId)` once with no caller-controlled route options, creates at most one planned run, returns `/ppo continue <run-id>` only after strict planned-result validation, and never continues automatically, creates a workspace, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a tool, or uses model interpretation.
+Phase 7A `/ppo start <project>` accepts only one existing six-project id, reuses Phase 6B `createPlannedDevelopmentRun(projectId)` once with no caller-controlled route options, creates at most one planned run, returns `/ppo continue <run-id>` only after strict planned-result validation, and never continues automatically, creates a workspace, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a tool, or uses model interpretation.
 
-KHLIM Super App (`khlim-digital-ecosystem`) is available to read-only and deterministic planning commands, but remains outside this five-project ordinary-development start boundary until its source path and test policy are reviewed.
+KHLIM Super App (`khlim-digital-ecosystem`) is available to read-only, deterministic planning, and ordinary-development commands for one bounded Phase 1 monorepo-foundation run with a fixed source path and foundation-test policy.
 
 OpenClaw direct command dispatch uses the local plugin tool:
 

@@ -41,7 +41,7 @@ import {
 const BASE_SHA = "a".repeat(40)
 const HEAD_SHA = "b".repeat(40)
 const TASK_SENTINEL = "PHASE_6O_TASK_TEXT_MUST_NOT_LEAK"
-const REVIEWED_PHASE_6N_POLICY_HASH = "fd364fb59fa7dbf383fa280ba1463b0ac860731766f4d4deee1ee3d25d05afa2"
+const REVIEWED_PHASE_6N_POLICY_HASH = "72ac5c9ebf025c6815f518654741880bb5685e49857cd0973b54da7f54acf86d"
 
 function runIdForSeed(seed) {
   return Buffer.alloc(32, seed).toString("base64url")

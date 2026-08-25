@@ -6,7 +6,7 @@ Phase 6G covers acceptance gates, GitHub delivery, exact-head remote PR review, 
 
 Trusted inputs are limited to:
 
-- the fixed five-project registry
+- the fixed six-project registry
 - the Phase 6A run record
 - canonical Phase 6C workspace facts
 - metadata-only Phase 6D, 6E, and 6F evidence

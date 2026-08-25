@@ -43,6 +43,48 @@
           "safety": "Phase 7A controlled start only; no caller-controlled route options, malformed planned-result continuation, or automatic continuation."
         },
         {
+          "command": "/runs",
+          "arguments": "",
+          "description": "List current ordinary development runs.",
+          "phase1Simulator": false,
+          "safety": "Phase 6O bounded read-only catalog only."
+        },
+        {
+          "command": "/run",
+          "arguments": "<run-id>",
+          "description": "Inspect one ordinary development run.",
+          "phase1Simulator": false,
+          "safety": "Phase 6O bounded read-only summary only."
+        },
+        {
+          "command": "/continue",
+          "arguments": "<run-id>",
+          "description": "Advance one run through one reviewed boundary.",
+          "phase1Simulator": false,
+          "safety": "Phase 6K one-boundary continuation only; each result provides the next safe command."
+        },
+        {
+          "command": "/recover",
+          "arguments": "<run-id>",
+          "description": "Inspect an interrupted or ambiguous run.",
+          "phase1Simulator": false,
+          "safety": "Phase 6M read-only recovery observation only."
+        },
+        {
+          "command": "/cancel",
+          "arguments": "<run-id>",
+          "description": "Stage cancellation of one quiescent run.",
+          "phase1Simulator": false,
+          "safety": "Phase 6P confirmation-gated cancellation only."
+        },
+        {
+          "command": "/cancel-confirm",
+          "arguments": "<request-id>",
+          "description": "Confirm one staged quiescent cancellation.",
+          "phase1Simulator": false,
+          "safety": "Phase 6P single-use confirmation only."
+        },
+        {
           "command": "/handoff",
           "arguments": "<project>",
           "description": "Create compact handoff for ChatGPT or Codex.",

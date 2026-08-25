@@ -274,6 +274,18 @@ function isHardeningTask(taskText) {
   return /\bharden(?:ing)?\b|\bsecurity\b|\babuse\b|\bmalformed\b|\berror handling\b|\bleak(?:age)?\b|\bsecrets?\b|\bboundary tests?\b/u.test(taskText.toLowerCase())
 }
 
+function isPlanningOnlyTask(taskText, estimate) {
+  if (estimate.label === "Too large - split required") {
+    return true
+  }
+
+  const task = taskText.toLowerCase()
+  const planning = /\b(review|inspect|analy[sz]e|assess|summarize|propose|recommend|plan|research|compare|identify|investigate)\b/u.test(task)
+  const implementation = /\b(implement|add|build|create|update|fix|harden|refactor|wire|integrate|write|edit|remove|delete|migrate|deploy)\b/u.test(task)
+
+  return planning && !implementation
+}
+
 async function defaultLoadProjectDocument(project) {
   const documentUrl = projectDocumentUrls.get(project.id)
 
@@ -334,6 +346,7 @@ function scopeTaskLine(task) {
 }
 
 function buildPrompt(project, task, docContextBullets, liveContext, estimate, hardening) {
+  const planningOnly = isPlanningOnlyTask(task, estimate)
   const lines = [
     "Codex Prompt",
     "",
@@ -358,7 +371,9 @@ function buildPrompt(project, task, docContextBullets, liveContext, estimate, ha
   appendSection(lines, "Goal", [
     estimate.label === "Too large - split required"
       ? `Plan a safe split for ${project.displayName} before implementation.`
-      : `Implement the requested task for ${project.displayName}.`
+      : planningOnly
+        ? `Produce the requested analysis or proposal for ${project.displayName} without modifying the repository.`
+        : `Implement the requested task for ${project.displayName}.`
   ])
 
   appendSection(lines, "Context", [
@@ -372,10 +387,17 @@ function buildPrompt(project, task, docContextBullets, liveContext, estimate, ha
     scopeTaskLine(task),
     "- Inspect the target repository before naming or editing files.",
     "- Use project docs as background and live GitHub facts as current repo context.",
-    "- Keep changes focused on the requested task; avoid unrelated refactors."
+    planningOnly
+      ? "- Keep the analysis focused on the requested task; avoid unrelated scope."
+      : "- Keep changes focused on the requested task; avoid unrelated refactors."
   ])
 
-  appendSection(lines, "Requirements", [
+  appendSection(lines, "Requirements", planningOnly ? [
+    "- Keep this response read-only; do not edit files or create repository changes.",
+    "- Propose only work supported by inspected repository evidence.",
+    "- Do not fabricate missing project state, file paths, or repository details.",
+    "- Document assumptions or blockers instead of expanding scope."
+  ] : [
     "- Implement only the task-specific changes.",
     "- Preserve existing behavior unless the task explicitly requires a change.",
     "- Do not fabricate missing project state, file paths, or repository details.",
@@ -391,14 +413,26 @@ function buildPrompt(project, task, docContextBullets, liveContext, estimate, ha
     ])
   }
 
-  appendSection(lines, "Tests / Checks", [
+  appendSection(lines, "Tests / Checks", planningOnly ? [
+    "- Validate the proposal against inspected documentation and live repository facts.",
+    "- Name the automated checks a later implementation should run when those checks are verified.",
+    "- Report any repository evidence that could not be inspected.",
+    "- Do not run mutation, deployment, or release commands."
+  ] : [
     "- Add or update appropriate automated tests for the requested behavior.",
     "- Run relevant syntax, lint, type, or unit checks when available.",
     "- Run regression checks for affected behavior.",
     "- Report any checks that cannot run."
   ])
 
-  appendSection(lines, "Safety Boundaries", [
+  appendSection(lines, "Safety Boundaries", planningOnly ? [
+    "- Keep repository access read-only.",
+    "- Do not create a branch, commit, pull request, or issue.",
+    "- Do not merge or deploy.",
+    "- Do not expose credentials.",
+    "- Do not weaken existing security boundaries.",
+    "- No unrelated scope expansion."
+  ] : [
     "- Work on a dedicated branch.",
     "- Do not develop directly on main.",
     "- Do not merge.",
@@ -407,7 +441,13 @@ function buildPrompt(project, task, docContextBullets, liveContext, estimate, ha
     "- No unrelated scope expansion."
   ])
 
-  appendSection(lines, "Exit Criteria", [
+  appendSection(lines, "Exit Criteria", planningOnly ? [
+    "- Requested analysis, recommendation, or split plan produced.",
+    "- One bounded next task is named when the evidence supports it.",
+    "- Suggested checks and relevant verified files are identified.",
+    "- Assumptions and blockers are reported.",
+    "- No repository changes were made."
+  ] : [
     "- Requested task implemented or split plan produced.",
     "- Tests/checks pass or failures are explained.",
     "- Changed files summarized.",

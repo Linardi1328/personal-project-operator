@@ -38,14 +38,15 @@ const fixedDarwinPaths = Object.freeze({
     "ledgerpilot-ai": "/Users/richie/ledgerpilot-ai",
     "spy-market-agent": "/Users/richie/spy-market-agent",
     portfolio: "/Users/richie/richie-linardi-portfolio-website",
-    "rbl-content-engine": "/Users/richie/rbl-content-engine"
+    "rbl-content-engine": "/Users/richie/rbl-content-engine",
+    "khlim-digital-ecosystem": "/Users/richie/khlim-digital-ecosystem"
   })
 })
 
 const fixedLinuxPaths = Object.freeze({
   codexExecutablePath: "/home/ppo/.local/bin/codex",
   gitExecutablePath: "/usr/bin/git",
-  nodeExecutablePath: "/usr/bin/node",
+  nodeExecutablePath: "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
   pythonExecutablePath: "/usr/bin/python3.12",
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
   sandboxExecutablePath: "/usr/bin/nsenter",
@@ -63,7 +64,8 @@ const fixedLinuxPaths = Object.freeze({
     "ledgerpilot-ai": "/var/lib/personal-project-operator/source-repos/ledgerpilot-ai",
     "spy-market-agent": "/var/lib/personal-project-operator/source-repos/spy-market-agent",
     portfolio: "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
-    "rbl-content-engine": "/var/lib/personal-project-operator/source-repos/rbl-content-engine"
+    "rbl-content-engine": "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
+    "khlim-digital-ecosystem": "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem"
   })
 })
 
@@ -106,6 +108,11 @@ const reviewedProjectTestPolicies = Object.freeze({
       id: "unittest",
       args: Object.freeze(["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
     }])
+  }),
+  "khlim-digital-ecosystem": Object.freeze({
+    policyId: "phase-6e-khlim-digital-ecosystem-fixed-node-foundation-policy",
+    kind: "node-foundation-test",
+    nodeTestPath: "tests/foundation.test.mjs"
   })
 })
 
@@ -272,6 +279,11 @@ async function assertNodeToolRuntime(paths, toolPath, options = {}) {
   await assertExecutable(paths.nodeExecutablePath, options)
   await assertRegularFile(toolPath, options)
   await runReadOnlyProbe(paths.nodeExecutablePath, [toolPath, "--version"], options)
+}
+
+async function assertNodeRuntime(paths, options = {}) {
+  await assertExecutable(paths.nodeExecutablePath, options)
+  await runReadOnlyProbe(paths.nodeExecutablePath, ["--version"], options)
 }
 
 function parsePositiveId(value) {
@@ -535,6 +547,27 @@ function nodeQualityPolicy(definition, paths, sandbox) {
   }
 }
 
+function nodeFoundationTestPolicy(definition, paths, sandbox) {
+  return {
+    policyId: definition.policyId,
+    policyVersion: "1",
+    trustedExecutablePaths: [paths.nodeExecutablePath],
+    env: {
+      PPO_PHASE6K_TEST_POLICY: "fixed"
+    },
+    sandbox,
+    steps: [{
+      id: "foundation-test",
+      executablePath: paths.nodeExecutablePath,
+      args: ["--test", definition.nodeTestPath],
+      timeoutMs: 120000,
+      maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
+      required: true,
+      shell: false
+    }]
+  }
+}
+
 function testPolicyForProject(projectId, paths, sandbox) {
   const definition = reviewedProjectTestPolicies[projectId]
 
@@ -552,6 +585,10 @@ function testPolicyForProject(projectId, paths, sandbox) {
 
   if (definition.kind === "node-next-quality") {
     return nodeQualityPolicy(definition, paths, sandbox)
+  }
+
+  if (definition.kind === "node-foundation-test") {
+    return nodeFoundationTestPolicy(definition, paths, sandbox)
   }
 
   throw runtimeError()
@@ -578,6 +615,11 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
     for (const step of definition.nodeSteps) {
       await assertNodeToolRuntime(paths, paths.nodeToolPaths[step.toolPathKey], options)
     }
+    return
+  }
+
+  if (definition.kind === "node-foundation-test") {
+    await assertNodeRuntime(paths, options)
     return
   }
 
@@ -629,6 +671,7 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
     await assertExecutable(paths.setprivPath, options)
     await assertExecutable(paths.readOnlyWorkspaceWrapperPath, options)
     await assertExecutable(paths.nodeExecutablePath, options)
+    await assertTrustedLinuxPath(paths.nodeExecutablePath, options)
     linuxIdentity = await lookupLinuxPpoIdentity(paths, options)
     await assertLinuxSandboxCapability(paths, linuxIdentity, options)
   }

@@ -17,7 +17,7 @@ local-operator/development-start-route.mjs
 The policy hash covers:
 
 - caller input limited to one project id
-- the fixed ordinary five-project scope
+- the fixed ordinary six-project scope
 - reuse of Phase 6B `createPlannedDevelopmentRun(projectId)`
 - no forwarding of caller-controlled route options into Phase 6B
 - strict validation of planned child results before returning a continuation command

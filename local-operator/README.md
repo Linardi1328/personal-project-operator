@@ -187,7 +187,7 @@ Phase 6H adds a local-only exact-SHA deployment agent foundation:
 local-operator/development-deployment-agent.mjs
 ```
 
-It accepts only a Phase 6A run in `merged` status, requires exact expected-version checks, and reads the deployment target solely from durable Phase 6G `merged` evidence. PPO self-development runs originate through an explicit local-only run-state capability fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`; ordinary project resolution and ordinary run creation still use only the five-project registry. The deployment target must be the Phase 6G merge commit SHA, not caller input, latest `main`, branch name, task text, chat, environment variables, repository configuration, or model output. The agent supports only the trusted `personal-project-operator` profile with fixed repository identity, fixed install directory, fixed origin, fixed exact-SHA deployment script, fixed runtime preflight, and fixed `ppo-openclaw.service` restart target.
+It accepts only a Phase 6A run in `merged` status, requires exact expected-version checks, and reads the deployment target solely from durable Phase 6G `merged` evidence. PPO self-development runs originate through an explicit local-only run-state capability fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`; ordinary project resolution and ordinary run creation still use only the six-project registry. The deployment target must be the Phase 6G merge commit SHA, not caller input, latest `main`, branch name, task text, chat, environment variables, repository configuration, or model output. The agent supports only the trusted `personal-project-operator` profile with fixed repository identity, fixed install directory, fixed origin, fixed exact-SHA deployment script, fixed runtime preflight, and fixed `ppo-openclaw.service` restart target.
 
 The agent transitions `merged -> deploy_in_progress` before mutation, invokes only trusted deployment operations with explicit argv, `shell: false`, bounded timeout/output, and metadata-only evidence, and transitions to `deployed` only after the deployed checkout HEAD equals the Phase 6G merge SHA and the approved preflight and fixed restart completed. Definitive failures transition to `deploy_failed`. Ambiguous outcomes remain open and require read-only reconciliation; reconciliation does not mutate the checkout, restart the service, retry deployment, or infer production verification. Phase 6H stops at `deployed` and does not automatically rollback, run health checks, perform production verification, add `/ppo continue`, or add Telegram/OpenClaw routes. See [phase-6h-deployment-agent.md](phase-6h-deployment-agent.md).
 
@@ -208,7 +208,7 @@ Phase 6K adds a controlled `/ppo continue <run-id>` orchestrator:
 local-operator/development-continue-orchestrator.mjs
 ```
 
-It accepts only an existing opaque Phase 6A run id for one of the ordinary five projects, reads the durable run state, captures the current version, re-reads immediately before dispatch, and passes that version internally to the existing reviewed Phase 6B-6G child API for the current status. It advances at most one outer boundary per invocation and stops at `merged`. It refuses PPO self-development runs, caller-selected versions/projects/actions/SHAs/workspaces/policies, ambiguous open attempts, production statuses, and all Phase 6H/6I/6J deployment, verification, and rollback operations.
+It accepts only an existing opaque Phase 6A run id for one of the ordinary six projects, reads the durable run state, captures the current version, re-reads immediately before dispatch, and passes that version internally to the existing reviewed Phase 6B-6G child API for the current status. It advances at most one outer boundary per invocation and stops at `merged`. It refuses PPO self-development runs, caller-selected versions/projects/actions/SHAs/workspaces/policies, ambiguous open attempts, production statuses, and all Phase 6H/6I/6J deployment, verification, and rollback operations.
 
 Phase 6L adds a unified read-only development recovery coordinator:
 
@@ -216,7 +216,7 @@ Phase 6L adds a unified read-only development recovery coordinator:
 local-operator/development-recovery-coordinator.mjs
 ```
 
-It accepts only an existing opaque Phase 6A run id for one of the ordinary five projects, dispatches at most one existing read-only Phase 6C-6G inspection/reconciliation boundary for the current durable status, and returns bounded owner-diagnostic metadata. Phase 6G recovery remains owned by the GitHub delivery reconciler and reports delivery not started, branch, PR, exact-head CI, remote review, merge-ready, and remote-merged observations without writes. It does not retry work, mutate run state, create/remove workspaces, execute Codex/tests/reviewers, push, create or modify PRs, merge, deploy, verify production, rollback, or add a `/ppo` route.
+It accepts only an existing opaque Phase 6A run id for one of the ordinary six projects, dispatches at most one existing read-only Phase 6C-6G inspection/reconciliation boundary for the current durable status, and returns bounded owner-diagnostic metadata. Phase 6G recovery remains owned by the GitHub delivery reconciler and reports delivery not started, branch, PR, exact-head CI, remote review, merge-ready, and remote-merged observations without writes. It does not retry work, mutate run state, create/remove workspaces, execute Codex/tests/reviewers, push, create or modify PRs, merge, deploy, verify production, rollback, or add a `/ppo` route.
 
 Phase 6M adds a controlled read-only recovery route around Phase 6L:
 
@@ -236,7 +236,7 @@ Phase 6N adds a local-only ordinary-run catalog foundation:
 local-operator/development-run-catalog.mjs
 ```
 
-It lists and inspects only existing ordinary Phase 6 runs for the fixed five-project registry. It uses a new non-mutating run-state snapshot reader, performs only bounded local filesystem reads under the fixed `development-runs` store layout, and never calls the existing `readDevelopmentRun(...)` recovery path. Missing stores are empty for listing and bounded not-found for exact inspection; lagging or missing canonical records are reported with explicit canonical-state classifications and are never repaired by the catalog.
+It lists and inspects only existing ordinary Phase 6 runs for the fixed six-project registry. It uses a new non-mutating run-state snapshot reader, performs only bounded local filesystem reads under the fixed `development-runs` store layout, and never calls the existing `readDevelopmentRun(...)` recovery path. Missing stores are empty for listing and bounded not-found for exact inspection; lagging or missing canonical records are reported with explicit canonical-state classifications and are never repaired by the catalog.
 
 Catalog summaries include only metadata: opaque run id, ordinary project id, status, stage, version, safe SHA fields, timestamps, terminal flag, and canonical-state classification. They exclude task text, filesystem paths, evidence, transition history, prompts, review findings, test details, PR raw state, GitHub responses, production metadata, stdout/stderr, raw errors, environment data, credentials, tokens, and secrets. PPO self-development runs are out of scope for the ordinary catalog and are omitted without exposing their run id, status, SHA, or production lifecycle metadata.
 
@@ -256,13 +256,13 @@ node local-operator/ppo-command.mjs run <run-id>
 
 `/ppo runs` accepts no caller-controlled filters, search text, sort fields, limits, offsets, project/status/stage selectors, paths, actions, confirmations, or production inputs. `/ppo run <run-id>` accepts exactly one opaque 43-character Phase 6A run id. Both routes invoke the Phase 6N catalog once, use only the Phase 6N formatters, and add a separate Phase 6O output ceiling.
 
-The routes remain read-only and metadata-only. They preserve Phase 6N's ordinary five-project scope, fixed 100-record inspection bound, 20-summary return bound, active-first ordering, corrupt-content isolation, unsafe-filesystem fail-closed behavior, stale-observation fail-closed behavior, zero canonical repair, and PPO self-development exclusion. They do not expose task text, evidence, transition history, paths, raw Git/GitHub state, production lifecycle metadata, stdout/stderr, raw errors, environment data, credentials, tokens, or secrets.
+The routes remain read-only and metadata-only. They preserve Phase 6N's ordinary six-project scope, fixed 100-record inspection bound, 20-summary return bound, active-first ordering, corrupt-content isolation, unsafe-filesystem fail-closed behavior, stale-observation fail-closed behavior, zero canonical repair, and PPO self-development exclusion. They do not expose task text, evidence, transition history, paths, raw Git/GitHub state, production lifecycle metadata, stdout/stderr, raw errors, environment data, credentials, tokens, or secrets.
 
 Phase 6O does not add cancellation, retry, repair, resume, run creation, arbitrary filters/search/sort, recovery invocation, continue invocation, deployment, production verification, rollback, a new OpenClaw tool, or model interpretation.
 
 ### Phase 6P - Controlled Quiescent Development Run Cancellation
 
-Phase 6P adds confirmation-gated cancellation for existing ordinary five-project development runs:
+Phase 6P adds confirmation-gated cancellation for existing ordinary six-project development runs:
 
 ```text
 local-operator/development-run-cancellation.mjs
@@ -291,7 +291,7 @@ node local-operator/ppo-command.mjs start <project>
 /ppo start <project>
 ```
 
-The route accepts exactly one project id from the existing five-project registry and rejects missing projects, unknown projects, repo names, paths, task text, SHAs, versions, branches, policies, runtime options, confirmations, actions, extra arguments, malformed whitespace, and control-character input before planning. It calls `createPlannedDevelopmentRun(projectId)` once with only the approved internal Phase 6B invocation. A planned outcome creates one Phase 6A run through the Phase 6B lifecycle and returns bounded output with project, run id, status, next stage, base SHA, and `/ppo continue <run-id>` as the next command only if the child result is internally consistent for project, `planned` status, `planning` or `implementation` next stage, equal plan/run base SHA, and matching run head SHA.
+The route accepts exactly one project id from the existing six-project registry and rejects missing projects, unknown projects, repo names, paths, task text, SHAs, versions, branches, policies, runtime options, confirmations, actions, extra arguments, malformed whitespace, and control-character input before planning. It calls `createPlannedDevelopmentRun(projectId)` once with only the approved internal Phase 6B invocation. A planned outcome creates one Phase 6A run through the Phase 6B lifecycle and returns bounded output with project, run id, status, next stage, base SHA, and `/ppo continue <run-id>` as the next command only if the child result is internally consistent for project, `planned` status, `planning` or `implementation` next stage, equal plan/run base SHA, and matching run head SHA.
 
 If Phase 6B returns `owner_action_required` or a malformed planned result, Phase 7A returns only bounded owner-action/route-unavailable information and never prints a continuation command for that result. It does not create workspaces, invoke Codex, run tests, run review/hardening, push, create PRs, merge, deploy, verify production, rollback, call `/ppo continue`, add a new OpenClaw tool, or use model interpretation.
 
@@ -332,10 +332,10 @@ If Phase 6B returns `owner_action_required` or a malformed planned result, Phase
 - `phase-6h-deployment-agent.md`: Phase 6H local usage and safety boundary.
 - `development-production-verification-agent.mjs`: Phase 6I read-only PPO production verification agent.
 - `phase-6i-production-verification-agent.md`: Phase 6I local usage and safety boundary.
-- `development-continue-orchestrator.mjs`: Phase 6K controlled `/ppo continue <run-id>` orchestrator for ordinary five-project runs.
-- `development-recovery-coordinator.mjs`: Phase 6L local-only read-only development recovery coordinator for ordinary five-project runs.
+- `development-continue-orchestrator.mjs`: Phase 6K controlled `/ppo continue <run-id>` orchestrator for ordinary six-project runs.
+- `development-recovery-coordinator.mjs`: Phase 6L local-only read-only development recovery coordinator for ordinary six-project runs.
 - `development-recovery-route.mjs`: Phase 6M controlled `/ppo recover <run-id>` route adapter around the Phase 6L coordinator.
-- `development-run-catalog.mjs`: Phase 6N local-only read-only development run catalog foundation for ordinary five-project runs.
+- `development-run-catalog.mjs`: Phase 6N local-only read-only development run catalog foundation for ordinary six-project runs.
 - `development-run-catalog-route.mjs`: Phase 6O controlled `/ppo runs` and `/ppo run <run-id>` route adapter around the Phase 6N catalog.
 - `development-run-cancellation.mjs`: Phase 6P quiescent cancellation engine for exactly eligible ordinary-run statuses.
 - `development-run-cancellation-approval.mjs`: Phase 6P single-use `/ppo cancel` and `/ppo cancel-confirm` approval store and handlers.
@@ -368,7 +368,7 @@ If Phase 6B returns `owner_action_required` or a malformed planned result, Phase
 - `development-run-catalog-route.test.mjs`: Phase 6O tests for route adapter composition, strict wrapper parsing, bridge-safe command exposure, real catalog invariants through `/ppo runs` and `/ppo run <run-id>`, bounded output, stale/fail-closed behavior, and static recovery/continue/production exclusions.
 - `development-run-cancellation.test.mjs`: Phase 6P tests for exact status eligibility, read-only preflight, successful cancellation invariants, formatter hardening, self-development exclusion, and static recovery/continue/production exclusions.
 - `development-run-cancellation-approval.test.mjs`: Phase 6P tests for request TTL/id policy, private pending/claimed store safety, single-use and concurrent confirmation, stale-state handling, wrapper parsing, and self-development confidentiality.
-- `development-start-route.test.mjs`: Phase 7A tests for all five projects, Phase 6B single-run creation, owner-action-required zero-write behavior, strict terminal parsing, bounded output, and static no-model/no-production/no-new-tool exclusions.
+- `development-start-route.test.mjs`: Phase 7A tests for all six projects, Phase 6B single-run creation, owner-action-required zero-write behavior, strict terminal parsing, bounded output, and static no-model/no-production/no-new-tool exclusions.
 - `github-ppo-commands.test.mjs`: fake-client tests for Phase 2B command formatting and safe errors.
 - `github-ppo-status.test.mjs`: fake-client tests for Phase 2C status formatting, bounded reads, and partial failures.
 - `codex-prompt-generator.test.mjs`: fake-doc and fake-client tests for deterministic prompt generation.
