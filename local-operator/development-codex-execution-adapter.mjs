@@ -1505,7 +1505,7 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   throw sandboxError()
 }
 
-async function runSandboxedProcess(invocation) {
+export async function runSandboxedProcess(invocation) {
   const command = invocation.sandboxCommand || sandboxedCommand(
     invocation.sandbox,
     invocation.executablePath,
@@ -1566,6 +1566,14 @@ async function runSandboxedProcess(invocation) {
     })
 
     child.on("error", (error) => {
+      settle(reject, error)
+    })
+
+    child.stdin.on("error", (error) => {
+      if (error?.code === "EPIPE") {
+        return
+      }
+
       settle(reject, error)
     })
 
