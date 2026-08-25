@@ -3065,7 +3065,7 @@ async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, o
     metadata: {
       project: current.project.id,
       recovery: REVIEW_ORPHAN_RECOVERY_ACTOR,
-        reviewedSha: expectedHeadSha,
+      reviewedSha: expectedHeadSha,
       reviewAttempt,
       previousOutcome,
       outcome: "review_orphan_recovered"
