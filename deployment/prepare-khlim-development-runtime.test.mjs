@@ -6,6 +6,7 @@ import test from "node:test"
 
 const SCRIPT_PATH = resolve("deployment/scripts/prepare-khlim-development-runtime.sh")
 const REVIEWER_PATH = resolve("deployment/bin/ppo-independent-reviewer")
+const REVIEW_OUTPUT_SCHEMA_PATH = resolve("deployment/phase6f-review-output.schema.json")
 
 test("KHLIM runtime preparation script has valid Bash syntax", () => {
   const result = spawnSync("bash", ["-n", SCRIPT_PATH], { encoding: "utf8" })
@@ -41,11 +42,42 @@ test("KHLIM runtime preparation is fixed, confirmation-gated, and non-destructiv
   assert.doesNotMatch(source, /reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--|rm\s+-rf|apparmor_restrict_unprivileged_userns=0/u)
 })
 
+test("independent reviewer output schema pins the exact decision contract", async () => {
+  const schema = JSON.parse(await readFile(REVIEW_OUTPUT_SCHEMA_PATH, "utf8"))
+  const required = [
+    "decision",
+    "reviewedSha",
+    "mergeAllowed",
+    "blockers",
+    "securityFindings",
+    "testsRequired",
+    "summary"
+  ]
+
+  assert.equal(schema.type, "object")
+  assert.equal(schema.additionalProperties, false)
+  assert.deepEqual(schema.required, required)
+  assert.deepEqual(Object.keys(schema.properties), required)
+  assert.deepEqual(schema.properties.decision.enum, [
+    "APPROVED",
+    "CHANGES_REQUESTED",
+    "OWNER_ACTION_REQUIRED"
+  ])
+  assert.equal(schema.properties.reviewedSha.pattern, "^[a-f0-9]{40}$")
+  assert.equal(schema.properties.blockers.maxItems, 5)
+  assert.equal(schema.properties.securityFindings.maxItems, 5)
+  assert.equal(schema.properties.testsRequired.maxItems, 5)
+  assert.equal(schema.properties.summary.maxLength, 500)
+})
+
 test("independent reviewer wrapper pins read-only non-interactive Codex", async () => {
   const source = await readFile(REVIEWER_PATH, "utf8")
 
   assert.match(source, /CODEX_BIN="\/home\/ppo\/\.local\/bin\/codex"/u)
   assert.match(source, /CODEX_MODEL="gpt-5\.6-sol"/u)
+  assert.match(source, /REVIEW_OUTPUT_SCHEMA="\/opt\/personal-project-operator\/deployment\/phase6f-review-output\.schema\.json"/u)
+  assert.match(source, /--output-schema "\$REVIEW_OUTPUT_SCHEMA"/u)
+  assert.match(source, /\[\[ ! -r "\$REVIEW_OUTPUT_SCHEMA" \]\]/u)
   assert.match(source, /--sandbox read-only/u)
   assert.match(source, /--ask-for-approval never/u)
   const invocationStart = source.indexOf('exec "$CODEX_BIN"')
