@@ -17,7 +17,7 @@ Phase 6E may:
 - reuse Phase 6C workspace location and reconciliation checks
 - require Phase 6D implementation evidence SHA to equal `run.headSha`
 - read test policy only from a trusted local per-project registry
-- establish and verify the trusted no-outbound-network command sandbox before tests execute; production Linux uses the local `codex sandbox linux` helper without a model call
+- establish and verify the trusted no-outbound-network command sandbox before tests execute; production Linux uses the local `codex sandbox` helper without a model call
 - use explicit executable path plus argv test steps with `shell: false`
 - set `cwd` only to the verified Phase 6C workspace
 - run a fixed bounded number of required test steps
