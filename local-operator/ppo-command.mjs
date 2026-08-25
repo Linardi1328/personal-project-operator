@@ -708,6 +708,30 @@ function applyPpoNamespace(output) {
       "- /ppo start <project> - Create one planned ordinary development run. [controlled development start]"
     )
     .replace(
+      "- /ppo runs - List current ordinary development runs. [future]",
+      "- /ppo runs - List current ordinary development runs. [read-only development catalog]"
+    )
+    .replace(
+      "- /ppo run <run-id> - Inspect one ordinary development run. [future]",
+      "- /ppo run <run-id> - Inspect one ordinary development run. [read-only development summary]"
+    )
+    .replace(
+      "- /ppo continue <run-id> - Advance one run through one reviewed boundary. [future]",
+      "- /ppo continue <run-id> - Advance one run through one reviewed boundary. [guided development]"
+    )
+    .replace(
+      "- /ppo recover <run-id> - Inspect an interrupted or ambiguous run. [future]",
+      "- /ppo recover <run-id> - Inspect an interrupted or ambiguous run. [read-only recovery]"
+    )
+    .replace(
+      "- /ppo cancel <run-id> - Stage cancellation of one quiescent run. [future]",
+      "- /ppo cancel <run-id> - Stage cancellation of one quiescent run. [approval stage]"
+    )
+    .replace(
+      "- /ppo cancel-confirm <request-id> - Confirm one staged quiescent cancellation. [future]",
+      "- /ppo cancel-confirm <request-id> - Confirm one staged quiescent cancellation. [approved quiescent cancellation]"
+    )
+    .replace(
       "Phase 1.5 boundary: no live APIs, no secrets, no writes.",
       "Phase 2B boundary: /ppo status/menu/help remain local fixture-backed; /ppo repo and /ppo pr use GitHub read-only; no writes."
     )
@@ -738,6 +762,10 @@ function applyPpoNamespace(output) {
     .replace(
       "Phase 6P boundary: /ppo cancel stages and /ppo cancel-confirm consumes a single-use quiescent cancellation request; /ppo runs and /ppo run remain read-only catalog routes; /ppo continue and /ppo recover keep their separate reviewed boundaries; production deployment, verification, and rollback remain unrouted.",
       "Phase 7A boundary: /ppo start forwards no caller-controlled route options, fails closed on malformed planned results, and never continues automatically; /ppo cancel remains confirmation-gated; /ppo runs and /ppo run remain read-only catalog routes; production deployment, verification, and rollback remain unrouted."
+    )
+    .replace(
+      "Phase 7A boundary: /ppo start forwards no caller-controlled route options, fails closed on malformed planned results, and never continues automatically; /ppo cancel remains confirmation-gated; /ppo runs and /ppo run remain read-only catalog routes; production deployment, verification, and rollback remain unrouted.",
+      "Guided development: run /ppo start once, then copy the exact Next command from each reply.\n\nPhase 7A boundary: /ppo start forwards no caller-controlled route options, fails closed on malformed planned results, and never continues automatically; /ppo cancel remains confirmation-gated; /ppo runs and /ppo run remain read-only catalog routes; production deployment, verification, and rollback remain unrouted."
     )
     .replace(
       [

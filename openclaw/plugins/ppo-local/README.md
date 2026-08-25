@@ -27,11 +27,11 @@ The plugin:
 - routes `/ppo issue-confirm` to atomically claim one unexpired local request before invoking the Phase 5A issue writer
 - routes `/ppo note-add` to local pending-request staging only; staging never appends a note
 - routes `/ppo note-confirm` to atomically claim one unexpired local request before invoking the Phase 5C note writer
-- routes `/ppo start <project>` to the controlled Phase 7A planned-run creation path for ordinary five-project runs only
-- routes `/ppo runs` and `/ppo run <run-id>` to the controlled Phase 6O read-only catalog routes for ordinary five-project runs only
-- routes `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` to the controlled Phase 6P quiescent cancellation approval path for ordinary five-project runs only
-- routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary five-project runs only
-- routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary five-project runs only
+- routes `/ppo start <project>` to the controlled Phase 7A planned-run creation path for ordinary six-project runs only
+- routes `/ppo runs` and `/ppo run <run-id>` to the controlled Phase 6O read-only catalog routes for ordinary six-project runs only
+- routes `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` to the controlled Phase 6P quiescent cancellation approval path for ordinary six-project runs only
+- routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary six-project runs only
+- routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary six-project runs only
 - does not call Telegram APIs
 - does not use secrets
 - mutates only the private local pending stores for Phase 5B issue, Phase 5D note, and Phase 6P cancellation approval requests, plus the approved local note store after `/ppo note-confirm`, the single confirmed Phase 6P `cancelled` run transition, and the single Phase 7A planned-run creation through Phase 6B; Phase 6M recovery and Phase 6O catalog routes are read-only
@@ -123,7 +123,7 @@ Phase 5C adds `node local-operator/ppo-command.mjs note-add <project> <note...>`
 
 ## Phase 7A development start
 
-Phase 7A adds `/ppo start <project>` through this same plugin. The bridge accepts only exact raw command shapes for the existing five project ids and maps to wrapper argv `["start", "<project>"]` with `shell: false`; malformed whitespace, envelopes, repo names, paths, task text, SHAs, branches, versions, policies, runtime options, confirmations, actions, and extra arguments are rejected before wrapper execution. The wrapper invokes the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` once with only the approved internal invocation. A validated planned outcome creates one run and returns `/ppo continue <run-id>` as the next command. Owner-action-required or malformed planned outcomes create no continuation command.
+Phase 7A adds `/ppo start <project>` through this same plugin. The bridge accepts only exact raw command shapes for the existing six project ids and maps to wrapper argv `["start", "<project>"]` with `shell: false`; malformed whitespace, envelopes, repo names, paths, task text, SHAs, branches, versions, policies, runtime options, confirmations, actions, and extra arguments are rejected before wrapper execution. The wrapper invokes the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` once with only the approved internal invocation. A validated planned outcome creates one run and returns `/ppo continue <run-id>` as the next command. Owner-action-required or malformed planned outcomes create no continuation command.
 
 Phase 7A never calls `/ppo continue` automatically, creates workspaces, invokes Codex, runs tests/review, pushes, creates PRs, merges, deploys, verifies production, rolls back, adds a new OpenClaw tool, or uses model interpretation.
 
@@ -137,7 +137,7 @@ Phase 6M adds `/ppo recover <run-id>` through this same plugin. The bridge accep
 
 ## Phase 6O development run catalog
 
-Phase 6O adds `/ppo runs` and `/ppo run <run-id>` through this same plugin. The bridge maps only `/ppo runs` to wrapper argv `["runs"]` and only `/ppo run <run-id>` to wrapper argv `["run", "<run-id>"]`. The wrapper invokes the reviewed Phase 6N catalog once and returns only bounded metadata summaries for ordinary five-project development runs. It accepts no project, status, stage, filter, search, sort, limit, offset, expected version, SHA, branch, path, action, service, production, confirmation, command, executable, or environment input from chat, and it never calls `/ppo continue` or `/ppo recover`.
+Phase 6O adds `/ppo runs` and `/ppo run <run-id>` through this same plugin. The bridge maps only `/ppo runs` to wrapper argv `["runs"]` and only `/ppo run <run-id>` to wrapper argv `["run", "<run-id>"]`. The wrapper invokes the reviewed Phase 6N catalog once and returns only bounded metadata summaries for ordinary six-project development runs. It accepts no project, status, stage, filter, search, sort, limit, offset, expected version, SHA, branch, path, action, service, production, confirmation, command, executable, or environment input from chat, and it never calls `/ppo continue` or `/ppo recover`.
 
 ## Phase 6P development run cancellation
 

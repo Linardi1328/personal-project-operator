@@ -12,7 +12,7 @@ It prepares exactly one isolated implementation branch/worktree for a Phase 6A r
 
 Phase 6C may:
 
-- resolve project ids through the existing five-project registry only
+- resolve project ids through the existing six-project registry only
 - read one Phase 6A run record from `${PPO_WRITE_DATA_DIR}/development-runs`
 - require exact expected-version optimistic concurrency
 - read source repository facts through bounded local Git argv calls

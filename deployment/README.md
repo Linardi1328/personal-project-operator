@@ -34,6 +34,7 @@ Phase 4A files are server-local bootstrap materials only.
 - `deployment/logrotate/ppo-openclaw`: logrotate template for optional file logs.
 - `deployment/scripts/bootstrap-ubuntu-24.04.sh`: installs OS packages, creates the non-root service user, creates directories, and installs systemd/logrotate templates.
 - `deployment/scripts/preflight-openclaw-runtime.sh`: fail-closed service preflight for the supported local-prefix Node/OpenClaw runtime.
+- `deployment/scripts/prepare-khlim-development-runtime.sh`: confirmation-gated installation of a root-owned Node 24 test runtime plus clone or fast-forward synchronization for the fixed KHLIM Super App ordinary-development source path.
 - `deployment/scripts/install-or-update-repo.sh`: installs or updates the PPO checkout from the fixed main branch.
 - `deployment/scripts/deploy-exact-sha.sh`: Phase 6H exact-SHA PPO deployment primitive for a trusted Phase 6G merge commit.
 - `deployment/scripts/verify-production-readonly.sh`: Phase 6I read-only production verification primitive for the exact Phase 6H deployed SHA.
@@ -102,6 +103,17 @@ Supported Node ranges are enforced exactly:
 - Node 26+
 
 Node 20, 21, 23, and too-old 22/24/25 releases are rejected.
+
+## KHLIM Ordinary-Development Runtime
+
+After the PPO release containing KHLIM Super App ordinary-development support is deployed, prepare its fixed source checkout and root-owned Node 24 test runtime once:
+
+```bash
+sudo env PPO_KHLIM_RUNTIME_CONFIRM=prepare-khlim-development-runtime \
+  /opt/personal-project-operator/deployment/scripts/prepare-khlim-development-runtime.sh
+```
+
+The command refuses an unclean or mismatched checkout and performs only a fast-forward update of `main`. It copies the supported OpenClaw-bundled Node executable into the fixed root-owned Phase 6K tools path; development runs cannot replace that trusted test executable.
 
 ## Service User
 

@@ -8,7 +8,7 @@ This phase does not add an executable autonomous-development workflow.
 
 Phase 6A may:
 
-- resolve projects through the existing five-project registry only
+- resolve projects through the existing six-project registry only
 - create cryptographically random opaque run ids
 - store run-state records under `${PPO_WRITE_DATA_DIR}/development-runs`
 - create private `0700` directories and `0600` files

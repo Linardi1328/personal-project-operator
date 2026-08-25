@@ -10,7 +10,7 @@ node local-operator/ppo-command.mjs start <project>
 
 ## Boundary
 
-The route accepts exactly one caller-controlled value: one existing five-project id.
+The route accepts exactly one caller-controlled value: one existing six-project id.
 
 Allowed project ids:
 

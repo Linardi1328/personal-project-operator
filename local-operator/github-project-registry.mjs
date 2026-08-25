@@ -60,7 +60,8 @@ const ordinaryDevelopmentProjectIds = new Set([
   "ledgerpilot-ai",
   "spy-market-agent",
   "portfolio",
-  "rbl-content-engine"
+  "rbl-content-engine",
+  "khlim-digital-ecosystem"
 ])
 
 const blockedProjectStatuses = new Map()

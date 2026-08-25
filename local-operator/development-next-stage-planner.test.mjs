@@ -169,7 +169,7 @@ async function assertRejectsCode(promise, code, errorClass = DevelopmentNextStag
   )
 }
 
-test("Phase 6B planner uses the fixed five-project allowlist", async () => {
+test("Phase 6B planner uses the fixed six-project allowlist", async () => {
   for (const project of PROJECTS) {
     const plan = await planNextDevelopmentStage(project.id, {
       sources: sourcesFor(project.id),

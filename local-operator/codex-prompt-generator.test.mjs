@@ -373,6 +373,30 @@ ${long}
 }
 
 {
+  const { output } = await makePrompt(
+    "khlim-digital-ecosystem",
+    "Review the repository and propose one small next development task"
+  )
+
+  assert.match(output, /Produce the requested analysis or proposal for KHLIM Super App without modifying the repository\./)
+  assert.match(output, /Keep this response read-only; do not edit files or create repository changes\./)
+  assert.match(output, /Do not create a branch, commit, pull request, or issue\./)
+  assert.match(output, /No repository changes were made\./)
+  assert.doesNotMatch(output, /Implement the requested task|Work on a dedicated branch|Branch pushed and ready for review/)
+}
+
+{
+  const { output } = await makePrompt(
+    "khlim-assist",
+    "Review the provider validation and implement the focused fix"
+  )
+
+  assert.match(output, /Implement the requested task for KHLIM Assist\./)
+  assert.match(output, /Work on a dedicated branch\./)
+  assert.doesNotMatch(output, /Keep this response read-only/)
+}
+
+{
   assert.equal(estimateTaskSize("docs update").label, "Small")
   assert.equal(estimateTaskSize("add user settings feature").label, "Medium")
   assert.equal(estimateTaskSize("refactor backend and frontend architecture").label, "Large")

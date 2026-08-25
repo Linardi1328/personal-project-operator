@@ -14,7 +14,7 @@ Trusted inputs are limited to:
 
 The deployment SHA must come only from Phase 6G merged evidence and must equal the Phase 6G merge commit SHA. Caller input, task text, chat, environment variables, command-line text, project Markdown, repository-controlled configuration, and model output cannot choose the deployment target.
 
-The PPO self-development run-state capability is fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`. It does not add PPO to the shared five-project registry and does not affect Telegram, OpenClaw, or ordinary PPO project resolution.
+The PPO self-development run-state capability is fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`. It does not add PPO to the shared six-project registry and does not affect Telegram, OpenClaw, or ordinary PPO project resolution.
 
 ## Allowed Writes
 

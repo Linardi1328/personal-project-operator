@@ -58,9 +58,6 @@ for (const projectId of ordinaryDevelopmentProjectIds) {
   expectedMappings.set(`start ${projectId}`, ["start", projectId]);
 }
 
-assert.equal(toPpoWrapperArgs("start khlim-digital-ecosystem"), null);
-assert.equal(toPpoWrapperArgs("/ppo start khlim-digital-ecosystem"), null);
-
 expectedMappings.set(`prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]);
 expectedMappings.set(`split-task ${phase3cTask}`, ["split-task", phase3cTask]);
 expectedMappings.set("issue-create khlim-assist Add issue title", ["/ppo", "issue-create", "khlim-assist", "Add issue title"]);
@@ -116,6 +113,8 @@ const fullPayload = await runPpoLocalTool({ command: "/ppo menu project" });
 assert.equal(fullPayload.ok, true, "full /ppo payload succeeds");
 assert.deepEqual(fullPayload.wrapperArgs, ["menu", "project"]);
 assert.equal(fullPayload.stdout, runWrapper(["menu", "project"]), "full /ppo payload returns exact wrapper output");
+assert.match(fullPayload.stdout, /Guided development: run \/ppo start once/);
+assert.match(fullPayload.stdout, /\/ppo continue <run-id>.*\[guided development\]/);
 
 {
   const safeStartOutput = [

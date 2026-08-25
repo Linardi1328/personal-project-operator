@@ -72,7 +72,7 @@ const catalogContract = Object.freeze({
   catalog: DEVELOPMENT_RUN_CATALOG_ID,
   policy: PHASE_6N_RUN_CATALOG_POLICY_ID,
   schemaVersion: 1,
-  scope: "ordinary-five-project-development-runs",
+  scope: "ordinary-six-project-development-runs",
   filesystem: "read-only-fixed-development-runs-store",
   maxRecordsInspected: MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED,
   maxSummariesReturned: MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES,

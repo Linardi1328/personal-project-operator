@@ -12,7 +12,7 @@ It determines whether one allowlisted project has enough approved source state t
 
 Phase 6B may:
 
-- resolve project ids through the existing five-project registry only
+- resolve project ids through the existing six-project registry only
 - read the fixed project Markdown file for that project
 - read `ROADMAP.md`
 - read existing Phase 2 GitHub read-only snapshot facts

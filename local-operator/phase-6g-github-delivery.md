@@ -15,7 +15,7 @@ local-operator/github-delivery-agent.mjs
 
 - exact expected run version
 - `run.status === "review_passed"`
-- project membership in the fixed five-project registry
+- project membership in the fixed six-project registry
 - canonical, clean Phase 6C workspace
 - workspace branch and HEAD equal to the run branch and `run.headSha`
 - Phase 6D implementation evidence for `run.headSha`

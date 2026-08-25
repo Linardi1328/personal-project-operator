@@ -141,7 +141,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 ### Phase 5A - Terminal-only controlled GitHub issue creation
 
 - Add terminal-only `node local-operator/ppo-command.mjs issue-create <project> <title> [body...]`.
-- Resolve `<project>` only through the existing five-project GitHub registry.
+- Resolve `<project>` only through the existing six-project GitHub registry.
 - Permit only `POST /repos/<approved repo>/issues` with `title` and `body` fields.
 - Require exact `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` before any network write.
 - Show a deterministic preview and refuse the write when confirmation is missing or mismatched.
@@ -153,7 +153,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 - Add `/ppo issue-create <project> <title> [--body <body>]` through the existing `ppo_local` direct-tool path.
 - Add `/ppo issue-confirm <request-id>` through the same `ppo_local` tool.
-- Keep `issue-create` as staging only: validate through the existing five-project registry and Phase 5A title/body limits, show the deterministic preview, persist the normalized intent locally, and return the confirmation command.
+- Keep `issue-create` as staging only: validate through the existing six-project registry and Phase 5A title/body limits, show the deterministic preview, persist the normalized intent locally, and return the confirmation command.
 - Generate cryptographically random opaque one-time request ids and expire pending requests after 10 minutes.
 - Keep pending request storage private and configurable with `PPO_WRITE_DATA_DIR`, defaulting to `local-operator/write-data/` for local use and `/var/lib/personal-project-operator/write-data` in systemd.
 - Make `issue-confirm` atomically claim one unexpired request before any network write, consume it before invoking the writer, and make replay, expired, malformed, unknown, or already-consumed ids perform zero GitHub writes.
@@ -164,7 +164,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 ### Phase 5C - Terminal-only controlled project notes foundation
 
 - Add terminal-only `node local-operator/ppo-command.mjs note-add <project> <note...>`.
-- Resolve `<project>` only through the existing five-project registry.
+- Resolve `<project>` only through the existing six-project registry.
 - Validate note text as inert terminal data: non-empty, maximum 2000 characters, and no terminal control or escape input.
 - Require exact `PPO_NOTE_WRITE_CONFIRM=add-note:<project>` before appending a note.
 - Show a deterministic preview and refuse the write when confirmation is missing or mismatched.
@@ -180,7 +180,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 - Add `/ppo note-add <project> <note...>` through the existing `ppo_local` direct-tool path.
 - Add `/ppo note-confirm <request-id>` through the same `ppo_local` tool.
-- Keep `/ppo note-add` as staging only: resolve the project through the existing five-project registry, reuse Phase 5C note validation and the 2000-character limit, reject chat input containing `PPO_NOTE_WRITE_CONFIRM`, perform zero note writes, show project/repo/note length without note text, persist the normalized intent locally, and return the confirmation command.
+- Keep `/ppo note-add` as staging only: resolve the project through the existing six-project registry, reuse Phase 5C note validation and the 2000-character limit, reject chat input containing `PPO_NOTE_WRITE_CONFIRM`, perform zero note writes, show project/repo/note length without note text, persist the normalized intent locally, and return the confirmation command.
 - Generate cryptographically random opaque one-time request ids and expire pending requests after 10 minutes.
 - Store pending note requests under `${PPO_WRITE_DATA_DIR}/pending-project-notes` using private `0700` directories and `0600` files. Persist note text only temporarily for the pending request and delete consumed or expired content.
 - Make `/ppo note-confirm` atomically claim and consume one unexpired request before invoking the Phase 5C writer with internal `add-note:<project>` confirmation. Unknown, expired, malformed, already-consumed, or replayed ids perform zero note writes.
@@ -192,7 +192,7 @@ Phase 1 must not call GitHub APIs, Telegram APIs, Codex usage screens, VPS servi
 
 - Add terminal-only `node local-operator/ppo-command.mjs state-promote <project> <note-id> <field>`.
 - Allow exactly `current-phase`, `last-known-status`, and `next-action` as project-state fields.
-- Resolve the project only through the existing five-project registry and require the durable Phase 5C/5D note to belong to that project.
+- Resolve the project only through the existing six-project registry and require the durable Phase 5C/5D note to belong to that project.
 - Require the exact `PPO_PROJECT_STATE_CONFIRM=promote-note:<project>:<note-id>:<field>` confirmation before mutation.
 - Refuse on `main`, refuse when the selected project-state file is dirty, and re-check the target hash immediately before replacement.
 - Replace only the selected level-two Markdown section body and preserve all other bytes.
@@ -218,7 +218,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 ### Phase 6A - Durable autonomous-development run-state foundation
 
 - Add a local-only `local-operator/development-run-state.mjs` store for future PPO development runs.
-- Resolve projects only through the existing five-project registry.
+- Resolve projects only through the existing six-project registry.
 - Generate cryptographically random opaque run ids.
 - Store one canonical run record under `${PPO_WRITE_DATA_DIR}/development-runs` with private `0700` directories and `0600` files.
 - Include project metadata, bounded task text, lifecycle status, derived stage, immutable base SHA, optional branch/head SHA, per-stage attempt counters, timestamps, structured SHA-pinned planning/implementation/review/test/deploy/verification/rollback evidence metadata, and immutable transition history.
@@ -234,7 +234,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 ### Phase 6B - Deterministic autonomous next-stage planner foundation
 
 - Add a local-only `local-operator/development-next-stage-planner.mjs` planner.
-- Resolve projects only through the existing five-project registry.
+- Resolve projects only through the existing six-project registry.
 - Read only the fixed project Markdown file for the selected project, `ROADMAP.md`, and existing Phase 2 GitHub read-only snapshot facts.
 - Reject arbitrary repo names, arbitrary file paths, traversal, globs, model inputs, and unsupported source locations.
 - Deterministically classify the exact project-state `## Next action` into one supported next stage only when source state is complete and unambiguous.
@@ -250,7 +250,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 ### Phase 6C - Isolated workspace/worktree manager foundation
 
 - Add a local-only `local-operator/development-workspace-manager.mjs` workspace manager.
-- Resolve projects only through the existing five-project registry.
+- Resolve projects only through the existing six-project registry.
 - Reuse the Phase 6A run-state store and accept only runs already in `planned` status.
 - Require exact expected-version checks before transitioning run state.
 - Read repository locations only from an explicit configured project workspace registry; reject paths from user/task text, planner output, project Markdown, and arbitrary filesystem traversal.
@@ -361,7 +361,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Allow delivery only when Phase 6D implementation evidence, Phase 6E PASS evidence, Phase 6F APPROVED evidence, the Phase 6C workspace HEAD, and the reviewed/tested implementation SHA all equal `run.headSha`.
 - Reconcile the canonical Phase 6C workspace before delivery and refuse missing, non-canonical, dirty, wrong-branch, wrong-repo, default-branch, detached, or moved-head state.
 - Keep acceptance deterministic. No model call may grant acceptance, and any SHA change invalidates the gate.
-- Add a trusted GitHub delivery agent that operates only on the fixed five-project registry, exact Phase 6C branch, fixed `origin`, and fixed `main` PR base.
+- Add a trusted GitHub delivery agent that operates only on the fixed six-project registry, exact Phase 6C branch, fixed `origin`, and fixed `main` PR base.
 - Push only `<approved implementation SHA>:refs/heads/<approved Phase 6C branch>` with trusted executable argv, `shell: false`, no force push, no arbitrary remotes/URLs, and no caller-supplied command strings.
 - Before and after push, reconcile the remote branch read-only. If a push outcome is ambiguous, do not blindly retry: recover success only when the remote branch is already the expected SHA; allow a bounded safe retry only when the branch is absent; fail closed on unexpected remote SHA.
 - Create or reuse exactly one PR from the approved Phase 6C branch to `main`. Re-query after ambiguous PR creation and recover only a unique exact matching PR; never create duplicates blindly.
@@ -382,8 +382,8 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 
 - Add a trusted local deployment agent for a Phase 6A run that has reached exactly `merged` through Phase 6G.
 - Require an exact expected version before any state transition and reject stale writers.
-- Add an explicit local-only Personal Project Operator self-development run-state capability fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`, while ordinary development-run creation and the public project resolver continue to use only the existing five-project registry.
-- Support only the reviewed `personal-project-operator` deployment profile; do not automatically generalize deployment to the five-project registry.
+- Add an explicit local-only Personal Project Operator self-development run-state capability fixed to `personal-project-operator` / `Linardi1328/personal-project-operator`, while ordinary development-run creation and the public project resolver continue to use only the existing six-project registry.
+- Support only the reviewed `personal-project-operator` deployment profile; do not automatically generalize deployment to the six-project registry.
 - Read the deployment target SHA only from durable Phase 6G `merged` evidence. The target must equal the Phase 6G merge commit SHA and must not come from caller input, task text, chat, environment variables, project Markdown, command-line text, repository-controlled configuration, or model output.
 - Preserve the Phase 6G SHA chain: implementation SHA, tested SHA, local reviewed SHA, remote reviewed SHA, merged implementation SHA, and deployment target SHA must all point to the approved development result through durable evidence.
 - Add a narrowly scoped exact-SHA deployment primitive for the PPO checkout. It verifies the fixed profile, fixed installation path, fixed repository identity, fixed origin, expected commit existence, expected commit reachability from approved `main`, previous installed revision when available, checkout HEAD after mutation, approved runtime preflight, and restart of only the fixed PPO service.
@@ -437,7 +437,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 
 - Add `/ppo continue <run-id>` through the existing `ppo_local` direct-tool route and terminal wrapper.
 - Accept exactly one caller-controlled value: the existing opaque 43-character Phase 6A development run id. Reject caller-supplied expected versions, project ids, statuses, actions, branches, SHAs, repositories, workspaces, commands, services, deployment targets, rollback targets, confirmations, and environment overrides.
-- Scope the command to the existing ordinary five-project registry only. Refuse `personal-project-operator`; PPO deployment, verification, and rollback remain local-only.
+- Scope the command to the existing ordinary six-project registry only. Refuse `personal-project-operator`; PPO deployment, verification, and rollback remain local-only.
 - Reuse the existing Phase 6A run-state store and existing Phase 6B-6G public APIs. Do not add statuses, evidence kinds, attempt counters, a second store, or parallel planner/workspace/Codex/test/review/hardening/delivery logic.
 - At invocation start, read the durable run, capture its version, classify the current status, then re-read immediately before invoking a mutating child phase and pass that current version internally as `expectedVersion`.
 - Invoke at most one reviewed high-level boundary per call: `created` planning, `planned` workspace preparation, safe `implementation_in_progress` Codex execution, `implementation_ready` tests, safe `tests_in_progress` retry, `tests_passed` review, `review_changes_requested` bounded hardening, `review_passed` Phase 6G delivery, or `merge_ready` SHA-pinned merge.
@@ -448,7 +448,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 
 ### Phase 6L - Unified Read-Only Development Recovery
 
-- Add a local-only `development-recovery-coordinator.mjs` for ambiguous or interrupted ordinary five-project Phase 6 development runs.
+- Add a local-only `development-recovery-coordinator.mjs` for ambiguous or interrupted ordinary six-project Phase 6 development runs.
 - Accept exactly one logical caller-controlled value: the existing opaque 43-character Phase 6A development run id. Reject caller-selected projects, statuses, actions, versions, SHAs, repositories, workspaces, commands, policies, services, deployment targets, rollback targets, confirmations, and environment overrides.
 - Reuse the existing Phase 6A run-state store and existing reviewed read-only Phase 6C-6G recovery APIs: workspace inspection, Codex execution reconciliation, automated testing reconciliation, independent review reconciliation, and GitHub delivery reconciliation.
 - Keep Phase 6G partial-delivery recovery inside the existing GitHub delivery reconciler, including bounded observations for delivery not started, branch, PR, exact-head CI, remote review, merge-ready, and remote-merged states.
@@ -471,7 +471,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 ### Phase 6N - Read-Only Development Run Catalog Foundation
 
 - Add a local-only `development-run-catalog.mjs` for discovering and summarizing existing ordinary Phase 6 development runs.
-- Scope the catalog to the existing ordinary five-project registry only. Do not expand the registry and do not expose PPO self-development runs through the ordinary catalog.
+- Scope the catalog to the existing ordinary six-project registry only. Do not expand the registry and do not expose PPO self-development runs through the ordinary catalog.
 - Add a separate non-mutating run-state snapshot reader that reuses the Phase 6A validated record parser but does not call `ensureStore`, create directories, chmod paths, refresh canonical records, or invoke any run-state mutation API.
 - Read only fixed `records/<run-id>.json` and `versions/<run-id>/<version>.json` locations under `${PPO_WRITE_DATA_DIR}/development-runs`. Require regular files, no symlinks, valid run-id filenames, valid version-marker filenames, bounded file sizes, and no scans outside the fixed store.
 - Return explicit canonical-state classifications such as current, behind, missing, conflict, invalid, missing store, unavailable store, or stale observation. Never silently repair lagging canonical records or missing canonical records.
@@ -488,13 +488,13 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - `/ppo runs` accepts no caller-controlled values: no project, status, stage, limit, offset, filter, search text, sort, terminal/active flag, expected version, SHA, branch, repository, path, action, confirmation, or extra token.
 - `/ppo run <run-id>` accepts exactly one caller-controlled value: the existing opaque 43-character Phase 6A run id. Reject missing ids, extra arguments, control characters, leading/trailing run-id whitespace, malformed ids, option syntax, project/status/SHA/action/path inputs, and arbitrary values before catalog access.
 - Keep output metadata-only and bounded by both Phase 6N formatters and a Phase 6O route ceiling. Do not expose task text, evidence, transition history, workspace paths, raw Git/GitHub state, test output, review findings, production metadata, stdout/stderr, raw errors, environment data, credentials, tokens, or secrets.
-- Preserve Phase 6N behavior through the routes: ordinary five-project scope, at most 100 inspected records, at most 20 summaries, active-first ordering, corrupt-content isolation, unsafe-filesystem fail-closed behavior, stale-observation fail-closed behavior, zero canonical repair, and PPO self-development omission.
+- Preserve Phase 6N behavior through the routes: ordinary six-project scope, at most 100 inspected records, at most 20 summaries, active-first ordering, corrupt-content isolation, unsafe-filesystem fail-closed behavior, stale-observation fail-closed behavior, zero canonical repair, and PPO self-development omission.
 - Keep OpenClaw deterministic. Do not add a new OpenClaw tool or model turn. The bridge maps only `/ppo runs` to `["runs"]` and `/ppo run <run-id>` to `["run", "<run-id>"]` with `shell: false`, bounded output, and strict malformed-input rejection before wrapper execution.
 - Do not add cancellation, retry, repair, resume, run creation, arbitrary filters/search/sort, automatic recovery, automatic continue, deployment, production verification, rollback, subprocess/network/model calls, background work, or any run-state mutation.
 
 ### Phase 6P - Controlled Quiescent Development Run Cancellation
 
-- Add a local cancellation engine with fixed identity `phase-6p-quiescent-development-run-cancellation` and a deterministic policy hash. The policy binds the ordinary five-project allowlist, exact eligible status allowlist, `canonical_current` requirement, expected-version requirement, target status `cancelled`, fixed actor `phase-6p-quiescent-cancellation`, fixed reason `owner_requested_quiescent_cancellation`, no evidence, no cleanup, no process interruption, no GitHub actions, and no production actions.
+- Add a local cancellation engine with fixed identity `phase-6p-quiescent-development-run-cancellation` and a deterministic policy hash. The policy binds the ordinary six-project allowlist, exact eligible status allowlist, `canonical_current` requirement, expected-version requirement, target status `cancelled`, fixed actor `phase-6p-quiescent-cancellation`, fixed reason `owner_requested_quiescent_cancellation`, no evidence, no cleanup, no process interruption, no GitHub actions, and no production actions.
 - Allow cancellation only from `created`, `planned`, `implementation_ready`, `tests_failed`, `tests_passed`, and `review_changes_requested`. Refuse `planning_in_progress`, `implementation_in_progress`, `tests_in_progress`, and `review_in_progress` as `state_not_quiescent`; refuse `review_passed`, `merge_ready`, and `merged` as delivery out of scope; refuse deployment, verification, and rollback states as production out of scope; refuse terminal states as terminal.
 - Stage `/ppo cancel <run-id>` through a cancellation-specific approval store under `${PPO_WRITE_DATA_DIR}/pending-development-run-cancellations/{pending,claimed}`. Store only request id, timestamps, policy id/hash, run id, expected version, project id, and before status. Use 43-character random request ids, 10-minute TTL, private modes, regular files only, no symlink following, exclusive creation, and atomic pending-to-claimed consumption.
 - Confirm `/ppo cancel-confirm <request-id>` by claiming the request before mutation, reinspecting the run once through the reviewed Phase 6N exact read-only path, requiring the same project, status, version, and `canonical_current`, then performing exactly one `transitionDevelopmentRun` to `cancelled` with the fixed actor and reason.
@@ -504,7 +504,7 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 ### Phase 7A - Controlled `/ppo start <project>` Route
 
 - Expose the reviewed Phase 6B `createPlannedDevelopmentRun(projectId)` capability through the existing terminal wrapper and the existing `ppo_local` OpenClaw/Telegram path.
-- Accept exactly one caller-controlled value: one project id from the existing five-project registry (`khlim-assist`, `ledgerpilot-ai`, `spy-market-agent`, `portfolio`, or `rbl-content-engine`).
+- Accept exactly one caller-controlled value: one project id from the existing six-project registry (`khlim-assist`, `ledgerpilot-ai`, `spy-market-agent`, `portfolio`, `rbl-content-engine`, or `khlim-digital-ecosystem`).
 - Reject unknown projects, missing project, extra arguments, malformed whitespace/envelopes, control characters, paths, repo names, task text, SHAs, versions, branches, policies, runtime options, confirmations, and actions before planning.
 - Add a separate Phase 7A route/policy id and deterministic policy hash covering caller input, fixed project scope, Phase 6B reuse, no caller-option forwarding, strict planned-result validation, zero production actions, zero model routing, and zero automatic continuation.
 - Reuse the existing Phase 6B planner, Phase 6A run-state store, and Phase 2 GitHub read-only behavior. Do not create another planner, run-state store, GitHub client, source reader, or planning engine.

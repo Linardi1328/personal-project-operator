@@ -74,7 +74,7 @@ Current connected candidates:
 - `rbl-content-engine`: `Linardi1328/rbl-content-engine`
 - `khlim-digital-ecosystem`: `Linardi1328/khlim-digital-ecosystem`
 
-KHLIM Super App is connected for read-only summaries and deterministic planning. It is not yet in the narrower ordinary-development registry used by `/ppo start`.
+KHLIM Super App is connected for read-only summaries, deterministic planning, and one bounded ordinary Phase 1 monorepo-foundation run. Refresh its project state and strengthen its test policy after that scaffold merges before starting product-feature work.
 
 ## Safety boundaries
 
@@ -109,11 +109,11 @@ Phase 5B permits only the listed `/ppo issue-create` staging command and `/ppo i
 
 Phase 5D permits only the listed `/ppo note-add` staging command and `/ppo note-confirm` single-use confirmation command through the same existing `ppo_local` tool. It does not add comments, labels, assignees, milestones, PRs, branches, commits, merges, workflow dispatches, project-state mutations, deployments, or new OpenClaw tools. Stored notes must not mutate project-state files automatically.
 
-Phase 6K permits only `/ppo continue <run-id>` for existing ordinary five-project Phase 6 development runs. It advances at most one reviewed Phase 6B-6G boundary per invocation and does not route PPO production deployment, verification, rollback, rollback reconciliation, services, or owner confirmations through OpenClaw.
+Phase 6K permits only `/ppo continue <run-id>` for existing ordinary six-project Phase 6 development runs. It advances at most one reviewed Phase 6B-6G boundary per invocation and does not route PPO production deployment, verification, rollback, rollback reconciliation, services, or owner confirmations through OpenClaw.
 
 Phase 6O permits `/ppo runs` and `/ppo run <run-id>` only as read-only Phase 6N ordinary-run catalog routes. They expose bounded metadata summaries only and do not accept filters, search, sort, recovery, continue, cancellation, retry, repair, production action, or model interpretation.
 
-Phase 6P permits `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` only as confirmation-gated quiescent cancellation routes for eligible ordinary five-project Phase 6 development runs. It does not interrupt processes, clean workspaces, retry, repair, recover, continue, cancel production, or route PPO production deployment, verification, rollback, services, or owner rollback confirmations through OpenClaw.
+Phase 6P permits `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` only as confirmation-gated quiescent cancellation routes for eligible ordinary six-project Phase 6 development runs. It does not interrupt processes, clean workspaces, retry, repair, recover, continue, cancel production, or route PPO production deployment, verification, rollback, services, or owner rollback confirmations through OpenClaw.
 
 Phase 7A permits `/ppo start <project>` only for one allowlisted ordinary project id. It reuses Phase 6B `createPlannedDevelopmentRun(projectId)` once with no caller-controlled route options, creates at most one planned run, returns `/ppo continue <run-id>` only after strict planned-result validation, and does not automatically continue, create workspaces, invoke Codex, run tests/review, push, create PRs, merge, deploy, verify production, rollback, add a new OpenClaw tool, or use model interpretation.
 

@@ -72,7 +72,7 @@ node local-operator/ppo-command.mjs issue-create <project> <title> [body...]
 
 The command must:
 
-- resolve project ids only through the existing five-project registry
+- resolve project ids only through the existing six-project registry
 - permit only `POST /repos/<approved repo>/issues`
 - send only `title` and `body` fields
 - require exact `PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>` before any network write
@@ -109,7 +109,7 @@ node local-operator/ppo-command.mjs note-add <project> <note...>
 
 The command must:
 
-- resolve project ids only through the existing five-project registry
+- resolve project ids only through the existing six-project registry
 - treat note text as inert data
 - reject empty, oversized, terminal-control, or escape-sequence input
 - require exact `PPO_NOTE_WRITE_CONFIRM=add-note:<project>` before appending a note
@@ -151,7 +151,7 @@ local-operator/development-run-state.mjs
 
 The store must:
 
-- resolve projects through the existing five-project registry only
+- resolve projects through the existing six-project registry only
 - generate cryptographically random opaque run ids
 - store records under `${PPO_WRITE_DATA_DIR}/development-runs`
 - create `0700` directories and `0600` files
@@ -175,7 +175,7 @@ local-operator/development-next-stage-planner.mjs
 
 The planner must:
 
-- resolve project ids through the existing five-project registry only
+- resolve project ids through the existing six-project registry only
 - read only the fixed selected `projects/<project>.md`, `ROADMAP.md`, and Phase 2 GitHub read-only snapshot facts
 - reject arbitrary repo names, arbitrary paths, traversal, globs, and unsupported source locations
 - return bounded structured output with project, current state, source-backed next task, next stage, base SHA, source evidence, and planner outcome
@@ -197,7 +197,7 @@ local-operator/development-workspace-manager.mjs
 
 The manager must:
 
-- resolve projects through the existing five-project registry only
+- resolve projects through the existing six-project registry only
 - reuse Phase 6A run-state records and accept only `planned` runs
 - require exact expected-version checks before run-state transition
 - read repository locations only from a trusted configured project workspace registry
