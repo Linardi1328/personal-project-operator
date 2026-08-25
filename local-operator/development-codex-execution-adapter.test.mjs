@@ -39,6 +39,7 @@ import {
   buildCodexImplementationPrompt,
   executeCodexImplementation,
   formatDevelopmentCodexExecutionAdapterError,
+  runSandboxedProcess,
   reconcileCodexExecution
 } from "./development-codex-execution-adapter.mjs"
 
@@ -68,6 +69,26 @@ function makeClock() {
     return next
   }
 }
+
+test("sandbox process absorbs child stdin EPIPE and reports the child exit", async () => {
+  const result = await runSandboxedProcess({
+    sandboxCommand: {
+      executablePath: process.execPath,
+      args: ["--eval", "process.stdin.destroy(); process.exit(23)"]
+    },
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH || "/usr/bin:/bin"
+    },
+    stdin: "x".repeat(8 * 1024 * 1024),
+    timeoutMs: 5000
+  })
+
+  assert.equal(result.exitCode, 23)
+  assert.equal(result.signal, null)
+  assert.equal(result.killed, false)
+  assert.equal(result.ambiguous, false)
+})
 
 async function canonicalTempRoot(label = "ppo-6d-") {
   return realpath(await mkdtemp(join(tmpdir(), label)))
