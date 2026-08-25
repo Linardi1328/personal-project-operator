@@ -48,6 +48,12 @@ test("independent reviewer wrapper pins read-only non-interactive Codex", async 
   assert.match(source, /CODEX_MODEL="gpt-5\.6-sol"/u)
   assert.match(source, /--sandbox read-only/u)
   assert.match(source, /--ask-for-approval never/u)
+  const invocationStart = source.indexOf('exec "$CODEX_BIN"')
+  const execSubcommand = source.indexOf("\n  exec ", invocationStart)
+
+  assert.notEqual(invocationStart, -1)
+  assert.notEqual(execSubcommand, -1)
+  assert.ok(source.indexOf("--ask-for-approval never", invocationStart) < execSubcommand)
   assert.match(source, /--ignore-user-config/u)
   assert.match(source, /--ignore-rules/u)
   assert.equal(source.includes('trust_level=\\"untrusted\\"'), true)

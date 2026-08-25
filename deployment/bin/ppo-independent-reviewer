@@ -29,11 +29,12 @@ export HOME="/home/ppo"
 export CODEX_HOME="/home/ppo/.codex"
 export PATH="/home/ppo/.local/bin:/home/ppo/.local/openclaw/tools/node/bin:/usr/local/bin:/usr/bin:/bin"
 
-exec "$CODEX_BIN" exec \
+exec "$CODEX_BIN" \
+  --ask-for-approval never \
+  exec \
   --ephemeral \
   --color never \
   --sandbox read-only \
-  --ask-for-approval never \
   --ignore-user-config \
   --ignore-rules \
   --strict-config \
