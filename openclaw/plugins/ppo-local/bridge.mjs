@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
@@ -34,10 +36,50 @@ const allowedDevelopmentProjectIds = new Set(
   listOrdinaryDevelopmentProjects().map((project) => project.id)
 );
 const unexpectedWrapperFailure = "PPO local wrapper failed: unexpected local failure.";
+const invalidWriteDataDirFailure = "PPO local wrapper failed: PPO_WRITE_DATA_DIR must be an absolute path.";
+
+export const DEFAULT_PPO_LOCAL_WRITE_DATA_DIR = join(
+  homedir(),
+  ".local",
+  "share",
+  "personal-project-operator",
+  "write-data"
+);
 
 export const defaultWrapperPath = fileURLToPath(
   new URL("../../../local-operator/ppo-command.mjs", import.meta.url)
 );
+
+export function resolvePpoLocalWriteDataDir(environment = process.env) {
+  const configured = environment?.PPO_WRITE_DATA_DIR;
+
+  if (configured === undefined || configured === "") {
+    return DEFAULT_PPO_LOCAL_WRITE_DATA_DIR;
+  }
+
+  if (
+    typeof configured !== "string" ||
+    configured !== configured.trim() ||
+    !isAbsolute(configured)
+  ) {
+    return null;
+  }
+
+  return configured;
+}
+
+function wrapperEnvironment(environment = process.env) {
+  const writeDataDir = resolvePpoLocalWriteDataDir(environment);
+
+  if (!writeDataDir) {
+    return null;
+  }
+
+  return {
+    ...environment,
+    PPO_WRITE_DATA_DIR: writeDataDir
+  };
+}
 
 export function unsupportedPpoToolInput(rawCommand) {
   const commandText = unwrapPpoEnvelope(typeof rawCommand === "string" ? rawCommand : "") || String(rawCommand || "");
@@ -395,11 +437,21 @@ export function toPpoWrapperArgs(rawCommand) {
 }
 
 async function runWrapper(wrapperPath, wrapperArgs, options) {
+  const env = wrapperEnvironment(options.environment || process.env);
+
+  if (!env) {
+    const error = new Error(invalidWriteDataDirFailure);
+    error.stdout = `${invalidWriteDataDirFailure}\n`;
+    error.code = 1;
+    throw error;
+  }
+
   if (options.runWrapper) {
-    return options.runWrapper(wrapperArgs, { wrapperPath });
+    return options.runWrapper(wrapperArgs, { wrapperPath, env });
   }
 
   return execFileAsync(process.execPath, [wrapperPath, ...wrapperArgs], {
+    env,
     maxBuffer: 1024 * 1024,
     shell: false
   });

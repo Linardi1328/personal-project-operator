@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CODEX_BIN="/home/ppo/.local/bin/codex"
+CODEX_BIN="/Users/richie/.local/bin/codex"
 CODEX_MODEL="gpt-5.6-sol"
-REVIEW_OUTPUT_SCHEMA="/opt/personal-project-operator/deployment/phase6f-review-output.schema.json"
-WORKSPACE_ROOT="/var/lib/personal-project-operator/development-workspaces"
+REVIEW_OUTPUT_SCHEMA="/Users/richie/personal-project-operator/deployment/phase6f-review-output.schema.json"
+WORKSPACE_ROOT="/Users/richie/.local/share/personal-project-operator/development-workspaces"
 
 if [[ "${PPO_PHASE6K_REVIEW_POLICY:-}" != "fixed" ]]; then
   printf 'PPO independent reviewer refused an untrusted invocation.\n' >&2
@@ -29,9 +29,9 @@ case "$PWD" in
     ;;
 esac
 
-export HOME="/home/ppo"
-export CODEX_HOME="/home/ppo/.codex"
-export PATH="/home/ppo/.local/bin:/home/ppo/.local/openclaw/tools/node/bin:/usr/local/bin:/usr/bin:/bin"
+export HOME="/Users/richie"
+export CODEX_HOME="/Users/richie/.codex"
+export PATH="/Users/richie/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
 
 exec "$CODEX_BIN" \
   --ask-for-approval never \

@@ -6,6 +6,7 @@ import test from "node:test"
 
 const SCRIPT_PATH = resolve("deployment/scripts/prepare-khlim-development-runtime.sh")
 const REVIEWER_PATH = resolve("deployment/bin/ppo-independent-reviewer")
+const MACOS_REVIEWER_PATH = resolve("deployment/bin/ppo-independent-reviewer-macos")
 const REVIEW_OUTPUT_SCHEMA_PATH = resolve("deployment/phase6f-review-output.schema.json")
 
 test("KHLIM runtime preparation script has valid Bash syntax", () => {
@@ -16,6 +17,12 @@ test("KHLIM runtime preparation script has valid Bash syntax", () => {
 
 test("independent reviewer wrapper has valid Bash syntax", () => {
   const result = spawnSync("bash", ["-n", REVIEWER_PATH], { encoding: "utf8" })
+
+  assert.equal(result.status, 0, result.stderr)
+})
+
+test("macOS independent reviewer wrapper has valid Bash syntax", () => {
+  const result = spawnSync("bash", ["-n", MACOS_REVIEWER_PATH], { encoding: "utf8" })
 
   assert.equal(result.status, 0, result.stderr)
 })
@@ -88,7 +95,25 @@ test("independent reviewer wrapper pins read-only non-interactive Codex", async 
   assert.ok(source.indexOf("--ask-for-approval never", invocationStart) < execSubcommand)
   assert.match(source, /--ignore-user-config/u)
   assert.match(source, /--ignore-rules/u)
-  assert.equal(source.includes('trust_level=\\"untrusted\\"'), true)
+  assert.doesNotMatch(source, /PROJECT_TRUST_OVERRIDE|trust_level/u)
   assert.match(source, /PPO_PHASE6K_REVIEW_POLICY/u)
   assert.doesNotMatch(source, /danger-full-access|yolo/u)
+})
+
+test("macOS independent reviewer wrapper pins local read-only non-interactive Codex", async () => {
+  const source = await readFile(MACOS_REVIEWER_PATH, "utf8")
+
+  assert.match(source, /CODEX_BIN="\/Users\/richie\/\.local\/bin\/codex"/u)
+  assert.match(source, /CODEX_MODEL="gpt-5\.6-sol"/u)
+  assert.match(source, /REVIEW_OUTPUT_SCHEMA="\/Users\/richie\/personal-project-operator\/deployment\/phase6f-review-output\.schema\.json"/u)
+  assert.match(source, /WORKSPACE_ROOT="\/Users\/richie\/\.local\/share\/personal-project-operator\/development-workspaces"/u)
+  assert.match(source, /--output-schema "\$REVIEW_OUTPUT_SCHEMA"/u)
+  assert.match(source, /\[\[ ! -r "\$REVIEW_OUTPUT_SCHEMA" \]\]/u)
+  assert.match(source, /--sandbox read-only/u)
+  assert.match(source, /--ask-for-approval never/u)
+  assert.match(source, /--ignore-user-config/u)
+  assert.match(source, /--ignore-rules/u)
+  assert.doesNotMatch(source, /PROJECT_TRUST_OVERRIDE|trust_level/u)
+  assert.match(source, /PPO_PHASE6K_REVIEW_POLICY/u)
+  assert.doesNotMatch(source, /\/home\/ppo|\/var\/lib\/personal-project-operator|danger-full-access|yolo/u)
 })

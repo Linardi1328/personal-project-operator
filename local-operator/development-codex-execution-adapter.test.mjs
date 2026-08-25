@@ -308,6 +308,20 @@ function trustedNativeLinuxCodexConfig(overrides = {}) {
   })
 }
 
+function trustedNativeDarwinCodexConfig(overrides = {}) {
+  return trustedNativeLinuxCodexConfig({
+    executionSandbox: {
+      type: CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN,
+      platform: "darwin",
+      network: "none",
+      enforcement: "codex-command-sandbox",
+      executablePath: process.execPath,
+      permissionProfile: ":workspace"
+    },
+    ...overrides
+  })
+}
+
 function makeSandboxRunner(codexRunner = async () => ({ exitCode: 0 }), options = {}) {
   const sandboxCalls = options.sandboxCalls || []
 
@@ -671,32 +685,61 @@ test("Codex native Linux backend keeps the controller online, sandboxes commands
   const codexCall = sandboxCalls.find((call) => call.kind === "codex")
   assert.ok(codexCall)
   assert.equal(codexCall.sandboxCommand.executablePath, process.execPath)
-  assert.deepEqual(codexCall.sandboxCommand.args.slice(-5), [
+  assert.deepEqual(codexCall.sandboxCommand.args.slice(-3), [
     "--model",
     "gpt-5.6-sol",
-    "-c",
-    `projects."${fixture.location.workspacePath}".trust_level="untrusted"`,
     "-"
   ])
+  assert.equal(codexCall.sandboxCommand.args.some((arg) => arg.includes("trust_level")), false)
 
   const probeCalls = sandboxCalls.filter((call) => call.kind === "sandbox-probe")
   assert.ok(probeCalls.length > 0)
   for (const call of probeCalls) {
-    assert.deepEqual(call.sandboxCommand.args.slice(0, 8), [
+    assert.deepEqual(call.sandboxCommand.args.slice(0, 6), [
       "sandbox",
-      "--config",
-      `projects."${call.cwd}".trust_level="untrusted"`,
       "--permission-profile",
       ":workspace",
       "--cd",
       call.cwd,
       "--"
     ])
+    assert.equal(call.sandboxCommand.args.some((arg) => arg.includes("trust_level")), false)
   }
 
   assert.equal(await git(["status", "--porcelain=v1", "--untracked-files=all"], fixture.location.workspacePath), "")
   assert.equal(await git(["log", "-1", "--pretty=%s"], fixture.location.workspacePath), "PPO implementation")
   await assert.rejects(readFile(hookMarker, "utf8"), /ENOENT/u)
+})
+
+test("Codex native macOS backend keeps model access outside the generated-command sandbox", async () => {
+  const fixture = await makeImplementationFixture()
+  const sandboxCalls = []
+  const result = await executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedNativeDarwinCodexConfig(),
+    ...sandboxedCodexRunner(async (invocation) => {
+      await writeFile(join(invocation.cwd, "native-macos-runtime.txt"), "implemented\n", "utf8")
+      return { exitCode: 0, stdout: "done", stderr: "" }
+    }, { sandboxCalls }),
+    now: fixture.now
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.run.status, "implementation_ready")
+  const codexCall = sandboxCalls.find((call) => call.kind === "codex")
+  assert.ok(codexCall)
+  assert.equal(codexCall.sandbox.type, CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN)
+  assert.equal(codexCall.sandboxCommand.executablePath, process.execPath)
+  assert.equal(codexCall.sandboxCommand.args[0], "exec")
+  assert.equal(codexCall.sandboxCommand.args.includes("sandbox"), false)
+
+  const probeCalls = sandboxCalls.filter((call) => call.kind === "sandbox-probe")
+  assert.ok(probeCalls.length > 0)
+  assert.equal(probeCalls.every((call) => call.sandboxCommand.args[0] === "sandbox"), true)
+  assert.equal(await git(["status", "--porcelain=v1", "--untracked-files=all"], fixture.location.workspacePath), "")
+  assert.equal(await git(["log", "-1", "--pretty=%s"], fixture.location.workspacePath), "PPO implementation")
 })
 
 test("Codex native Linux commit refuses repository-local content filters", async () => {

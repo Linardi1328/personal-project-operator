@@ -102,11 +102,13 @@ The bridge also accepts full `/ppo ...` payloads for local validation, but OpenC
 
 ## Phase 5B/5D write-data
 
-Pending issue requests default to:
+Commands routed through this plugin pin `PPO_WRITE_DATA_DIR` to one stable user-level location when the Gateway does not configure an override:
 
 ```text
-local-operator/write-data
+~/.local/share/personal-project-operator/write-data
 ```
+
+The bridge passes that same absolute path to every wrapper process, so `start`, `runs`, `run`, `continue`, `recover`, cancellation, issue approval, and note approval cannot silently split state across repository checkouts or Gateway working directories. An explicit `PPO_WRITE_DATA_DIR` override must also be absolute and contain no surrounding whitespace.
 
 On the VPS, systemd sets:
 
