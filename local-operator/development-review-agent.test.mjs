@@ -12,6 +12,7 @@ import { promisify } from "node:util"
 import test from "node:test"
 import {
   DevelopmentRunStateError,
+  REVIEW_ORPHAN_RECOVERY_ACTOR,
   REVIEW_ORPHAN_RECOVERY_CONFIRMATION,
   createDevelopmentRun,
   readDevelopmentRun,
@@ -546,8 +547,10 @@ test("orphan recovery closes the prior review boundary before a fresh attempt", 
   })
 
   assert.equal(recovered.status, "tests_passed")
+  assert.equal(latestReviewEvidence(recovered).source, REVIEW_ORPHAN_RECOVERY_ACTOR)
   assert.equal(latestReviewEvidence(recovered).metadata.outcome, "review_orphan_recovered")
-  assert.equal(latestReviewEvidence(recovered).metadata.reviewer, INDEPENDENT_REVIEW_AGENT_ID)
+  assert.equal(latestReviewEvidence(recovered).metadata.recovery, REVIEW_ORPHAN_RECOVERY_ACTOR)
+  assert.equal(Object.hasOwn(latestReviewEvidence(recovered).metadata, "reviewer"), false)
 
   const reviewed = await executeIndependentReview(recovered.runId, {
     expectedVersion: recovered.version,
