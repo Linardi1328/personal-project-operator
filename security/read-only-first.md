@@ -164,7 +164,7 @@ Phase 6D allows bounded local Codex execution for an implementation run:
 
 - `local-operator/development-codex-execution-adapter.mjs`
 
-The adapter may read one `implementation_in_progress` Phase 6A run, reconcile one verified Phase 6C workspace, establish an explicit no-outbound-network OS/process sandbox before Codex starts, use the Linux network-namespace privilege-drop backend for Ubuntu 24.04 production, record bounded implementation attempts in the Phase 6A run record, invoke trusted locally configured Codex through that sandbox with `cwd` set to that workspace, verify a new clean local descendant commit, and transition only `implementation_in_progress -> implementation_ready`.
+The adapter may read one `implementation_in_progress` Phase 6A run, reconcile one verified Phase 6C workspace, establish Codex's no-outbound-network command sandbox before implementation starts, use fixed `codex exec` argv with the native Linux `:workspace` profile for Ubuntu 24.04 production, record bounded implementation attempts in the Phase 6A run record, create one fixed local commit after successful sandboxed edits, verify the new clean descendant commit, and transition only `implementation_in_progress -> implementation_ready`.
 
 This exception does not run automated tests, review changes, harden in loops, write GitHub, push, create or merge PRs, deploy, restart services, roll back, route `/ppo continue`, or add Telegram/OpenClaw autonomous-development commands.
 

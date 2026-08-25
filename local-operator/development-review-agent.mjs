@@ -35,7 +35,8 @@ export const MAX_REVIEW_GIT_OUTPUT_BYTES = 32 * 1024
 export const MAX_REVIEW_FINDINGS = 5
 export const REVIEW_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
-  LINUX_NETWORK_NAMESPACE: "linux-network-namespace"
+  LINUX_NETWORK_NAMESPACE: "linux-network-namespace",
+  CODEX_NATIVE_LINUX: "codex-native-linux"
 })
 export const REVIEW_DECISIONS = Object.freeze({
   APPROVED: "APPROVED",
@@ -350,6 +351,45 @@ function normalizeExecutionSandbox(sandbox) {
     }
   }
 
+  if (type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+    if (
+      platform !== "linux" ||
+      enforcement !== "codex-command-sandbox" ||
+      sandbox.readOnlyWorkspace !== true ||
+      sandbox.readOnlyWorkspaceMode !== "codex-native-read-only"
+    ) {
+      throw reviewError(
+        "REVIEW_SANDBOX_REQUIRED",
+        sandboxRequiredMessage
+      )
+    }
+
+    const permissionProfile = normalizeSafeText(sandbox.permissionProfile, {
+      code: "REVIEW_SANDBOX_REQUIRED",
+      safeMessage: sandboxRequiredMessage,
+      maxChars: 40
+    })
+
+    if (permissionProfile !== ":read-only") {
+      throw reviewError(
+        "REVIEW_SANDBOX_REQUIRED",
+        sandboxRequiredMessage
+      )
+    }
+
+    return {
+      type,
+      backend: REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+      platform,
+      network,
+      enforcement,
+      readOnlyWorkspace: true,
+      readOnlyWorkspaceMode: "codex-native-read-only",
+      executablePath: normalizeSandboxPath(sandbox.executablePath),
+      permissionProfile
+    }
+  }
+
   throw reviewError(
     "REVIEW_SANDBOX_REQUIRED",
     sandboxRequiredMessage
@@ -581,6 +621,37 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   assertSandboxRuntimePlatform(sandbox, options)
   const readOnlyPaths = normalizeReadOnlyPaths(options.readOnlyPaths || options.readOnlyWorkspacePath)
 
+  if (sandbox.type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+    if (options.kind === "review") {
+      return {
+        backend: sandbox.backend,
+        executablePath,
+        args: [...args]
+      }
+    }
+
+    const cwd = normalizeReadOnlyWorkspacePath(options.cwd)
+    const projectOverride = `projects."${cwd.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}".trust_level="untrusted"`
+
+    return {
+      backend: sandbox.backend,
+      executablePath: sandbox.executablePath,
+      args: [
+        "sandbox",
+        "linux",
+        "--config",
+        projectOverride,
+        "--permission-profile",
+        sandbox.permissionProfile,
+        "--cd",
+        cwd,
+        "--",
+        executablePath,
+        ...args
+      ]
+    }
+  }
+
   if (sandbox.type === REVIEW_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC) {
     return {
       backend: sandbox.backend,
@@ -710,7 +781,9 @@ async function runSandboxedCommand(invocation, options = {}) {
   try {
     const command = sandboxedCommand(invocation.sandbox, invocation.executablePath, invocation.args, {
       ...options,
-      readOnlyPaths: invocation.readOnlyPaths || [invocation.cwd]
+      readOnlyPaths: invocation.readOnlyPaths || [invocation.cwd],
+      kind: invocation.kind,
+      cwd: invocation.cwd
     })
 
     return await runner({
@@ -793,6 +866,10 @@ function assertSandboxProbeResult(result) {
 
 function linuxNetworkNamespaceSandbox(sandbox) {
   return sandbox.type === REVIEW_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE
+}
+
+function codexNativeLinuxSandbox(sandbox) {
+  return sandbox.type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
 }
 
 async function assertSandboxLinuxPrivilegeBoundary(config, location, readOnlyPaths, options) {
@@ -978,7 +1055,10 @@ function isDirectNetworkDenied(config, result, connectionCount) {
     return true
   }
 
-  return linuxNetworkNamespaceSandbox(config.sandbox) && (
+  return (
+    linuxNetworkNamespaceSandbox(config.sandbox) ||
+    codexNativeLinuxSandbox(config.sandbox)
+  ) && (
     result?.exitCode === 67 ||
     result?.exitCode === 68
   )

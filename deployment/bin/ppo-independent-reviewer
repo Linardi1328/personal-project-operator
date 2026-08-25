@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CODEX_BIN="/home/ppo/.local/bin/codex"
+CODEX_MODEL="gpt-5.6-sol"
+WORKSPACE_ROOT="/var/lib/personal-project-operator/development-workspaces"
+
+if [[ "${PPO_PHASE6K_REVIEW_POLICY:-}" != "fixed" ]]; then
+  printf 'PPO independent reviewer refused an untrusted invocation.\n' >&2
+  exit 78
+fi
+
+if [[ ! -x "$CODEX_BIN" ]]; then
+  printf 'PPO independent reviewer runtime is unavailable.\n' >&2
+  exit 78
+fi
+
+case "$PWD" in
+  "$WORKSPACE_ROOT"/*) ;;
+  *)
+    printf 'PPO independent reviewer refused a workspace outside the managed root.\n' >&2
+    exit 78
+    ;;
+esac
+
+PROJECT_TRUST_OVERRIDE="projects.\"${PWD}\".trust_level=\"untrusted\""
+
+export HOME="/home/ppo"
+export CODEX_HOME="/home/ppo/.codex"
+export PATH="/home/ppo/.local/bin:/home/ppo/.local/openclaw/tools/node/bin:/usr/local/bin:/usr/bin:/bin"
+
+exec "$CODEX_BIN" exec \
+  --ephemeral \
+  --color never \
+  --sandbox read-only \
+  --ask-for-approval never \
+  --ignore-user-config \
+  --ignore-rules \
+  --strict-config \
+  -c "$PROJECT_TRUST_OVERRIDE" \
+  --model "$CODEX_MODEL" \
+  -

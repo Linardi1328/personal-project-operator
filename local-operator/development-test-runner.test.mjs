@@ -225,6 +225,18 @@ function trustedLinuxSandbox(overrides = {}) {
   }
 }
 
+function trustedNativeLinuxSandbox(overrides = {}) {
+  return {
+    type: TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+    platform: "linux",
+    network: "none",
+    enforcement: "codex-command-sandbox",
+    executablePath: process.execPath,
+    permissionProfile: ":workspace",
+    ...overrides
+  }
+}
+
 function testStep(overrides = {}) {
   return {
     id: "unit",
@@ -829,6 +841,44 @@ test("Linux test sandbox policy uses namespace and privilege-drop argv before ex
   assert.equal(started.metadata.network, "none")
 })
 
+test("Codex native Linux test sandbox uses the fixed workspace permission profile", async () => {
+  const fixture = await makeImplementationReadyFixture()
+  const calls = []
+  const result = await executeAutomatedTests(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    testPolicyRegistry: trustedTestPolicyRegistry(fixture, {
+      sandbox: trustedNativeLinuxSandbox()
+    }),
+    sandboxRunner: makeSandboxRunner(async () => ({ exitCode: 0 }), { calls }),
+    now: fixture.now
+  })
+
+  assert.equal(result.run.status, "tests_passed")
+  assert.deepEqual(calls.map((call) => call.probe || call.kind), [
+    "local-process",
+    "direct-network",
+    "test"
+  ])
+
+  for (const call of calls) {
+    assert.equal(call.sandbox.type, TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX)
+    assert.equal(call.sandboxCommand.executablePath, process.execPath)
+    assert.deepEqual(call.sandboxArgs.slice(0, 9), [
+      "sandbox",
+      "linux",
+      "--config",
+      `projects."${call.cwd}".trust_level="untrusted"`,
+      "--permission-profile",
+      ":workspace",
+      "--cd",
+      call.cwd,
+      "--"
+    ])
+  }
+})
+
 test("sandbox must be active before attempt reservation and test execution", async () => {
   const fixture = await makeImplementationReadyFixture()
 
@@ -848,7 +898,7 @@ test("sandbox must be active before attempt reservation and test execution", asy
   assert.equal(reloaded.attempts.test, 0)
 })
 
-test("automated test runner adds no Codex, GitHub write, merge, deploy, or OpenClaw route", async () => {
+test("automated test runner adds no GitHub write, merge, deploy, or OpenClaw route", async () => {
   assert.equal(TRUSTED_GIT_EXECUTABLE.endsWith("/git") || TRUSTED_GIT_EXECUTABLE === "git", true)
 
   const fixture = await makeImplementationReadyFixture()
@@ -866,5 +916,5 @@ test("automated test runner adds no Codex, GitHub write, merge, deploy, or OpenC
   const invokedExecutables = calls.filter((call) => call.kind === "test").map((call) => call.executablePath)
 
   assert.deepEqual(invokedExecutables, [process.execPath])
-  assert.equal(calls.some((call) => /codex|gh|openclaw|docker|kubectl|systemctl/u.test(call.executablePath)), false)
+  assert.equal(calls.some((call) => /gh|openclaw|docker|kubectl|systemctl/u.test(call.executablePath)), false)
 })

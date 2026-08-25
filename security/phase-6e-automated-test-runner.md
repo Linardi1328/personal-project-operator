@@ -17,7 +17,7 @@ Phase 6E may:
 - reuse Phase 6C workspace location and reconciliation checks
 - require Phase 6D implementation evidence SHA to equal `run.headSha`
 - read test policy only from a trusted local per-project registry
-- establish and verify a trusted explicit no-outbound-network OS/process sandbox before tests execute
+- establish and verify the trusted no-outbound-network command sandbox before tests execute; production Linux uses the local `codex sandbox linux` helper without a model call
 - use explicit executable path plus argv test steps with `shell: false`
 - set `cwd` only to the verified Phase 6C workspace
 - run a fixed bounded number of required test steps
@@ -40,7 +40,7 @@ Phase 6E must not:
 - pass evidence if workspace branch or HEAD differs from `run.headSha`
 - pass evidence if the workspace is dirty before or after tests
 - treat a timeout, signal, interruption, killed process, output overflow, or uncertain result as a definitive pass or failure
-- invoke Codex, ChatGPT, OpenAI APIs, another model, automated review, or hardening loops
+- invoke `codex exec`, ChatGPT, OpenAI APIs, another model, automated review, or hardening loops
 - call GitHub writes, create PRs, push, merge, rebase, reset, cherry-pick, deploy, restart services, roll back, or perform production verification
 - add `/ppo continue`
 - add Telegram/OpenClaw routes or new OpenClaw tools

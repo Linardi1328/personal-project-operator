@@ -306,6 +306,20 @@ function trustedLinuxSandbox(overrides = {}) {
   }
 }
 
+function trustedNativeLinuxSandbox(overrides = {}) {
+  return {
+    type: REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+    platform: "linux",
+    network: "none",
+    enforcement: "codex-command-sandbox",
+    readOnlyWorkspace: true,
+    readOnlyWorkspaceMode: "codex-native-read-only",
+    executablePath: process.execPath,
+    permissionProfile: ":read-only",
+    ...overrides
+  }
+}
+
 function trustedReviewConfig(overrides = {}) {
   return {
     executablePath: process.execPath,
@@ -1120,6 +1134,54 @@ test("Linux review sandbox policy uses namespace, read-only wrapper, and privile
   assert.equal(started.metadata.readOnlyWorkspace, true)
 })
 
+test("Codex native Linux review sandbox keeps probes read-only and invokes the fixed reviewer directly", async () => {
+  const fixture = await makeTestsPassedFixture()
+  const calls = []
+  const result = await executeIndependentReview(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    reviewConfig: trustedReviewConfig({
+      sandbox: trustedNativeLinuxSandbox()
+    }),
+    reviewRunner: makeReviewRunner(async () => ({
+      exitCode: 0,
+      stdout: `${JSON.stringify(decision(fixture.headSha))}\n`
+    }), { calls }),
+    now: fixture.now
+  })
+
+  assert.equal(result.run.status, "review_passed")
+  assert.deepEqual(calls.map((call) => call.probe || call.kind), [
+    "local-process",
+    "workspace-read",
+    "workspace-file-write",
+    "source-file-write",
+    "workspace-git-mutation",
+    "direct-network",
+    "review"
+  ])
+
+  for (const call of calls.filter((entry) => entry.kind === "sandbox-probe")) {
+    assert.deepEqual(call.sandboxArgs.slice(0, 9), [
+      "sandbox",
+      "linux",
+      "--config",
+      `projects."${call.cwd}".trust_level="untrusted"`,
+      "--permission-profile",
+      ":read-only",
+      "--cd",
+      call.cwd,
+      "--"
+    ])
+  }
+
+  const reviewCall = calls.find((call) => call.kind === "review")
+  assert.ok(reviewCall)
+  assert.equal(reviewCall.sandboxCommand.executablePath, process.execPath)
+  assert.deepEqual(reviewCall.sandboxCommand.args, trustedReviewConfig().args)
+})
+
 test("sandbox must be active before review attempt reservation", async () => {
   const fixture = await makeTestsPassedFixture()
 
@@ -1196,5 +1258,5 @@ test("independent review agent adds no implementation adapter, GitHub write, pus
   const reviewExecutables = calls.filter((call) => call.kind === "review").map((call) => call.executablePath)
 
   assert.deepEqual(reviewExecutables, [process.execPath])
-  assert.equal(calls.some((call) => /codex|gh|openclaw|docker|kubectl|systemctl/u.test(call.executablePath)), false)
+  assert.equal(calls.some((call) => /gh|openclaw|docker|kubectl|systemctl/u.test(call.executablePath)), false)
 })

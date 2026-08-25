@@ -275,12 +275,12 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Reconcile the Phase 6C workspace before execution and refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces.
 - Require workspace HEAD to match the run head/base state before Codex starts.
 - Read Codex executable path, explicit sandbox backend configuration, Git executable path, argv, timeout, and environment only from trusted local configuration.
-- Require an active no-outbound-network OS/process sandbox before spawning Codex; fail closed if it cannot be established or verified.
-- Support explicit platform-capable sandbox backends: macOS `sandbox-exec` for local validation and Linux network namespace execution for the Ubuntu 24.04 VPS runtime.
-- For the Linux backend, enter a root-provisioned/preconfigured no-network namespace, then drop to a configured non-root uid/gid with `no_new_privs` and no effective capabilities before launching Codex.
+- Require an active no-outbound-network sandbox for model-generated commands before spawning Codex; fail closed if it cannot be established or verified.
+- Support explicit platform-capable sandbox backends: macOS `sandbox-exec` for local validation and Codex's native Linux command sandbox for the Ubuntu 24.04 VPS runtime.
+- For the production Linux backend, run fixed non-interactive `codex exec` argv while generated commands use the fixed `:workspace` permission profile with network disabled.
 - Verify before attempt reservation that sandboxed local Git works and that direct network, direct SSH transport, absolute Git with sanitized env, and ordinary `git push` cannot reach the host listener.
-- Keep Git wrapper/env remote-write denial only as defense in depth, not as the primary boundary.
-- Invoke Codex through the sandbox with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified isolated workspace.
+- Keep Git wrapper/env remote-write denial as defense in depth and let PPO create the local commit after successful sandboxed edits.
+- Invoke fixed `codex exec` argv with `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified isolated workspace while generated commands remain sandboxed.
 - Generate a deterministic bounded prompt from the run task and planning evidence metadata, including explicit no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries.
 - Durably record bounded implementation execution attempts in the Phase 6A run record using exact expected-version checks.
 - Treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous and require reconciliation before retry.

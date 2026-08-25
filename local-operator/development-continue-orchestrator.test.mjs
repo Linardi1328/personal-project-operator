@@ -258,6 +258,7 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/usr/bin/git",
       "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
       "/usr/bin/python3.12",
+      "/usr/bin/bwrap",
       "/usr/bin/nsenter",
       "/usr/bin/id",
       "/usr/bin/setpriv",
@@ -306,15 +307,6 @@ async function fakeRuntimeExecFile() {
   }
 }
 
-async function fakeRuntimeIdentity() {
-  return {
-    uid: 4242,
-    gid: 4243,
-    userName: "ppo",
-    groupName: "ppo"
-  }
-}
-
 function runPpoCommand(args, options = {}) {
   return spawnSync(process.execPath, ["local-operator/ppo-command.mjs", ...args], {
     cwd: new URL("..", import.meta.url).pathname,
@@ -347,7 +339,6 @@ async function loadFakeRuntimeProfileFor(projectId, options = {}) {
     lstatImpl: options.lstatImpl || options.statImpl || fakeRuntimeStatFor(),
     accessImpl: options.accessImpl || (async () => {}),
     execFileImpl: options.execFileImpl || fakeRuntimeExecFile,
-    identityLookup: options.identityLookup,
     linuxSandboxCapabilityProbe: options.linuxSandboxCapabilityProbe
   })
 }
@@ -1508,11 +1499,10 @@ test("Phase 6K RBL retry evidence must match the new compile/unittest policy", a
   }
 })
 
-test("Phase 6K Linux runtime profile uses the exact preconfigured namespace backend and ppo identity", async () => {
+test("Phase 6K Linux runtime profile uses Codex native command sandboxing", async () => {
   const probes = []
   const profile = await loadFakeRuntimeProfileFor("khlim-assist", {
     platform: "linux",
-    identityLookup: fakeRuntimeIdentity,
     linuxSandboxCapabilityProbe: async (probe) => {
       probes.push(probe)
       return true
@@ -1520,37 +1510,50 @@ test("Phase 6K Linux runtime profile uses the exact preconfigured namespace back
   })
 
   assert.equal(probes.length, 1)
-  assert.equal(probes[0].executablePath, "/usr/bin/nsenter")
-  assert.deepEqual(probes[0].args.slice(0, 11), [
-    "--net=/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns",
-    "/usr/bin/setpriv",
-    "--no-new-privs",
-    "--reuid=4242",
-    "--regid=4243",
-    "--clear-groups",
-    "--bounding-set=-all",
-    "--inh-caps=-all",
-    "--ambient-caps=-all",
+  assert.equal(probes[0].executablePath, "/home/ppo/.local/bin/codex")
+  assert.deepEqual(probes[0].args, [
+    "sandbox",
+    "linux",
+    "--config",
+    "projects.\"/var/lib/personal-project-operator/development-workspaces\".trust_level=\"untrusted\"",
+    "--permission-profile",
+    ":read-only",
+    "--cd",
+    "/var/lib/personal-project-operator/development-workspaces",
     "--",
-    "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node"
+    "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
+    "--eval",
+    "process.exit(0)"
   ])
-  assert.equal(profile.codexConfig.executionSandbox.executablePath, "/usr/bin/nsenter")
-  assert.equal(profile.codexConfig.executionSandbox.namespacePath, "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns")
-  assert.equal(profile.codexConfig.executionSandbox.setprivPath, "/usr/bin/setpriv")
-  assert.equal(profile.codexConfig.executionSandbox.runAsUid, 4242)
-  assert.equal(profile.codexConfig.executionSandbox.runAsGid, 4243)
-  assert.notEqual(profile.codexConfig.executionSandbox.runAsUid, 1000)
-  assert.notEqual(profile.codexConfig.executionSandbox.runAsGid, 1000)
+  assert.equal(profile.codexConfig.executionSandbox.type, "codex-native-linux")
+  assert.equal(profile.codexConfig.executionSandbox.executablePath, "/home/ppo/.local/bin/codex")
+  assert.equal(profile.codexConfig.executionSandbox.permissionProfile, ":workspace")
+  assert.deepEqual(profile.codexConfig.args, [
+    "exec",
+    "--ephemeral",
+    "--color",
+    "never",
+    "--sandbox",
+    "workspace-write",
+    "-c",
+    "approval_policy=\"never\"",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--strict-config",
+    "--model",
+    "gpt-5.6-sol",
+    "-"
+  ])
   assert.equal(profile.testPolicyRegistry["khlim-assist"].steps[0].executablePath, "/usr/bin/python3.12")
   assert.deepEqual(profile.testPolicyRegistry["khlim-assist"].steps[0].args, ["-m", "pytest", "backend/tests"])
-  assert.equal(profile.reviewConfig.sandbox.readOnlyWorkspaceWrapperPath, "/usr/local/bin/ppo-readonly-workspace-wrapper")
-  assert.doesNotMatch(JSON.stringify(profile), /unshare/)
+  assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
+  assert.equal(profile.reviewConfig.sandbox.permissionProfile, ":read-only")
+  assert.doesNotMatch(JSON.stringify(profile), /nsenter|setpriv|no-outbound\.netns/u)
 })
 
 test("Phase 6K KHLIM Linux profile binds the fixed source and foundation test", async () => {
   const profile = await loadFakeRuntimeProfileFor("khlim-digital-ecosystem", {
     platform: "linux",
-    identityLookup: fakeRuntimeIdentity,
     linuxSandboxCapabilityProbe: async () => true
   })
   const policy = profile.testPolicyRegistry["khlim-digital-ecosystem"]
@@ -1572,34 +1575,30 @@ test("Phase 6K KHLIM Linux profile binds the fixed source and foundation test", 
   assert.equal(policy.steps[0].shell, false)
 })
 
-test("Phase 6K Linux runtime profile fails closed for missing or unusable namespace boundaries", async () => {
-  const namespacePath = "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns"
+test("Phase 6K Linux runtime profile fails closed for missing or unusable Codex sandbox boundaries", async () => {
+  const bubblewrapPath = "/usr/bin/bwrap"
+  const reviewerPath = "/usr/local/bin/ppo-independent-reviewer"
   const trustedNodePath = "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node"
 
   await assert.rejects(
     () => loadFakeRuntimeProfileFor("khlim-assist", {
       platform: "linux",
-      statImpl: fakeRuntimeStatFor({ missing: new Set([namespacePath]) }),
-      identityLookup: fakeRuntimeIdentity,
+      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
       linuxSandboxCapabilityProbe: async () => true
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
   )
 
-  await assert.rejects(
-    () => loadFakeRuntimeProfileFor("khlim-assist", {
-      platform: "linux",
-      statImpl: fakeRuntimeStatFor(),
-      identityLookup: fakeRuntimeIdentity
-    }),
-    (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
-  )
+  const productionProbeProfile = await loadFakeRuntimeProfileFor("khlim-assist", {
+    platform: "linux",
+    statImpl: fakeRuntimeStatFor()
+  })
+  assert.equal(productionProbeProfile.codexConfig.executionSandbox.type, "codex-native-linux")
 
   await assert.rejects(
     () => loadFakeRuntimeProfileFor("khlim-assist", {
       platform: "linux",
-      statImpl: fakeRuntimeStatFor({ missing: new Set(["/usr/bin/nsenter"]) }),
-      identityLookup: fakeRuntimeIdentity,
+      statImpl: fakeRuntimeStatFor({ missing: new Set([reviewerPath]) }),
       linuxSandboxCapabilityProbe: async () => true
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
@@ -1609,7 +1608,6 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable namesp
     () => loadFakeRuntimeProfileFor("khlim-digital-ecosystem", {
       platform: "linux",
       statImpl: fakeRuntimeStatFor({ modeByPath: { [trustedNodePath]: 0o100775 } }),
-      identityLookup: fakeRuntimeIdentity,
       linuxSandboxCapabilityProbe: async () => true
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
@@ -1618,12 +1616,7 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable namesp
   await assert.rejects(
     () => loadFakeRuntimeProfileFor("khlim-assist", {
       platform: "linux",
-      identityLookup: async () => ({
-        uid: 0,
-        gid: 0,
-        userName: "root",
-        groupName: "root"
-      }),
+      statImpl: fakeRuntimeStatFor({ modeByPath: { [reviewerPath]: 0o100775 } }),
       linuxSandboxCapabilityProbe: async () => true
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
@@ -1632,7 +1625,6 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable namesp
   await assert.rejects(
     () => loadFakeRuntimeProfileFor("khlim-assist", {
       platform: "linux",
-      identityLookup: fakeRuntimeIdentity,
       linuxSandboxCapabilityProbe: async () => false
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
@@ -1640,7 +1632,7 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable namesp
 })
 
 test("Phase 6K refuses missing Linux runtime readiness before child or policy-store mutation", async () => {
-  const namespacePath = "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns"
+  const bubblewrapPath = "/usr/bin/bwrap"
   const fixture = await createStoredRun("implementation_in_progress")
   const before = await readDevelopmentRun(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir
@@ -1656,10 +1648,9 @@ test("Phase 6K refuses missing Linux runtime readiness before child or policy-st
     },
     trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
       platform: "linux",
-      statImpl: fakeRuntimeStatFor({ missing: new Set([namespacePath]) }),
+      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
       accessImpl: async () => {},
       execFileImpl: fakeRuntimeExecFile,
-      identityLookup: fakeRuntimeIdentity,
       linuxSandboxCapabilityProbe: async () => true
     })
   })

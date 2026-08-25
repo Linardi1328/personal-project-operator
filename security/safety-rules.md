@@ -232,14 +232,14 @@ The adapter must:
 - refuse missing, mismatched, detached, wrong-branch, wrong-project, non-canonical, or outside-managed-root workspaces
 - require workspace HEAD to match the run head/base state before Codex starts
 - read Codex executable path, explicit sandbox backend configuration, Git executable path, argv, timeout, and environment only from trusted local configuration
-- establish and verify an explicit no-outbound-network OS/process sandbox before spawning Codex
+- establish and verify the no-outbound-network native command sandbox before spawning Codex
 - use the Linux network-namespace backend for Ubuntu 24.04 production only when a sandboxed preflight proves non-root execution, zero effective capabilities, and `NoNewPrivs: 1`
 - keep Git wrapper/env remote-write denial only as defense in depth
-- invoke Codex through the sandbox with explicit argv, `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified workspace
+- invoke fixed `codex exec` argv with `shell: false`, bounded timeout/output capture, and `cwd` set only to the verified workspace while generated commands remain sandboxed
 - generate a deterministic bounded prompt with no-push, no-merge, no-deploy, no-credential-change, no-destructive-operation, and isolated-workspace boundaries
 - record bounded implementation attempts durably in the Phase 6A run record
 - treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous
-- verify resulting Git state independently rather than trusting Codex prose
+- create the local commit only after successful sandboxed edits and verify resulting Git state independently rather than trusting Codex prose
 - require a clean workspace and a new local descendant implementation commit
 - transition only `implementation_in_progress -> implementation_ready` after verification
 - attach metadata-only SHA-pinned implementation evidence
@@ -266,14 +266,14 @@ The runner must:
 - read tests only from a trusted local per-project policy registry
 - refuse arbitrary command strings, shell interpolation, package-manager scripts, untrusted executables, and secret-bearing env values
 - invoke test commands through explicit argv, `shell: false`, bounded timeout/output capture, sanitized env, and `cwd` set only to the verified workspace
-- establish and verify an explicit no-outbound-network OS/process sandbox before executing tests
+- establish and verify the no-outbound-network command sandbox before executing tests
 - record bounded testing attempts durably in the Phase 6A run record
 - treat timeout, signal, killed/interrupted process, output overflow, or uncertain completion as ambiguous
 - transition only to `tests_passed` after all required tests pass for the exact implementation SHA
 - attach metadata-only SHA-pinned test evidence
 - provide read-only reconciliation for interrupted testing and pass-evidence validity
 
-Phase 6E must not invoke Codex or models, automate review, harden in loops, call GitHub writes, push, create PRs, merge, deploy, restart services, roll back, perform production verification, add `/ppo continue`, add Telegram/OpenClaw routes, or add new OpenClaw tools.
+Phase 6E may invoke the local `codex sandbox linux` helper only to enforce the reviewed test command boundary; it must not invoke `codex exec`, models, automated review, hardening loops, GitHub writes, push, PR creation, merge, deployment, service restart, rollback, production verification, new `/ppo continue` routing, Telegram/OpenClaw routes, or new OpenClaw tools.
 
 ## Phase 6F independent review and bounded hardening boundary
 
