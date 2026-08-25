@@ -273,7 +273,7 @@ The runner must:
 - attach metadata-only SHA-pinned test evidence
 - provide read-only reconciliation for interrupted testing and pass-evidence validity
 
-Phase 6E may invoke the local `codex sandbox linux` helper only to enforce the reviewed test command boundary; it must not invoke `codex exec`, models, automated review, hardening loops, GitHub writes, push, PR creation, merge, deployment, service restart, rollback, production verification, new `/ppo continue` routing, Telegram/OpenClaw routes, or new OpenClaw tools.
+Phase 6E may invoke the local `codex sandbox` helper only to enforce the reviewed test command boundary; it must not invoke `codex exec`, models, automated review, hardening loops, GitHub writes, push, PR creation, merge, deployment, service restart, rollback, production verification, new `/ppo continue` routing, Telegram/OpenClaw routes, or new OpenClaw tools.
 
 ## Phase 6F independent review and bounded hardening boundary
 
