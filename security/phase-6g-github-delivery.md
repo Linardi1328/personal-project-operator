@@ -29,7 +29,7 @@ Allowed writes are strictly limited to:
 - create the approved PR from that branch to `main`, or reuse the unique existing exact PR
 - merge the approved PR with expected-head-SHA protection
 
-Disallowed writes include issues, labels, comments, releases, workflow dispatch, branch deletion, repository settings, branch protection changes, force pushes, tags, arbitrary endpoints, deployment, rollback, and service control.
+Disallowed writes include issues, labels, comments, releases, workflow dispatch, arbitrary branch deletion, repository settings, branch protection changes, force pushes, tags, arbitrary endpoints, deployment, rollback, and service control. The sole deletion exception is the verified post-merge cleanup described below.
 
 Git and GitHub calls use trusted executables, explicit argv, and `shell: false`. Phase 6G does not accept caller-supplied git command strings, remote names, remote URLs, merge methods, or PR targets.
 
@@ -40,8 +40,17 @@ Network writes can complete remotely while the local process times out. Phase 6G
 - push ambiguity is resolved by remote branch SHA
 - PR creation ambiguity is resolved by unique exact branch/base PR lookup
 - merge ambiguity is resolved by PR merged state, merge commit SHA, and `main`
+- branch-deletion ambiguity is resolved by the exact remote branch ref becoming absent
 
 Unexpected SHA or conflicting state fails closed for owner action. The agent does not blindly repeat ambiguous writes.
+
+## Post-Merge Branch Cleanup
+
+After the merge commit and `main` are independently verified, Phase 6G may delete only the
+same-repository `ppo/<project>/implementation/<run>` head branch recorded by the run. The
+remote branch must still equal the approved implementation SHA. A missing branch is already
+clean; a moved or unverifiable branch is preserved and recorded as `cleanup_required`.
+Cleanup failure cannot invalidate or conceal a verified merge.
 
 ## Remote Review
 

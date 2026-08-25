@@ -92,7 +92,8 @@ function makeRun(status, options = {}) {
     evidence: {
       ...evidence(),
       ...(options.evidence || {})
-    }
+    },
+    task: options.task || "Phase 6K stored route fixture."
   }
 }
 
@@ -2164,12 +2165,19 @@ test("Phase 6K output is compact bounded metadata", async () => {
   assert.match(handled.output, /^PPO Development Continue\n/)
   assert.match(handled.output, new RegExp(`Run: ${RUN_ID}`))
   assert.match(handled.output, /Project: khlim-assist/)
+  assert.match(handled.output, /Build summary: Phase 6K stored route fixture\./)
   assert.match(handled.output, /Before: created/)
   assert.match(handled.output, /Action: phase-6b-plan/)
   assert.match(handled.output, /Outcome: planned/)
   assert.match(handled.output, /After: planned/)
   assert.match(handled.output, new RegExp(`Next command: /ppo continue ${RUN_ID}`, "u"))
   assert.doesNotMatch(handled.output, /stdout|stderr|stack|token|secret|SENSITIVE_TEST_SENTINEL/i)
+
+  const hostileSummaryOutput = formatDevelopmentContinueResult({
+    ...handled.result,
+    buildSummary: "SENSITIVE_TEST_SENTINEL token=do-not-render"
+  })
+  assert.doesNotMatch(hostileSummaryOutput, /Build summary|SENSITIVE_TEST_SENTINEL|do-not-render/u)
 
   const blockedRun = makeRun("implementation_in_progress", {
     attempts: { implementation: 1 }

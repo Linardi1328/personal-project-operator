@@ -29,6 +29,7 @@ import {
   reconcileTrustedReviewWorkspace,
   trustedReviewReadOnlyPaths
 } from "./development-review-agent.mjs"
+import { resolveImplementationWorkspaceLocation } from "./development-workspace-manager.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -50,6 +51,7 @@ export const REQUIRED_PPO_PR_VALIDATION_STEPS = Object.freeze([
 
 const shaPattern = /^[a-f0-9]{40}$/u
 const branchPattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/u
+const ppoImplementationBranchPattern = /^ppo\/[a-z0-9][a-z0-9-]*\/implementation\/[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u
 const safeRemotePatterns = [
   /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/iu,
   /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?$/iu,
@@ -239,6 +241,10 @@ function assertGitArgs(args) {
     const [sha, ref] = String(value).split(":")
     return normalizeSha(sha, "Push SHA") && branchRef(ref) && !String(value).startsWith("+")
   }
+  const deleteRef = (value) => {
+    const ref = String(value).slice(1)
+    return String(value).startsWith(":refs/heads/") && branchRef(ref)
+  }
   const exactShape = (
     args[0] === "-C" &&
     typeof args[1] === "string" &&
@@ -251,7 +257,7 @@ function assertGitArgs(args) {
       )) ||
       (command === "status" && args.length === 5 && subcommand === "--porcelain=v1" && args[4] === "--untracked-files=all") ||
       (command === "ls-remote" && args.length === 6 && subcommand === "origin" && branchRef(args[4]) && args[5] === "--refs") ||
-      (command === "push" && args.length === 6 && subcommand === "origin" && pushRef(args[4]) && args[5] === "--porcelain")
+      (command === "push" && args.length === 6 && subcommand === "origin" && (deleteRef(args[4]) || pushRef(args[4])) && args[5] === "--porcelain")
     )
   )
 
@@ -2096,6 +2102,52 @@ async function reconcileMergeCompletion(run, facts, options = {}) {
   }
 }
 
+async function cleanupMergedDeliveryBranch(run, facts, options = {}) {
+  const branch = normalizeBranch(facts.pr.headRef)
+
+  if (!ppoImplementationBranchPattern.test(branch)) {
+    return { outcome: "cleanup_required", deleted: false }
+  }
+
+  try {
+    const location = await resolveImplementationWorkspaceLocation(run, options)
+    const beforeSha = await readRemoteBranchSha(location, branch, options)
+
+    if (beforeSha === null) {
+      return { outcome: "branch_already_deleted", deleted: false }
+    }
+
+    if (beforeSha !== facts.approvedSha) {
+      return { outcome: "cleanup_required", deleted: false }
+    }
+
+    const deleteArgs = [
+      "-C",
+      location.workspacePath,
+      "push",
+      "origin",
+      `:refs/heads/${branch}`,
+      "--porcelain"
+    ]
+
+    try {
+      await runGit(deleteArgs, options)
+    } catch (error) {
+      if (error?.ambiguous !== true && error?.code !== "GITHUB_DELIVERY_PUSH_AMBIGUOUS") {
+        return { outcome: "cleanup_required", deleted: false }
+      }
+    }
+
+    const afterSha = await readRemoteBranchSha(location, branch, options)
+
+    return afterSha === null
+      ? { outcome: "branch_deleted", deleted: true }
+      : { outcome: "cleanup_required", deleted: false }
+  } catch {
+    return { outcome: "cleanup_required", deleted: false }
+  }
+}
+
 async function transitionMerged(run, facts, completed, options = {}) {
   const evidence = deliveryEvidence(run, facts.approvedSha, "merged", {
     prNumber: facts.pr.number,
@@ -2103,6 +2155,8 @@ async function transitionMerged(run, facts, completed, options = {}) {
     mergeMethod: PHASE_6G_APPROVED_MERGE_METHOD,
     mergeCommitSha: completed.mergeCommitSha,
     mainSha: completed.mainSha,
+    branchCleanupOutcome: completed.branchCleanup.outcome,
+    branchDeleted: completed.branchCleanup.deleted,
     mergedAt: timestamp(options)
   }, "Phase 6G exact-head pull request merge was verified.")
 
@@ -2138,6 +2192,7 @@ export async function executeShaPinnedMerge(runId, options = {}) {
   if (latestMergeStartedEvidence(run)?.sha === normalizeSha(run.headSha, "Run head SHA")) {
     const facts = await mergeStartedReconciliationFacts(run)
     const completed = await reconcileMergeCompletion(run, facts, options)
+    completed.branchCleanup = await cleanupMergedDeliveryBranch(run, facts, options)
     const mergedRun = await transitionMerged(run, facts, completed, options)
 
     return {
@@ -2184,6 +2239,7 @@ export async function executeShaPinnedMerge(runId, options = {}) {
   }
 
   const completed = await reconcileMergeCompletion(run, facts, options)
+  completed.branchCleanup = await cleanupMergedDeliveryBranch(run, facts, options)
   const mergedRun = await transitionMerged(run, facts, completed, options)
 
   return {
