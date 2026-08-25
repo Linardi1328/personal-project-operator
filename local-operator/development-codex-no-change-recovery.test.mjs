@@ -6,7 +6,8 @@ import { join, resolve } from "node:path"
 import test from "node:test"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
-  CODEX_EXECUTION_SANDBOX_ID
+  CODEX_EXECUTION_SANDBOX_ID,
+  classifyCodexExecutionAttemptEvidence
 } from "./development-codex-execution-adapter.mjs"
 import {
   CODEX_NO_CHANGE_RECOVERY_CONFIRMATION,
@@ -130,6 +131,12 @@ async function makeDefinitiveFailureRun({ closeAttempt = true } = {}) {
       writeDataDir,
       now
     })
+
+    assert.equal(
+      classifyCodexExecutionAttemptEvidence(run),
+      "definitive_failed",
+      JSON.stringify(run.evidence.implementation.at(-1))
+    )
   }
 
   return { writeDataDir, now, run }

@@ -10,7 +10,7 @@ KHLIM Super App
 
 ## Connection status
 
-Connected and enabled for ordinary PPO development.
+Connected candidate.
 
 ## Current role
 
