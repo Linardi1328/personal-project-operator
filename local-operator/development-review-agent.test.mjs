@@ -31,7 +31,8 @@ import {
   REVIEW_DECISIONS,
   REVIEW_SANDBOX_BACKENDS,
   executeIndependentReview,
-  reconcileIndependentReview
+  reconcileIndependentReview,
+  runSandboxedProcess
 } from "./development-review-agent.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -53,6 +54,29 @@ function makeClock() {
     return next
   }
 }
+
+test("review sandbox process absorbs child stdin EPIPE and reports the child exit", async () => {
+  const result = await runSandboxedProcess({
+    sandboxCommand: {
+      executablePath: process.execPath,
+      args: ["--eval", "process.stdin.destroy(); process.exit(23)"]
+    },
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH || "/usr/bin:/bin"
+    },
+    stdin: "x".repeat(8 * 1024 * 1024),
+    timeoutMs: 5000,
+    maxOutputBytes: 1024
+  })
+
+  assert.equal(result.exitCode, 23)
+  assert.equal(result.signal, null)
+  assert.equal(result.killed, false)
+  assert.equal(result.timedOut, false)
+  assert.equal(result.outputOverflow, false)
+  assert.equal(result.ambiguous, false)
+})
 
 async function canonicalTempRoot(label = "ppo-6f-") {
   return realpath(await mkdtemp(join(tmpdir(), label)))
