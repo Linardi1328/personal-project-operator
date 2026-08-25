@@ -10,7 +10,7 @@ KHLIM Super App
 
 ## Connection status
 
-Connected candidate.
+Connected and enabled for ordinary PPO development.
 
 ## Current role
 
@@ -22,24 +22,26 @@ High.
 
 ## Current phase
 
-Phase 1 technology and engineering foundation preparation.
+Phase 1 technology and engineering foundation.
 
 ## Last known status
 
-The repository contains the product, architecture, security, UX, roadmap, and decision-record foundation. The planned TypeScript monorepo and application packages have not been scaffolded yet.
+The reviewed TypeScript monorepo foundation is merged. The repository now contains pinned Node.js, pnpm, Turborepo, and TypeScript root tooling; the planned mobile, admin, API, shared-package, and Prisma boundaries; a deterministic foundation test; and the PPO pull-request validation workflow.
 
 ## Next action
 
-Add the reviewed Phase 1 monorepo foundation with pinned root workspace configuration, the planned app and package boundaries, and `tests/foundation.test.mjs` as the deterministic foundation check.
+Add one focused shared TypeScript configuration foundation. Populate `packages/typescript-config` with reviewed reusable compiler configurations for the current Node, Next.js, and Expo boundaries, add only the minimal consumer `tsconfig.json` files needed to prove inheritance, and extend `tests/foundation.test.mjs` to validate the compiler guardrails deterministically.
+
+Do not add application features, runtime framework dependencies, authentication, database models, deployment configuration, or production integrations in this task.
 
 ## Codex fit
 
-Good fit for the one approved foundation scaffold. After that run merges, refresh this project state and strengthen the test policy before starting product-feature work. Keep mobile, admin, API, data, security, and deployment work split into separate tasks.
+Good fit for the approved shared TypeScript configuration task. Keep later mobile, admin, API, data, security, observability, and deployment work split into separate small or medium runs.
 
 ## Do not change
 
-- Do not expand the first `/ppo start` run beyond the reviewed monorepo foundation and its deterministic foundation test.
-- Do not start later product-feature runs until this PPO project state and test policy are refreshed after the scaffold merges.
+- Do not repeat or replace the merged monorepo scaffold.
+- Do not expand the next run beyond shared TypeScript configuration and its deterministic foundation checks.
 - Do not expose or deploy production systems without review.
 - Do not weaken parent/guardian, coach, administrator, or athlete authorization boundaries.
 - Do not add credentials or real participant data.
@@ -49,5 +51,5 @@ Good fit for the one approved foundation scaffold. After that run merges, refres
 
 - The platform may process information about minors.
 - Role and relationship mistakes could expose private athlete or family data.
-- A broad initial scaffold could prematurely couple mobile, admin, API, data, and infrastructure concerns.
+- Broad foundation tasks could prematurely couple mobile, admin, API, data, and infrastructure concerns.
 - Future notification, reward, event, and AI features need explicit consent, audit, and abuse-prevention boundaries.

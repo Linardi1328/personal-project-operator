@@ -2558,7 +2558,8 @@ async function reconcileCodexExecutionInternal(runId, options = {}) {
     facts: {
       branch: facts?.branch || null,
       headSha: facts?.headSha || null,
-      expectedStartSha
+      expectedStartSha,
+      dirty: facts ? Boolean(facts.dirtyStatus) : null
     }
   }
 }
