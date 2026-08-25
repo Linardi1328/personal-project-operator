@@ -23,6 +23,7 @@ import {
   executeShaPinnedMerge
 } from "./github-delivery-agent.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
+import { safeDevelopmentBuildSummary } from "./development-build-summary.mjs"
 
 export const DEVELOPMENT_CONTINUE_ORCHESTRATOR_ID = "phase-6k-controlled-ppo-continue-orchestrator"
 export const PHASE_6K_CONTINUE_POLICY_ID = "phase-6k-controlled-ppo-continue"
@@ -420,7 +421,8 @@ function baseResult({
   outcome,
   after = before,
   headSha = null,
-  reason = null
+  reason = null,
+  buildSummary = null
 }) {
   return {
     ok,
@@ -432,6 +434,7 @@ function baseResult({
     outcome: safeOutcome(outcome),
     after,
     headSha: safeHeadSha(headSha),
+    buildSummary: safeDevelopmentBuildSummary(buildSummary),
     reason: reason ? safeReason(reason) : null,
     policyId: PHASE_6K_CONTINUE_POLICY_ID,
     policyHash: PHASE_6K_CONTINUE_POLICY_HASH
@@ -448,6 +451,7 @@ function ownerActionResult(run, action, reason) {
     outcome: "owner_action_required",
     after: run.status,
     headSha: run.headSha,
+    buildSummary: run.task,
     reason
   })
 }
@@ -465,6 +469,7 @@ function blockedStatusResult(run) {
     outcome: ok ? "complete" : "owner_action_required",
     after: run.status,
     headSha: run.headSha,
+    buildSummary: run.task,
     reason
   })
 }
@@ -479,6 +484,7 @@ function staleStateResult(run, action) {
     outcome: "stale_state",
     after: run.status,
     headSha: run.headSha,
+    buildSummary: run.task,
     reason: "run_changed_before_dispatch"
   })
 }
@@ -530,6 +536,7 @@ async function childFailureResult(run, action, error, options = {}) {
       outcome: "owner_action_required",
       after: run.status,
       headSha: run.headSha,
+      buildSummary: run.task,
       reason: "child_state_reload_failed"
     })
   }
@@ -543,6 +550,7 @@ async function childFailureResult(run, action, error, options = {}) {
     outcome: stale ? "stale_state" : safeOutcome(error?.outcome || error?.safeOutcome, "owner_action_required"),
     after: observed?.status || run.status,
     headSha: observed?.headSha || run.headSha,
+    buildSummary: observed?.task || run.task,
     reason: stale
       ? "stale_run_version"
       : safeReason(error?.reasonCode || error?.reason || code.toLowerCase(), "child_operation_refused")
@@ -567,6 +575,7 @@ function childResultToContinueResult(beforeRun, action, childResult, afterRun = 
     outcome,
     after: run.status || beforeRun.status,
     headSha: run.headSha || beforeRun.headSha,
+    buildSummary: run.task || beforeRun.task,
     reason: childOk ? null : childResult?.reason || childResult?.reasonCode || "child_operation_refused"
   })
 }
@@ -649,6 +658,12 @@ export function formatDevelopmentContinueResult(result) {
     `Run: ${result.runId || "unknown"}`,
     `Project: ${result.project || "unknown"}`
   ]
+
+  const buildSummary = safeDevelopmentBuildSummary(result.buildSummary)
+
+  if (buildSummary) {
+    lines.push(`Build summary: ${buildSummary}`)
+  }
 
   if (result.before && result.before !== "unknown" && result.action !== "none") {
     lines.push(`Before: ${result.before}`)
