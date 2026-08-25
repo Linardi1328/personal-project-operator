@@ -48,6 +48,10 @@ export const MAX_DEVELOPMENT_RUN_EVIDENCE_PER_TRANSITION = 8
 export const MAX_DEVELOPMENT_RUN_METADATA_KEYS = 16
 export const MAX_DEVELOPMENT_RUN_METADATA_ARRAY_ITEMS = 16
 export const MAX_DEVELOPMENT_RUN_STAGE_ATTEMPTS = 20
+export const REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR = "phase-6f-review-runtime-failure-recovery"
+export const REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION = "retry-phase6f-review-runtime-failure-v1"
+
+const reviewRuntimeFailureRecoveryToken = Symbol("phase-6f-review-runtime-failure-recovery")
 
 export const DEVELOPMENT_RUN_STATUSES = Object.freeze([
   "created",
@@ -1074,9 +1078,18 @@ function applyTransition(record, {
   evidence,
   actor,
   reason,
-  now
+  now,
+  recoveryToken
 }) {
-  assertAllowedTransition(record.status, toStatus)
+  const approvedRuntimeRecovery = (
+    recoveryToken === reviewRuntimeFailureRecoveryToken &&
+    record.status === "review_changes_requested" &&
+    toStatus === "tests_passed"
+  )
+
+  if (!approvedRuntimeRecovery) {
+    assertAllowedTransition(record.status, toStatus)
+  }
 
   if (record.history.length >= MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES) {
     throw runStateError(
@@ -2594,7 +2607,8 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {})
     evidence,
     actor,
     reason,
-    now
+    now,
+    recoveryToken: options.reviewRuntimeRecoveryToken
   })
   const paths = storePaths(normalizedRunId, options)
 
@@ -2646,6 +2660,185 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
   return cloneJson(next)
 }
 
+function latestIndependentReviewDecisionForRuntimeRecovery(record) {
+  const evidence = Array.isArray(record?.evidence?.review) ? record.evidence.review : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+
+    if (
+      entry?.source === "phase-6f-independent-review-agent" &&
+      ["approved", "changes_requested", "owner_action_required"].includes(entry?.metadata?.outcome)
+    ) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function matchingReviewFindingsForRuntimeRecovery(record, decision) {
+  const evidence = Array.isArray(record?.evidence?.review) ? record.evidence.review : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+
+    if (
+      entry?.source === "phase-6f-independent-review-agent" &&
+      entry?.metadata?.outcome === "review_findings" &&
+      entry?.sha === decision?.sha &&
+      entry?.metadata?.reviewedSha === decision?.metadata?.reviewedSha &&
+      entry?.metadata?.attempt === decision?.metadata?.attempt
+    ) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function assertRuntimeRecoveryEmptyFindingList(value) {
+  if (!Array.isArray(value) || value.length !== 0) {
+    throw runStateError(
+      "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
+      "Review runtime recovery requires an owner-action decision with no genuine review findings."
+    )
+  }
+}
+
+function assertReviewRuntimeFailureRecoveryCandidate(record, {
+  expectedHeadSha,
+  reviewAttempt,
+  confirmation
+}) {
+  if (confirmation !== REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION) {
+    throw runStateError(
+      "REVIEW_RUNTIME_RECOVERY_CONFIRMATION_REQUIRED",
+      "Exact confirmation is required for review runtime failure recovery."
+    )
+  }
+
+  if (record.status !== "review_changes_requested") {
+    throw runStateError(
+      "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
+      "Review runtime failure recovery requires review_changes_requested status."
+    )
+  }
+
+  if (record.headSha !== expectedHeadSha) {
+    throw runStateError(
+      "REVIEW_RUNTIME_RECOVERY_HEAD_MISMATCH",
+      "Review runtime failure recovery head SHA does not match the development run."
+    )
+  }
+
+  if (!Number.isInteger(reviewAttempt) || reviewAttempt <= 0 || record.attempts.review !== reviewAttempt) {
+    throw runStateError(
+      "REVIEW_RUNTIME_RECOVERY_ATTEMPT_MISMATCH",
+      "Review runtime failure recovery attempt does not match the development run."
+    )
+  }
+
+  const decision = latestIndependentReviewDecisionForRuntimeRecovery(record)
+  const findings = matchingReviewFindingsForRuntimeRecovery(record, decision)
+
+  if (
+    !decision ||
+    decision.sha !== expectedHeadSha ||
+    decision.metadata?.reviewedSha !== expectedHeadSha ||
+    decision.metadata?.attempt !== reviewAttempt ||
+    decision.metadata?.decision !== "OWNER_ACTION_REQUIRED" ||
+    decision.metadata?.outcome !== "owner_action_required" ||
+    decision.metadata?.mergeAllowed !== false ||
+    decision.metadata?.blockers !== 0 ||
+    decision.metadata?.securityFindings !== 0 ||
+    decision.metadata?.testsRequired !== 0
+  ) {
+    throw runStateError(
+      "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
+      "Review runtime failure recovery requires an owner-action decision with no genuine review findings."
+    )
+  }
+
+  if (
+    !findings ||
+    findings.metadata?.decision !== "OWNER_ACTION_REQUIRED" ||
+    findings.metadata?.mergeAllowed !== false ||
+    findings.metadata?.blockers !== 0 ||
+    findings.metadata?.securityFindings !== 0 ||
+    findings.metadata?.testsRequired !== 0
+  ) {
+    throw runStateError(
+      "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
+      "Review runtime failure recovery requires matching empty review findings evidence."
+    )
+  }
+
+  assertRuntimeRecoveryEmptyFindingList(findings.metadata?.blockerItems)
+  assertRuntimeRecoveryEmptyFindingList(findings.metadata?.securityItems)
+  assertRuntimeRecoveryEmptyFindingList(findings.metadata?.testItems)
+}
+
+async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, recovery, options = {}) {
+  const normalizedRunId = normalizeDevelopmentRunId(runId)
+  const expectedVersion = normalizeExpectedVersion(recovery?.expectedVersion)
+  const expectedHeadSha = normalizeOptionalSha(recovery?.expectedHeadSha, "Expected head SHA")
+  const reviewAttempt = recovery?.reviewAttempt
+  const confirmation = normalizeSafeText(recovery?.confirmation, {
+    fieldName: "Review runtime recovery confirmation",
+    maxChars: 100,
+    code: "REVIEW_RUNTIME_RECOVERY_CONFIRMATION_REQUIRED",
+    safeMessage: "Exact confirmation is required for review runtime failure recovery."
+  })
+  const current = await readDevelopmentRunInternal(normalizedRunId, options)
+
+  if (current.version !== expectedVersion) {
+    throw runStateError(
+      "STALE_RUN_VERSION",
+      "Development run state changed; reload before retrying."
+    )
+  }
+
+  assertReviewRuntimeFailureRecoveryCandidate(current, {
+    expectedHeadSha,
+    reviewAttempt,
+    confirmation
+  })
+
+  const now = nowDate(options)
+  const evidence = normalizeEvidenceList([{
+    kind: "review",
+    sha: expectedHeadSha,
+    source: REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR,
+    summary: "Confirmed Phase 6F reviewer runtime failure recovered for one retry.",
+    metadata: {
+      project: current.project.id,
+      recovery: REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR,
+      reviewedSha: expectedHeadSha,
+      reviewAttempt,
+      previousDecision: "OWNER_ACTION_REQUIRED",
+      outcome: "review_runtime_failure_recovered"
+    }
+  }], {
+    ...options,
+    now: () => now
+  })
+  const next = applyTransition(current, {
+    toStatus: "tests_passed",
+    branch: current.branch,
+    headSha: expectedHeadSha,
+    evidence,
+    actor: REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR,
+    reason: "phase-6f-review-runtime-failure-retry",
+    now,
+    recoveryToken: reviewRuntimeFailureRecoveryToken
+  })
+  const paths = storePaths(normalizedRunId, options)
+
+  await commitRecord(paths, next)
+  return cloneJson(next)
+}
+
 export async function createDevelopmentRun(input, options = {}) {
   try {
     return await createDevelopmentRunInternal(input, options)
@@ -2684,6 +2877,14 @@ export async function readPersonalProjectOperatorSelfDevelopmentRun(runId, optio
 export async function transitionDevelopmentRun(runId, transition, options = {}) {
   try {
     return await transitionDevelopmentRunInternal(runId, transition, options)
+  } catch (error) {
+    throw safeRunStateFailure(error)
+  }
+}
+
+export async function recoverDevelopmentRunReviewRuntimeFailureState(runId, recovery, options = {}) {
+  try {
+    return await recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, recovery, options)
   } catch (error) {
     throw safeRunStateFailure(error)
   }
