@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 CODEX_BIN="/home/ppo/.local/bin/codex"
 CODEX_MODEL="gpt-5.6-sol"
+REVIEW_OUTPUT_SCHEMA="/opt/personal-project-operator/deployment/phase6f-review-output.schema.json"
 WORKSPACE_ROOT="/var/lib/personal-project-operator/development-workspaces"
 
 if [[ "${PPO_PHASE6K_REVIEW_POLICY:-}" != "fixed" ]]; then
@@ -12,6 +13,11 @@ fi
 
 if [[ ! -x "$CODEX_BIN" ]]; then
   printf 'PPO independent reviewer runtime is unavailable.\n' >&2
+  exit 78
+fi
+
+if [[ ! -r "$REVIEW_OUTPUT_SCHEMA" ]]; then
+  printf 'PPO independent reviewer output schema is unavailable.\n' >&2
   exit 78
 fi
 
@@ -38,6 +44,7 @@ exec "$CODEX_BIN" \
   --ignore-user-config \
   --ignore-rules \
   --strict-config \
+  --output-schema "$REVIEW_OUTPUT_SCHEMA" \
   -c "$PROJECT_TRUST_OVERRIDE" \
   --model "$CODEX_MODEL" \
   -
