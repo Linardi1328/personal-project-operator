@@ -1440,6 +1440,56 @@ function validateHistoryEventShape(event) {
   }
 }
 
+function isReviewRuntimeRecoveryHistoryEvent(event, priorEvidence, attempts, projectId) {
+  if (
+    event.fromStatus !== "review_changes_requested" ||
+    event.toStatus !== "tests_passed" ||
+    event.actor !== REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR ||
+    event.reason !== "phase-6f-review-runtime-failure-retry" ||
+    !Array.isArray(event.evidence) ||
+    event.evidence.length !== 1
+  ) {
+    return false
+  }
+
+  const recoveryEvidence = event.evidence[0]
+  const expectedMetadata = {
+    project: projectId,
+    recovery: REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR,
+    reviewedSha: event.headSha,
+    reviewAttempt: attempts.review,
+    previousDecision: "OWNER_ACTION_REQUIRED",
+    outcome: "review_runtime_failure_recovered"
+  }
+
+  if (
+    recoveryEvidence?.kind !== "review" ||
+    recoveryEvidence?.sha !== event.headSha ||
+    recoveryEvidence?.source !== REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR ||
+    recoveryEvidence?.summary !== "Confirmed Phase 6F reviewer runtime failure recovered for one retry." ||
+    stableStringify(recoveryEvidence?.metadata) !== stableStringify(expectedMetadata)
+  ) {
+    return false
+  }
+
+  try {
+    assertReviewRuntimeFailureRecoveryCandidate({
+      status: event.fromStatus,
+      headSha: event.headSha,
+      attempts,
+      evidence: priorEvidence
+    }, {
+      expectedHeadSha: event.headSha,
+      reviewAttempt: attempts.review,
+      confirmation: REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION
+    })
+  } catch {
+    return false
+  }
+
+  return true
+}
+
 function validateHistory(record) {
   if (!Array.isArray(record.history) || record.history.length === 0 || record.history.length > MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES) {
     throw runStateError(
@@ -1486,7 +1536,17 @@ function validateHistory(record) {
     }
 
     if (index > 0 && event.fromStatus !== event.toStatus) {
-      assertAllowedTransition(event.fromStatus, event.toStatus)
+      const reviewRuntimeRecovery = isReviewRuntimeRecoveryHistoryEvent(
+        event,
+        evidence,
+        attempts,
+        record.project.id
+      )
+
+      if (!reviewRuntimeRecovery) {
+        assertAllowedTransition(event.fromStatus, event.toStatus)
+      }
+
       attempts = incrementAttempts(attempts, event.toStatus)
     } else if (index > 0) {
       if (!sameStatusAttemptStatuses.has(event.toStatus)) {
