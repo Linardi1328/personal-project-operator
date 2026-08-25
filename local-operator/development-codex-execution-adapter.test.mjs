@@ -1366,6 +1366,16 @@ test("interrupted Codex reconciliation reports unchanged, advanced, and mismatch
     workspaceRegistry: unchanged.registry
   })
   assert.equal(unchangedResult.status, "unchanged")
+  assert.equal(unchangedResult.facts.dirty, false)
+
+  const dirty = await makeImplementationFixture()
+  await writeFile(join(dirty.location.workspacePath, "dirty.txt"), "dirty\n", "utf8")
+  const dirtyResult = await reconcileCodexExecution(dirty.run.runId, {
+    writeDataDir: dirty.writeDataDir,
+    workspaceRegistry: dirty.registry
+  })
+  assert.equal(dirtyResult.status, "unchanged")
+  assert.equal(dirtyResult.facts.dirty, true)
 
   const advanced = await makeImplementationFixture()
   await writeFile(join(advanced.location.workspacePath, "advanced.txt"), "advanced\n", "utf8")

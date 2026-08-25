@@ -549,7 +549,7 @@ test("trusted repository docs can document confirmation placeholders without blo
   assert.equal(plan.next.stage, "implementation")
   assert.equal(
     plan.next.task,
-    "Add the reviewed Phase 1 monorepo foundation with pinned root workspace configuration, the planned app and package boundaries, and `tests/foundation.test.mjs` as the deterministic foundation check."
+    "Add one focused shared TypeScript configuration foundation. Populate `packages/typescript-config` with reusable compiler configurations for Node, Next.js, and Expo, add only minimal consumer `tsconfig.json` files proving inheritance, and extend `tests/foundation.test.mjs` with deterministic guardrail checks."
   )
   assert.doesNotMatch(JSON.stringify(plan), /PPO_GITHUB_WRITE_CONFIRM|PPO_NOTE_WRITE_CONFIRM/u)
 })
