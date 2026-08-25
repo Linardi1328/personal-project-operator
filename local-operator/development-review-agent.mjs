@@ -6,6 +6,7 @@ import { isAbsolute, relative, resolve as resolvePath, sep } from "node:path"
 import { promisify } from "node:util"
 import {
   DevelopmentRunStateError,
+  REVIEW_ORPHAN_RECOVERY_ACTOR,
   readDevelopmentRun,
   recordDevelopmentRunProgress,
   resolveDevelopmentRunProject,
@@ -1549,7 +1550,17 @@ function latestReviewEvidence(run) {
   for (let index = evidence.length - 1; index >= 0; index -= 1) {
     const entry = evidence[index]
 
-    if (entry?.source === INDEPENDENT_REVIEW_AGENT_ID || entry?.metadata?.reviewer === INDEPENDENT_REVIEW_AGENT_ID) {
+    const independentReviewEvidence = (
+      entry?.source === INDEPENDENT_REVIEW_AGENT_ID ||
+      entry?.metadata?.reviewer === INDEPENDENT_REVIEW_AGENT_ID
+    )
+    const recoveredReviewBoundary = (
+      entry?.source === REVIEW_ORPHAN_RECOVERY_ACTOR &&
+      entry?.metadata?.recovery === REVIEW_ORPHAN_RECOVERY_ACTOR &&
+      entry?.metadata?.outcome === "review_orphan_recovered"
+    )
+
+    if (independentReviewEvidence || recoveredReviewBoundary) {
       return entry
     }
   }
