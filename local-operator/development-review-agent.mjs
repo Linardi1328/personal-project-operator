@@ -2030,8 +2030,8 @@ function buildReviewAmbiguityEvidence(run, execution, ambiguity, endedAt) {
       timedOut: ambiguity.timedOut,
       killed: ambiguity.killed,
       outputOverflow: ambiguity.outputOverflow,
-      stdoutOverflow: ambiguity.stdoutOverflow,
-      stderrOverflow: ambiguity.stderrOverflow,
+      decisionOverflow: ambiguity.stdoutOverflow,
+      progressOverflow: ambiguity.stderrOverflow,
       signal: ambiguity.signal,
       sandbox: INDEPENDENT_REVIEW_SANDBOX_ID,
       network: "none"
