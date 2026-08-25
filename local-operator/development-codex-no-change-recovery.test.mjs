@@ -114,7 +114,7 @@ async function makeDefinitiveFailureRun({ closeAttempt = true } = {}) {
     actor: CODEX_EXECUTION_ADAPTER_ID,
     reason: "phase-6d-codex-execution-attempt",
     incrementAttempt: true,
-    evidence: [executionEvidence({ attempt: 1, outcome: "execution_started" })]
+    evidence: [executionEvidence({ attempt: 2, outcome: "execution_started" })]
   }, {
     writeDataDir,
     now
@@ -126,7 +126,7 @@ async function makeDefinitiveFailureRun({ closeAttempt = true } = {}) {
       status: "implementation_in_progress",
       actor: CODEX_EXECUTION_ADAPTER_ID,
       reason: "phase-6d-codex-execution-definitive-failure",
-      evidence: [executionEvidence({ attempt: 1, outcome: "execution_failed" })]
+      evidence: [executionEvidence({ attempt: 2, outcome: "execution_failed" })]
     }, {
       writeDataDir,
       now
@@ -202,7 +202,7 @@ test("confirmed definitive no-change recovery cancels the stranded run", async (
   assert.equal(result.run.stage, "closed")
   assert.equal(result.run.version, fixture.run.version + 1)
   assert.equal(result.run.headSha, BASE_SHA)
-  assert.equal(result.run.implementationAttempt, 1)
+  assert.equal(result.run.implementationAttempt, 2)
 
   const stored = await readDevelopmentRun(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir
