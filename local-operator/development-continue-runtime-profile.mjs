@@ -28,6 +28,9 @@ const fixedDarwinPaths = Object.freeze({
   gitExecutablePath: "/opt/homebrew/bin/git",
   nodeExecutablePath: "/opt/homebrew/bin/node",
   pythonExecutablePath: "/opt/homebrew/bin/python3.12",
+  projectPythonExecutablePaths: Object.freeze({
+    "khlim-assist": "/Users/richie/.local/share/personal-project-operator/runtimes/khlim-assist-python3.12/bin/python3"
+  }),
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
   sandboxExecutablePath: "/usr/bin/sandbox-exec",
   executionPath: "/Users/richie/.local/bin:/opt/homebrew/bin:/usr/bin:/bin",
@@ -52,6 +55,7 @@ const fixedLinuxPaths = Object.freeze({
   gitExecutablePath: "/usr/bin/git",
   nodeExecutablePath: "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
   pythonExecutablePath: "/usr/bin/python3.12",
+  projectPythonExecutablePaths: Object.freeze({}),
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
   sandboxExecutablePath: "/home/ppo/.local/bin/codex",
   bubblewrapExecutablePath: "/usr/bin/bwrap",
@@ -74,9 +78,27 @@ const fixedLinuxPaths = Object.freeze({
 
 const reviewedProjectTestPolicies = Object.freeze({
   "khlim-assist": Object.freeze({
-    policyId: "phase-6e-khlim-assist-fixed-python-pytest-policy",
-    kind: "python-pytest",
-    pythonTestPaths: Object.freeze(["backend/tests"])
+    policyId: "phase-6e-khlim-assist-fixed-python-quality-policy",
+    kind: "python-quality-suite",
+    pythonRuntimeProbes: Object.freeze([
+      Object.freeze(["-m", "ruff", "--version"]),
+      Object.freeze(["-m", "mypy", "--version"]),
+      Object.freeze(["-m", "pytest", "--version"]),
+      Object.freeze([
+        "-c",
+        "import aiosqlite, alembic, asyncpg, fastapi, greenlet, httpx, openai, pydantic, pydantic_settings, pytest, pytest_asyncio, sqlalchemy, uvicorn; raise SystemExit(0 if pytest.__version__.split('.', 1)[0] == '8' else 1)"
+      ])
+    ]),
+    pythonSteps: Object.freeze([{
+      id: "ruff",
+      args: Object.freeze(["-m", "ruff", "check", "--no-cache", "."])
+    }, {
+      id: "mypy",
+      args: Object.freeze(["-m", "mypy", "--no-incremental", "backend/app"])
+    }, {
+      id: "pytest",
+      args: Object.freeze(["-m", "pytest", "-p", "no:cacheprovider", "backend/tests"])
+    }])
   }),
   "ledgerpilot-ai": Object.freeze({
     policyId: "phase-6e-ledgerpilot-ai-fixed-python-pytest-policy",
@@ -273,6 +295,14 @@ async function assertPythonPytestRuntime(paths, options = {}) {
   await runReadOnlyProbe(paths.pythonExecutablePath, ["-m", "pytest", "--version"], options)
 }
 
+async function assertPythonQualitySuiteRuntime(definition, paths, options = {}) {
+  await assertExecutable(paths.pythonExecutablePath, options)
+
+  for (const args of definition.pythonRuntimeProbes) {
+    await runReadOnlyProbe(paths.pythonExecutablePath, [...args], options)
+  }
+}
+
 async function assertPythonStandardLibraryRuntime(paths, options = {}) {
   await assertExecutable(paths.pythonExecutablePath, options)
   await runReadOnlyProbe(paths.pythonExecutablePath, ["-c", "import compileall, unittest"], options)
@@ -433,7 +463,7 @@ function pythonTestPolicy(definition, paths, sandbox) {
   }
 }
 
-function pythonCompileUnittestPolicy(definition, paths, sandbox) {
+function pythonCommandSuitePolicy(definition, paths, sandbox) {
   return {
     policyId: definition.policyId,
     policyVersion: "1",
@@ -512,8 +542,8 @@ function testPolicyForProject(projectId, paths, sandbox) {
     return pythonTestPolicy(definition, paths, sandbox)
   }
 
-  if (definition.kind === "python-compile-unittest") {
-    return pythonCompileUnittestPolicy(definition, paths, sandbox)
+  if (definition.kind === "python-quality-suite" || definition.kind === "python-compile-unittest") {
+    return pythonCommandSuitePolicy(definition, paths, sandbox)
   }
 
   if (definition.kind === "node-next-quality") {
@@ -536,6 +566,11 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
 
   if (definition.kind === "python-pytest") {
     await assertPythonPytestRuntime(paths, options)
+    return
+  }
+
+  if (definition.kind === "python-quality-suite") {
+    await assertPythonQualitySuiteRuntime(definition, paths, options)
     return
   }
 
@@ -586,6 +621,10 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   const platform = options.platform || process.platform
   const paths = fixedPathsForPlatform(platform)
   const sourceRepoPath = paths.sourceRepoPaths[projectId]
+  const projectPaths = {
+    ...paths,
+    pythonExecutablePath: paths.projectPythonExecutablePaths[projectId] || paths.pythonExecutablePath
+  }
 
   if (!sourceRepoPath) {
     throw runtimeError()
@@ -595,7 +634,7 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   await assertExecutable(paths.gitExecutablePath, options)
   await assertExecutable(paths.reviewExecutablePath, options)
   await assertExecutable(paths.sandboxExecutablePath, options)
-  await assertProjectTestRuntime(projectId, paths, options)
+  await assertProjectTestRuntime(projectId, projectPaths, options)
 
   await assertDirectory(sourceRepoPath, options)
   await assertDirectory(paths.workspaceRoot, options)
@@ -667,7 +706,7 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
       executionSandbox: codexSandbox
     },
     testPolicyRegistry: {
-      [projectId]: testPolicyForProject(projectId, paths, testSandbox)
+      [projectId]: testPolicyForProject(projectId, projectPaths, testSandbox)
     },
     reviewConfig: {
       executablePath: paths.reviewExecutablePath,
@@ -697,6 +736,10 @@ export async function loadDevelopmentRecoveryRuntimeProfile(request = {}, option
   const platform = options.platform || process.platform
   const paths = fixedPathsForPlatform(platform)
   const sourceRepoPath = paths.sourceRepoPaths[projectId]
+  const projectPaths = {
+    ...paths,
+    pythonExecutablePath: paths.projectPythonExecutablePaths[projectId] || paths.pythonExecutablePath
+  }
 
   if (!sourceRepoPath) {
     throw runtimeError()
@@ -713,7 +756,7 @@ export async function loadDevelopmentRecoveryRuntimeProfile(request = {}, option
 
   if (options.includeTestPolicy === true) {
     profile.testPolicyRegistry = {
-      [projectId]: testPolicyForProject(projectId, paths, buildTestSandbox(paths, platform))
+      [projectId]: testPolicyForProject(projectId, projectPaths, buildTestSandbox(paths, platform))
     }
   }
 

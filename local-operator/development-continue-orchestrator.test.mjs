@@ -44,6 +44,7 @@ const PROJECT = {
   fullName: `${listOrdinaryDevelopmentProjects()[0].owner}/${listOrdinaryDevelopmentProjects()[0].repo}`
 }
 const TEST_POLICY_ID = "phase-6e-local-node-policy"
+const MACOS_KHLIM_ASSIST_PYTHON = "/Users/richie/.local/share/personal-project-operator/runtimes/khlim-assist-python3.12/bin/python3"
 
 function evidence() {
   return {
@@ -253,6 +254,7 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/opt/homebrew/bin/git",
       "/opt/homebrew/bin/node",
       "/opt/homebrew/bin/python3.12",
+      MACOS_KHLIM_ASSIST_PYTHON,
       "/usr/local/bin/ppo-independent-reviewer",
       "/usr/bin/sandbox-exec",
       "/home/ppo/.local/bin/codex",
@@ -1260,11 +1262,18 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
   assert.equal(profile.codexConfig.env.CODEX_HOME, "/Users/richie/.codex")
   assert.equal(profile.codexConfig.remoteGitWritePolicy.mode, "deny")
   assert.equal(profile.codexConfig.executionSandbox.network, "none")
-  assert.equal(profile.testPolicyRegistry[PROJECT.id].steps.length, 1)
-  assert.equal(profile.testPolicyRegistry[PROJECT.id].policyId, "phase-6e-khlim-assist-fixed-python-pytest-policy")
-  assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].trustedExecutablePaths, ["/opt/homebrew/bin/python3.12"])
-  assert.equal(profile.testPolicyRegistry[PROJECT.id].steps[0].executablePath, "/opt/homebrew/bin/python3.12")
-  assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].steps[0].args, ["-m", "pytest", "backend/tests"])
+  assert.equal(profile.testPolicyRegistry[PROJECT.id].steps.length, 3)
+  assert.equal(profile.testPolicyRegistry[PROJECT.id].policyId, "phase-6e-khlim-assist-fixed-python-quality-policy")
+  assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].trustedExecutablePaths, [MACOS_KHLIM_ASSIST_PYTHON])
+  assert.deepEqual(
+    profile.testPolicyRegistry[PROJECT.id].steps.map((step) => step.executablePath),
+    Array(3).fill(MACOS_KHLIM_ASSIST_PYTHON)
+  )
+  assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].steps.map((step) => step.args), [
+    ["-m", "ruff", "check", "--no-cache", "."],
+    ["-m", "mypy", "--no-incremental", "backend/app"],
+    ["-m", "pytest", "-p", "no:cacheprovider", "backend/tests"]
+  ])
   assert.doesNotMatch(JSON.stringify(profile.testPolicyRegistry[PROJECT.id]), /node --test|package\.json|npm|npx|Makefile/)
   assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
   assert.equal(profile.reviewConfig.timeoutMs, 10 * 60 * 1000)
@@ -1306,10 +1315,14 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
 test("Phase 6K runtime profile defines one reviewed fixed test policy for each ordinary project", async () => {
   const expectedPolicies = new Map([
     ["khlim-assist", {
-      policyId: "phase-6e-khlim-assist-fixed-python-pytest-policy",
-      executablePath: "/opt/homebrew/bin/python3.12",
-      args: ["-m", "pytest", "backend/tests"],
-      stepCount: 1
+      policyId: "phase-6e-khlim-assist-fixed-python-quality-policy",
+      executablePath: MACOS_KHLIM_ASSIST_PYTHON,
+      args: [
+        ["-m", "ruff", "check", "--no-cache", "."],
+        ["-m", "mypy", "--no-incremental", "backend/app"],
+        ["-m", "pytest", "-p", "no:cacheprovider", "backend/tests"]
+      ],
+      stepCount: 3
     }],
     ["ledgerpilot-ai", {
       policyId: "phase-6e-ledgerpilot-ai-fixed-python-pytest-policy",
@@ -1376,7 +1389,7 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
       assert.equal(step.shell, false, projectId)
     }
 
-    if (projectId === "portfolio" || projectId === "rbl-content-engine") {
+    if (projectId === "khlim-assist" || projectId === "portfolio" || projectId === "rbl-content-engine") {
       assert.deepEqual(policy.steps.map((step) => step.args), expected.args, projectId)
       assert.doesNotMatch(JSON.stringify(policy), /npm|npx|package\.json|node --test|Makefile/i, projectId)
     } else {
@@ -1387,6 +1400,10 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
     if (projectId === "rbl-content-engine") {
       assert.deepEqual(policy.steps.map((step) => step.id), ["compile", "unittest"])
       assert.doesNotMatch(JSON.stringify(policy), /pytest/)
+    }
+
+    if (projectId === "khlim-assist") {
+      assert.deepEqual(policy.steps.map((step) => step.id), ["ruff", "mypy", "pytest"])
     }
   }
 
@@ -1410,10 +1427,41 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
     execFileImpl: fakeRuntimeExecFile
   })
   assert.deepEqual(
-    maliciousProfile.testPolicyRegistry["khlim-assist"].steps[0].args,
-    ["-m", "pytest", "backend/tests"]
+    maliciousProfile.testPolicyRegistry["khlim-assist"].steps.map((step) => step.args),
+    [
+      ["-m", "ruff", "check", "--no-cache", "."],
+      ["-m", "mypy", "--no-incremental", "backend/app"],
+      ["-m", "pytest", "-p", "no:cacheprovider", "backend/tests"]
+    ]
   )
   assert.doesNotMatch(JSON.stringify(maliciousProfile.testPolicyRegistry["khlim-assist"]), /curl|\/bin\/sh|npm test|node --test/)
+})
+
+test("Phase 6K KHLIM Assist readiness probes every fixed quality tool and application dependency", async () => {
+  const probes = []
+  const profile = await loadFakeRuntimeProfileFor("khlim-assist", {
+    execFileImpl: async (executablePath, args) => {
+      probes.push({ executablePath, args })
+      return { stdout: "ok\n", stderr: "" }
+    },
+    codexSandboxCapabilityProbe: async () => true
+  })
+
+  assert.deepEqual(
+    probes
+      .filter((probe) => probe.executablePath === MACOS_KHLIM_ASSIST_PYTHON)
+      .map((probe) => probe.args),
+    [
+      ["-m", "ruff", "--version"],
+      ["-m", "mypy", "--version"],
+      ["-m", "pytest", "--version"],
+      [
+        "-c",
+        "import aiosqlite, alembic, asyncpg, fastapi, greenlet, httpx, openai, pydantic, pydantic_settings, pytest, pytest_asyncio, sqlalchemy, uvicorn; raise SystemExit(0 if pytest.__version__.split('.', 1)[0] == '8' else 1)"
+      ]
+    ]
+  )
+  assert.equal(profile.testPolicyRegistry["khlim-assist"].steps.length, 3)
 })
 
 test("Phase 6K RBL reviewed policy uses fixed Python compileall and unittest without pytest", async () => {
@@ -1568,8 +1616,15 @@ test("Phase 6K Linux runtime profile uses Codex native command sandboxing", asyn
     "gpt-5.6-sol",
     "-"
   ])
-  assert.equal(profile.testPolicyRegistry["khlim-assist"].steps[0].executablePath, "/usr/bin/python3.12")
-  assert.deepEqual(profile.testPolicyRegistry["khlim-assist"].steps[0].args, ["-m", "pytest", "backend/tests"])
+  assert.deepEqual(
+    profile.testPolicyRegistry["khlim-assist"].steps.map((step) => step.executablePath),
+    Array(3).fill("/usr/bin/python3.12")
+  )
+  assert.deepEqual(profile.testPolicyRegistry["khlim-assist"].steps.map((step) => step.args), [
+    ["-m", "ruff", "check", "--no-cache", "."],
+    ["-m", "mypy", "--no-incremental", "backend/app"],
+    ["-m", "pytest", "-p", "no:cacheprovider", "backend/tests"]
+  ])
   assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
   assert.equal(
     profile.reviewConfig.env.PATH,

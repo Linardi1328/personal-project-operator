@@ -108,6 +108,23 @@ sudo install -m 0755 -o root -g wheel \
 
 Do not install `deployment/bin/ppo-independent-reviewer` on macOS. That separate wrapper is pinned to the Linux `/home/ppo`, `/var/lib`, and `/opt` runtime layout.
 
+### KHLIM Assist Python quality runtime
+
+KHLIM Assist uses a project-specific PPO-managed Python 3.12 virtual environment. Phase 6C verifies the complete application and development dependency set before reserving a workspace, and Phase 6E runs Ruff, mypy, then pytest with caches disabled. Do not install these dependencies into Homebrew's base Python interpreter.
+
+Prepare the runtime from a clean `/Users/richie/khlim-assist` checkout:
+
+```bash
+PPO_MACOS_PYTHON_RUNTIME_CONFIRM='prepare-macos-khlim-assist-python-runtime-v1' \
+  /Users/richie/personal-project-operator/deployment/scripts/prepare-macos-khlim-assist-python-runtime.sh
+```
+
+The preparation script snapshots tracked source files into a temporary directory before installing the declared `dev` extra, so neither the source checkout nor a PPO implementation workspace receives build artifacts. It creates only this fixed private runtime:
+
+```text
+/Users/richie/.local/share/personal-project-operator/runtimes/khlim-assist-python3.12
+```
+
 ## What should not be connected yet
 
 - live GitHub API access
