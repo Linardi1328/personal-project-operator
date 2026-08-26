@@ -165,13 +165,25 @@ Phase 6K continue, Phase 6M recover, Phase 6O exact-run catalog inspection, and 
 
 ## Local Phase 5B/5C/5D write-data paths
 
-For local testing, pending issue requests default to:
+Telegram/OpenClaw commands use one stable user-level write-data root by default:
 
 ```text
-<ppo-repo>/local-operator/write-data
+/Users/richie/.local/share/personal-project-operator/write-data
 ```
 
-You may override the local pending store and audit file:
+This keeps `/ppo start`, `/ppo run`, `/ppo continue`, approval requests, and notes on the same absolute path even if the repository is moved, updated, or linked from a different checkout. `PPO_WRITE_DATA_DIR`, when configured, must be an absolute path; the bridge fails closed before invoking the wrapper if it is relative or has surrounding whitespace.
+
+For an installed Gateway, pin the same path in the global OpenClaw environment file at `~/.openclaw/.env`:
+
+```text
+PPO_WRITE_DATA_DIR=/Users/richie/.local/share/personal-project-operator/write-data
+```
+
+OpenClaw loads this global file for the Gateway service, unlike shell-only exports that may be absent from launchd. Restart the Gateway after changing it.
+
+Direct terminal commands that bypass the plugin continue to default to the repository-local store unless `PPO_WRITE_DATA_DIR` is set. Use the same absolute value for terminal and Telegram work when they need to inspect the same runs.
+
+You may override the write-data store and audit file with other absolute paths:
 
 ```bash
 PPO_WRITE_DATA_DIR=/private/tmp/ppo-write-data \
@@ -184,13 +196,13 @@ Pending issue and note request directories are created with `0700`, request file
 Phase 5C notes use the same `PPO_WRITE_DATA_DIR` root for terminal-only storage under:
 
 ```text
-<ppo-repo>/local-operator/write-data/project-notes
+/Users/richie/.local/share/personal-project-operator/write-data/project-notes
 ```
 
 Phase 5D pending note requests use:
 
 ```text
-<ppo-repo>/local-operator/write-data/pending-project-notes
+/Users/richie/.local/share/personal-project-operator/write-data/pending-project-notes
 ```
 
 ## Refresh OpenClaw

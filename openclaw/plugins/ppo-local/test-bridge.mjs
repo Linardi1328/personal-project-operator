@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { runPpoLocalTool, toPpoWrapperArgs } from "./bridge.mjs";
+import {
+  DEFAULT_PPO_LOCAL_WRITE_DATA_DIR,
+  resolvePpoLocalWriteDataDir,
+  runPpoLocalTool,
+  toPpoWrapperArgs
+} from "./bridge.mjs";
 import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.mjs";
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
 import {
@@ -42,6 +47,73 @@ const validIssueRequestId = "A".repeat(43);
 const validNoteRequestId = "B".repeat(43);
 const validDevelopmentRunId = "C".repeat(43);
 const validCancellationRequestId = "D".repeat(43);
+
+assert.equal(
+  resolvePpoLocalWriteDataDir({}),
+  DEFAULT_PPO_LOCAL_WRITE_DATA_DIR,
+  "bridge uses one stable user-level write-data directory by default"
+);
+assert.equal(
+  resolvePpoLocalWriteDataDir({ PPO_WRITE_DATA_DIR: "/private/tmp/ppo-state" }),
+  "/private/tmp/ppo-state",
+  "bridge preserves an explicit absolute write-data directory"
+);
+for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-state", "/private/tmp/ppo-state "]) {
+  assert.equal(
+    resolvePpoLocalWriteDataDir({ PPO_WRITE_DATA_DIR: invalidWriteDataDir }),
+    null,
+    "bridge rejects ambiguous write-data paths"
+  );
+}
+
+{
+  const observedWriteDataDirs = [];
+
+  for (const command of ["start khlim-assist", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`]) {
+    const result = await runPpoLocalTool(
+      { command },
+      {
+        environment: {},
+        runWrapper: async (wrapperArgs, context) => {
+          observedWriteDataDirs.push(context.env.PPO_WRITE_DATA_DIR);
+          return {
+            stdout: `fake wrapper: ${wrapperArgs.join(" ")}\n`,
+            stderr: ""
+          };
+        }
+      }
+    );
+
+    assert.equal(result.ok, true, `${command} executes with the canonical state directory`);
+  }
+
+  assert.deepEqual(
+    observedWriteDataDirs,
+    Array(3).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
+    "start, run, and continue share exactly one state directory"
+  );
+}
+
+{
+  let wrapperCalls = 0;
+  const result = await runPpoLocalTool(
+    { command: "status" },
+    {
+      environment: { PPO_WRITE_DATA_DIR: "relative/write-data" },
+      runWrapper: async () => {
+        wrapperCalls += 1;
+        return { stdout: "must not run", stderr: "" };
+      }
+    }
+  );
+
+  assert.equal(result.ok, false, "relative write-data configuration fails closed");
+  assert.equal(wrapperCalls, 0, "invalid state configuration never starts the wrapper");
+  assert.equal(
+    result.stdout,
+    "PPO local wrapper failed: PPO_WRITE_DATA_DIR must be an absolute path.\n"
+  );
+}
 
 for (const projectId of currentProjectIds) {
   expectedMappings.set(

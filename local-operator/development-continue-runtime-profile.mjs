@@ -14,6 +14,7 @@ import {
 } from "./development-test-runner.mjs"
 import {
   MAX_REVIEW_OUTPUT_BYTES,
+  MAX_REVIEW_TIMEOUT_MS,
   REVIEW_SANDBOX_BACKENDS
 } from "./development-review-agent.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
@@ -288,16 +289,11 @@ async function assertNodeRuntime(paths, options = {}) {
   await runReadOnlyProbe(paths.nodeExecutablePath, ["--version"], options)
 }
 
-async function assertLinuxSandboxCapability(paths, options = {}) {
-  await assertTrustedLinuxPath(paths.bubblewrapExecutablePath, options)
-  await assertTrustedLinuxPath(paths.reviewExecutablePath, options)
-
+async function assertCodexNativeSandboxCapability(paths, platform, options = {}) {
   const probeRequest = {
-    executablePath: paths.sandboxExecutablePath,
+    executablePath: paths.codexExecutablePath,
     args: [
       "sandbox",
-      "--config",
-      `projects."${paths.workspaceRoot}".trust_level="untrusted"`,
       "--permission-profile",
       ":read-only",
       "--cd",
@@ -308,12 +304,13 @@ async function assertLinuxSandboxCapability(paths, options = {}) {
       "process.exit(0)"
     ],
     cwd: paths.workspaceRoot,
-    runAsUser: "ppo",
-    runAsGroup: "ppo"
+    platform
   }
 
-  if (typeof options.linuxSandboxCapabilityProbe === "function") {
-    const probe = await options.linuxSandboxCapabilityProbe(probeRequest)
+  const capabilityProbe = options.codexSandboxCapabilityProbe || options.linuxSandboxCapabilityProbe
+
+  if (typeof capabilityProbe === "function") {
+    const probe = await capabilityProbe(probeRequest)
 
     if (probe !== true && probe?.ok !== true) {
       throw runtimeError()
@@ -330,8 +327,8 @@ async function assertLinuxSandboxCapability(paths, options = {}) {
       encoding: "utf8",
       env: {
         ...sanitizedProbeEnv,
-        HOME: "/home/ppo",
-        CODEX_HOME: "/home/ppo/.codex",
+        HOME: platform === "darwin" ? "/Users/richie" : "/home/ppo",
+        CODEX_HOME: platform === "darwin" ? "/Users/richie/.codex" : "/home/ppo/.codex",
         PATH: paths.executionPath
       },
       maxBuffer: 4096,
@@ -346,11 +343,12 @@ async function assertLinuxSandboxCapability(paths, options = {}) {
 function buildCodexSandbox(paths, platform, identity = null) {
   if (platform === "darwin") {
     return {
-      type: CODEX_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC,
+      type: CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN,
       platform: "darwin",
       network: "none",
-      enforcement: "os-process",
-      executablePath: paths.sandboxExecutablePath
+      enforcement: "codex-command-sandbox",
+      executablePath: paths.codexExecutablePath,
+      permissionProfile: ":workspace"
     }
   }
 
@@ -388,13 +386,14 @@ function buildTestSandbox(paths, platform, identity = null) {
 function buildReviewSandbox(paths, platform, identity = null) {
   if (platform === "darwin") {
     return {
-      type: REVIEW_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC,
+      type: REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN,
       platform: "darwin",
       network: "none",
-      enforcement: "os-process",
+      enforcement: "codex-command-sandbox",
       readOnlyWorkspace: true,
-      readOnlyWorkspaceMode: "trusted-read-only-workspace",
-      executablePath: paths.sandboxExecutablePath
+      readOnlyWorkspaceMode: "codex-native-read-only",
+      executablePath: paths.codexExecutablePath,
+      permissionProfile: ":read-only"
     }
   }
 
@@ -601,30 +600,28 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   await assertDirectory(sourceRepoPath, options)
   await assertDirectory(paths.workspaceRoot, options)
 
+  const codexRuntimeEnv = {
+    ...sanitizedProbeEnv,
+    HOME: platform === "darwin" ? "/Users/richie" : "/home/ppo",
+    CODEX_HOME: platform === "darwin" ? "/Users/richie/.codex" : "/home/ppo/.codex",
+    PATH: paths.executionPath
+  }
+
+  await runReadOnlyProbe(paths.codexExecutablePath, ["--version"], {
+    ...options,
+    probeEnv: codexRuntimeEnv
+  })
+  await runReadOnlyProbe(paths.codexExecutablePath, ["login", "status"], {
+    ...options,
+    probeEnv: codexRuntimeEnv
+  })
+  await assertCodexNativeSandboxCapability(paths, platform, options)
+
   if (platform === "linux") {
     await assertExecutable(paths.bubblewrapExecutablePath, options)
     await assertExecutable(paths.nodeExecutablePath, options)
     await assertTrustedLinuxPath(paths.nodeExecutablePath, options)
     await assertTrustedLinuxPath(paths.reviewExecutablePath, options)
-    await runReadOnlyProbe(paths.codexExecutablePath, ["--version"], {
-      ...options,
-      probeEnv: {
-        ...sanitizedProbeEnv,
-        HOME: "/home/ppo",
-        CODEX_HOME: "/home/ppo/.codex",
-        PATH: paths.executionPath
-      }
-    })
-    await runReadOnlyProbe(paths.codexExecutablePath, ["login", "status"], {
-      ...options,
-      probeEnv: {
-        ...sanitizedProbeEnv,
-        HOME: "/home/ppo",
-        CODEX_HOME: "/home/ppo/.codex",
-        PATH: paths.executionPath
-      }
-    })
-    await assertLinuxSandboxCapability(paths, options)
   }
 
   const codexSandbox = buildCodexSandbox(paths, platform)
@@ -641,7 +638,7 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
     codexConfig: {
       executablePath: paths.codexExecutablePath,
       gitExecutablePath: paths.gitExecutablePath,
-      args: platform === "linux" ? [
+      args: [
         "exec",
         "--ephemeral",
         "--color",
@@ -656,13 +653,13 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
         "--model",
         CODEX_PRODUCTION_MODEL,
         "-"
-      ] : [],
+      ],
       timeoutMs: MAX_CODEX_TIMEOUT_MS,
-      env: platform === "linux" ? {
-        HOME: "/home/ppo",
-        CODEX_HOME: "/home/ppo/.codex",
+      env: {
+        HOME: platform === "darwin" ? "/Users/richie" : "/home/ppo",
+        CODEX_HOME: platform === "darwin" ? "/Users/richie/.codex" : "/home/ppo/.codex",
         PATH: paths.executionPath
-      } : {},
+      },
       remoteGitWritePolicy: {
         mode: "deny",
         enforcement: "adapter-git-wrapper"
@@ -675,7 +672,7 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
     reviewConfig: {
       executablePath: paths.reviewExecutablePath,
       args: [],
-      timeoutMs: 300000,
+      timeoutMs: MAX_REVIEW_TIMEOUT_MS,
       maxOutputBytes: MAX_REVIEW_OUTPUT_BYTES,
       env: {
         PPO_PHASE6K_REVIEW_POLICY: "fixed",

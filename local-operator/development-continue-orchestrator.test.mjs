@@ -340,6 +340,7 @@ async function loadFakeRuntimeProfileFor(projectId, options = {}) {
     lstatImpl: options.lstatImpl || options.statImpl || fakeRuntimeStatFor(),
     accessImpl: options.accessImpl || (async () => {}),
     execFileImpl: options.execFileImpl || fakeRuntimeExecFile,
+    codexSandboxCapabilityProbe: options.codexSandboxCapabilityProbe,
     linuxSandboxCapabilityProbe: options.linuxSandboxCapabilityProbe
   })
 }
@@ -1216,7 +1217,9 @@ test("Phase 6K default route loads the reviewed runtime profile before real chil
     assert.equal(profileRequests[0].action, action, status)
     assert.equal(result.action, action, status)
     assert.notEqual(result.reason, "continue_runtime_not_ready", status)
-    assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|raw|secret|token/i, status)
+    const { runId, ...boundedResult } = result
+    assert.equal(runId, fixture.run.runId, status)
+    assert.doesNotMatch(JSON.stringify(boundedResult), /SENSITIVE_TEST_SENTINEL|raw|secret|token/i, status)
   }
 })
 
@@ -1234,6 +1237,27 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
   assert.equal(profile.workspaceRegistry[PROJECT.id].workspaceRoot, "/Users/richie/.local/share/personal-project-operator/development-workspaces")
   assert.equal(profile.codexConfig.executablePath, "/Users/richie/.local/bin/codex")
   assert.equal(profile.codexConfig.gitExecutablePath, "/opt/homebrew/bin/git")
+  assert.equal(profile.codexConfig.executionSandbox.type, "codex-native-darwin")
+  assert.equal(profile.codexConfig.executionSandbox.executablePath, "/Users/richie/.local/bin/codex")
+  assert.equal(profile.codexConfig.executionSandbox.permissionProfile, ":workspace")
+  assert.deepEqual(profile.codexConfig.args, [
+    "exec",
+    "--ephemeral",
+    "--color",
+    "never",
+    "--sandbox",
+    "workspace-write",
+    "-c",
+    "approval_policy=\"never\"",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--strict-config",
+    "--model",
+    "gpt-5.6-sol",
+    "-"
+  ])
+  assert.equal(profile.codexConfig.env.HOME, "/Users/richie")
+  assert.equal(profile.codexConfig.env.CODEX_HOME, "/Users/richie/.codex")
   assert.equal(profile.codexConfig.remoteGitWritePolicy.mode, "deny")
   assert.equal(profile.codexConfig.executionSandbox.network, "none")
   assert.equal(profile.testPolicyRegistry[PROJECT.id].steps.length, 1)
@@ -1243,6 +1267,7 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
   assert.deepEqual(profile.testPolicyRegistry[PROJECT.id].steps[0].args, ["-m", "pytest", "backend/tests"])
   assert.doesNotMatch(JSON.stringify(profile.testPolicyRegistry[PROJECT.id]), /node --test|package\.json|npm|npx|Makefile/)
   assert.equal(profile.reviewConfig.executablePath, "/usr/local/bin/ppo-independent-reviewer")
+  assert.equal(profile.reviewConfig.timeoutMs, 10 * 60 * 1000)
   assert.equal(profile.reviewConfig.env.PATH, "/opt/homebrew/bin:/usr/bin:/bin")
   assert.equal(profile.reviewConfig.shell, false)
   assert.equal(profile.reviewConfig.sandbox.readOnlyWorkspace, true)
@@ -1417,7 +1442,7 @@ test("Phase 6K RBL reviewed policy uses fixed Python compileall and unittest wit
   assert.equal(policy.steps[1].executablePath, "/opt/homebrew/bin/python3.12")
   assert.deepEqual(policy.steps[1].args, ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
   assert.equal(policy.steps[1].shell, false)
-  assert.deepEqual(probes, [{
+  assert.deepEqual(probes.filter((probe) => probe.executablePath === "/opt/homebrew/bin/python3.12"), [{
     executablePath: "/opt/homebrew/bin/python3.12",
     args: ["-c", "import compileall, unittest"]
   }])
@@ -1515,8 +1540,6 @@ test("Phase 6K Linux runtime profile uses Codex native command sandboxing", asyn
   assert.equal(probes[0].executablePath, "/home/ppo/.local/bin/codex")
   assert.deepEqual(probes[0].args, [
     "sandbox",
-    "--config",
-    "projects.\"/var/lib/personal-project-operator/development-workspaces\".trust_level=\"untrusted\"",
     "--permission-profile",
     ":read-only",
     "--cd",
@@ -1554,6 +1577,42 @@ test("Phase 6K Linux runtime profile uses Codex native command sandboxing", asyn
   )
   assert.equal(profile.reviewConfig.sandbox.permissionProfile, ":read-only")
   assert.doesNotMatch(JSON.stringify(profile), /nsenter|setpriv|no-outbound\.netns/u)
+})
+
+test("Phase 6K macOS runtime profile keeps the Codex controller online and sandboxes generated commands", async () => {
+  const probes = []
+  const profile = await loadFakeRuntimeProfileFor("khlim-digital-ecosystem", {
+    platform: "darwin",
+    codexSandboxCapabilityProbe: async (probe) => {
+      probes.push(probe)
+      return true
+    }
+  })
+
+  assert.equal(probes.length, 1)
+  assert.equal(probes[0].executablePath, "/Users/richie/.local/bin/codex")
+  assert.deepEqual(probes[0].args, [
+    "sandbox",
+    "--permission-profile",
+    ":read-only",
+    "--cd",
+    "/Users/richie/.local/share/personal-project-operator/development-workspaces",
+    "--",
+    "/opt/homebrew/bin/node",
+    "--eval",
+    "process.exit(0)"
+  ])
+  assert.equal(profile.codexConfig.executionSandbox.type, "codex-native-darwin")
+  assert.equal(profile.codexConfig.executionSandbox.platform, "darwin")
+  assert.equal(profile.codexConfig.executionSandbox.enforcement, "codex-command-sandbox")
+  assert.equal(profile.codexConfig.executionSandbox.permissionProfile, ":workspace")
+  assert.notDeepEqual(profile.codexConfig.args, [])
+  assert.equal(profile.codexConfig.args[0], "exec")
+  assert.equal(profile.codexConfig.args.at(-1), "-")
+  assert.equal(profile.reviewConfig.timeoutMs, 10 * 60 * 1000)
+  assert.equal(profile.reviewConfig.sandbox.type, "codex-native-darwin")
+  assert.equal(profile.reviewConfig.sandbox.executablePath, "/Users/richie/.local/bin/codex")
+  assert.equal(profile.reviewConfig.sandbox.permissionProfile, ":read-only")
 })
 
 test("Phase 6K KHLIM Linux profile binds the fixed source and foundation test", async () => {

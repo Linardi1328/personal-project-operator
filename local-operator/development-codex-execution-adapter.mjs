@@ -40,6 +40,7 @@ export const PHASE_6G_REMOTE_PR_REVIEW_AGENT_ID = "phase-6g-remote-pr-review-age
 export const PHASE_6F_REVIEW_FINDINGS_OUTCOME = "review_findings"
 export const CODEX_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
+  CODEX_NATIVE_DARWIN: "codex-native-darwin",
   LINUX_NETWORK_NAMESPACE: "linux-network-namespace",
   CODEX_NATIVE_LINUX: "codex-native-linux"
 })
@@ -744,6 +745,38 @@ function normalizeExecutionSandbox(sandbox) {
     }
   }
 
+  if (type === CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN) {
+    if (platform !== "darwin" || enforcement !== "codex-command-sandbox") {
+      throw adapterError(
+        "CODEX_SANDBOX_REQUIRED",
+        "Codex execution requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    const permissionProfile = normalizeSafeText(sandbox.permissionProfile, {
+      code: "CODEX_SANDBOX_REQUIRED",
+      safeMessage: "Codex execution requires a trusted no-outbound-network process sandbox.",
+      maxChars: 40
+    })
+
+    if (permissionProfile !== ":workspace") {
+      throw adapterError(
+        "CODEX_SANDBOX_REQUIRED",
+        "Codex execution requires a trusted no-outbound-network process sandbox."
+      )
+    }
+
+    return {
+      type,
+      backend: CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN,
+      platform,
+      network,
+      enforcement,
+      executablePath: normalizeSandboxPath(sandbox.executablePath),
+      permissionProfile
+    }
+  }
+
   if (type === CODEX_SANDBOX_BACKENDS.LINUX_NETWORK_NAMESPACE) {
     if (platform !== "linux" || enforcement !== "os-network-namespace") {
       throw adapterError(
@@ -824,7 +857,7 @@ function normalizeCodexConfig(config) {
     executionSandbox: normalizeExecutionSandbox(config.executionSandbox)
   }
 
-  if (codexNativeLinuxSandbox(normalized.executionSandbox)) {
+  if (codexNativeCommandSandbox(normalized.executionSandbox)) {
     const expectedArgs = [
       "exec",
       "--ephemeral",
@@ -1140,12 +1173,12 @@ function codexNativeLinuxSandbox(sandbox) {
   return sandbox.type === CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
 }
 
-function codexUntrustedProjectOverride(workspacePath) {
-  const escaped = normalizeSandboxPath(workspacePath)
-    .replaceAll("\\", "\\\\")
-    .replaceAll("\"", "\\\"")
+function codexNativeDarwinSandbox(sandbox) {
+  return sandbox.type === CODEX_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN
+}
 
-  return `projects."${escaped}".trust_level="untrusted"`
+function codexNativeCommandSandbox(sandbox) {
+  return codexNativeDarwinSandbox(sandbox) || codexNativeLinuxSandbox(sandbox)
 }
 
 async function assertSandboxLinuxPrivilegeBoundary(config, location, policy, options) {
@@ -1221,7 +1254,7 @@ function isDirectNetworkDenied(config, result, connectionCount) {
 
   return (
     linuxNetworkNamespaceSandbox(config.executionSandbox) ||
-    codexNativeLinuxSandbox(config.executionSandbox)
+    codexNativeCommandSandbox(config.executionSandbox)
   ) && (
     result?.exitCode === 67 ||
     result?.exitCode === 68
@@ -1439,7 +1472,7 @@ function assertSandboxRuntimePlatform(sandbox, options = {}) {
 function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   assertSandboxRuntimePlatform(sandbox, options)
 
-  if (codexNativeLinuxSandbox(sandbox)) {
+  if (codexNativeCommandSandbox(sandbox)) {
     if (options.kind === "codex") {
       return {
         backend: sandbox.backend,
@@ -1455,8 +1488,6 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
       executablePath: sandbox.executablePath,
       args: [
         "sandbox",
-        "--config",
-        codexUntrustedProjectOverride(cwd),
         "--permission-profile",
         sandbox.permissionProfile,
         "--cd",
@@ -1628,19 +1659,11 @@ async function runSandboxedCommand(invocation, options = {}) {
 }
 
 async function invokeCodex(config, invocation, options = {}) {
-  const args = codexNativeLinuxSandbox(config.executionSandbox)
-    ? [
-        ...config.args.slice(0, -1),
-        "-c",
-        codexUntrustedProjectOverride(invocation.cwd),
-        config.args.at(-1)
-      ]
-    : [...config.args]
   const boundedInvocation = {
     kind: "codex",
     sandbox: config.executionSandbox,
     executablePath: config.executablePath,
-    args,
+    args: [...config.args],
     cwd: invocation.cwd,
     stdin: invocation.prompt,
     prompt: invocation.prompt,
@@ -1695,7 +1718,7 @@ async function invokeCodex(config, invocation, options = {}) {
 }
 
 async function commitNativeCodexChanges(config, location, expectedStartSha, options = {}) {
-  if (!codexNativeLinuxSandbox(config.executionSandbox)) {
+  if (!codexNativeCommandSandbox(config.executionSandbox)) {
     return
   }
 

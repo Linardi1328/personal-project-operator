@@ -32,12 +32,13 @@ export const MAX_REVIEW_ENV_VALUE_CHARS = 1000
 export const MAX_REVIEW_PROMPT_CHARS = 6000
 export const MAX_REVIEW_OUTPUT_BYTES = 32 * 1024
 export const MAX_REVIEW_STDERR_BYTES = 256 * 1024
-export const MAX_REVIEW_TIMEOUT_MS = 5 * 60 * 1000
+export const MAX_REVIEW_TIMEOUT_MS = 10 * 60 * 1000
 export const MIN_REVIEW_TIMEOUT_MS = 1000
 export const MAX_REVIEW_GIT_OUTPUT_BYTES = 32 * 1024
 export const MAX_REVIEW_FINDINGS = 5
 export const REVIEW_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
+  CODEX_NATIVE_DARWIN: "codex-native-darwin",
   LINUX_NETWORK_NAMESPACE: "linux-network-namespace",
   CODEX_NATIVE_LINUX: "codex-native-linux"
 })
@@ -354,9 +355,16 @@ function normalizeExecutionSandbox(sandbox) {
     }
   }
 
-  if (type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+  if (
+    type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN ||
+    type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
+  ) {
+    const expectedPlatform = type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN
+      ? "darwin"
+      : "linux"
+
     if (
-      platform !== "linux" ||
+      platform !== expectedPlatform ||
       enforcement !== "codex-command-sandbox" ||
       sandbox.readOnlyWorkspace !== true ||
       sandbox.readOnlyWorkspaceMode !== "codex-native-read-only"
@@ -382,7 +390,7 @@ function normalizeExecutionSandbox(sandbox) {
 
     return {
       type,
-      backend: REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+      backend: type,
       platform,
       network,
       enforcement,
@@ -674,7 +682,7 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   assertSandboxRuntimePlatform(sandbox, options)
   const readOnlyPaths = normalizeReadOnlyPaths(options.readOnlyPaths || options.readOnlyWorkspacePath)
 
-  if (sandbox.type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+  if (codexNativeCommandSandbox(sandbox)) {
     if (options.kind === "review") {
       return {
         backend: sandbox.backend,
@@ -684,15 +692,11 @@ function sandboxedCommand(sandbox, executablePath, args, options = {}) {
     }
 
     const cwd = normalizeReadOnlyWorkspacePath(options.cwd)
-    const projectOverride = `projects."${cwd.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}".trust_level="untrusted"`
-
     return {
       backend: sandbox.backend,
       executablePath: sandbox.executablePath,
       args: [
         "sandbox",
-        "--config",
-        projectOverride,
         "--permission-profile",
         sandbox.permissionProfile,
         "--cd",
@@ -939,6 +943,14 @@ function codexNativeLinuxSandbox(sandbox) {
   return sandbox.type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
 }
 
+function codexNativeDarwinSandbox(sandbox) {
+  return sandbox.type === REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN
+}
+
+function codexNativeCommandSandbox(sandbox) {
+  return codexNativeDarwinSandbox(sandbox) || codexNativeLinuxSandbox(sandbox)
+}
+
 async function assertSandboxLinuxPrivilegeBoundary(config, location, readOnlyPaths, options) {
   if (!linuxNetworkNamespaceSandbox(config.sandbox)) {
     return
@@ -1124,7 +1136,7 @@ function isDirectNetworkDenied(config, result, connectionCount) {
 
   return (
     linuxNetworkNamespaceSandbox(config.sandbox) ||
-    codexNativeLinuxSandbox(config.sandbox)
+    codexNativeCommandSandbox(config.sandbox)
   ) && (
     result?.exitCode === 67 ||
     result?.exitCode === 68

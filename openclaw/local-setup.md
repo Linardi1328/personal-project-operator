@@ -80,6 +80,34 @@ Do not override OpenClaw built-ins:
 
 The OpenClaw skill uses `command-dispatch: tool` and `command-tool: ppo_local` so `/ppo` bypasses model interpretation. For the manual owner test, load the repo skill tree from `<ppo-repo>/openclaw/skills`, link the local plugin from `<ppo-repo>/openclaw/plugins/ppo-local`, and allow only `ppo_local` if the active OpenClaw tool profile excludes it; see [openclaw/skills/ppo/install-local.md](skills/ppo/install-local.md).
 
+## Phase 6K macOS development runtime
+
+Controlled `/ppo continue` development on Richie's Mac requires the fixed local source checkout, managed workspace root, and reviewed macOS independent-review wrapper expected by `development-continue-runtime-profile.mjs`:
+
+```text
+/Users/richie/khlim-digital-ecosystem
+/Users/richie/.local/share/personal-project-operator/development-workspaces
+/usr/local/bin/ppo-independent-reviewer
+```
+
+Create the private managed workspace root and clone the fixed source repository only when the source path is absent:
+
+```bash
+mkdir -p /Users/richie/.local/share/personal-project-operator/development-workspaces
+chmod 700 /Users/richie/.local/share/personal-project-operator/development-workspaces
+git clone --branch main --single-branch https://github.com/Linardi1328/khlim-digital-ecosystem.git /Users/richie/khlim-digital-ecosystem
+```
+
+Install the reviewed macOS wrapper as a root-owned executable:
+
+```bash
+sudo install -m 0755 -o root -g wheel \
+  /Users/richie/personal-project-operator/deployment/bin/ppo-independent-reviewer-macos \
+  /usr/local/bin/ppo-independent-reviewer
+```
+
+Do not install `deployment/bin/ppo-independent-reviewer` on macOS. That separate wrapper is pinned to the Linux `/home/ppo`, `/var/lib`, and `/opt` runtime layout.
+
 ## What should not be connected yet
 
 - live GitHub API access

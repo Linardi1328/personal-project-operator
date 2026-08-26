@@ -30,6 +30,7 @@ import {
   MAX_INDEPENDENT_REVIEW_ATTEMPTS,
   MAX_REVIEW_OUTPUT_BYTES,
   MAX_REVIEW_STDERR_BYTES,
+  MAX_REVIEW_TIMEOUT_MS,
   PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
   PHASE_6E_TEST_EVIDENCE_SOURCE,
   REVIEW_DECISIONS,
@@ -47,6 +48,10 @@ const TRUSTED_LINUX_READONLY_WRAPPER_EXECUTABLE = process.env.PPO_REVIEW_TEST_LI
 const TRUSTED_LINUX_NAMESPACE_PATH = process.env.PPO_REVIEW_TEST_LINUX_NAMESPACE_PATH || "/run/netns/ppo-review-no-network"
 const TRUSTED_LINUX_RUN_AS_UID = 1000
 const TRUSTED_LINUX_RUN_AS_GID = 1000
+
+test("independent review keeps a bounded ten-minute execution ceiling", () => {
+  assert.equal(MAX_REVIEW_TIMEOUT_MS, 10 * 60 * 1000)
+})
 
 function makeClock() {
   let tick = 0
@@ -388,6 +393,20 @@ function trustedNativeLinuxSandbox(overrides = {}) {
   return {
     type: REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
     platform: "linux",
+    network: "none",
+    enforcement: "codex-command-sandbox",
+    readOnlyWorkspace: true,
+    readOnlyWorkspaceMode: "codex-native-read-only",
+    executablePath: process.execPath,
+    permissionProfile: ":read-only",
+    ...overrides
+  }
+}
+
+function trustedNativeDarwinSandbox(overrides = {}) {
+  return {
+    type: REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN,
+    platform: "darwin",
     network: "none",
     enforcement: "codex-command-sandbox",
     readOnlyWorkspace: true,
@@ -1307,20 +1326,56 @@ test("Codex native Linux review sandbox keeps probes read-only and invokes the f
   ])
 
   for (const call of calls.filter((entry) => entry.kind === "sandbox-probe")) {
-    assert.deepEqual(call.sandboxArgs.slice(0, 8), [
+    assert.deepEqual(call.sandboxArgs.slice(0, 6), [
       "sandbox",
-      "--config",
-      `projects."${call.cwd}".trust_level="untrusted"`,
       "--permission-profile",
       ":read-only",
       "--cd",
       call.cwd,
       "--"
     ])
+    assert.equal(call.sandboxArgs.some((arg) => arg.includes("trust_level")), false)
   }
 
   const reviewCall = calls.find((call) => call.kind === "review")
   assert.ok(reviewCall)
+  assert.equal(reviewCall.sandboxCommand.executablePath, process.execPath)
+  assert.deepEqual(reviewCall.sandboxCommand.args, trustedReviewConfig().args)
+})
+
+test("Codex native macOS review sandbox keeps the controller online and probes read-only boundaries", async () => {
+  const fixture = await makeTestsPassedFixture()
+  const calls = []
+  const result = await executeIndependentReview(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    reviewConfig: trustedReviewConfig({
+      sandbox: trustedNativeDarwinSandbox()
+    }),
+    reviewRunner: makeReviewRunner(async () => ({
+      exitCode: 0,
+      stdout: `${JSON.stringify(decision(fixture.headSha))}\n`
+    }), { calls }),
+    now: fixture.now
+  })
+
+  assert.equal(result.run.status, "review_passed")
+  for (const call of calls.filter((entry) => entry.kind === "sandbox-probe")) {
+    assert.deepEqual(call.sandboxArgs.slice(0, 6), [
+      "sandbox",
+      "--permission-profile",
+      ":read-only",
+      "--cd",
+      call.cwd,
+      "--"
+    ])
+    assert.equal(call.sandboxArgs.some((arg) => arg.includes("trust_level")), false)
+  }
+
+  const reviewCall = calls.find((call) => call.kind === "review")
+  assert.ok(reviewCall)
+  assert.equal(reviewCall.sandbox.type, REVIEW_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN)
   assert.equal(reviewCall.sandboxCommand.executablePath, process.execPath)
   assert.deepEqual(reviewCall.sandboxCommand.args, trustedReviewConfig().args)
 })
