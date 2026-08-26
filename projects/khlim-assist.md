@@ -30,7 +30,7 @@ Phase 2 implements multilingual interpretation, approved knowledge retrieval, de
 
 ## Next action
 
-Review Phase 2 evaluation results and choose one focused next task without enabling participant auto-replies.
+Add deterministic regression tests for Phase 2 multilingual GREEN/YELLOW/RED classification, including malformed and empty inputs, without changing classification logic, retrieval behavior, or participant auto-reply settings.
 
 ## Codex fit
 
