@@ -572,10 +572,12 @@ test("passing tests use explicit argv with shell=false, sanitized env, no-networ
 
 test("one required test failure remains tests_in_progress with metadata-only failed evidence", async () => {
   const fixture = await makeImplementationReadyFixture()
+  const calls = []
   const registry = trustedTestPolicyRegistry(fixture, {
     steps: [
       testStep({ id: "unit" }),
-      testStep({ id: "integration", args: ["--eval", "process.exit(1)"] })
+      testStep({ id: "integration", args: ["--eval", "process.exit(1)"] }),
+      testStep({ id: "must-not-run" })
     ]
   })
 
@@ -588,7 +590,7 @@ test("one required test failure remains tests_in_progress with metadata-only fai
       exitCode: invocation.testId === "integration" ? 1 : 0,
       stdout: "failure details are discarded",
       stderr: "raw failure is discarded"
-    })),
+    }), { calls }),
     now: fixture.now
   }), "TEST_POLICY_FAILED")
 
@@ -601,6 +603,10 @@ test("one required test failure remains tests_in_progress with metadata-only fai
   assert.equal(reloaded.attempts.test, 1)
   assert.equal(latest.metadata.outcome, "failed")
   assert.equal(latest.sha, fixture.headSha)
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "test").map((call) => call.testId),
+    ["unit", "integration"]
+  )
   assert.doesNotMatch(JSON.stringify(reloaded.evidence.test), /failure details|raw failure|stdout|stderr/u)
 })
 

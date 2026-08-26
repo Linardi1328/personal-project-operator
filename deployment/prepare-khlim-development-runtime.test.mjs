@@ -9,6 +9,7 @@ import {
 } from "../local-operator/development-review-findings-contract.mjs"
 
 const SCRIPT_PATH = resolve("deployment/scripts/prepare-khlim-development-runtime.sh")
+const MACOS_KHLIM_ASSIST_PYTHON_SCRIPT_PATH = resolve("deployment/scripts/prepare-macos-khlim-assist-python-runtime.sh")
 const REVIEWER_PATH = resolve("deployment/bin/ppo-independent-reviewer")
 const MACOS_REVIEWER_PATH = resolve("deployment/bin/ppo-independent-reviewer-macos")
 const REVIEW_OUTPUT_SCHEMA_PATH = resolve("deployment/phase6f-review-output.schema.json")
@@ -17,6 +18,31 @@ test("KHLIM runtime preparation script has valid Bash syntax", () => {
   const result = spawnSync("bash", ["-n", SCRIPT_PATH], { encoding: "utf8" })
 
   assert.equal(result.status, 0, result.stderr)
+})
+
+test("macOS KHLIM Assist Python runtime preparation script has valid Bash syntax", () => {
+  const result = spawnSync("bash", ["-n", MACOS_KHLIM_ASSIST_PYTHON_SCRIPT_PATH], { encoding: "utf8" })
+
+  assert.equal(result.status, 0, result.stderr)
+})
+
+test("macOS KHLIM Assist Python runtime preparation is fixed, gated, isolated, and source-clean", async () => {
+  const source = await readFile(MACOS_KHLIM_ASSIST_PYTHON_SCRIPT_PATH, "utf8")
+
+  assert.match(source, /BASE_PYTHON="\/opt\/homebrew\/bin\/python3\.12"/u)
+  assert.match(source, /SOURCE_REPO="\/Users\/richie\/khlim-assist"/u)
+  assert.match(source, /RUNTIME_DIR="\$\{RUNTIME_ROOT\}\/khlim-assist-python3\.12"/u)
+  assert.match(source, /PPO_MACOS_PYTHON_RUNTIME_CONFIRM/u)
+  assert.match(source, /REQUIRED_CONFIRMATION="prepare-macos-khlim-assist-python-runtime-v1"/u)
+  assert.match(source, /status --porcelain=v1 --untracked-files=all/u)
+  assert.match(source, /archive --format=tar HEAD/u)
+  assert.match(source, /-m venv "\$\{STAGING_DIR\}"/u)
+  assert.match(source, /pip install "\$\{SOURCE_SNAPSHOT\}\[dev\]"/u)
+  assert.match(source, /-m ruff --version/u)
+  assert.match(source, /-m mypy --version/u)
+  assert.match(source, /-m pytest --version/u)
+  assert.match(source, /pytest\.__version__\.split/u)
+  assert.doesNotMatch(source, /sudo|git\s+clone|git\s+pull|reset\s+--hard|--break-system-packages/u)
 })
 
 test("independent reviewer wrapper has valid Bash syntax", () => {
