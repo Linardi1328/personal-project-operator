@@ -266,14 +266,16 @@ test("recovery CLI refuses malformed invocation before reading run state", () =>
   assert.match(result.stderr, /Usage: recover-phase6d-codex-no-change\.mjs/u)
 })
 
-test("KHLIM project brief records the merged scaffold and one new bounded task", async () => {
+test("KHLIM project brief records merged TypeScript configuration and a bounded ESLint task", async () => {
   const brief = await readFile(
     new URL("../projects/khlim-digital-ecosystem.md", import.meta.url),
     "utf8"
   )
 
-  assert.match(brief, /reviewed TypeScript monorepo foundation is merged/u)
+  assert.match(brief, /shared TypeScript configuration foundation are merged/u)
   assert.match(brief, /shared TypeScript configuration foundation/u)
-  assert.match(brief, /Do not repeat or replace the merged monorepo scaffold/u)
+  assert.match(brief, /shared ESLint flat-configuration foundation/u)
+  assert.match(brief, /Do not repeat or replace the merged monorepo or shared TypeScript configuration foundations/u)
+  assert.doesNotMatch(brief, /Add one focused shared TypeScript configuration foundation/u)
   assert.doesNotMatch(brief, /have not been scaffolded yet/u)
 })
