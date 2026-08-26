@@ -15,6 +15,10 @@ import {
 import {
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
+import {
+  MAX_REVIEW_FINDING_CHARS,
+  MAX_REVIEW_FINDINGS
+} from "./development-review-findings-contract.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -35,7 +39,7 @@ export const MAX_REVIEW_STDERR_BYTES = 256 * 1024
 export const MAX_REVIEW_TIMEOUT_MS = 10 * 60 * 1000
 export const MIN_REVIEW_TIMEOUT_MS = 1000
 export const MAX_REVIEW_GIT_OUTPUT_BYTES = 32 * 1024
-export const MAX_REVIEW_FINDINGS = 5
+export { MAX_REVIEW_FINDING_CHARS, MAX_REVIEW_FINDINGS }
 export const REVIEW_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
   CODEX_NATIVE_DARWIN: "codex-native-darwin",
@@ -1887,7 +1891,7 @@ function buildReviewDecisionEvidence(run, execution, config, decision, endedAt) 
   }
 }
 
-function normalizeDecisionText(value, maxChars = 200) {
+function normalizeDecisionText(value, maxChars = MAX_REVIEW_FINDING_CHARS) {
   return normalizeSafeText(value, {
     code: "REVIEW_OUTPUT_INVALID",
     safeMessage: "Independent reviewer output did not match the required schema.",
@@ -1903,7 +1907,10 @@ function normalizeDecisionList(value, fieldName) {
     )
   }
 
-  return value.map((entry) => normalizeDecisionText(entry, fieldName === "summary" ? 500 : 200))
+  return value.map((entry) => normalizeDecisionText(
+    entry,
+    fieldName === "summary" ? 500 : MAX_REVIEW_FINDING_CHARS
+  ))
 }
 
 function hasOnlyKeys(value, keys) {

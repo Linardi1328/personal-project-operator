@@ -8,6 +8,7 @@ import {
 import { planExistingDevelopmentRun } from "./development-next-stage-planner.mjs"
 import { prepareImplementationWorkspace } from "./development-workspace-manager.mjs"
 import {
+  CODEX_EXECUTION_FAILURE_CLASSES,
   classifyCodexExecutionAttemptEvidence,
   executeCodexImplementation
 } from "./development-codex-execution-adapter.mjs"
@@ -180,6 +181,7 @@ const defaultChildHandlers = Object.freeze({
 const safeReasonPattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const safeOutcomePattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const shaPattern = /^[a-f0-9]{40}$/u
+const codexFailureClasses = new Set(CODEX_EXECUTION_FAILURE_CLASSES)
 
 export class DevelopmentContinueOrchestratorError extends Error {
   constructor(code, safeMessage) {
@@ -514,6 +516,11 @@ function safeFailureResult(runId, error) {
 async function childFailureResult(run, action, error, options = {}) {
   const code = typeof error?.code === "string" ? error.code : "CHILD_OPERATION_FAILED"
   const stale = code === "STALE_RUN_VERSION"
+  const codexFailureClass = (
+    code === "CODEX_EXECUTION_FAILED" &&
+    typeof error?.failureClass === "string" &&
+    codexFailureClasses.has(error.failureClass)
+  ) ? error.failureClass : null
   let observed = null
 
   try {
@@ -553,7 +560,12 @@ async function childFailureResult(run, action, error, options = {}) {
     buildSummary: observed?.task || run.task,
     reason: stale
       ? "stale_run_version"
-      : safeReason(error?.reasonCode || error?.reason || code.toLowerCase(), "child_operation_refused")
+      : safeReason(
+        codexFailureClass
+          ? `codex_${codexFailureClass}_failed`
+          : error?.reasonCode || error?.reason || code.toLowerCase(),
+        "child_operation_refused"
+      )
   })
 }
 

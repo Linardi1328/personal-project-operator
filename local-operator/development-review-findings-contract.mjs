@@ -1,0 +1,2 @@
+export const MAX_REVIEW_FINDINGS = 5
+export const MAX_REVIEW_FINDING_CHARS = 200

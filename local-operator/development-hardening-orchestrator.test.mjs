@@ -1005,23 +1005,37 @@ test("remediation context is derived only from durable review evidence and rerun
   assert.doesNotMatch(evidenceText, new RegExp(fixture.location.workspacePath.replaceAll("/", "\\/"), "u"))
 })
 
-test("review blocker size and unsafe content validation fails closed before hardening", async () => {
-  const oversized = await makeReviewChangesRequestedFixture({
+test("review finding boundaries are shared across review, hardening, and Codex prompt construction", async () => {
+  const boundaryFinding = `boundary-${"x".repeat(191)}`
+  const boundary = await makeReviewChangesRequestedFixture({
     reviewDecision: {
-      blockers: ["x".repeat(170)]
+      blockers: [boundaryFinding]
     }
   })
 
-  await assertRejectsCode(executeBoundedHardening(oversized.run.runId, {
+  assert.equal(boundaryFinding.length, 200)
+  await assertHardeningStartsFromEvidence(
+    boundary.run,
+    boundary,
+    INDEPENDENT_REVIEW_AGENT_ID,
+    boundaryFinding
+  )
+
+  const oversized = await makeTestsPassedFixture()
+  await assertRejectsCode(executeIndependentReview(oversized.run.runId, {
     expectedVersion: oversized.run.version,
     writeDataDir: oversized.writeDataDir,
     workspaceRegistry: oversized.registry,
-    codexConfig: trustedCodexConfig(),
-    testPolicyRegistry: trustedTestPolicyRegistry(oversized),
     reviewConfig: trustedReviewConfig(),
-    sandboxRunner: makeCombinedSandboxRunner(),
-    reviewRunner: makeReviewRunner()
-  }), "HARDENING_REVIEW_FINDINGS_INVALID")
+    reviewRunner: makeReviewRunner(async (invocation) => ({
+      exitCode: 0,
+      stdout: `${JSON.stringify(changesRequestedDecision(invocation.reviewedSha, {
+        blockers: ["x".repeat(201)]
+      }))}\n`,
+      stderr: ""
+    })),
+    now: oversized.now
+  }), "REVIEW_OUTPUT_INVALID")
 
   const unsafe = await makeTestsPassedFixture()
   await assertRejectsCode(executeIndependentReview(unsafe.run.runId, {

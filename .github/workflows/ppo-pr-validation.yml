@@ -8,6 +8,8 @@ on:
     branches:
       - 'phase/**'
       - 'feature/**'
+      - 'fix/**'
+      - 'hotfix/**'
 
 permissions:
   contents: read
@@ -26,8 +28,23 @@ jobs:
       - name: Shell syntax checks
         run: find deployment -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 
-      - name: Full regression suite
+      - name: Parallel regression suite
+        run: node --test local-operator/*.test.mjs deployment/*.test.mjs openclaw/plugins/ppo-local/test-bridge.mjs
+
+      - name: Full serial regression suite
         run: node --test --test-concurrency=1 local-operator/*.test.mjs deployment/*.test.mjs openclaw/plugins/ppo-local/test-bridge.mjs
+
+      - name: Critical Phase 6 lifecycle stability
+        run: |
+          for audit_round in 1 2; do
+            node --test --test-concurrency=1 \
+              local-operator/development-codex-execution-adapter.test.mjs \
+              local-operator/development-hardening-orchestrator.test.mjs \
+              local-operator/development-review-agent.test.mjs \
+              local-operator/development-continue-orchestrator.test.mjs \
+              local-operator/development-recovery-coordinator.test.mjs \
+              local-operator/development-acceptance-gate.test.mjs
+          done
 
       - name: Diff whitespace checks
         run: |
