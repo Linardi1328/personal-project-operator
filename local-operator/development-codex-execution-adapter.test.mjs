@@ -1082,9 +1082,9 @@ test("implementation prompt is deterministic, bounded, scoped, and secret-exclud
 test("hardening prompt keeps maximum item counts, 200-character boundary items, and mandatory safety boundaries", async () => {
   const fixture = await makeImplementationFixture()
   const reviewedSha = fixture.run.headSha
-  const blockers = Array.from({ length: 5 }, (_, index) => `blocker-${index + 1}-${"b".repeat(145)}`)
-  const securityFindings = Array.from({ length: 5 }, (_, index) => `security-${index + 1}-${"s".repeat(143)}`)
-  const testsRequired = Array.from({ length: 5 }, (_, index) => `test-${index + 1}-${"t".repeat(148)}`)
+  const blockers = Array.from({ length: 5 }, (_, index) => `blocker-${index + 1}-${"b".repeat(190)}`)
+  const securityFindings = Array.from({ length: 5 }, (_, index) => `security-${index + 1}-${"s".repeat(189)}`)
+  const testsRequired = Array.from({ length: 5 }, (_, index) => `test-${index + 1}-${"t".repeat(193)}`)
   const remediationHash = sha256Text(stableStringify({
     reviewedSha,
     decision: "CHANGES_REQUESTED",
@@ -1290,6 +1290,7 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
   assert.equal(noopReloaded.status, "implementation_in_progress")
   assert.equal(noopReloaded.attempts.implementation, noop.run.attempts.implementation + 1)
   assert.equal(noopReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
+  assert.equal(noopReloaded.evidence.implementation.at(-1).metadata.failureClass, "no_change")
 
   const nonzero = await makeImplementationFixture()
   await assertRejectsCode(executeCodexImplementation(nonzero.run.runId, {
@@ -1303,6 +1304,7 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
   assert.equal(nonzeroReloaded.status, "implementation_in_progress")
   assert.equal(nonzeroReloaded.attempts.implementation, nonzero.run.attempts.implementation + 1)
   assert.equal(nonzeroReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
+  assert.equal(nonzeroReloaded.evidence.implementation.at(-1).metadata.failureClass, "nonzero_exit")
 
   const dirty = await makeImplementationFixture()
   await assertRejectsCode(executeCodexImplementation(dirty.run.runId, {
@@ -1319,6 +1321,7 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
   assert.equal(dirtyReloaded.status, "implementation_in_progress")
   assert.equal(dirtyReloaded.attempts.implementation, dirty.run.attempts.implementation + 1)
   assert.equal(dirtyReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
+  assert.equal(dirtyReloaded.evidence.implementation.at(-1).metadata.failureClass, "workspace_invalid")
 
   const sourceChanged = await makeImplementationFixture()
   await assertRejectsCode(executeCodexImplementation(sourceChanged.run.runId, {
@@ -1334,6 +1337,47 @@ test("Codex no-op, nonzero exit, dirty workspace, and source mutation leave run 
   assert.equal(sourceChangedReloaded.status, "implementation_in_progress")
   assert.equal(sourceChangedReloaded.attempts.implementation, sourceChanged.run.attempts.implementation + 1)
   assert.equal(sourceChangedReloaded.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
+  assert.equal(sourceChangedReloaded.evidence.implementation.at(-1).metadata.failureClass, "source_changed")
+})
+
+test("definitive Codex failures retain only bounded actionable classifications", async () => {
+  for (const fixtureCase of [
+    {
+      failureClass: "authentication",
+      stderr: "401 token_invalidated: session has ended; log out and sign in again"
+    },
+    {
+      failureClass: "workspace_trust",
+      stderr: "Not inside a trusted directory and --skip-git-repo-check was not specified"
+    },
+    {
+      failureClass: "configuration",
+      stderr: "Error loading config.toml: unknown configuration field"
+    }
+  ]) {
+    const fixture = await makeImplementationFixture()
+
+    await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+      expectedVersion: fixture.run.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      codexConfig: trustedCodexConfig(),
+      ...sandboxedCodexRunner(async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: fixtureCase.stderr
+      }))
+    }), "CODEX_EXECUTION_FAILED")
+
+    const reloaded = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    const evidence = reloaded.evidence.implementation.at(-1)
+
+    assert.equal(evidence.metadata.outcome, "execution_failed")
+    assert.equal(evidence.metadata.failureClass, fixtureCase.failureClass)
+    assert.doesNotMatch(JSON.stringify(reloaded), /token_invalidated|config\.toml|skip-git-repo-check/iu)
+  }
 })
 
 test("definitive implementation retries persist attempt counters, survive reload, and enforce max", async () => {

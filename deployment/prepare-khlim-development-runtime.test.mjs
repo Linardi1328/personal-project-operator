@@ -3,6 +3,10 @@ import { spawnSync } from "node:child_process"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import test from "node:test"
+import {
+  MAX_REVIEW_FINDING_CHARS,
+  MAX_REVIEW_FINDINGS
+} from "../local-operator/development-review-findings-contract.mjs"
 
 const SCRIPT_PATH = resolve("deployment/scripts/prepare-khlim-development-runtime.sh")
 const REVIEWER_PATH = resolve("deployment/bin/ppo-independent-reviewer")
@@ -71,9 +75,10 @@ test("independent reviewer output schema pins the exact decision contract", asyn
     "OWNER_ACTION_REQUIRED"
   ])
   assert.equal(schema.properties.reviewedSha.pattern, "^[a-f0-9]{40}$")
-  assert.equal(schema.properties.blockers.maxItems, 5)
-  assert.equal(schema.properties.securityFindings.maxItems, 5)
-  assert.equal(schema.properties.testsRequired.maxItems, 5)
+  for (const field of ["blockers", "securityFindings", "testsRequired"]) {
+    assert.equal(schema.properties[field].maxItems, MAX_REVIEW_FINDINGS)
+    assert.equal(schema.properties[field].items.maxLength, MAX_REVIEW_FINDING_CHARS)
+  }
   assert.equal(schema.properties.summary.maxLength, 500)
 })
 

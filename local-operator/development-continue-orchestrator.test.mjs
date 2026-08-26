@@ -2017,6 +2017,28 @@ test("Phase 6K reports durable child failure state after one read-only reload", 
   assert.equal(stored.version, planned.version + 1)
 })
 
+test("Phase 6K surfaces bounded Codex failure classifications without raw output", async () => {
+  const run = makeRun("implementation_in_progress")
+  const reader = makeReader(run)
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: reader.readRun,
+    childHandlers: {
+      executeCodexImplementation: async () => {
+        const error = new Error("SENSITIVE_TEST_SENTINEL 401 token_invalidated")
+        error.code = "CODEX_EXECUTION_FAILED"
+        error.failureClass = "authentication"
+        throw error
+      }
+    },
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(result.reason, "codex_authentication_failed")
+  assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|token_invalidated/iu)
+})
+
 test("Phase 6K bounds child failure output when post-failure reload is unavailable", async () => {
   const run = makeRun("created")
   const calls = []

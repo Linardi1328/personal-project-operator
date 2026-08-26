@@ -18,11 +18,15 @@ import {
   DEFAULT_PPO_WRITE_DATA_DIR,
   PPO_WRITE_DATA_DIR_ENV
 } from "./project-note-add.mjs"
+import {
+  MAX_REVIEW_FINDING_CHARS,
+  MAX_REVIEW_FINDINGS
+} from "./development-review-findings-contract.mjs"
 
 const execFileAsync = promisify(execFile)
 
 export const CODEX_EXECUTION_ADAPTER_ID = "phase-6d-codex-execution-adapter"
-export const MAX_CODEX_PROMPT_CHARS = 4000
+export const MAX_CODEX_PROMPT_CHARS = 6000
 export const MAX_CODEX_ARG_COUNT = 16
 export const MAX_CODEX_ARG_CHARS = 160
 export const MAX_CODEX_ENV_KEYS = 16
@@ -38,6 +42,17 @@ export const PHASE_6F_HARDENING_ORCHESTRATOR_ID = "phase-6f-bounded-hardening-or
 export const PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID = "phase-6f-independent-review-agent"
 export const PHASE_6G_REMOTE_PR_REVIEW_AGENT_ID = "phase-6g-remote-pr-review-agent"
 export const PHASE_6F_REVIEW_FINDINGS_OUTCOME = "review_findings"
+export const CODEX_EXECUTION_FAILURE_CLASSES = Object.freeze([
+  "authentication",
+  "configuration",
+  "git_verification",
+  "no_change",
+  "nonzero_exit",
+  "runtime",
+  "source_changed",
+  "workspace_invalid",
+  "workspace_trust"
+])
 export const CODEX_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
   CODEX_NATIVE_DARWIN: "codex-native-darwin",
@@ -57,6 +72,7 @@ const hardeningReviewSources = new Set([
   PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID,
   PHASE_6G_REMOTE_PR_REVIEW_AGENT_ID
 ])
+const codexFailureClasses = new Set(CODEX_EXECUTION_FAILURE_CLASSES)
 const noOutboundNetworkSandboxProfile = `(version 1)
 (allow default)
 (deny network*)
@@ -310,7 +326,7 @@ function latestReviewFindingsEvidence(run, reviewedSha, attempt, reviewer) {
 }
 
 function normalizeHardeningItems(value) {
-  if (!Array.isArray(value) || value.length > 5) {
+  if (!Array.isArray(value) || value.length > MAX_REVIEW_FINDINGS) {
     throw adapterError(
       "CODEX_PROMPT_UNSAFE",
       "Codex prompt source is unsafe; execution refused."
@@ -320,7 +336,7 @@ function normalizeHardeningItems(value) {
   return value.map((entry) => normalizeSafeText(entry, {
     code: "CODEX_PROMPT_UNSAFE",
     safeMessage: "Codex prompt source is unsafe; execution refused.",
-    maxChars: 200
+    maxChars: MAX_REVIEW_FINDING_CHARS
   }))
 }
 
@@ -1448,6 +1464,53 @@ function ambiguousExecutionError() {
   return error
 }
 
+function classifyCodexNonzeroExit(result) {
+  const output = `${String(result?.stdout ?? "")}\n${String(result?.stderr ?? "")}`
+
+  if (/token_invalidated|refresh_token_invalidated|log out and sign in again|session has ended/iu.test(output)) {
+    return "authentication"
+  }
+
+  if (/not inside a trusted directory|skip-git-repo-check|trusted directory/iu.test(output)) {
+    return "workspace_trust"
+  }
+
+  if (/error loading config\.toml|unknown configuration field|unknown config/iu.test(output)) {
+    return "configuration"
+  }
+
+  return "nonzero_exit"
+}
+
+function classifyCodexFailure(error) {
+  if (codexFailureClasses.has(error?.failureClass)) {
+    return error.failureClass
+  }
+
+  if (error?.code === "CODEX_NO_IMPLEMENTATION") {
+    return "no_change"
+  }
+
+  if (error?.code === "CODEX_SOURCE_CHANGED") {
+    return "source_changed"
+  }
+
+  if (error?.code === "CODEX_GIT_VERIFY_FAILED") {
+    return "git_verification"
+  }
+
+  if ([
+    "CODEX_IMPLEMENTATION_INVALID",
+    "CODEX_WORKSPACE_DETACHED",
+    "CODEX_WORKSPACE_HEAD_MISMATCH",
+    "CODEX_WORKSPACE_NOT_READY"
+  ].includes(error?.code)) {
+    return "workspace_invalid"
+  }
+
+  return "runtime"
+}
+
 function assertBoundedCodexOutput(result) {
   const stdoutBytes = Buffer.byteLength(String(result?.stdout ?? ""), "utf8")
   const stderrBytes = Buffer.byteLength(String(result?.stderr ?? ""), "utf8")
@@ -1693,10 +1756,12 @@ async function invokeCodex(config, invocation, options = {}) {
       throw ambiguousExecutionError()
     }
 
-    throw adapterError(
+    const failure = adapterError(
       "CODEX_EXECUTION_FAILED",
       "Codex execution failed before a verified implementation was produced."
     )
+    failure.failureClass = "runtime"
+    throw failure
   }
 
   if (isUncertainExecutionOutcome(result)) {
@@ -1706,10 +1771,12 @@ async function invokeCodex(config, invocation, options = {}) {
   assertBoundedCodexOutput(result)
 
   if (!Number.isInteger(result?.exitCode) || result.exitCode !== 0) {
-    throw adapterError(
+    const failure = adapterError(
       "CODEX_EXECUTION_FAILED",
       "Codex execution exited without a verified implementation."
     )
+    failure.failureClass = classifyCodexNonzeroExit(result)
+    throw failure
   }
 
   return {
@@ -2130,6 +2197,7 @@ function buildExecutionFailureEvidence(run, location, execution) {
       startedAt: execution.startedAt,
       endedAt: execution.endedAt,
       outcome: "execution_failed",
+      failureClass: execution.failureClass,
       remotePolicy: "deny",
       sandbox: CODEX_EXECUTION_SANDBOX_ID,
       backend: execution.executionSandbox.backend,
@@ -2301,7 +2369,11 @@ export function classifyCodexExecutionAttemptEvidence(run) {
     return "open"
   }
 
-  if (metadata.outcome === "execution_failed" && boundedEvidenceText(metadata.endedAt, 80)) {
+  if (
+    metadata.outcome === "execution_failed" &&
+    boundedEvidenceText(metadata.endedAt, 80) &&
+    (metadata.failureClass === undefined || codexFailureClasses.has(metadata.failureClass))
+  ) {
     return "definitive_failed"
   }
 
@@ -2474,6 +2546,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
     }
 
     execution.endedAt = timestamp(nowDate(options))
+    execution.failureClass = classifyCodexFailure(error)
     await recordDefinitiveCodexFailure(attemptRun, postReservation.location, execution, options)
     throw error
   }
@@ -2485,6 +2558,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
   try {
     verified = await verifyImplementationResult(attemptRun, postReservation.location, sourceBefore, postReservation.expectedStartSha, options)
   } catch (error) {
+    execution.failureClass = classifyCodexFailure(error)
     await recordDefinitiveCodexFailure(attemptRun, postReservation.location, execution, options)
     throw error
   }

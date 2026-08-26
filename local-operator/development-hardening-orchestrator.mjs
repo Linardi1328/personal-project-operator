@@ -21,6 +21,10 @@ import {
   REVIEW_FINDINGS_EVIDENCE_OUTCOME,
   executeIndependentReview
 } from "./development-review-agent.mjs"
+import {
+  MAX_REVIEW_FINDING_CHARS,
+  MAX_REVIEW_FINDINGS
+} from "./development-review-findings-contract.mjs"
 
 export const HARDENING_ORCHESTRATOR_ID = PHASE_6F_HARDENING_ORCHESTRATOR_ID
 export const MAX_HARDENING_ROUNDS = 3
@@ -119,7 +123,12 @@ function normalizeSha(value, fieldName = "SHA") {
 function normalizeFindingText(value) {
   const normalized = String(value ?? "").trim()
 
-  if (!normalized || normalized.length > 160 || unsafeControlPattern.test(normalized) || sensitiveTextPattern.test(normalized)) {
+  if (
+    !normalized ||
+    normalized.length > MAX_REVIEW_FINDING_CHARS ||
+    unsafeControlPattern.test(normalized) ||
+    sensitiveTextPattern.test(normalized)
+  ) {
     throw hardeningError(
       "HARDENING_REVIEW_FINDINGS_INVALID",
       "Review findings are missing, malformed, oversized, or unsafe for automated hardening."
@@ -130,7 +139,7 @@ function normalizeFindingText(value) {
 }
 
 function normalizeFindingList(value) {
-  if (!Array.isArray(value) || value.length > 5) {
+  if (!Array.isArray(value) || value.length > MAX_REVIEW_FINDINGS) {
     throw hardeningError(
       "HARDENING_REVIEW_FINDINGS_INVALID",
       "Review findings are missing, malformed, oversized, or unsafe for automated hardening."
