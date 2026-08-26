@@ -1079,7 +1079,7 @@ test("implementation prompt is deterministic, bounded, scoped, and secret-exclud
   }), "CODEX_CONFIG_INVALID")
 })
 
-test("hardening prompt keeps all remediation items and mandatory safety boundaries at max bounds", async () => {
+test("hardening prompt keeps maximum item counts, 200-character boundary items, and mandatory safety boundaries", async () => {
   const fixture = await makeImplementationFixture()
   const reviewedSha = fixture.run.headSha
   const blockers = Array.from({ length: 5 }, (_, index) => `blocker-${index + 1}-${"b".repeat(145)}`)
@@ -1168,6 +1168,62 @@ test("hardening prompt keeps all remediation items and mandatory safety boundari
   ]) {
     assert.match(prompt, new RegExp(requiredBoundary.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"))
   }
+  const boundaryBlockers = [`blocker-1-${"b".repeat(190)}`]
+  const boundarySecurityFindings = [`security-1-${"s".repeat(189)}`]
+  const boundaryTestsRequired = [`test-1-${"t".repeat(193)}`]
+  const boundaryRemediationHash = sha256Text(stableStringify({
+    reviewedSha,
+    decision: "CHANGES_REQUESTED",
+    blockers: boundaryBlockers,
+    securityFindings: boundarySecurityFindings,
+    testsRequired: boundaryTestsRequired
+  }))
+  const boundaryRun = structuredClone(run)
+
+  Object.assign(boundaryRun.evidence.implementation[0].metadata, {
+    blockerCount: boundaryBlockers.length,
+    securityFindingCount: boundarySecurityFindings.length,
+    testRequirementCount: boundaryTestsRequired.length,
+    remediationHash: boundaryRemediationHash
+  })
+
+  Object.assign(boundaryRun.evidence.review[0].metadata, {
+    blockers: boundaryBlockers.length,
+    securityFindings: boundarySecurityFindings.length,
+    testsRequired: boundaryTestsRequired.length,
+    blockerItems: boundaryBlockers,
+    securityItems: boundarySecurityFindings,
+    testItems: boundaryTestsRequired,
+    findingHash: boundaryRemediationHash
+  })
+
+  const boundaryPrompt = buildCodexImplementationPrompt(
+    boundaryRun,
+    fixture.location
+  )
+
+  assert.equal(boundaryPrompt.length <= MAX_CODEX_PROMPT_CHARS, true)
+
+  for (const item of [
+    ...boundaryBlockers,
+    ...boundarySecurityFindings,
+    ...boundaryTestsRequired
+  ]) {
+    assert.equal(item.length, 200)
+    assert.match(boundaryPrompt, new RegExp(item, "u"))
+  }
+
+  const oversizedRun = structuredClone(boundaryRun)
+  oversizedRun.evidence.review[0].metadata.blockerItems[0] += "b"
+
+  assert.throws(
+    () => buildCodexImplementationPrompt(oversizedRun, fixture.location),
+    (error) => {
+      assert.equal(error.code, "CODEX_PROMPT_UNSAFE")
+      return true
+    }
+  )
+
 })
 
 test("successful Codex execution is independently verified and transitions to implementation_ready", async () => {
@@ -1480,4 +1536,5 @@ test("Phase 6D adds no GitHub write, deployment, PR automation, or OpenClaw rout
 
   const fixture = await makeImplementationFixture()
   assert.equal((await stat(fixture.location.workspacePath)).isDirectory(), true)
+
 })

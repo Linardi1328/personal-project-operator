@@ -309,7 +309,7 @@ function latestReviewFindingsEvidence(run, reviewedSha, attempt, reviewer) {
   return null
 }
 
-function normalizeHardeningItems(value, fieldName) {
+function normalizeHardeningItems(value) {
   if (!Array.isArray(value) || value.length > 5) {
     throw adapterError(
       "CODEX_PROMPT_UNSAFE",
@@ -320,7 +320,7 @@ function normalizeHardeningItems(value, fieldName) {
   return value.map((entry) => normalizeSafeText(entry, {
     code: "CODEX_PROMPT_UNSAFE",
     safeMessage: "Codex prompt source is unsafe; execution refused.",
-    maxChars: fieldName === "testsRequired" ? 160 : 160
+    maxChars: 200
   }))
 }
 
@@ -373,9 +373,9 @@ function deriveHardeningRemediationContext(run) {
     )
   }
 
-  const blockers = normalizeHardeningItems(findings.metadata?.blockerItems, "blockers")
-  const securityFindings = normalizeHardeningItems(findings.metadata?.securityItems, "securityFindings")
-  const testsRequired = normalizeHardeningItems(findings.metadata?.testItems, "testsRequired")
+  const blockers = normalizeHardeningItems(findings.metadata?.blockerItems)
+  const securityFindings = normalizeHardeningItems(findings.metadata?.securityItems)
+  const testsRequired = normalizeHardeningItems(findings.metadata?.testItems)
   const expectedHash = sha256Text(stableStringify({
     reviewedSha,
     decision: "CHANGES_REQUESTED",
