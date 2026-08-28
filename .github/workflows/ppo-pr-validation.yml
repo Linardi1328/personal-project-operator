@@ -46,6 +46,40 @@ jobs:
               local-operator/development-acceptance-gate.test.mjs
           done
 
+      - name: Phase 6Q integrated user acceptance
+        run: |
+          node --test --test-concurrency=1 \
+            local-operator/phase-6q-integrated-acceptance.test.mjs \
+            local-operator/github-ppo-status.test.mjs \
+            local-operator/github-ppo-commands.test.mjs \
+            local-operator/codex-prompt-generator.test.mjs \
+            local-operator/codex-planning-tools.test.mjs \
+            local-operator/github-issue-create.test.mjs \
+            local-operator/github-issue-approval.test.mjs \
+            local-operator/project-note-add.test.mjs \
+            local-operator/project-note-approval.test.mjs \
+            local-operator/project-state-promote.test.mjs \
+            local-operator/development-run-state.test.mjs \
+            local-operator/development-next-stage-planner.test.mjs \
+            local-operator/development-workspace-manager.test.mjs \
+            local-operator/development-codex-execution-adapter.test.mjs \
+            local-operator/development-test-runner.test.mjs \
+            local-operator/development-review-agent.test.mjs \
+            local-operator/development-hardening-orchestrator.test.mjs \
+            local-operator/github-delivery-agent.test.mjs \
+            local-operator/development-deployment-agent.test.mjs \
+            local-operator/development-production-verification-agent.test.mjs \
+            local-operator/development-rollback-agent.test.mjs \
+            local-operator/development-start-route.test.mjs \
+            local-operator/development-continue-orchestrator.test.mjs \
+            local-operator/development-recovery-coordinator.test.mjs \
+            local-operator/development-recovery-route.test.mjs \
+            local-operator/development-run-catalog.test.mjs \
+            local-operator/development-run-catalog-route.test.mjs \
+            local-operator/development-run-cancellation.test.mjs \
+            local-operator/development-run-cancellation-approval.test.mjs \
+            openclaw/plugins/ppo-local/test-bridge.mjs
+
       - name: Diff whitespace checks
         run: |
           git diff --check
