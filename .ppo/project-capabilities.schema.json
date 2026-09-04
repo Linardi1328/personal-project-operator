@@ -53,6 +53,13 @@
           "type": "array",
           "minItems": 5,
           "maxItems": 5,
+          "allOf": [
+            { "contains": { "properties": { "id": { "const": "syntax" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "parallel-regression" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "serial-regression" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "critical-lifecycle" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "integrated-acceptance" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 }
+          ],
           "items": {
             "type": "object",
             "additionalProperties": false,
