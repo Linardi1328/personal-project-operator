@@ -13,6 +13,7 @@ import {
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
+  formatReviewRuntimeFailureRecovery,
   recoverReviewRuntimeFailure
 } from "./development-review-retry-recovery.mjs"
 
@@ -125,7 +126,24 @@ async function makeReviewFailureRun(decision = "OWNER_ACTION_REQUIRED") {
     run = await transitionDevelopmentRun(run.runId, {
       expectedVersion: run.version,
       status,
-      actor: "test-agent"
+      actor: "test-agent",
+      ...(status === "tests_passed" ? {
+        evidence: [{
+          kind: "test",
+          sha: HEAD_SHA,
+          source: "phase-6e-automated-test-runner",
+          summary: "Exact-SHA automated test policy passed.",
+          metadata: {
+            project: "khlim-digital-ecosystem",
+            implSha: HEAD_SHA,
+            outcome: "passed",
+            total: 1,
+            passed: 1,
+            failed: 0,
+            ambiguous: 0
+          }
+        }]
+      } : {})
     }, {
       writeDataDir,
       now
@@ -230,9 +248,37 @@ test("confirmed runtime failure recovery returns the exact run to tests_passed",
   assert.equal(stored.status, "tests_passed")
   assert.equal(stored.headSha, HEAD_SHA)
   assert.equal(stored.attempts.review, 1)
+  assert.equal(stored.attempts.implementation, fixture.run.attempts.implementation)
+  assert.equal(stored.attempts.test, fixture.run.attempts.test)
+  assert.equal(stored.evidence.test.length, fixture.run.evidence.test.length)
+  assert.deepEqual(stored.evidence.test, fixture.run.evidence.test)
+  assert.equal(stored.evidence.test.at(-1).sha, HEAD_SHA)
+  assert.equal(stored.evidence.test.at(-1).metadata.implSha, HEAD_SHA)
+  assert.equal(stored.evidence.test.at(-1).metadata.outcome, "passed")
+  assert.equal(stored.evidence.review.filter((entry) => entry.metadata?.outcome === "hardening_started").length, 0)
   assert.equal(stored.evidence.review.at(-1).source, "phase-6f-review-runtime-failure-recovery")
   assert.equal(stored.evidence.review.at(-1).metadata.outcome, "review_runtime_failure_recovered")
   assert.equal(stored.evidence.review.some((entry) => entry.metadata?.decision === "APPROVED"), false)
+})
+
+test("recovery formatter supports the terminal-only self-development continuation route", () => {
+  const output = formatReviewRuntimeFailureRecovery({
+    outcome: "review_runtime_failure_recovered",
+    before: { version: 12, status: "review_changes_requested" },
+    run: {
+      runId: "S".repeat(43),
+      project: "personal-project-operator",
+      version: 13,
+      status: "tests_passed",
+      headSha: HEAD_SHA,
+      reviewAttempt: 1
+    }
+  }, {
+    nextCommand: "ppo-self-development continue"
+  })
+
+  assert.match(output, new RegExp(`Next command: ppo-self-development continue ${"S".repeat(43)}`, "u"))
+  assert.doesNotMatch(output, /Next command: \/ppo continue/u)
 })
 
 test("ordinary transitions still refuse review_changes_requested to tests_passed", async () => {

@@ -852,6 +852,43 @@ test("valid blockers transition review_in_progress to review_changes_requested w
   assert.equal(result.review.mergeAllowed, false)
   assert.equal(latestReviewEvidence(result.run).metadata.outcome, "changes_requested")
   assert.equal(latestReviewEvidence(result.run).metadata.blockers, 1)
+  assert.equal(Object.hasOwn(latestReviewEvidence(result.run).metadata, "runtimeFailureClass"), false)
+  assert.equal(result.run.evidence.review.some((entry) => entry.metadata?.outcome === "review_findings"), true)
+})
+
+test("authentication and non-authentication reviewer failures remain classified runtime evidence without findings", async () => {
+  for (const [stderr, expectedClass] of [
+    ["codex: authentication token expired", "authentication"],
+    ["codex: reviewer process unavailable", "runtime"]
+  ]) {
+    const fixture = await makeTestsPassedFixture()
+
+    await assertRejectsCode(executeIndependentReview(fixture.run.runId, {
+      expectedVersion: fixture.run.version,
+      writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry,
+      reviewConfig: trustedReviewConfig(),
+      reviewRunner: makeReviewRunner(async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr
+      })),
+      now: fixture.now
+    }), "REVIEW_EXECUTION_FAILED")
+
+    const reloaded = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    const evidence = latestReviewEvidence(reloaded)
+
+    assert.equal(reloaded.status, "review_changes_requested")
+    assert.equal(evidence.metadata.decision, REVIEW_DECISIONS.OWNER_ACTION_REQUIRED)
+    assert.equal(evidence.metadata.runtimeFailureClass, expectedClass)
+    assert.equal(evidence.metadata.blockers, 0)
+    assert.equal(evidence.metadata.securityFindings, 0)
+    assert.equal(evidence.metadata.testsRequired, 0)
+    assert.equal(reloaded.evidence.review.some((entry) => entry.metadata?.outcome === "review_findings"), false)
+  }
 })
 
 test("valid owner-action-required review uses review_changes_requested without inventing approval", async () => {

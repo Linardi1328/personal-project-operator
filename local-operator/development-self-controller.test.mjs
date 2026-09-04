@@ -420,6 +420,9 @@ test("Stage 0 command exposes confirmation-gated exact-SHA review retry without 
   assert.equal(handled.ok, true)
   assert.deepEqual(calls[0], [RUN_ID, 12, HEAD_SHA, "retry-phase6f-review-runtime-failure-v1"])
   assert.match(handled.output, /After: tests_passed \(version 13\)/u)
+  assert.match(handled.output, new RegExp(`Head: ${HEAD_SHA}`, "u"))
+  assert.match(handled.output, new RegExp(`Next command: ppo-self-development continue ${RUN_ID}`, "u"))
+  assert.doesNotMatch(handled.output, /Next command: \/ppo continue/u)
 })
 
 test("Stage 0 cancellation requires a current canonical run, exact version, and exact local confirmation", async () => {

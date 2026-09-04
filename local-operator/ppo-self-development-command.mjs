@@ -71,7 +71,12 @@ export async function handlePpoSelfDevelopmentCommand(args, handlers = {}) {
     args[5] === "--local-owner-confirmed"
   ) {
     const result = await recoverReviewRuntime(args[1], Number(args[2]), args[3], args[4])
-    return { ok: result.ok, output: formatReviewRuntimeFailureRecovery(result) }
+    return {
+      ok: result.ok,
+      output: formatReviewRuntimeFailureRecovery(result, {
+        nextCommand: "ppo-self-development continue"
+      })
+    }
   }
 
   if (args.length === 2 && args[0] === "cancel" && exactRunId(args[1])) {
