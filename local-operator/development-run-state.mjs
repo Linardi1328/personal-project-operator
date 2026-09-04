@@ -17,6 +17,8 @@ import {
   PPO_WRITE_DATA_DIR_ENV
 } from "./project-note-add.mjs"
 import {
+  PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
+  getApprovedDevelopmentProject,
   getOrdinaryDevelopmentProject,
   listOrdinaryDevelopmentProjects
 } from "./github-project-registry.mjs"
@@ -30,13 +32,7 @@ export {
   DEVELOPMENT_RUN_ID_PATTERN
 }
 
-export const PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT = Object.freeze({
-  id: "personal-project-operator",
-  displayName: "Personal Project Operator",
-  owner: "Linardi1328",
-  repo: "personal-project-operator",
-  fullName: "Linardi1328/personal-project-operator"
-})
+export { PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT }
 
 export const DEVELOPMENT_RUN_SCHEMA_VERSION = 1
 export const DEVELOPMENT_RUN_STORE_DIR = "development-runs"
@@ -555,6 +551,26 @@ export function resolveDevelopmentRunProject(projectId) {
     ...project,
     fullName: repoFullName(project)
   }
+}
+
+export function resolveApprovedDevelopmentRunProject(projectId) {
+  if (typeof projectId !== "string" || !projectId.trim()) {
+    throw runStateError(
+      "INVALID_PROJECT",
+      "Approved development project id is required."
+    )
+  }
+
+  const project = getApprovedDevelopmentProject(projectId.trim())
+
+  if (!project) {
+    throw runStateError(
+      "UNKNOWN_PROJECT",
+      "Project id is not in the approved development allowlist."
+    )
+  }
+
+  return project
 }
 
 export function normalizeDevelopmentRunStatus(status) {

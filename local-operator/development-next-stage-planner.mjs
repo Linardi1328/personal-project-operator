@@ -4,15 +4,21 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   DevelopmentRunStateError,
+  PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
   createDevelopmentRun,
+  createPersonalProjectOperatorSelfDevelopmentRun,
   readDevelopmentRun,
+  readPersonalProjectOperatorSelfDevelopmentRun,
+  transitionPersonalProjectOperatorSelfDevelopmentRun,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
   GitHubReadOnlyError,
-  createGitHubReadOnlyClient
+  createGitHubReadOnlyClient,
+  createPersonalProjectOperatorSelfDevelopmentGitHubReadOnlyClient
 } from "./github-readonly.mjs"
 import {
+  getApprovedDevelopmentProject,
   getOrdinaryDevelopmentProject,
   listOrdinaryDevelopmentProjects
 } from "./github-project-registry.mjs"
@@ -55,7 +61,10 @@ const unsafeControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-
 const sensitiveTextPattern = /(?:SENSITIVE_TEST_SENTINEL|github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
 
 const approvedProjectDocRefs = Object.freeze(Object.fromEntries(
-  listOrdinaryDevelopmentProjects().map((project) => [project.id, `projects/${project.id}.md`])
+  [
+    ...listOrdinaryDevelopmentProjects(),
+    PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
+  ].map((project) => [project.id, `projects/${project.id}.md`])
 ))
 const approvedSourceRefs = new Set([
   "ROADMAP.md",
@@ -101,7 +110,7 @@ function repoFullName(project) {
   return `${project.owner}/${project.repo}`
 }
 
-function resolvePlannerProject(projectId) {
+function resolvePlannerProject(projectId, options = {}) {
   if (typeof projectId !== "string" || !projectId.trim()) {
     throw plannerError(
       "INVALID_PROJECT",
@@ -110,7 +119,9 @@ function resolvePlannerProject(projectId) {
   }
 
   const normalized = projectId.trim()
-  const project = getOrdinaryDevelopmentProject(normalized)
+  const project = options.allowPersonalProjectOperatorSelfDevelopmentProject === true
+    ? getApprovedDevelopmentProject(normalized)
+    : getOrdinaryDevelopmentProject(normalized)
 
   if (!project) {
     throw plannerError(
@@ -661,7 +672,13 @@ async function readPlannerSources(project, options = {}) {
 }
 
 async function getReadOnlySnapshot(project, options = {}) {
-  const client = options.githubClient || createGitHubReadOnlyClient(options.githubOptions || {})
+  const selfDevelopment = (
+    options.allowPersonalProjectOperatorSelfDevelopmentProject === true &&
+    project.id === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id
+  )
+  const client = options.githubClient || (selfDevelopment
+    ? createPersonalProjectOperatorSelfDevelopmentGitHubReadOnlyClient(options.githubOptions || {})
+    : createGitHubReadOnlyClient(options.githubOptions || {}))
   return client.getProjectSnapshot(project.id)
 }
 
@@ -704,7 +721,7 @@ function buildPlanEvidenceRecord(plan) {
 }
 
 async function planNextDevelopmentStageInternal(projectId, options = {}) {
-  const project = resolvePlannerProject(projectId)
+  const project = resolvePlannerProject(projectId, options)
   let sources
 
   try {
@@ -926,91 +943,139 @@ export async function planNextDevelopmentStage(projectId, options = {}) {
   }
 }
 
+async function createPlannedDevelopmentRunInternal(projectId, options, stateApi) {
+  const plan = await planNextDevelopmentStageInternal(projectId, options)
+
+  if (plan.outcome !== "planned") {
+    return {
+      ok: false,
+      outcome: plan.outcome,
+      plan,
+      run: null
+    }
+  }
+
+  assertPlanIsExecutable(plan)
+
+  const created = await stateApi.create({
+    projectId: plan.project.id,
+    task: plan.next.task,
+    baseSha: plan.baseSha,
+    branch: plan.githubFacts.repository.defaultBranch,
+    headSha: plan.baseSha,
+    actor: NEXT_STAGE_PLANNER_ID
+  }, options)
+  const planning = await stateApi.transition(created.runId, {
+    expectedVersion: created.version,
+    status: "planning_in_progress",
+    actor: NEXT_STAGE_PLANNER_ID,
+    reason: "phase-6b-planning-started"
+  }, options)
+  const planned = await stateApi.transition(created.runId, {
+    expectedVersion: planning.version,
+    status: "planned",
+    actor: NEXT_STAGE_PLANNER_ID,
+    reason: "phase-6b-plan-ready",
+    evidence: [buildPlanEvidenceRecord(plan)]
+  }, options)
+
+  return {
+    ok: true,
+    outcome: "planned",
+    plan,
+    run: planned
+  }
+}
+
 export async function createPlannedDevelopmentRun(projectId, options = {}) {
   try {
-    const plan = await planNextDevelopmentStageInternal(projectId, options)
-
-    if (plan.outcome !== "planned") {
-      return {
-        ok: false,
-        outcome: plan.outcome,
-        plan,
-        run: null
-      }
-    }
-
-    assertPlanIsExecutable(plan)
-
-    const created = await createDevelopmentRun({
-      projectId: plan.project.id,
-      task: plan.next.task,
-      baseSha: plan.baseSha,
-      branch: plan.githubFacts.repository.defaultBranch,
-      headSha: plan.baseSha,
-      actor: NEXT_STAGE_PLANNER_ID
-    }, options)
-    const planning = await transitionDevelopmentRun(created.runId, {
-      expectedVersion: created.version,
-      status: "planning_in_progress",
-      actor: NEXT_STAGE_PLANNER_ID,
-      reason: "phase-6b-planning-started"
-    }, options)
-    const planned = await transitionDevelopmentRun(created.runId, {
-      expectedVersion: planning.version,
-      status: "planned",
-      actor: NEXT_STAGE_PLANNER_ID,
-      reason: "phase-6b-plan-ready",
-      evidence: [buildPlanEvidenceRecord(plan)]
-    }, options)
-
-    return {
-      ok: true,
-      outcome: "planned",
-      plan,
-      run: planned
-    }
+    return await createPlannedDevelopmentRunInternal(projectId, options, {
+      create: createDevelopmentRun,
+      transition: transitionDevelopmentRun
+    })
   } catch (error) {
     throw safePlannerFailure(error)
   }
 }
 
+export async function createPlannedPersonalProjectOperatorSelfDevelopmentRun(options = {}) {
+  try {
+    const selfOptions = {
+      ...options,
+      allowPersonalProjectOperatorSelfDevelopmentProject: true
+    }
+    return await createPlannedDevelopmentRunInternal(
+      PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id,
+      selfOptions,
+      {
+        create: createPersonalProjectOperatorSelfDevelopmentRun,
+        transition: transitionPersonalProjectOperatorSelfDevelopmentRun
+      }
+    )
+  } catch (error) {
+    throw safePlannerFailure(error)
+  }
+}
+
+async function planExistingDevelopmentRunInternal(runId, options, stateApi) {
+  const expectedVersion = options.expectedVersion
+  const currentRun = await stateApi.read(runId, options)
+  const plan = await planNextDevelopmentStageInternal(currentRun.project.id, options)
+
+  if (plan.outcome !== "planned") {
+    return {
+      ok: false,
+      outcome: plan.outcome,
+      plan,
+      run: currentRun
+    }
+  }
+
+  assertPlanIsExecutable(plan)
+
+  const planning = await stateApi.transition(currentRun.runId, {
+    expectedVersion,
+    status: "planning_in_progress",
+    actor: NEXT_STAGE_PLANNER_ID,
+    reason: "phase-6b-planning-started"
+  }, options)
+  const planned = await stateApi.transition(currentRun.runId, {
+    expectedVersion: planning.version,
+    status: "planned",
+    actor: NEXT_STAGE_PLANNER_ID,
+    reason: "phase-6b-plan-ready",
+    evidence: [buildPlanEvidenceRecord(plan)]
+  }, options)
+
+  return {
+    ok: true,
+    outcome: "planned",
+    plan,
+    run: planned
+  }
+}
+
 export async function planExistingDevelopmentRun(runId, options = {}) {
   try {
-    const expectedVersion = options.expectedVersion
-    const currentRun = await readDevelopmentRun(runId, options)
-    const plan = await planNextDevelopmentStageInternal(currentRun.project.id, options)
+    return await planExistingDevelopmentRunInternal(runId, options, {
+      read: readDevelopmentRun,
+      transition: transitionDevelopmentRun
+    })
+  } catch (error) {
+    throw safePlannerFailure(error)
+  }
+}
 
-    if (plan.outcome !== "planned") {
-      return {
-        ok: false,
-        outcome: plan.outcome,
-        plan,
-        run: currentRun
-      }
+export async function planExistingPersonalProjectOperatorSelfDevelopmentRun(runId, options = {}) {
+  try {
+    const selfOptions = {
+      ...options,
+      allowPersonalProjectOperatorSelfDevelopmentProject: true
     }
-
-    assertPlanIsExecutable(plan)
-
-    const planning = await transitionDevelopmentRun(currentRun.runId, {
-      expectedVersion,
-      status: "planning_in_progress",
-      actor: NEXT_STAGE_PLANNER_ID,
-      reason: "phase-6b-planning-started"
-    }, options)
-    const planned = await transitionDevelopmentRun(currentRun.runId, {
-      expectedVersion: planning.version,
-      status: "planned",
-      actor: NEXT_STAGE_PLANNER_ID,
-      reason: "phase-6b-plan-ready",
-      evidence: [buildPlanEvidenceRecord(plan)]
-    }, options)
-
-    return {
-      ok: true,
-      outcome: "planned",
-      plan,
-      run: planned
-    }
+    return await planExistingDevelopmentRunInternal(runId, selfOptions, {
+      read: readPersonalProjectOperatorSelfDevelopmentRun,
+      transition: transitionPersonalProjectOperatorSelfDevelopmentRun
+    })
   } catch (error) {
     throw safePlannerFailure(error)
   }

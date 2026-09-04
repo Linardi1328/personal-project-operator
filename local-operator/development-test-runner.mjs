@@ -8,7 +8,7 @@ import {
   DevelopmentRunStateError,
   readDevelopmentRun,
   recordDevelopmentRunProgress,
-  resolveDevelopmentRunProject,
+  resolveApprovedDevelopmentRunProject,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
@@ -584,7 +584,7 @@ function normalizeTestPolicyRegistry(registry) {
   const normalized = new Map()
 
   for (const [projectId, policy] of Object.entries(registry)) {
-    const project = resolveDevelopmentRunProject(projectId)
+    const project = resolveApprovedDevelopmentRunProject(projectId)
     normalized.set(project.id, normalizeProjectTestPolicy(project, policy))
   }
 

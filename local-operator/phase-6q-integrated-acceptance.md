@@ -35,6 +35,7 @@ A SHA change invalidates the result and requires the checks to run again.
 | terminal `issue-create` | `github-issue-create.test.mjs` | PASS |
 | terminal `note-add` | `project-note-add.test.mjs` | PASS |
 | terminal `state-promote` | `project-state-promote.test.mjs` | PASS |
+| local-only `ppo-self-development` | `development-self-controller.test.mjs` | PASS |
 
 ## Phase 6 lifecycle matrix
 

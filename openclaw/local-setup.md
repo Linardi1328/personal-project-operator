@@ -104,6 +104,10 @@ Install the reviewed macOS wrapper as a root-owned executable:
 sudo install -m 0755 -o root -g wheel \
   /Users/richie/personal-project-operator/deployment/bin/ppo-independent-reviewer-macos \
   /usr/local/bin/ppo-independent-reviewer
+
+sudo install -m 0755 -o root -g wheel \
+  /Users/richie/personal-project-operator/deployment/bin/ppo-self-development \
+  /usr/local/bin/ppo-self-development
 ```
 
 Do not install `deployment/bin/ppo-independent-reviewer` on macOS. That separate wrapper is pinned to the Linux `/home/ppo`, `/var/lib`, and `/opt` runtime layout.

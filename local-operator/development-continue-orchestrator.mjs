@@ -3,9 +3,13 @@ import {
   DEVELOPMENT_RUN_ID_PATTERN,
   DevelopmentRunStateError,
   PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
-  readDevelopmentRun
+  readDevelopmentRun,
+  readPersonalProjectOperatorSelfDevelopmentRun
 } from "./development-run-state.mjs"
-import { planExistingDevelopmentRun } from "./development-next-stage-planner.mjs"
+import {
+  planExistingDevelopmentRun,
+  planExistingPersonalProjectOperatorSelfDevelopmentRun
+} from "./development-next-stage-planner.mjs"
 import { prepareImplementationWorkspace } from "./development-workspace-manager.mjs"
 import {
   CODEX_EXECUTION_FAILURE_CLASSES,
@@ -28,6 +32,8 @@ import { safeDevelopmentBuildSummary } from "./development-build-summary.mjs"
 
 export const DEVELOPMENT_CONTINUE_ORCHESTRATOR_ID = "phase-6k-controlled-ppo-continue-orchestrator"
 export const PHASE_6K_CONTINUE_POLICY_ID = "phase-6k-controlled-ppo-continue"
+export const PPO_SELF_DEVELOPMENT_CONTINUE_ORCHESTRATOR_ID = "stage-0-local-ppo-self-development-continue-orchestrator"
+export const PPO_SELF_DEVELOPMENT_CONTINUE_POLICY_ID = "stage-0-local-ppo-self-development-continue"
 
 const policyBoundary = Object.freeze({
   id: PHASE_6K_CONTINUE_POLICY_ID,
@@ -44,7 +50,47 @@ export const PHASE_6K_CONTINUE_POLICY_HASH = createHash("sha256")
   .update(JSON.stringify(policyBoundary))
   .digest("hex")
 
+const selfDevelopmentPolicyBoundary = Object.freeze({
+  id: PPO_SELF_DEVELOPMENT_CONTINUE_POLICY_ID,
+  orchestrator: PPO_SELF_DEVELOPMENT_CONTINUE_ORCHESTRATOR_ID,
+  callerInput: Object.freeze(["runId"]),
+  allowedProjects: Object.freeze([PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id]),
+  localOnly: true,
+  openClawRoute: false,
+  maximumStatus: "merged",
+  productionActions: false,
+  backgroundExecution: false,
+  modelRouting: false
+})
+
+export const PPO_SELF_DEVELOPMENT_CONTINUE_POLICY_HASH = createHash("sha256")
+  .update(JSON.stringify(selfDevelopmentPolicyBoundary))
+  .digest("hex")
+
 const ordinaryProjectIds = new Set(policyBoundary.allowedProjects)
+const ordinaryScope = Object.freeze({
+  id: "ordinary",
+  policyId: PHASE_6K_CONTINUE_POLICY_ID,
+  policyHash: PHASE_6K_CONTINUE_POLICY_HASH,
+  reader: readDevelopmentRun,
+  allowProject: (run) => {
+    const projectId = projectIdFor(run)
+    return projectId !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id && ordinaryProjectIds.has(projectId)
+  },
+  childOptions: Object.freeze({}),
+  nextCommand: "/ppo continue"
+})
+const selfDevelopmentScope = Object.freeze({
+  id: "self-development",
+  policyId: PPO_SELF_DEVELOPMENT_CONTINUE_POLICY_ID,
+  policyHash: PPO_SELF_DEVELOPMENT_CONTINUE_POLICY_HASH,
+  reader: readPersonalProjectOperatorSelfDevelopmentRun,
+  allowProject: (run) => projectIdFor(run) === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id,
+  childOptions: Object.freeze({
+    allowPersonalProjectOperatorSelfDevelopmentProject: true
+  }),
+  nextCommand: "ppo-self-development continue"
+})
 const forbiddenCallerOptionKeys = new Set([
   "expectedVersion",
   "project",
@@ -240,16 +286,11 @@ function projectIdFor(run) {
   return typeof run?.project?.id === "string" ? run.project.id : "unknown"
 }
 
-function isOrdinaryProject(run) {
-  const projectId = projectIdFor(run)
-
-  return (
-    projectId !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id &&
-    ordinaryProjectIds.has(projectId)
-  )
+function isAllowedProject(run, scope) {
+  return scope.allowProject(run) === true
 }
 
-function projectRefusedResult(run) {
+function projectRefusedResult(run, scope) {
   return baseResult({
     ok: false,
     runId: run.runId,
@@ -260,28 +301,28 @@ function projectRefusedResult(run) {
     after: run.status,
     headSha: run.headSha,
     reason: "project_refused"
-  })
+  }, scope)
 }
 
-function validateImplementationAttemptBoundary(run, action) {
+function validateImplementationAttemptBoundary(run, action, scope) {
   const classification = classifyCodexExecutionAttemptEvidence(run)
 
   if (classification === "invalid") {
-    return ownerActionResult(run, action, "codex_evidence_invalid")
+    return ownerActionResult(run, action, "codex_evidence_invalid", scope)
   }
 
   if (classification === "open") {
-    return ownerActionResult(run, action, "codex_reconciliation_required")
+    return ownerActionResult(run, action, "codex_reconciliation_required", scope)
   }
 
   if (classification === "none" || classification === "definitive_failed") {
     return null
   }
 
-  return ownerActionResult(run, action, "codex_evidence_invalid")
+  return ownerActionResult(run, action, "codex_evidence_invalid", scope)
 }
 
-function resolveCurrentTestPolicyIdentity(run, action, runtimeOptions) {
+function resolveCurrentTestPolicyIdentity(run, action, runtimeOptions, scope) {
   try {
     return {
       ok: true,
@@ -290,13 +331,13 @@ function resolveCurrentTestPolicyIdentity(run, action, runtimeOptions) {
   } catch {
     return {
       ok: false,
-      result: ownerActionResult(run, action, "continue_runtime_not_ready")
+      result: ownerActionResult(run, action, "continue_runtime_not_ready", scope)
     }
   }
 }
 
-function validateAutomatedTestRetryBoundary(run, action, runtimeOptions) {
-  const policy = resolveCurrentTestPolicyIdentity(run, action, runtimeOptions)
+function validateAutomatedTestRetryBoundary(run, action, runtimeOptions, scope) {
+  const policy = resolveCurrentTestPolicyIdentity(run, action, runtimeOptions, scope)
 
   if (!policy.ok) {
     return policy.result
@@ -305,33 +346,33 @@ function validateAutomatedTestRetryBoundary(run, action, runtimeOptions) {
   const classification = classifyAutomatedTestAttemptEvidence(run, policy.identity)
 
   if (classification === "none") {
-    return ownerActionResult(run, action, "automated_test_reconciliation_required")
+    return ownerActionResult(run, action, "automated_test_reconciliation_required", scope)
   }
 
   if (classification === "open") {
-    return ownerActionResult(run, action, "automated_test_reconciliation_required")
+    return ownerActionResult(run, action, "automated_test_reconciliation_required", scope)
   }
 
   if (classification === "definitive_failed") {
     return null
   }
 
-  return ownerActionResult(run, action, "automated_test_evidence_invalid")
+  return ownerActionResult(run, action, "automated_test_evidence_invalid", scope)
 }
 
-function validateAttemptBoundary(run, boundary, runtimeOptions = {}) {
+function validateAttemptBoundary(run, boundary, runtimeOptions = {}, scope = ordinaryScope) {
   if (run.status === "implementation_in_progress") {
-    return validateImplementationAttemptBoundary(run, boundary.action)
+    return validateImplementationAttemptBoundary(run, boundary.action, scope)
   }
 
   if (run.status === "tests_in_progress") {
-    return validateAutomatedTestRetryBoundary(run, boundary.action, runtimeOptions)
+    return validateAutomatedTestRetryBoundary(run, boundary.action, runtimeOptions, scope)
   }
 
   return null
 }
 
-function childOptions(options, expectedVersion, runtimeOptions = {}) {
+function childOptions(options, expectedVersion, runtimeOptions = {}, scope = ordinaryScope) {
   const forwarded = {}
 
   for (const [key, value] of Object.entries(options)) {
@@ -345,19 +386,23 @@ function childOptions(options, expectedVersion, runtimeOptions = {}) {
   return {
     ...forwarded,
     ...runtimeOptions,
+    ...scope.childOptions,
     expectedVersion
   }
 }
 
-function childHandlers(options = {}) {
+function childHandlers(options = {}, scope = ordinaryScope) {
   return {
     ...defaultChildHandlers,
+    ...(scope.id === "self-development" ? {
+      planExistingDevelopmentRun: planExistingPersonalProjectOperatorSelfDevelopmentRun
+    } : {}),
     ...(options.childHandlers || {})
   }
 }
 
-async function readRun(runId, options = {}) {
-  const reader = options.readRun || readDevelopmentRun
+async function readRun(runId, options = {}, scope = ordinaryScope) {
+  const reader = options.readRun || scope.reader
   return await reader(runId, options)
 }
 
@@ -385,7 +430,7 @@ function normalizeRuntimeProfile(profile) {
   return normalized
 }
 
-async function resolveRuntimeOptions(run, boundary, options = {}) {
+async function resolveRuntimeOptions(run, boundary, options = {}, scope = ordinaryScope) {
   if (typeof options.trustedRuntimeProfileProvider !== "function") {
     return {
       ok: true,
@@ -398,8 +443,8 @@ async function resolveRuntimeOptions(run, boundary, options = {}) {
       run,
       action: boundary.action,
       handler: boundary.handler,
-      policyId: PHASE_6K_CONTINUE_POLICY_ID,
-      policyHash: PHASE_6K_CONTINUE_POLICY_HASH
+      policyId: scope.policyId,
+      policyHash: scope.policyHash
     })
 
     return {
@@ -425,7 +470,7 @@ function baseResult({
   headSha = null,
   reason = null,
   buildSummary = null
-}) {
+}, scope = ordinaryScope) {
   return {
     ok,
     project,
@@ -438,12 +483,12 @@ function baseResult({
     headSha: safeHeadSha(headSha),
     buildSummary: safeDevelopmentBuildSummary(buildSummary),
     reason: reason ? safeReason(reason) : null,
-    policyId: PHASE_6K_CONTINUE_POLICY_ID,
-    policyHash: PHASE_6K_CONTINUE_POLICY_HASH
+    policyId: scope.policyId,
+    policyHash: scope.policyHash
   }
 }
 
-function ownerActionResult(run, action, reason) {
+function ownerActionResult(run, action, reason, scope = ordinaryScope) {
   return baseResult({
     ok: false,
     runId: run.runId,
@@ -455,10 +500,10 @@ function ownerActionResult(run, action, reason) {
     headSha: run.headSha,
     buildSummary: run.task,
     reason
-  })
+  }, scope)
 }
 
-function blockedStatusResult(run) {
+function blockedStatusResult(run, scope = ordinaryScope) {
   const reason = blockedStatusReasons[run.status] || "unsupported_status"
   const ok = run.status === "merged" || run.status === "verified"
 
@@ -473,10 +518,10 @@ function blockedStatusResult(run) {
     headSha: run.headSha,
     buildSummary: run.task,
     reason
-  })
+  }, scope)
 }
 
-function staleStateResult(run, action) {
+function staleStateResult(run, action, scope = ordinaryScope) {
   return baseResult({
     ok: false,
     runId: run.runId,
@@ -488,10 +533,10 @@ function staleStateResult(run, action) {
     headSha: run.headSha,
     buildSummary: run.task,
     reason: "run_changed_before_dispatch"
-  })
+  }, scope)
 }
 
-function safeFailureResult(runId, error) {
+function safeFailureResult(runId, error, scope = ordinaryScope) {
   const code = error instanceof DevelopmentContinueOrchestratorError
     ? error.code
     : error instanceof DevelopmentRunStateError
@@ -510,10 +555,10 @@ function safeFailureResult(runId, error) {
     outcome: code === "STALE_RUN_VERSION" ? "stale_state" : "owner_action_required",
     after: "unknown",
     reason
-  })
+  }, scope)
 }
 
-async function childFailureResult(run, action, error, options = {}) {
+async function childFailureResult(run, action, error, options = {}, scope = ordinaryScope) {
   const code = typeof error?.code === "string" ? error.code : "CHILD_OPERATION_FAILED"
   const stale = code === "STALE_RUN_VERSION"
   const codexFailureClass = (
@@ -524,9 +569,9 @@ async function childFailureResult(run, action, error, options = {}) {
   let observed = null
 
   try {
-    const reloaded = await readRun(run.runId, options)
+    const reloaded = await readRun(run.runId, options, scope)
 
-    if (reloaded?.runId === run.runId && isOrdinaryProject(reloaded)) {
+    if (reloaded?.runId === run.runId && isAllowedProject(reloaded, scope)) {
       observed = reloaded
     }
   } catch {
@@ -545,7 +590,7 @@ async function childFailureResult(run, action, error, options = {}) {
       headSha: run.headSha,
       buildSummary: run.task,
       reason: "child_state_reload_failed"
-    })
+    }, scope)
   }
 
   return baseResult({
@@ -566,10 +611,10 @@ async function childFailureResult(run, action, error, options = {}) {
           : error?.reasonCode || error?.reason || code.toLowerCase(),
         "child_operation_refused"
       )
-  })
+  }, scope)
 }
 
-function childResultToContinueResult(beforeRun, action, childResult, afterRun = null) {
+function childResultToContinueResult(beforeRun, action, childResult, afterRun = null, scope = ordinaryScope) {
   const run = childResult?.run && typeof childResult.run === "object"
     ? childResult.run
     : afterRun || beforeRun
@@ -589,47 +634,47 @@ function childResultToContinueResult(beforeRun, action, childResult, afterRun = 
     headSha: run.headSha || beforeRun.headSha,
     buildSummary: run.task || beforeRun.task,
     reason: childOk ? null : childResult?.reason || childResult?.reasonCode || "child_operation_refused"
-  })
+  }, scope)
 }
 
-async function executeDevelopmentContinueInternal(runId, options = {}) {
+async function executeDevelopmentContinueInternal(runId, options = {}, scope = ordinaryScope) {
   assertNoCallerControlledOptions(options)
   const normalizedRunId = normalizeRunId(runId)
-  const initial = await readRun(normalizedRunId, options)
+  const initial = await readRun(normalizedRunId, options, scope)
 
-  if (!isOrdinaryProject(initial)) {
-    return projectRefusedResult(initial)
+  if (!isAllowedProject(initial, scope)) {
+    return projectRefusedResult(initial, scope)
   }
 
   const boundary = statusActions[initial.status]
 
   if (!boundary) {
-    return blockedStatusResult(initial)
+    return blockedStatusResult(initial, scope)
   }
 
-  const current = await readRun(normalizedRunId, options)
+  const current = await readRun(normalizedRunId, options, scope)
 
-  if (!isOrdinaryProject(current)) {
-    return projectRefusedResult(current)
+  if (!isAllowedProject(current, scope)) {
+    return projectRefusedResult(current, scope)
   }
 
   if (current.version !== initial.version || current.status !== initial.status) {
-    return staleStateResult(current, boundary.action)
+    return staleStateResult(current, boundary.action, scope)
   }
 
-  const runtime = await resolveRuntimeOptions(current, boundary, options)
+  const runtime = await resolveRuntimeOptions(current, boundary, options, scope)
 
   if (!runtime.ok) {
     return runtime.result
   }
 
-  const openAttempt = validateAttemptBoundary(current, boundary, runtime.runtimeOptions)
+  const openAttempt = validateAttemptBoundary(current, boundary, runtime.runtimeOptions, scope)
 
   if (openAttempt) {
     return openAttempt
   }
 
-  const handler = childHandlers(options)[boundary.handler]
+  const handler = childHandlers(options, scope)[boundary.handler]
 
   if (typeof handler !== "function") {
     throw continueError(
@@ -639,20 +684,20 @@ async function executeDevelopmentContinueInternal(runId, options = {}) {
   }
 
   try {
-    const childResult = await handler(normalizedRunId, childOptions(options, current.version, runtime.runtimeOptions))
+    const childResult = await handler(normalizedRunId, childOptions(options, current.version, runtime.runtimeOptions, scope))
     let afterRun = null
 
     if (!childResult?.run) {
       try {
-        afterRun = await readRun(normalizedRunId, options)
+        afterRun = await readRun(normalizedRunId, options, scope)
       } catch {
         afterRun = null
       }
     }
 
-    return childResultToContinueResult(current, boundary.action, childResult, afterRun)
+    return childResultToContinueResult(current, boundary.action, childResult, afterRun, scope)
   } catch (error) {
-    return await childFailureResult(current, boundary.action, error, options)
+    return await childFailureResult(current, boundary.action, error, options, scope)
   }
 }
 
@@ -664,9 +709,17 @@ export async function executeDevelopmentContinue(runId, options = {}) {
   }
 }
 
-export function formatDevelopmentContinueResult(result) {
+export async function executePersonalProjectOperatorSelfDevelopmentContinue(runId, options = {}) {
+  try {
+    return await executeDevelopmentContinueInternal(runId, options, selfDevelopmentScope)
+  } catch (error) {
+    return safeFailureResult(runId, error, selfDevelopmentScope)
+  }
+}
+
+function formatDevelopmentContinueResultForScope(result, scope) {
   const lines = [
-    "PPO Development Continue",
+    scope.id === "self-development" ? "PPO Self-Development Continue" : "PPO Development Continue",
     `Run: ${result.runId || "unknown"}`,
     `Project: ${result.project || "unknown"}`
   ]
@@ -700,12 +753,20 @@ export function formatDevelopmentContinueResult(result) {
     : null
 
   if (runId && result.ok === true && Object.hasOwn(statusActions, result.after)) {
-    lines.push(`Next command: /ppo continue ${runId}`)
+    lines.push(`Next command: ${scope.nextCommand} ${runId}`)
   } else if (runId && result.ok === false) {
-    lines.push(`Next command: /ppo run ${runId}`)
+    lines.push(`Next command: ${scope.id === "self-development" ? "ppo-self-development status" : "/ppo run"} ${runId}`)
   }
 
   return `${lines.join("\n")}\n`
+}
+
+export function formatDevelopmentContinueResult(result) {
+  return formatDevelopmentContinueResultForScope(result, ordinaryScope)
+}
+
+export function formatPersonalProjectOperatorSelfDevelopmentContinueResult(result) {
+  return formatDevelopmentContinueResultForScope(result, selfDevelopmentScope)
 }
 
 export async function handlePpoDevelopmentContinueCommand(runId, options = {}) {
