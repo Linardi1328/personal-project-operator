@@ -7,6 +7,7 @@ const ROOT = resolve(import.meta.dirname, "..");
 const PPO_COMMAND = resolve(ROOT, "local-operator/ppo-command.mjs");
 const BRIDGE = resolve(ROOT, "openclaw/plugins/ppo-local/index.mjs");
 const WORKFLOW = resolve(ROOT, ".github/workflows/ppo-pr-validation.yml");
+const QUALITY_RUNNER = resolve(ROOT, "deployment/scripts/run-ppo-development-quality.mjs");
 
 const USER_FACING_ACCEPTANCE = Object.freeze([
   { surface: "/ppo status", suites: ["local-operator/github-ppo-status.test.mjs"] },
@@ -89,14 +90,16 @@ test("Phase 6Q acceptance references only existing dedicated test suites", async
 test("Phase 6Q CI gate executes every user-surface suite and every Phase 6 lifecycle suite", async () => {
   const workflow = await readFile(WORKFLOW, "utf8");
   const step = workflowStep(workflow);
+  const runner = await readFile(QUALITY_RUNNER, "utf8");
   const required = new Set([
     ...USER_FACING_ACCEPTANCE.flatMap(({ suites }) => suites),
     ...PHASE_6_LIFECYCLE_SUITES,
     "openclaw/plugins/ppo-local/test-bridge.mjs"
   ]);
 
+  assert.match(step, /node deployment\/scripts\/run-ppo-development-quality\.mjs integrated-acceptance/u);
   for (const suite of required) {
-    assert.match(step, new RegExp(suite.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"), suite);
+    assert.match(runner, new RegExp(suite.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"), suite);
   }
 });
 
@@ -111,5 +114,7 @@ test("Phase 6Q CI remains non-production and does not run live deployment or rol
 test("Phase 6Q keeps the OpenClaw bridge in the user-facing acceptance boundary", async () => {
   await access(BRIDGE);
   const workflow = await readFile(WORKFLOW, "utf8");
-  assert.match(workflowStep(workflow), /openclaw\/plugins\/ppo-local\/test-bridge\.mjs/u);
+  const runner = await readFile(QUALITY_RUNNER, "utf8");
+  assert.match(workflowStep(workflow), /run-ppo-development-quality\.mjs integrated-acceptance/u);
+  assert.match(runner, /openclaw\/plugins\/ppo-local\/test-bridge\.mjs/u);
 });

@@ -655,6 +655,14 @@ Telegram development is guided rather than command-memory based. Start once with
 
 If Phase 6B returns `owner_action_required` or a malformed planned result, Phase 7A returns only bounded owner-action/route-unavailable information and never prints a continuation command for that result. It does not accept task text, repositories, paths, SHAs, branches, versions, policies, runtime options, confirmations, or actions. It does not create a workspace, invoke Codex, run tests or review, push, create a PR, merge, deploy, verify production, rollback, call `/ppo continue`, add a new OpenClaw tool, or use model interpretation. See [local-operator/phase-7a-controlled-ppo-start.md](local-operator/phase-7a-controlled-ppo-start.md) and [security/phase-7a-controlled-ppo-start.md](security/phase-7a-controlled-ppo-start.md).
 
+### Stage 0 - Local PPO Self-Development Controller
+
+Stage 0 adds a terminal-only Customer Zero controller for the fixed `Linardi1328/personal-project-operator` repository. It can start, inspect, continue, recover, and confirmation-gate cancellation for PPO self-development runs while reusing the existing Phase 6B–6G engines and stopping at `merged`.
+
+It is deliberately absent from `ppo-command.mjs`, the OpenClaw bridge, ordinary run catalogs, and every `/ppo` route. The ordinary six-project scope is unchanged. PPO self-development is macOS-local only, accepts no caller-selected repository/runtime/policy/provider/deployment target, and cannot deploy, verify production, roll back, or control services.
+
+The self-development test policy and GitHub PR validation share `deployment/scripts/run-ppo-development-quality.mjs`, which runs syntax, parallel regression, serial regression, two critical lifecycle stability rounds, and integrated acceptance. See [local-operator/stage-0-ppo-self-development-controller.md](local-operator/stage-0-ppo-self-development-controller.md).
+
 ## Command Menu System
 
 Commands are grouped into phone-friendly categories:

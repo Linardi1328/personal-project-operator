@@ -18,6 +18,7 @@ import {
   REVIEW_SANDBOX_BACKENDS
 } from "./development-review-agent.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
+import { PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT } from "./development-run-state.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -41,6 +42,7 @@ const fixedDarwinPaths = Object.freeze({
     portfolioEslint: "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/eslint/bin/eslint.js"
   }),
   sourceRepoPaths: Object.freeze({
+    "personal-project-operator": "/Users/richie/personal-project-operator",
     "khlim-assist": "/Users/richie/khlim-assist",
     "ledgerpilot-ai": "/Users/richie/ledgerpilot-ai",
     "spy-market-agent": "/Users/richie/spy-market-agent",
@@ -77,6 +79,18 @@ const fixedLinuxPaths = Object.freeze({
 })
 
 const reviewedProjectTestPolicies = Object.freeze({
+  "personal-project-operator": Object.freeze({
+    policyId: "stage-0-ppo-self-development-fixed-quality-policy",
+    kind: "node-command-suite",
+    runnerPath: "deployment/scripts/run-ppo-development-quality.mjs",
+    nodeSteps: Object.freeze([
+      Object.freeze({ id: "syntax" }),
+      Object.freeze({ id: "parallel-regression" }),
+      Object.freeze({ id: "serial-regression" }),
+      Object.freeze({ id: "critical-lifecycle" }),
+      Object.freeze({ id: "integrated-acceptance" })
+    ])
+  }),
   "khlim-assist": Object.freeze({
     policyId: "phase-6e-khlim-assist-fixed-python-quality-policy",
     kind: "python-quality-suite",
@@ -531,6 +545,28 @@ function nodeFoundationTestPolicy(definition, paths, sandbox) {
   }
 }
 
+function nodeCommandSuitePolicy(definition, paths, sandbox) {
+  return {
+    policyId: definition.policyId,
+    policyVersion: "1",
+    trustedExecutablePaths: [paths.nodeExecutablePath],
+    env: {
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath
+    },
+    sandbox,
+    steps: definition.nodeSteps.map((step) => ({
+      id: step.id,
+      executablePath: paths.nodeExecutablePath,
+      args: [definition.runnerPath, step.id],
+      timeoutMs: 120000,
+      maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
+      required: true,
+      shell: false
+    }))
+  }
+}
+
 function testPolicyForProject(projectId, paths, sandbox) {
   const definition = reviewedProjectTestPolicies[projectId]
 
@@ -552,6 +588,10 @@ function testPolicyForProject(projectId, paths, sandbox) {
 
   if (definition.kind === "node-foundation-test") {
     return nodeFoundationTestPolicy(definition, paths, sandbox)
+  }
+
+  if (definition.kind === "node-command-suite") {
+    return nodeCommandSuitePolicy(definition, paths, sandbox)
   }
 
   throw runtimeError()
@@ -591,6 +631,11 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
     return
   }
 
+  if (definition.kind === "node-command-suite") {
+    await assertNodeRuntime(paths, options)
+    return
+  }
+
   throw runtimeError()
 }
 
@@ -606,19 +651,13 @@ function assertReviewedPolicyCoverage() {
 
     policyIds.add(definition.policyId)
   }
-}
 
-export async function loadDevelopmentContinueRuntimeProfile(request = {}, options = {}) {
-  assertReviewedPolicyCoverage()
-
-  const run = request.run
-  const projectId = typeof run?.project?.id === "string" ? run.project.id : null
-
-  if (!ordinaryProjectIds.has(projectId)) {
+  if (!reviewedProjectTestPolicies[PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id]) {
     throw runtimeError()
   }
+}
 
-  const platform = options.platform || process.platform
+async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
   const paths = fixedPathsForPlatform(platform)
   const sourceRepoPath = paths.sourceRepoPaths[projectId]
   const projectPaths = {
@@ -723,6 +762,36 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   }
 }
 
+export async function loadDevelopmentContinueRuntimeProfile(request = {}, options = {}) {
+  assertReviewedPolicyCoverage()
+
+  const run = request.run
+  const projectId = typeof run?.project?.id === "string" ? run.project.id : null
+
+  if (!ordinaryProjectIds.has(projectId)) {
+    throw runtimeError()
+  }
+
+  const platform = options.platform || process.platform
+  return await loadRuntimeProfileForProject(projectId, platform, options)
+}
+
+export async function loadPersonalProjectOperatorSelfDevelopmentRuntimeProfile(request = {}, options = {}) {
+  assertReviewedPolicyCoverage()
+
+  const projectId = request.run?.project?.id
+  const platform = options.platform || process.platform
+
+  if (
+    projectId !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id ||
+    platform !== "darwin"
+  ) {
+    throw runtimeError()
+  }
+
+  return await loadRuntimeProfileForProject(projectId, platform, options)
+}
+
 export async function loadDevelopmentRecoveryRuntimeProfile(request = {}, options = {}) {
   assertReviewedPolicyCoverage()
 
@@ -757,6 +826,44 @@ export async function loadDevelopmentRecoveryRuntimeProfile(request = {}, option
   if (options.includeTestPolicy === true) {
     profile.testPolicyRegistry = {
       [projectId]: testPolicyForProject(projectId, projectPaths, buildTestSandbox(paths, platform))
+    }
+  }
+
+  return profile
+}
+
+export async function loadPersonalProjectOperatorSelfDevelopmentRecoveryRuntimeProfile(request = {}, options = {}) {
+  assertReviewedPolicyCoverage()
+
+  const projectId = request.run?.project?.id
+  const platform = options.platform || process.platform
+
+  if (
+    projectId !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id ||
+    platform !== "darwin"
+  ) {
+    throw runtimeError()
+  }
+
+  const paths = fixedPathsForPlatform(platform)
+  const sourceRepoPath = paths.sourceRepoPaths[projectId]
+
+  if (!sourceRepoPath) {
+    throw runtimeError()
+  }
+
+  const profile = {
+    workspaceRegistry: {
+      [projectId]: {
+        sourceRepoPath,
+        workspaceRoot: paths.workspaceRoot
+      }
+    }
+  }
+
+  if (options.includeTestPolicy === true) {
+    profile.testPolicyRegistry = {
+      [projectId]: testPolicyForProject(projectId, paths, buildTestSandbox(paths, platform))
     }
   }
 

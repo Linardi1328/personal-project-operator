@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import {
+  PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
   getBlockedPhase2GitHubProjectStatus,
   getPhase2GitHubProject,
   listPhase2GitHubProjects
@@ -74,6 +75,20 @@ export function resolveProject(projectId) {
     "UNKNOWN_PROJECT",
     `Project "${projectLabel(projectId)}" is not in the Phase 2A GitHub read-only allowlist.`
   )
+}
+
+export function resolvePersonalProjectOperatorSelfDevelopmentProject(projectId) {
+  if (projectId !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id) {
+    throw new GitHubReadOnlyError(
+      "UNKNOWN_PROJECT",
+      "Personal Project Operator self-development GitHub reads are fixed to the approved PPO repository."
+    )
+  }
+
+  return {
+    ...PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
+    fullName: `${PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.owner}/${PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.repo}`
+  }
 }
 
 export function normalizeLimit(limit = DEFAULT_ITEM_LIMIT) {
@@ -446,15 +461,16 @@ export function normalizeIssue(payload) {
   }
 }
 
-export function createGitHubReadOnlyClient({
+function createFixedGitHubReadOnlyClient({
   runner = createGhApiGetRunner(),
-  now = () => new Date()
-} = {}) {
+  now = () => new Date(),
+  projectResolver
+}) {
   return {
-    resolveProject,
+    resolveProject: projectResolver,
 
     async getRepoMetadata(projectId) {
-      const project = resolveProject(projectId)
+      const project = projectResolver(projectId)
       const endpoint = repoEndpoint(project)
       const payload = ensureObject(await requestJson(runner, endpoint), endpoint)
       ensureRepoIdentity(payload, project, endpoint)
@@ -463,7 +479,7 @@ export function createGitHubReadOnlyClient({
     },
 
     async getRecentCommits(projectId, limit = DEFAULT_ITEM_LIMIT) {
-      const project = resolveProject(projectId)
+      const project = projectResolver(projectId)
       const perPage = normalizeLimit(limit)
       const endpoint = `${repoEndpoint(project)}/commits`
       const payload = ensureArray(await requestJson(runner, endpoint, { per_page: perPage }), endpoint)
@@ -472,7 +488,7 @@ export function createGitHubReadOnlyClient({
     },
 
     async getOpenPullRequests(projectId, limit = DEFAULT_ITEM_LIMIT) {
-      const project = resolveProject(projectId)
+      const project = projectResolver(projectId)
       const perPage = normalizeLimit(limit)
       const endpoint = `${repoEndpoint(project)}/pulls`
       const payload = ensureArray(await requestJson(runner, endpoint, { state: "open", per_page: perPage }), endpoint)
@@ -487,7 +503,7 @@ export function createGitHubReadOnlyClient({
     },
 
     async getOpenIssuesPage(projectId, limit = DEFAULT_ITEM_LIMIT) {
-      const project = resolveProject(projectId)
+      const project = projectResolver(projectId)
       const perPage = normalizeLimit(limit)
       const endpoint = `${repoEndpoint(project)}/issues`
       const payload = ensureArray(await requestJson(runner, endpoint, { state: "open", per_page: perPage }), endpoint)
@@ -504,7 +520,7 @@ export function createGitHubReadOnlyClient({
     },
 
     async getProjectSnapshot(projectId) {
-      const project = resolveProject(projectId)
+      const project = projectResolver(projectId)
       const [repository, recentCommits, openPullRequests, openIssues] = await Promise.all([
         this.getRepoMetadata(project.id),
         this.getRecentCommits(project.id),
@@ -528,6 +544,20 @@ export function createGitHubReadOnlyClient({
       }
     }
   }
+}
+
+export function createGitHubReadOnlyClient(options = {}) {
+  return createFixedGitHubReadOnlyClient({
+    ...options,
+    projectResolver: resolveProject
+  })
+}
+
+export function createPersonalProjectOperatorSelfDevelopmentGitHubReadOnlyClient(options = {}) {
+  return createFixedGitHubReadOnlyClient({
+    ...options,
+    projectResolver: resolvePersonalProjectOperatorSelfDevelopmentProject
+  })
 }
 
 export async function getRepoMetadata(projectId, options = {}) {

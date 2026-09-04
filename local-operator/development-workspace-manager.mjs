@@ -6,7 +6,7 @@ import { promisify } from "node:util"
 import {
   DevelopmentRunStateError,
   readDevelopmentRun,
-  resolveDevelopmentRunProject,
+  resolveApprovedDevelopmentRunProject,
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
@@ -189,7 +189,7 @@ function workspaceRunMaterial(run) {
 }
 
 export function makeDevelopmentWorkspaceBranchName(run) {
-  const projectId = resolveDevelopmentRunProject(run?.project?.id).id
+  const projectId = resolveApprovedDevelopmentRunProject(run?.project?.id).id
   const material = workspaceRunMaterial(run)
   const branchName = `ppo/${projectId}/implementation/${material}`
 
@@ -204,7 +204,7 @@ export function makeDevelopmentWorkspaceBranchName(run) {
 }
 
 export function makeDevelopmentWorkspaceId(run) {
-  const projectId = resolveDevelopmentRunProject(run?.project?.id).id
+  const projectId = resolveApprovedDevelopmentRunProject(run?.project?.id).id
   const workspaceId = `${projectId}-${workspaceRunMaterial(run)}`
 
   if (!workspaceIdPattern.test(workspaceId)) {
@@ -249,7 +249,7 @@ function normalizeProjectWorkspaceRegistry(registry, options = {}) {
   const normalized = new Map()
 
   for (const [projectId, entry] of Object.entries(registry)) {
-    const project = resolveDevelopmentRunProject(projectId)
+    const project = resolveApprovedDevelopmentRunProject(projectId)
 
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw workspaceError(
@@ -677,7 +677,7 @@ function defaultBranchBlocked(branchName) {
 }
 
 function verifyRunProject(run) {
-  const project = resolveDevelopmentRunProject(run?.project?.id)
+  const project = resolveApprovedDevelopmentRunProject(run?.project?.id)
 
   if (
     run.project.displayName !== project.displayName ||

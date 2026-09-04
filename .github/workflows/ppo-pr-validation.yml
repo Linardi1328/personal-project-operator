@@ -22,63 +22,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Node syntax checks
-        run: find local-operator deployment openclaw -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
-
-      - name: Shell syntax checks
-        run: find deployment -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+      - name: Repository syntax checks
+        run: node deployment/scripts/run-ppo-development-quality.mjs syntax
 
       - name: Parallel regression suite
-        run: node --test local-operator/*.test.mjs deployment/*.test.mjs openclaw/plugins/ppo-local/test-bridge.mjs
+        run: node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
 
       - name: Full serial regression suite
-        run: node --test --test-concurrency=1 local-operator/*.test.mjs deployment/*.test.mjs openclaw/plugins/ppo-local/test-bridge.mjs
+        run: node deployment/scripts/run-ppo-development-quality.mjs serial-regression
 
       - name: Critical Phase 6 lifecycle stability
-        run: |
-          for audit_round in 1 2; do
-            node --test --test-concurrency=1 \
-              local-operator/development-codex-execution-adapter.test.mjs \
-              local-operator/development-hardening-orchestrator.test.mjs \
-              local-operator/development-review-agent.test.mjs \
-              local-operator/development-continue-orchestrator.test.mjs \
-              local-operator/development-recovery-coordinator.test.mjs \
-              local-operator/development-acceptance-gate.test.mjs
-          done
+        run: node deployment/scripts/run-ppo-development-quality.mjs critical-lifecycle
 
       - name: Phase 6Q integrated user acceptance
-        run: |
-          node --test --test-concurrency=1 \
-            local-operator/phase-6q-integrated-acceptance.test.mjs \
-            local-operator/github-ppo-status.test.mjs \
-            local-operator/github-ppo-commands.test.mjs \
-            local-operator/codex-prompt-generator.test.mjs \
-            local-operator/codex-planning-tools.test.mjs \
-            local-operator/github-issue-create.test.mjs \
-            local-operator/github-issue-approval.test.mjs \
-            local-operator/project-note-add.test.mjs \
-            local-operator/project-note-approval.test.mjs \
-            local-operator/project-state-promote.test.mjs \
-            local-operator/development-run-state.test.mjs \
-            local-operator/development-next-stage-planner.test.mjs \
-            local-operator/development-workspace-manager.test.mjs \
-            local-operator/development-codex-execution-adapter.test.mjs \
-            local-operator/development-test-runner.test.mjs \
-            local-operator/development-review-agent.test.mjs \
-            local-operator/development-hardening-orchestrator.test.mjs \
-            local-operator/github-delivery-agent.test.mjs \
-            local-operator/development-deployment-agent.test.mjs \
-            local-operator/development-production-verification-agent.test.mjs \
-            local-operator/development-rollback-agent.test.mjs \
-            local-operator/development-start-route.test.mjs \
-            local-operator/development-continue-orchestrator.test.mjs \
-            local-operator/development-recovery-coordinator.test.mjs \
-            local-operator/development-recovery-route.test.mjs \
-            local-operator/development-run-catalog.test.mjs \
-            local-operator/development-run-catalog-route.test.mjs \
-            local-operator/development-run-cancellation.test.mjs \
-            local-operator/development-run-cancellation-approval.test.mjs \
-            openclaw/plugins/ppo-local/test-bridge.mjs
+        run: node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
 
       - name: Diff whitespace checks
         run: |

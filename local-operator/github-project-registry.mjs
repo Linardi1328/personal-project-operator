@@ -64,6 +64,14 @@ const ordinaryDevelopmentProjectIds = new Set([
   "khlim-digital-ecosystem"
 ])
 
+export const PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT = Object.freeze({
+  id: "personal-project-operator",
+  displayName: "Personal Project Operator",
+  owner: "Linardi1328",
+  repo: "personal-project-operator",
+  fullName: "Linardi1328/personal-project-operator"
+})
+
 const blockedProjectStatuses = new Map()
 
 function cloneProject(project) {
@@ -94,6 +102,14 @@ export function getOrdinaryDevelopmentProject(projectId) {
   }
 
   return getPhase2GitHubProject(projectId)
+}
+
+export function getApprovedDevelopmentProject(projectId) {
+  if (projectId === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id) {
+    return cloneProject(PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT)
+  }
+
+  return getOrdinaryDevelopmentProject(projectId)
 }
 
 export function getBlockedPhase2GitHubProjectStatus(projectId) {

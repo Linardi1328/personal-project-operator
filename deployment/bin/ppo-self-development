@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  printf '%s\n' 'PPO self-development is available only on the approved local macOS controller.' >&2
+  exit 1
+fi
+
+exec \
+  /opt/homebrew/bin/node \
+  /Users/richie/personal-project-operator/local-operator/ppo-self-development-command.mjs \
+  "$@"

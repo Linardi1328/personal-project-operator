@@ -6,7 +6,7 @@ import { promisify } from "node:util"
 import {
   DevelopmentRunStateError,
   readDevelopmentRun,
-  resolveDevelopmentRunProject
+  resolveApprovedDevelopmentRunProject
 } from "./development-run-state.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
@@ -242,7 +242,7 @@ async function canonicalPath(cwd, value, code, safeMessage) {
 }
 
 export async function verifyAcceptanceWorkspace(run, options = {}) {
-  const project = resolveDevelopmentRunProject(run?.project?.id)
+  const project = resolveApprovedDevelopmentRunProject(run?.project?.id)
   const approvedSha = normalizeSha(run?.headSha, "Run head SHA")
   const expectedBranch = makeDevelopmentWorkspaceBranchName(run)
 
@@ -510,7 +510,7 @@ async function assertDevelopmentAcceptanceGateInternal(runId, options = {}) {
     )
   }
 
-  const project = resolveDevelopmentRunProject(run.project.id)
+  const project = resolveApprovedDevelopmentRunProject(run.project.id)
 
   if (
     run.project.displayName !== project.displayName ||

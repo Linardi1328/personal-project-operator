@@ -514,6 +514,17 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Keep OpenClaw deterministic. Do not add a new OpenClaw tool or model turn. The bridge maps only exact `/ppo start <project>` command shapes to `["start", "<project>"]` with `shell: false` and rejects malformed start envelopes without normalization.
 - Do not automatically call `/ppo continue`, create a workspace, invoke Codex, run tests, run review/hardening, push, create a PR, merge, deploy, verify production, rollback, run background work, poll, or perform any production action.
 
+### Stage 0 - Local PPO Self-Development Controller
+
+- Add one terminal-only controller fixed to `personal-project-operator` / `Linardi1328/personal-project-operator` on the approved Customer Zero macOS host.
+- Reuse the Phase 6B planner, Phase 6A run state, and Phase 6C–6G workspace, Codex, test, review, hardening, delivery, and merge engines. Do not create parallel lifecycle implementations.
+- Separate internally approved self-development from the ordinary six-project public scope. Keep every existing `/ppo` and OpenClaw route unchanged and self-development-excluding.
+- Advance at most one Phase 6B–6G boundary per `continue` invocation and stop at `merged`. Never route deployment, production verification, rollback, or service control.
+- Add read-only status and recovery inspection that require current canonical state and disclose only bounded metadata.
+- Add exact-version, exact-confirmation cancellation for the existing quiescent status set only. Do not interrupt processes, clean workspaces, delete branches, close PRs, or mutate production.
+- Bind PPO self-development testing to the same five-gate runner used by GitHub PR validation: syntax, parallel regression, serial regression, repeated critical lifecycle, and integrated acceptance.
+- Refuse Linux self-development, arbitrary repositories, caller-selected tasks, paths, SHAs, branches, runtimes, policies, providers, commands, executables, environments, and production targets.
+
 ### Phase 6Q - Full Phase 6 Integrated Acceptance and Closure Validation
 
 - Add no new feature by default.

@@ -31,11 +31,16 @@ import {
   GITHUB_DELIVERY_AGENT_ID,
   reconcileGitHubDelivery
 } from "./github-delivery-agent.mjs"
-import { loadDevelopmentRecoveryRuntimeProfile } from "./development-continue-runtime-profile.mjs"
+import {
+  loadDevelopmentRecoveryRuntimeProfile,
+  loadPersonalProjectOperatorSelfDevelopmentRecoveryRuntimeProfile
+} from "./development-continue-runtime-profile.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 
 export const DEVELOPMENT_RECOVERY_COORDINATOR_ID = "phase-6l-readonly-development-recovery-coordinator"
 export const PHASE_6L_RECOVERY_POLICY_ID = "phase-6l-readonly-development-recovery-policy"
+export const PPO_SELF_DEVELOPMENT_RECOVERY_COORDINATOR_ID = "stage-0-readonly-ppo-self-development-recovery"
+export const PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_ID = "stage-0-readonly-ppo-self-development-recovery-policy"
 
 const ordinaryProjects = listOrdinaryDevelopmentProjects()
 const ordinaryProjectById = new Map(ordinaryProjects.map((project) => [project.id, project]))
@@ -94,6 +99,34 @@ const policyBoundary = Object.freeze({
 export const PHASE_6L_RECOVERY_POLICY_HASH = createHash("sha256")
   .update(JSON.stringify(policyBoundary))
   .digest("hex")
+
+const selfDevelopmentRecoveryBoundary = Object.freeze({
+  id: PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_ID,
+  coordinator: PPO_SELF_DEVELOPMENT_RECOVERY_COORDINATOR_ID,
+  callerInput: Object.freeze(["runId"]),
+  allowedProjects: Object.freeze([PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id]),
+  statusContract: PHASE_6L_RECOVERY_STATUS_CONTRACT,
+  readOnly: true,
+  localOnly: true,
+  routeExposed: false,
+  productionActions: false,
+  mutationActions: false
+})
+
+export const PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_HASH = createHash("sha256")
+  .update(JSON.stringify(selfDevelopmentRecoveryBoundary))
+  .digest("hex")
+
+const ordinaryRecoveryScope = Object.freeze({
+  id: "ordinary",
+  policyId: PHASE_6L_RECOVERY_POLICY_ID,
+  policyHash: PHASE_6L_RECOVERY_POLICY_HASH
+})
+const selfDevelopmentRecoveryScope = Object.freeze({
+  id: "self-development",
+  policyId: PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_ID,
+  policyHash: PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_HASH
+})
 
 const forbiddenCallerOptionKeys = new Set([
   "project",
@@ -377,8 +410,23 @@ function classifyDurableChangeAfterChild(before, after) {
   return "stale_observation"
 }
 
-function validateRunProject(run) {
+function validateRunProject(run, scope = ordinaryRecoveryScope) {
   const projectId = projectIdFor(run)
+
+  if (scope.id === "self-development") {
+    const expected = PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
+
+    return {
+      ok: (
+        projectId === expected.id &&
+        run.project.displayName === expected.displayName &&
+        run.project.owner === expected.owner &&
+        run.project.repo === expected.repo &&
+        run.project.fullName === expected.fullName
+      ),
+      reason: projectId === expected.id ? "identity" : "unknown"
+    }
+  }
 
   if (projectId === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id) {
     return { ok: false, reason: "self_development" }
@@ -404,11 +452,15 @@ function validateRunProject(run) {
   return { ok: true }
 }
 
-async function readRun(runId, options = {}) {
+async function readRun(runId, options = {}, scope = ordinaryRecoveryScope) {
   const stateOptions = runStateOptions(options)
 
   if (typeof options.readRun === "function") {
     return await options.readRun(runId, stateOptions)
+  }
+
+  if (scope.id === "self-development") {
+    return await readPersonalProjectOperatorSelfDevelopmentRun(runId, stateOptions)
   }
 
   try {
@@ -470,25 +522,32 @@ function normalizeRecoveryProfile(profile, includeTestPolicy) {
   return normalized
 }
 
-async function resolveRecoveryProfile(run, boundary, options = {}) {
+async function resolveRecoveryProfile(run, boundary, options = {}, scope = ordinaryRecoveryScope) {
   const includeTestPolicy = boundary.phase === "6E"
-  const provider = options.recoveryRuntimeProfileProvider || (async (request) => await loadDevelopmentRecoveryRuntimeProfile(request, {
-    includeTestPolicy,
-    platform: options.platform
-  }))
+  const provider = options.recoveryRuntimeProfileProvider || (async (request) => (
+    scope.id === "self-development"
+      ? await loadPersonalProjectOperatorSelfDevelopmentRecoveryRuntimeProfile(request, {
+        includeTestPolicy,
+        platform: options.platform
+      })
+      : await loadDevelopmentRecoveryRuntimeProfile(request, {
+        includeTestPolicy,
+        platform: options.platform
+      })
+  ))
   const profile = await provider({
     run,
     phase: boundary.phase,
     operation: boundary.operation,
-    policyId: PHASE_6L_RECOVERY_POLICY_ID,
-    policyHash: PHASE_6L_RECOVERY_POLICY_HASH,
+    policyId: scope.policyId,
+    policyHash: scope.policyHash,
     includeTestPolicy
   })
 
   return normalizeRecoveryProfile(profile, includeTestPolicy)
 }
 
-function childOptions(options, profile, includeGithub = false) {
+function childOptions(options, profile, includeGithub = false, scope = ordinaryRecoveryScope) {
   const forwarded = {
     ...runStateOptions(options),
     workspaceRegistry: profile.workspaceRegistry
@@ -508,6 +567,10 @@ function childOptions(options, profile, includeGithub = false) {
 
   if (includeGithub && options.githubClient && typeof options.githubClient === "object") {
     forwarded.githubClient = options.githubClient
+  }
+
+  if (scope.id === "self-development") {
+    forwarded.allowPersonalProjectOperatorSelfDevelopmentProject = true
   }
 
   return forwarded
@@ -786,7 +849,19 @@ function terminalResult(run) {
   })
 }
 
-function projectOutOfScopeResult(run) {
+function projectOutOfScopeResult(run, scope = ordinaryRecoveryScope) {
+  if (scope.id === "self-development") {
+    return baseResult({
+      ok: false,
+      run,
+      phase: "none",
+      operation: "none",
+      outcome: "recovery_unavailable",
+      observation: "project_identity_invalid",
+      ownerActionRequired: true
+    })
+  }
+
   const selfDevelopment = projectIdFor(run) === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id
 
   return baseResult({
@@ -824,11 +899,11 @@ function stateChangedResult(run, boundary) {
   })
 }
 
-async function runChildRecovery(run, boundary, options = {}) {
+async function runChildRecovery(run, boundary, options = {}, scope = ordinaryRecoveryScope) {
   let profile
 
   try {
-    profile = await resolveRecoveryProfile(run, boundary, options)
+    profile = await resolveRecoveryProfile(run, boundary, options, scope)
   } catch {
     return unavailableResult(run, boundary.phase, boundary.operation)
   }
@@ -849,7 +924,7 @@ async function runChildRecovery(run, boundary, options = {}) {
   let childThrew = false
 
   try {
-    childResult = await child(run.runId, childOptions(options, profile, boundary.phase === "6G"))
+    childResult = await child(run.runId, childOptions(options, profile, boundary.phase === "6G", scope))
   } catch {
     childThrew = true
   }
@@ -857,7 +932,7 @@ async function runChildRecovery(run, boundary, options = {}) {
   let after
 
   try {
-    after = await readRun(run.runId, options)
+    after = await readRun(run.runId, options, scope)
   } catch {
     return unavailableResult(run, boundary.phase, boundary.operation)
   }
@@ -903,14 +978,14 @@ async function runChildRecovery(run, boundary, options = {}) {
   return unavailableResult(run, boundary.phase, boundary.operation)
 }
 
-async function executeDevelopmentRecoveryInternal(runId, options = {}) {
+async function executeDevelopmentRecoveryInternal(runId, options = {}, scope = ordinaryRecoveryScope) {
   assertNoCallerControlledOptions(options)
   const normalizedRunId = normalizeRunId(runId)
-  const run = await readRun(normalizedRunId, options)
-  const projectValidation = validateRunProject(run)
+  const run = await readRun(normalizedRunId, options, scope)
+  const projectValidation = validateRunProject(run, scope)
 
   if (!projectValidation.ok) {
-    return projectOutOfScopeResult(run)
+    return projectOutOfScopeResult(run, scope)
   }
 
   if (!DEVELOPMENT_RUN_STATUSES.includes(run.status)) {
@@ -939,7 +1014,7 @@ async function executeDevelopmentRecoveryInternal(runId, options = {}) {
     return noRecoveryResult(run)
   }
 
-  return await runChildRecovery(run, boundary, options)
+  return await runChildRecovery(run, boundary, options, scope)
 }
 
 export async function executeDevelopmentRecovery(runId, options = {}) {
@@ -964,6 +1039,39 @@ export async function executeDevelopmentRecovery(runId, options = {}) {
   }
 }
 
+function withSelfDevelopmentRecoveryPolicy(result) {
+  return {
+    ...result,
+    coordinator: PPO_SELF_DEVELOPMENT_RECOVERY_COORDINATOR_ID,
+    policyId: PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_ID,
+    policyHash: PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_HASH
+  }
+}
+
+export async function executePersonalProjectOperatorSelfDevelopmentRecovery(runId, options = {}) {
+  try {
+    return withSelfDevelopmentRecoveryPolicy(
+      await executeDevelopmentRecoveryInternal(runId, options, selfDevelopmentRecoveryScope)
+    )
+  } catch {
+    return withSelfDevelopmentRecoveryPolicy(baseResult({
+      ok: false,
+      run: {
+        runId: typeof runId === "string" && DEVELOPMENT_RUN_ID_PATTERN.test(runId) ? runId : "unknown",
+        project: PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id,
+        version: null,
+        status: "unknown",
+        headSha: null
+      },
+      phase: "none",
+      operation: "none",
+      outcome: "recovery_unavailable",
+      observation: "malformed_child_result",
+      ownerActionRequired: true
+    }))
+  }
+}
+
 export function formatDevelopmentRecoveryResult(result) {
   const run = result?.run || {}
   const ownerAction = result?.ownerActionRequired === true ? "required" : "not-required"
@@ -979,4 +1087,11 @@ export function formatDevelopmentRecoveryResult(result) {
   ]
 
   return `${lines.join("\n")}\n`
+}
+
+export function formatPersonalProjectOperatorSelfDevelopmentRecoveryResult(result) {
+  return formatDevelopmentRecoveryResult(result).replace(
+    "PPO Development Recovery",
+    "PPO Self-Development Recovery"
+  )
 }
