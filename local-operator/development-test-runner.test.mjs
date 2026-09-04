@@ -12,6 +12,7 @@ import { promisify } from "node:util"
 import test from "node:test"
 import {
   DevelopmentRunStateError,
+  PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
   createDevelopmentRun,
   readDevelopmentRun,
   resolveDevelopmentRunProject,
@@ -27,10 +28,13 @@ import {
   MAX_AUTOMATED_TEST_ATTEMPTS,
   MAX_AUTOMATED_TEST_STEPS,
   MAX_TEST_OUTPUT_BYTES,
+  MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS,
+  MAX_TEST_TIMEOUT_MS,
   PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
   TEST_SANDBOX_BACKENDS,
   executeAutomatedTests,
-  reconcileAutomatedTesting
+  reconcileAutomatedTesting,
+  resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -315,6 +319,32 @@ async function assertRejectsCode(promise, code) {
 function latestTestEvidence(run) {
   return run.evidence.test.at(-1)
 }
+
+test("PPO self-development alone receives the bounded five-minute test-step ceiling", () => {
+  const selfProject = PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
+  const policy = (project, timeoutMs) => ({
+    [project.id]: {
+      policyId: "phase-6e-timeout-boundary-fixture",
+      policyVersion: "1",
+      trustedExecutablePaths: [process.execPath],
+      env: {},
+      sandbox: trustedSandbox(),
+      steps: [testStep({ timeoutMs })]
+    }
+  })
+
+  assert.doesNotThrow(() => resolveAutomatedTestPolicyIdentity({ project: selfProject }, {
+    testPolicyRegistry: policy(selfProject, MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS)
+  }))
+
+  const ordinaryProject = resolveDevelopmentRunProject("khlim-assist")
+  assert.throws(
+    () => resolveAutomatedTestPolicyIdentity({ project: ordinaryProject }, {
+      testPolicyRegistry: policy(ordinaryProject, MAX_TEST_TIMEOUT_MS + 1)
+    }),
+    (error) => error instanceof DevelopmentRunStateError && error.code === "TEST_POLICY_INVALID"
+  )
+})
 
 test("automated tests require implementation_ready, exact expected version, and matching Phase 6D implementation evidence", async () => {
   const source = await makeSourceRepo()

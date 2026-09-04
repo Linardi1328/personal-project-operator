@@ -11,10 +11,20 @@ import {
   DEVELOPMENT_RUN_CANCELLATION_REASON,
   classifyDevelopmentRunCancellationStatus
 } from "./development-run-cancellation.mjs"
+import {
+  AUTOMATED_TEST_RUNNER_ID,
+  AUTOMATED_TEST_SANDBOX_ID
+} from "./development-test-runner.mjs"
 
 export const PPO_SELF_DEVELOPMENT_CANCELLATION_ID = "stage-0-local-ppo-self-development-cancellation"
 export const PPO_SELF_DEVELOPMENT_CANCELLATION_POLICY_ID = "stage-0-local-ppo-self-development-cancellation-policy"
 export const PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION = "cancel-personal-project-operator-run"
+export const PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS = 30 * 60 * 1000
+export const PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON =
+  "owner_requested_stale_self_test_cancellation"
+
+const safePolicyIdPattern = /^[a-z0-9][a-z0-9_.:-]{0,79}$/u
+const policyHashPattern = /^[a-f0-9]{64}$/u
 
 const policyBoundary = Object.freeze({
   id: PPO_SELF_DEVELOPMENT_CANCELLATION_POLICY_ID,
@@ -23,6 +33,13 @@ const policyBoundary = Object.freeze({
   localOnly: true,
   openClawRoute: false,
   eligibleStatuses: DEVELOPMENT_RUN_CANCELLATION_ELIGIBLE_STATUSES,
+  staleTestAttempt: Object.freeze({
+    status: "tests_in_progress",
+    minimumAgeMs: PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS,
+    runner: AUTOMATED_TEST_RUNNER_ID,
+    sandbox: AUTOMATED_TEST_SANDBOX_ID,
+    network: "none"
+  }),
   confirmation: PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
   expectedVersionRequired: true,
   targetStatus: "cancelled",
@@ -58,6 +75,56 @@ function validSelfRecord(record) {
   )
 }
 
+function currentTimeMs(options) {
+  try {
+    const current = typeof options.now === "function" ? options.now() : new Date()
+    return current instanceof Date ? current.getTime() : Number.NaN
+  } catch {
+    return Number.NaN
+  }
+}
+
+function staleSelfTestAttempt(run, options) {
+  if (run.status !== "tests_in_progress" || !Array.isArray(run?.evidence?.test)) {
+    return false
+  }
+
+  const entry = run.evidence.test.at(-1)
+  const metadata = entry?.metadata || {}
+  const startedAtMs = typeof metadata.startedAt === "string" && metadata.startedAt.length <= 80
+    ? Date.parse(metadata.startedAt)
+    : Number.NaN
+  const nowMs = currentTimeMs(options)
+
+  return (
+    Number.isFinite(nowMs) &&
+    Number.isFinite(startedAtMs) &&
+    nowMs - startedAtMs >= PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS &&
+    Number.isInteger(run?.attempts?.test) &&
+    run.attempts.test > 0 &&
+    entry?.kind === "test" &&
+    entry?.source === AUTOMATED_TEST_RUNNER_ID &&
+    entry?.sha === run.headSha &&
+    metadata.runner === AUTOMATED_TEST_RUNNER_ID &&
+    metadata.project === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id &&
+    metadata.attempt === run.attempts.test &&
+    metadata.implSha === run.headSha &&
+    metadata.outcome === "testing_started" &&
+    metadata.endedAt === undefined &&
+    metadata.sandbox === AUTOMATED_TEST_SANDBOX_ID &&
+    metadata.network === "none" &&
+    metadata.branch === run.branch &&
+    safePolicyIdPattern.test(metadata.policyId || "") &&
+    policyHashPattern.test(metadata.policyHash || "") &&
+    typeof metadata.workspaceId === "string" &&
+    metadata.workspaceId.length > 0 &&
+    metadata.workspaceId.length <= 120 &&
+    typeof metadata.workspaceRef === "string" &&
+    metadata.workspaceRef.length > 0 &&
+    metadata.workspaceRef.length <= 160
+  )
+}
+
 async function inspectCurrent(runId, options = {}) {
   if (typeof runId !== "string" || !DEVELOPMENT_RUN_ID_PATTERN.test(runId)) {
     return failure("invalid_run_id")
@@ -86,8 +153,9 @@ async function inspectCurrent(runId, options = {}) {
   }
 
   const statusClass = classifyDevelopmentRunCancellationStatus(run.status)
+  const staleTestAttempt = staleSelfTestAttempt(run, options)
 
-  if (statusClass !== "eligible") {
+  if (statusClass !== "eligible" && !staleTestAttempt) {
     return failure(statusClass)
   }
 
@@ -101,7 +169,8 @@ async function inspectCurrent(runId, options = {}) {
     project: run.project.id,
     beforeStatus: run.status,
     expectedVersion: run.version,
-    headSha: run.headSha
+    headSha: run.headSha,
+    staleTestAttempt
   }
 }
 
@@ -139,7 +208,9 @@ export async function confirmPersonalProjectOperatorSelfDevelopmentCancellation(
       expectedVersion,
       status: "cancelled",
       actor: DEVELOPMENT_RUN_CANCELLATION_ACTOR,
-      reason: DEVELOPMENT_RUN_CANCELLATION_REASON
+      reason: ready.staleTestAttempt
+        ? PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON
+        : DEVELOPMENT_RUN_CANCELLATION_REASON
     }, options)
 
     return {
@@ -154,7 +225,8 @@ export async function confirmPersonalProjectOperatorSelfDevelopmentCancellation(
       afterStatus: run.status,
       beforeVersion: expectedVersion,
       afterVersion: run.version,
-      headSha: run.headSha
+      headSha: run.headSha,
+      staleTestAttempt: ready.staleTestAttempt
     }
   } catch (error) {
     return failure(error?.code === "STALE_RUN_VERSION" ? "stale_state" : "cancellation_unavailable")
@@ -174,6 +246,7 @@ export function formatPersonalProjectOperatorSelfDevelopmentCancellation(result)
     lines.push(`Before: ${result.beforeStatus}`)
     lines.push(`Version: ${result.expectedVersion ?? `${result.beforeVersion} -> ${result.afterVersion}`}`)
     lines.push(`Head: ${result.headSha || "none"}`)
+    lines.push(`Stale test attempt: ${result.staleTestAttempt === true ? "yes" : "no"}`)
 
     if (result.outcome === "cancellation_ready") {
       lines.push(

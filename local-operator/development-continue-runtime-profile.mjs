@@ -84,11 +84,11 @@ const reviewedProjectTestPolicies = Object.freeze({
     kind: "node-command-suite",
     runnerPath: "deployment/scripts/run-ppo-development-quality.mjs",
     nodeSteps: Object.freeze([
-      Object.freeze({ id: "syntax" }),
-      Object.freeze({ id: "parallel-regression" }),
-      Object.freeze({ id: "serial-regression" }),
-      Object.freeze({ id: "critical-lifecycle" }),
-      Object.freeze({ id: "integrated-acceptance" })
+      Object.freeze({ id: "syntax", timeoutMs: 60_000 }),
+      Object.freeze({ id: "parallel-regression", timeoutMs: 180_000 }),
+      Object.freeze({ id: "serial-regression", timeoutMs: 300_000 }),
+      Object.freeze({ id: "critical-lifecycle", timeoutMs: 300_000 }),
+      Object.freeze({ id: "integrated-acceptance", timeoutMs: 300_000 })
     ])
   }),
   "khlim-assist": Object.freeze({
@@ -559,7 +559,7 @@ function nodeCommandSuitePolicy(definition, paths, sandbox) {
       id: step.id,
       executablePath: paths.nodeExecutablePath,
       args: [definition.runnerPath, step.id],
-      timeoutMs: 120000,
+      timeoutMs: step.timeoutMs,
       maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
       required: true,
       shell: false

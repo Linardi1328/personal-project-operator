@@ -657,7 +657,7 @@ If Phase 6B returns `owner_action_required` or a malformed planned result, Phase
 
 ### Stage 0 - Local PPO Self-Development Controller
 
-Stage 0 adds a terminal-only Customer Zero controller for the fixed `Linardi1328/personal-project-operator` repository. It can start, inspect, continue, recover, and confirmation-gate cancellation for PPO self-development runs while reusing the existing Phase 6B–6G engines and stopping at `merged`.
+Stage 0 adds a terminal-only Customer Zero controller for the fixed `Linardi1328/personal-project-operator` repository. It can start, inspect, continue, recover, and confirmation-gate cancellation for PPO self-development runs while reusing the existing Phase 6B–6G engines and stopping at `merged`. Its five local quality gates use explicit per-gate bounded timeouts, and a structurally valid open self-test attempt can be cancelled only after a 30-minute cooling period with exact-version local confirmation.
 
 It is deliberately absent from `ppo-command.mjs`, the OpenClaw bridge, ordinary run catalogs, and every `/ppo` route. The ordinary six-project scope is unchanged. PPO self-development is macOS-local only, accepts no caller-selected repository/runtime/policy/provider/deployment target, and cannot deploy, verify production, roll back, or control services.
 

@@ -521,8 +521,8 @@ Phase 5 write actions must be individually reviewed, permissioned, and auditable
 - Separate internally approved self-development from the ordinary six-project public scope. Keep every existing `/ppo` and OpenClaw route unchanged and self-development-excluding.
 - Advance at most one Phase 6B–6G boundary per `continue` invocation and stop at `merged`. Never route deployment, production verification, rollback, or service control.
 - Add read-only status and recovery inspection that require current canonical state and disclose only bounded metadata.
-- Add exact-version, exact-confirmation cancellation for the existing quiescent status set only. Do not interrupt processes, clean workspaces, delete branches, close PRs, or mutate production.
-- Bind PPO self-development testing to the same five-gate runner used by GitHub PR validation: syntax, parallel regression, serial regression, repeated critical lifecycle, and integrated acceptance.
+- Add exact-version, exact-confirmation cancellation for the existing quiescent status set and for a structurally valid open PPO self-test attempt only after a fixed 30-minute cooling period. Do not interrupt processes, clean workspaces, delete branches, close PRs, or mutate production.
+- Bind PPO self-development testing to the same five-gate runner used by GitHub PR validation: syntax, parallel regression, serial regression, repeated critical lifecycle, and integrated acceptance. Assign explicit bounded per-gate timeouts that reflect each gate's reviewed workload while retaining the ordinary-project timeout ceiling.
 - Refuse Linux self-development, arbitrary repositories, caller-selected tasks, paths, SHAs, branches, runtimes, policies, providers, commands, executables, environments, and production targets.
 
 ### Phase 6Q - Full Phase 6 Integrated Acceptance and Closure Validation

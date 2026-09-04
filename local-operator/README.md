@@ -297,7 +297,7 @@ If Phase 6B returns `owner_action_required` or a malformed planned result, Phase
 
 ### Stage 0 - Local PPO Self-Development Controller
 
-Stage 0 adds `ppo-self-development` as a separate terminal-only macOS controller fixed to `Linardi1328/personal-project-operator`. It reuses the Phase 6B–6G engines, advances at most one boundary per continuation, stops at `merged`, provides read-only status/recovery, and requires exact-version local confirmation for quiescent cancellation.
+Stage 0 adds `ppo-self-development` as a separate terminal-only macOS controller fixed to `Linardi1328/personal-project-operator`. It reuses the Phase 6B–6G engines, advances at most one boundary per continuation, stops at `merged`, provides read-only status/recovery, and requires exact-version local confirmation for quiescent cancellation or a structurally valid open self-test attempt that has remained stale for at least 30 minutes.
 
 The controller is not imported by `ppo-command.mjs` or the OpenClaw bridge. The ordinary six-project registry and all `/ppo` routes remain unchanged. See `stage-0-ppo-self-development-controller.md`.
 
@@ -348,7 +348,7 @@ The controller is not imported by `ppo-command.mjs` or the OpenClaw bridge. The 
 - `development-start-route.mjs`: Phase 7A controlled `/ppo start <project>` route adapter around the Phase 6B planned-run creator.
 - `phase-7a-controlled-ppo-start.md`: Phase 7A local usage and safety boundary.
 - `development-self-controller.mjs`: Stage 0 fixed-repository self-development start, status, continuation, recovery, and cancellation composition.
-- `development-self-cancellation.mjs`: Stage 0 read-only staging and exact-version local confirmation for quiescent self-development cancellation.
+- `development-self-cancellation.mjs`: Stage 0 read-only staging and exact-version local confirmation for quiescent self-development cancellation, including a 30-minute stale open self-test exception with no process interruption.
 - `ppo-self-development-command.mjs`: strict terminal-only Stage 0 command parser.
 - `stage-0-ppo-self-development-controller.md`: Stage 0 usage, validation, and safety boundary.
 - `codex-prompt-generator.mjs`: Phase 3A local Codex prompt text generator, routed through `/ppo codex` in Phase 3C.

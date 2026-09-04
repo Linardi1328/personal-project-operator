@@ -29,9 +29,17 @@ import {
 } from "./development-recovery-coordinator.mjs"
 import {
   PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
+  PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS,
+  PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON,
   confirmPersonalProjectOperatorSelfDevelopmentCancellation,
   stagePersonalProjectOperatorSelfDevelopmentCancellation
 } from "./development-self-cancellation.mjs"
+import {
+  AUTOMATED_TEST_RUNNER_ID,
+  AUTOMATED_TEST_SANDBOX_ID,
+  MAX_AUTOMATED_TEST_STEPS,
+  MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS
+} from "./development-test-runner.mjs"
 import {
   inspectPersonalProjectOperatorSelfDevelopment,
   startPersonalProjectOperatorSelfDevelopment
@@ -376,6 +384,110 @@ test("Stage 0 cancellation requires a current canonical run, exact version, and 
   assert.equal(stored.status, "cancelled")
 })
 
+test("Stage 0 cancellation retires only a structurally valid stale self-test attempt", async () => {
+  const startedAt = "2026-09-04T00:00:00.000Z"
+  const attempts = {
+    planning: 1,
+    implementation: 1,
+    test: 1,
+    review: 0,
+    merge: 0,
+    deploy: 0,
+    verification: 0,
+    rollback: 0
+  }
+  const run = selfRun("tests_in_progress", {
+    attempts,
+    evidence: {
+      planning: [],
+      implementation: [],
+      review: [],
+      test: [{
+        kind: "test",
+        sha: HEAD_SHA,
+        source: AUTOMATED_TEST_RUNNER_ID,
+        summary: "Automated test attempt reserved.",
+        metadata: {
+          project: SELF.id,
+          runner: AUTOMATED_TEST_RUNNER_ID,
+          attempt: 1,
+          policyId: "stage-0-ppo-self-development-fixed-quality-policy",
+          policyHash: "c".repeat(64),
+          implSha: HEAD_SHA,
+          startedAt,
+          outcome: "testing_started",
+          sandbox: AUTOMATED_TEST_SANDBOX_ID,
+          network: "none",
+          branch: "main",
+          workspaceId: "personal-project-operator-stage0-fixture",
+          workspaceRef: "refs/heads/ppo/personal-project-operator/implementation/stage0-fixture"
+        }
+      }],
+      merge: [],
+      deploy: [],
+      verification: [],
+      rollback: []
+    }
+  })
+  const inspectRun = async () => ({
+    ok: true,
+    canonicalState: "canonical_current",
+    recoveryRequired: false,
+    record: structuredClone(run)
+  })
+  const fresh = await stagePersonalProjectOperatorSelfDevelopmentCancellation(RUN_ID, {
+    inspectRun,
+    now: () => new Date(Date.parse(startedAt) + PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS - 1)
+  })
+
+  assert.equal(fresh.ok, false)
+  assert.equal(fresh.outcome, "state_not_quiescent")
+
+  const now = () => new Date(Date.parse(startedAt) + PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS)
+  const completedRun = structuredClone(run)
+  completedRun.evidence.test.at(-1).metadata.endedAt = now().toISOString()
+  const completed = await stagePersonalProjectOperatorSelfDevelopmentCancellation(RUN_ID, {
+    inspectRun: async () => ({
+      ok: true,
+      canonicalState: "canonical_current",
+      recoveryRequired: false,
+      record: completedRun
+    }),
+    now
+  })
+
+  assert.equal(completed.ok, false)
+  assert.equal(completed.outcome, "state_not_quiescent")
+
+  const ready = await stagePersonalProjectOperatorSelfDevelopmentCancellation(RUN_ID, {
+    inspectRun,
+    now
+  })
+
+  assert.equal(ready.ok, true)
+  assert.equal(ready.staleTestAttempt, true)
+
+  let transitionInput
+  const cancelled = await confirmPersonalProjectOperatorSelfDevelopmentCancellation(
+    RUN_ID,
+    run.version,
+    PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
+    {
+      inspectRun,
+      now,
+      transitionRun: async (runId, input) => {
+        assert.equal(runId, RUN_ID)
+        transitionInput = input
+        return { ...run, status: "cancelled", version: run.version + 1 }
+      }
+    }
+  )
+
+  assert.equal(cancelled.ok, true)
+  assert.equal(cancelled.staleTestAttempt, true)
+  assert.equal(transitionInput.reason, PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON)
+})
+
 test("Stage 0 status inspection is read-only and fails closed for a non-current canonical record", async () => {
   const result = await inspectPersonalProjectOperatorSelfDevelopment(RUN_ID, {
     inspectRun: async () => ({
@@ -425,6 +537,22 @@ test("Stage 0 fixed runtime uses five repository-wide gates and refuses Linux se
     "critical-lifecycle",
     "integrated-acceptance"
   ])
+  assert.deepEqual(policy.steps.map((step) => step.timeoutMs), [
+    60_000,
+    180_000,
+    300_000,
+    300_000,
+    300_000
+  ])
+  assert.equal(Math.max(...policy.steps.map((step) => step.timeoutMs)), MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS)
+  assert.ok(
+    policy.steps.reduce((total, step) => total + step.timeoutMs, 0) <
+      PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS
+  )
+  assert.ok(
+    MAX_AUTOMATED_TEST_STEPS * MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS <
+      PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS
+  )
   assert.equal(profile.workspaceRegistry[SELF.id].sourceRepoPath, "/Users/richie/personal-project-operator")
 
   await assert.rejects(
