@@ -43,9 +43,11 @@ export const MAX_GITHUB_DELIVERY_API_OUTPUT_BYTES = 256 * 1024
 export const MAX_GITHUB_DELIVERY_API_TIMEOUT_MS = 30 * 1000
 export const MAX_REMOTE_REVIEW_PROMPT_CHARS = 6000
 export const REQUIRED_PPO_PR_VALIDATION_STEPS = Object.freeze([
-  "Node syntax checks",
-  "Shell syntax checks",
-  "Full regression suite",
+  "Repository syntax checks",
+  "Parallel regression suite",
+  "Full serial regression suite",
+  "Critical Phase 6 lifecycle stability",
+  "Phase 6Q integrated user acceptance",
   "Diff whitespace checks"
 ])
 
