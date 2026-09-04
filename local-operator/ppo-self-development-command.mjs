@@ -12,7 +12,10 @@ import {
   startPersonalProjectOperatorSelfDevelopment
 } from "./development-self-controller.mjs"
 import { DEVELOPMENT_RUN_ID_PATTERN } from "./development-run-id.mjs"
-import { PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION } from "./development-self-cancellation.mjs"
+import {
+  PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
+  PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
+} from "./development-self-cancellation.mjs"
 
 function unavailable() {
   return "PPO Self-Development\nStatus: unavailable\nOutcome: invalid_command\n"
@@ -60,7 +63,10 @@ export async function handlePpoSelfDevelopmentCommand(args, handlers = {}) {
     args[0] === "cancel-confirm" &&
     exactRunId(args[1]) &&
     /^(?:0|[1-9][0-9]{0,2})$/u.test(args[2]) &&
-    args[3] === PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION &&
+    [
+      PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
+      PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
+    ].includes(args[3]) &&
     args[4] === "--local-owner-confirmed"
   ) {
     const result = await confirmCancellation(

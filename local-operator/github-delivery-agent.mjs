@@ -2212,6 +2212,13 @@ export async function executeShaPinnedMerge(runId, options = {}) {
 
   let facts = await mergeReadyFacts(run, options)
 
+  if (facts.pr.mergeableState === "behind") {
+    throw deliveryError(
+      "GITHUB_DELIVERY_BASE_ADVANCED",
+      "The pull request base advanced after exact-head approval; retire this run and revalidate from the current base."
+    )
+  }
+
   run = await recordDeliveryProgress(run, deliveryEvidence(run, facts.approvedSha, "merge_started", {
     prNumber: facts.pr.number,
     expectedHeadSha: facts.approvedSha,

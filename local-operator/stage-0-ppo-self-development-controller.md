@@ -13,6 +13,7 @@ ppo-self-development continue <run-id>
 ppo-self-development recover <run-id>
 ppo-self-development cancel <run-id>
 ppo-self-development cancel-confirm <run-id> <version> cancel-personal-project-operator-run --local-owner-confirmed
+ppo-self-development cancel-confirm <run-id> <version> cancel-stale-unmerged-personal-project-operator-run --local-owner-confirmed
 ```
 
 `start` reads the fixed `projects/personal-project-operator.md`, `ROADMAP.md`, and GitHub read-only snapshot. It accepts no task, repository, SHA, branch, runtime, policy, provider, or deployment input.
@@ -21,7 +22,7 @@ ppo-self-development cancel-confirm <run-id> <version> cancel-personal-project-o
 
 `recover` performs one read-only Phase 6C–6G observation. It does not retry, repair, mutate the run, invoke Codex, run tests, write GitHub state, deploy, or roll back.
 
-Cancellation is allowed from the existing quiescent status set. A self-development run stuck in `tests_in_progress` is also eligible only when its latest test evidence is an exact-SHA, structurally valid open PPO test reservation at least 30 minutes old. That cooling period is longer than the five gates' aggregate 19-minute command budget. Staging is read-only. Confirmation is bound to the observed run id and version and requires the exact local-owner confirmation. It never interrupts a process, cleans a workspace, deletes a branch, closes a PR, or affects production.
+Cancellation is allowed from the existing quiescent status set. A self-development run stuck in `tests_in_progress` is also eligible only when its latest test evidence is an exact-SHA, structurally valid open PPO test reservation at least 30 minutes old. A self-development run stuck at `merge_ready` is eligible only when its latest delivery evidence is a structurally valid exact-SHA `merge_ready` or `merge_started` record at least 30 minutes old, and it requires the separate `cancel-stale-unmerged-personal-project-operator-run` confirmation. The cooling period is longer than the five gates' aggregate 19-minute command budget. Staging is read-only. Confirmation is bound to the observed run id and version and requires exact local-owner confirmation. It never interrupts a process, cleans a workspace, deletes a branch, closes a PR, or affects production.
 
 ## Validation parity
 
@@ -34,6 +35,8 @@ PPO self-development uses `deployment/scripts/run-ppo-development-quality.mjs` f
 5. Integrated acceptance.
 
 The GitHub `PPO PR validation` workflow invokes the same gate runner, preventing local/CI command drift.
+
+Phase 6G refuses a PR reported as `behind` before reserving a merge attempt. The owner must close the unmerged PR, wait for the fixed cooling period, retire the SHA-bound run through the separate confirmation, and start a new run from current `main`; PPO never updates an approved PR branch in place or reuses stale tests and reviews.
 
 ## Boundary
 

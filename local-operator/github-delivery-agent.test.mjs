@@ -1673,6 +1673,33 @@ test("SHA-pinned merge requires merge_ready, exact current head, mergeability, e
     workspaceRegistry: blocked.registry,
     githubClient: blockedClient
   }), "GITHUB_DELIVERY_PR_NOT_MERGEABLE")
+
+  const behind = await makeReviewPassedFixture()
+  const behindClient = makeGitHubClient(behind.project, behind.run.branch, behind.headSha)
+  const behindDelivered = await executeGitHubDeliveryToMergeReady(behind.run.runId, {
+    expectedVersion: behind.run.version,
+    writeDataDir: behind.writeDataDir,
+    workspaceRegistry: behind.registry,
+    gitRunner: makeGitRunner(),
+    githubClient: behindClient,
+    reviewConfig: trustedReviewConfig(),
+    reviewRunner: makeReviewRunner(),
+    now: behind.now
+  })
+  behindClient.state.prs[0].mergeableState = "behind"
+  await assertRejectsCode(executeShaPinnedMerge(behind.run.runId, {
+    expectedVersion: behindDelivered.run.version,
+    writeDataDir: behind.writeDataDir,
+    workspaceRegistry: behind.registry,
+    githubClient: behindClient
+  }), "GITHUB_DELIVERY_BASE_ADVANCED")
+
+  const behindReloaded = await readDevelopmentRun(behind.run.runId, {
+    writeDataDir: behind.writeDataDir
+  })
+  assert.equal(behindReloaded.status, "merge_ready")
+  assert.equal(behindReloaded.evidence.merge.at(-1).metadata.outcome, "merge_ready")
+  assert.equal(behindClient.state.mergeCalls.length, 0)
 })
 
 test("post-merge cleanup preserves an unexpectedly moved branch and reports cleanup required", async () => {

@@ -37,7 +37,7 @@ No model call can grant acceptance. Any SHA change invalidates the gate and requ
 5. Require exact-head `PPO PR validation` success.
 6. Run independent exact-head remote PR review inside the Phase 6F reviewer sandbox.
 7. Transition `review_passed -> merge_ready`.
-8. Re-fetch PR, CI, remote approval, and mergeability.
+8. Re-fetch PR, CI, remote approval, and mergeability; refuse a PR reported as `behind` before reserving a merge attempt.
 9. Merge with a fixed method and GitHub expected-head-SHA protection.
 10. Verify the merge commit and `main`.
 11. Delete the exact PPO implementation branch only when it still points to the approved SHA.
@@ -53,6 +53,8 @@ External writes are reconciled before retry:
 - ambiguous branch deletion: re-read the remote ref; only an absent ref proves cleanup succeeded
 
 The agent never force-pushes, never merges by branch name alone, and never blindly repeats an ambiguous write.
+
+A `behind` PR is deterministic base drift, not an ambiguous merge. PPO fails closed before `merge_started` and does not update the branch because a new commit would invalidate the approved SHA's local tests, local review, CI, and remote review. The unmerged run must be retired through the bounded self-development recovery path, when applicable, and restarted from current `main`.
 
 Branch cleanup is shared by every allowlisted project. It is limited to the run's
 `ppo/<project>/implementation/<run>` branch after the exact PR merge is proven. A missing
