@@ -242,7 +242,10 @@ test("Stage 0 planner accepts the checked-in PPO project next action", async () 
   assert.equal(planned.ok, true)
   assert.equal(planned.outcome, "planned")
   assert.equal(planned.run.status, "planned")
-  assert.equal(planned.run.task.includes("deployment-provider metadata"), true)
+  assert.equal(
+    planned.run.task.includes("Phase 6F reviewer-runtime readiness and recovery"),
+    true
+  )
 })
 
 test("Stage 0 start validates the self project and returns only bounded run metadata", async () => {

@@ -22,15 +22,15 @@ High.
 
 ## Current phase
 
-Stage 0 — local PPO self-development controller.
+Stage 1A — Customer Zero reviewer-runtime reliability hardening.
 
 ## Last known status
 
-The local-only self-development controller is available for the fixed PPO repository and reuses the reviewed Phase 6B–6G lifecycle without exposing PPO self-development through ordinary OpenClaw commands.
+The Customer Zero capability-manifest foundation is merged with versioned repository identity, runtime preparation, local quality gates, required GitHub checks, and deployment-provider metadata. Existing self-development and ordinary-project behavior remains unchanged.
 
 ## Next action
 
-Add the Customer Zero project capability manifest foundation. Define versioned repository identity, runtime preparation, local quality gates, required GitHub checks, and deployment-provider metadata while preserving all existing project behavior and safety boundaries.
+Add first-class Customer Zero Phase 6F reviewer-runtime readiness and recovery. Verify live Codex authentication before reserving review, classify authentication and runtime failures separately from review findings, and expose exact-version self-development recovery that preserves clean exact-SHA implementation and test evidence without consuming a hardening round.
 
 ## Codex fit
 
@@ -47,4 +47,5 @@ Good fit for small, backend-oriented orchestration changes. Preserve existing ex
 
 - Self-modification can weaken the operator's own safety controls if repository identity is not fixed.
 - Runtime and validation drift can allow locally accepted changes to fail in GitHub CI.
+- Credential-presence checks can report a revoked Codex refresh token as logged in unless readiness includes a live authenticated probe.
 - Broad architecture work can hide unrelated behavior changes and make review ineffective.
