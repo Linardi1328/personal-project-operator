@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -204,6 +204,26 @@ test("Stage 0 planner creates a fixed PPO run while the ordinary planner still r
     planNextDevelopmentStage(SELF.id, planningOptions(writeDataDir)),
     (error) => error?.code === "UNKNOWN_PROJECT"
   )
+})
+
+test("Stage 0 planner accepts the checked-in PPO project next action", async () => {
+  const writeDataDir = await tempWriteDataDir()
+  const checkedInProjectDocument = await readFile(
+    new URL("../projects/personal-project-operator.md", import.meta.url),
+    "utf8"
+  )
+  const planned = await createPlannedPersonalProjectOperatorSelfDevelopmentRun({
+    ...planningOptions(writeDataDir),
+    sources: {
+      "ROADMAP.md": roadmap(),
+      "projects/personal-project-operator.md": checkedInProjectDocument
+    }
+  })
+
+  assert.equal(planned.ok, true)
+  assert.equal(planned.outcome, "planned")
+  assert.equal(planned.run.status, "planned")
+  assert.equal(planned.run.task.includes("deployment-provider metadata"), true)
 })
 
 test("Stage 0 start validates the self project and returns only bounded run metadata", async () => {
