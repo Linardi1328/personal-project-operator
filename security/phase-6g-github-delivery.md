@@ -21,6 +21,8 @@ The acceptance gate is deterministic. It returns delivery allowed only when the 
 
 The reviewed SHA, tested SHA, implementation SHA, and workspace HEAD must be identical. Any SHA movement invalidates delivery and merge readiness.
 
+Immediately before merge reservation, a PR reported as `behind` fails closed. Phase 6G does not update the approved branch in place or transfer tests and reviews to a new commit.
+
 ## GitHub Writes
 
 Allowed writes are strictly limited to:
@@ -43,6 +45,8 @@ Network writes can complete remotely while the local process times out. Phase 6G
 - branch-deletion ambiguity is resolved by the exact remote branch ref becoming absent
 
 Unexpected SHA or conflicting state fails closed for owner action. The agent does not blindly repeat ambiguous writes.
+
+Base drift is deterministic rather than ambiguous. It is refused before `merge_started`, preserving the exact approved SHA for bounded retirement and a fresh run from the current base.
 
 ## Post-Merge Branch Cleanup
 

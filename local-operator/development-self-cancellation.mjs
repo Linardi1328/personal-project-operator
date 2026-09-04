@@ -15,13 +15,26 @@ import {
   AUTOMATED_TEST_RUNNER_ID,
   AUTOMATED_TEST_SANDBOX_ID
 } from "./development-test-runner.mjs"
+import {
+  PHASE_6G_DELIVERY_POLICY_HASH,
+  PHASE_6G_DELIVERY_POLICY_ID
+} from "./development-acceptance-gate.mjs"
+import {
+  GITHUB_DELIVERY_AGENT_ID,
+  PHASE_6G_APPROVED_MERGE_METHOD
+} from "./github-delivery-agent.mjs"
 
 export const PPO_SELF_DEVELOPMENT_CANCELLATION_ID = "stage-0-local-ppo-self-development-cancellation"
 export const PPO_SELF_DEVELOPMENT_CANCELLATION_POLICY_ID = "stage-0-local-ppo-self-development-cancellation-policy"
 export const PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION = "cancel-personal-project-operator-run"
+export const PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION =
+  "cancel-stale-unmerged-personal-project-operator-run"
 export const PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS = 30 * 60 * 1000
+export const PPO_SELF_DEVELOPMENT_STALE_MERGE_STATE_MIN_AGE_MS = 30 * 60 * 1000
 export const PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON =
   "owner_requested_stale_self_test_cancellation"
+export const PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_REASON =
+  "owner_confirmed_stale_unmerged_self_merge_cancellation"
 
 const safePolicyIdPattern = /^[a-z0-9][a-z0-9_.:-]{0,79}$/u
 const policyHashPattern = /^[a-f0-9]{64}$/u
@@ -39,6 +52,13 @@ const policyBoundary = Object.freeze({
     runner: AUTOMATED_TEST_RUNNER_ID,
     sandbox: AUTOMATED_TEST_SANDBOX_ID,
     network: "none"
+  }),
+  staleMergeState: Object.freeze({
+    status: "merge_ready",
+    minimumAgeMs: PPO_SELF_DEVELOPMENT_STALE_MERGE_STATE_MIN_AGE_MS,
+    agent: GITHUB_DELIVERY_AGENT_ID,
+    mergeMethod: PHASE_6G_APPROVED_MERGE_METHOD,
+    confirmation: PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
   }),
   confirmation: PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
   expectedVersionRequired: true,
@@ -125,6 +145,53 @@ function staleSelfTestAttempt(run, options) {
   )
 }
 
+function staleSelfMergeState(run, options) {
+  if (run.status !== "merge_ready" || !Array.isArray(run?.evidence?.merge)) {
+    return false
+  }
+
+  const entry = run.evidence.merge.at(-1)
+  const metadata = entry?.metadata || {}
+  const observedAt = metadata.outcome === "merge_started" ? metadata.startedAt : metadata.preparedAt
+  const observedAtMs = typeof observedAt === "string" && observedAt.length <= 80
+    ? Date.parse(observedAt)
+    : Number.NaN
+  const nowMs = currentTimeMs(options)
+  const common = (
+    Number.isFinite(nowMs) &&
+    Number.isFinite(observedAtMs) &&
+    nowMs - observedAtMs >= PPO_SELF_DEVELOPMENT_STALE_MERGE_STATE_MIN_AGE_MS &&
+    entry?.kind === "merge" &&
+    entry?.source === GITHUB_DELIVERY_AGENT_ID &&
+    entry?.sha === run.headSha &&
+    metadata.agent === GITHUB_DELIVERY_AGENT_ID &&
+    metadata.project === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id &&
+    metadata.policyId === PHASE_6G_DELIVERY_POLICY_ID &&
+    metadata.policyHash === PHASE_6G_DELIVERY_POLICY_HASH &&
+    metadata.implementationSha === run.headSha &&
+    Number.isInteger(metadata.prNumber) &&
+    metadata.prNumber > 0
+  )
+
+  if (!common) {
+    return false
+  }
+
+  if (metadata.outcome === "merge_started") {
+    return (
+      metadata.expectedHeadSha === run.headSha &&
+      metadata.mergeMethod === PHASE_6G_APPROVED_MERGE_METHOD
+    )
+  }
+
+  return (
+    metadata.outcome === "merge_ready" &&
+    metadata.prHeadSha === run.headSha &&
+    metadata.branch === run.branch &&
+    metadata.base === "main"
+  )
+}
+
 async function inspectCurrent(runId, options = {}) {
   if (typeof runId !== "string" || !DEVELOPMENT_RUN_ID_PATTERN.test(runId)) {
     return failure("invalid_run_id")
@@ -154,8 +221,9 @@ async function inspectCurrent(runId, options = {}) {
 
   const statusClass = classifyDevelopmentRunCancellationStatus(run.status)
   const staleTestAttempt = staleSelfTestAttempt(run, options)
+  const staleMergeState = staleSelfMergeState(run, options)
 
-  if (statusClass !== "eligible" && !staleTestAttempt) {
+  if (statusClass !== "eligible" && !staleTestAttempt && !staleMergeState) {
     return failure(statusClass)
   }
 
@@ -170,7 +238,11 @@ async function inspectCurrent(runId, options = {}) {
     beforeStatus: run.status,
     expectedVersion: run.version,
     headSha: run.headSha,
-    staleTestAttempt
+    staleTestAttempt,
+    staleMergeState,
+    confirmation: staleMergeState
+      ? PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
+      : PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION
   }
 }
 
@@ -187,7 +259,10 @@ export async function confirmPersonalProjectOperatorSelfDevelopmentCancellation(
   if (
     !Number.isInteger(expectedVersion) ||
     expectedVersion < 0 ||
-    confirmation !== PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION
+    ![
+      PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
+      PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
+    ].includes(confirmation)
   ) {
     return failure("confirmation_required")
   }
@@ -196,6 +271,10 @@ export async function confirmPersonalProjectOperatorSelfDevelopmentCancellation(
 
   if (!ready.ok) {
     return ready
+  }
+
+  if (confirmation !== ready.confirmation) {
+    return failure("confirmation_required")
   }
 
   if (ready.expectedVersion !== expectedVersion) {
@@ -208,9 +287,11 @@ export async function confirmPersonalProjectOperatorSelfDevelopmentCancellation(
       expectedVersion,
       status: "cancelled",
       actor: DEVELOPMENT_RUN_CANCELLATION_ACTOR,
-      reason: ready.staleTestAttempt
-        ? PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON
-        : DEVELOPMENT_RUN_CANCELLATION_REASON
+      reason: ready.staleMergeState
+        ? PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_REASON
+        : ready.staleTestAttempt
+          ? PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON
+          : DEVELOPMENT_RUN_CANCELLATION_REASON
     }, options)
 
     return {
@@ -226,7 +307,8 @@ export async function confirmPersonalProjectOperatorSelfDevelopmentCancellation(
       beforeVersion: expectedVersion,
       afterVersion: run.version,
       headSha: run.headSha,
-      staleTestAttempt: ready.staleTestAttempt
+      staleTestAttempt: ready.staleTestAttempt,
+      staleMergeState: ready.staleMergeState
     }
   } catch (error) {
     return failure(error?.code === "STALE_RUN_VERSION" ? "stale_state" : "cancellation_unavailable")
@@ -247,10 +329,11 @@ export function formatPersonalProjectOperatorSelfDevelopmentCancellation(result)
     lines.push(`Version: ${result.expectedVersion ?? `${result.beforeVersion} -> ${result.afterVersion}`}`)
     lines.push(`Head: ${result.headSha || "none"}`)
     lines.push(`Stale test attempt: ${result.staleTestAttempt === true ? "yes" : "no"}`)
+    lines.push(`Stale merge state: ${result.staleMergeState === true ? "yes" : "no"}`)
 
     if (result.outcome === "cancellation_ready") {
       lines.push(
-        `Confirm: ppo-self-development cancel-confirm ${result.runId} ${result.expectedVersion} ${PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION} --local-owner-confirmed`
+        `Confirm: ppo-self-development cancel-confirm ${result.runId} ${result.expectedVersion} ${result.confirmation} --local-owner-confirmed`
       )
     }
   }

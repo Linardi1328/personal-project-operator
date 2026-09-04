@@ -29,6 +29,9 @@ import {
 } from "./development-recovery-coordinator.mjs"
 import {
   PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
+  PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION,
+  PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_REASON,
+  PPO_SELF_DEVELOPMENT_STALE_MERGE_STATE_MIN_AGE_MS,
   PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS,
   PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON,
   confirmPersonalProjectOperatorSelfDevelopmentCancellation,
@@ -40,6 +43,14 @@ import {
   MAX_AUTOMATED_TEST_STEPS,
   MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS
 } from "./development-test-runner.mjs"
+import {
+  PHASE_6G_DELIVERY_POLICY_HASH,
+  PHASE_6G_DELIVERY_POLICY_ID
+} from "./development-acceptance-gate.mjs"
+import {
+  GITHUB_DELIVERY_AGENT_ID,
+  PHASE_6G_APPROVED_MERGE_METHOD
+} from "./github-delivery-agent.mjs"
 import {
   inspectPersonalProjectOperatorSelfDevelopment,
   startPersonalProjectOperatorSelfDevelopment
@@ -488,6 +499,120 @@ test("Stage 0 cancellation retires only a structurally valid stale self-test att
   assert.equal(transitionInput.reason, PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON)
 })
 
+test("Stage 0 cancellation requires separate owner confirmation for a stale unmerged merge state", async () => {
+  const startedAt = "2026-09-04T18:24:45.397Z"
+  const branch = "ppo/personal-project-operator/implementation/stage0-merge-fixture"
+  const run = selfRun("merge_ready", {
+    branch,
+    evidence: {
+      planning: [],
+      implementation: [],
+      review: [],
+      test: [],
+      merge: [{
+        kind: "merge",
+        sha: HEAD_SHA,
+        source: GITHUB_DELIVERY_AGENT_ID,
+        summary: "Phase 6G exact-head merge attempt was reserved.",
+        metadata: {
+          project: SELF.id,
+          agent: GITHUB_DELIVERY_AGENT_ID,
+          policyId: PHASE_6G_DELIVERY_POLICY_ID,
+          policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+          implementationSha: HEAD_SHA,
+          outcome: "merge_started",
+          prNumber: 67,
+          expectedHeadSha: HEAD_SHA,
+          mergeMethod: PHASE_6G_APPROVED_MERGE_METHOD,
+          startedAt
+        }
+      }],
+      deploy: [],
+      verification: [],
+      rollback: []
+    }
+  })
+  const inspectRun = async () => ({
+    ok: true,
+    canonicalState: "canonical_current",
+    recoveryRequired: false,
+    record: structuredClone(run)
+  })
+  const fresh = await stagePersonalProjectOperatorSelfDevelopmentCancellation(RUN_ID, {
+    inspectRun,
+    now: () => new Date(Date.parse(startedAt) + PPO_SELF_DEVELOPMENT_STALE_MERGE_STATE_MIN_AGE_MS - 1)
+  })
+
+  assert.equal(fresh.ok, false)
+  assert.equal(fresh.outcome, "delivery_state_out_of_scope")
+
+  const now = () => new Date(Date.parse(startedAt) + PPO_SELF_DEVELOPMENT_STALE_MERGE_STATE_MIN_AGE_MS)
+  const ready = await stagePersonalProjectOperatorSelfDevelopmentCancellation(RUN_ID, { inspectRun, now })
+
+  assert.equal(ready.ok, true)
+  assert.equal(ready.staleMergeState, true)
+  assert.equal(ready.confirmation, PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION)
+
+  const preparedRun = structuredClone(run)
+  preparedRun.evidence.merge[0].summary = "Phase 6G delivery is ready for an exact-head merge."
+  preparedRun.evidence.merge[0].metadata = {
+    project: SELF.id,
+    agent: GITHUB_DELIVERY_AGENT_ID,
+    policyId: PHASE_6G_DELIVERY_POLICY_ID,
+    policyHash: PHASE_6G_DELIVERY_POLICY_HASH,
+    implementationSha: HEAD_SHA,
+    outcome: "merge_ready",
+    prNumber: 67,
+    prHeadSha: HEAD_SHA,
+    branch,
+    base: "main",
+    preparedAt: startedAt
+  }
+  const preparedReady = await stagePersonalProjectOperatorSelfDevelopmentCancellation(RUN_ID, {
+    inspectRun: async () => ({
+      ok: true,
+      canonicalState: "canonical_current",
+      recoveryRequired: false,
+      record: preparedRun
+    }),
+    now
+  })
+
+  assert.equal(preparedReady.ok, true)
+  assert.equal(preparedReady.staleMergeState, true)
+  assert.equal(
+    preparedReady.confirmation,
+    PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
+  )
+
+  const genericRefused = await confirmPersonalProjectOperatorSelfDevelopmentCancellation(
+    RUN_ID,
+    run.version,
+    PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
+    { inspectRun, now }
+  )
+  assert.equal(genericRefused.outcome, "confirmation_required")
+
+  let transitionInput
+  const cancelled = await confirmPersonalProjectOperatorSelfDevelopmentCancellation(
+    RUN_ID,
+    run.version,
+    PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION,
+    {
+      inspectRun,
+      now,
+      transitionRun: async (_runId, input) => {
+        transitionInput = input
+        return { ...run, status: "cancelled", version: run.version + 1 }
+      }
+    }
+  )
+
+  assert.equal(cancelled.ok, true)
+  assert.equal(cancelled.staleMergeState, true)
+  assert.equal(transitionInput.reason, PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_REASON)
+})
+
 test("Stage 0 status inspection is read-only and fails closed for a non-current canonical record", async () => {
   const result = await inspectPersonalProjectOperatorSelfDevelopment(RUN_ID, {
     inspectRun: async () => ({
@@ -583,12 +708,42 @@ test("Stage 0 command parser exposes only strict local commands", async () => {
   const malformed = await handlePpoSelfDevelopmentCommand(["continue", RUN_ID, "extra"], {
     continueRun: async () => assert.fail("malformed command must not dispatch")
   })
+  const cancellationCalls = []
+  const staleMergeCancellation = await handlePpoSelfDevelopmentCommand([
+    "cancel-confirm",
+    RUN_ID,
+    "4",
+    PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION,
+    "--local-owner-confirmed"
+  ], {
+    confirmCancellation: async (runId, version, confirmation) => {
+      cancellationCalls.push({ runId, version, confirmation })
+      return {
+        ok: true,
+        outcome: "cancelled",
+        runId,
+        project: SELF.id,
+        beforeStatus: "merge_ready",
+        afterStatus: "cancelled",
+        beforeVersion: version,
+        afterVersion: version + 1,
+        headSha: HEAD_SHA,
+        staleMergeState: true
+      }
+    }
+  })
 
   assert.equal(result.ok, true)
   assert.deepEqual(calls, [RUN_ID])
   assert.match(result.output, /PPO Self-Development Continue/u)
   assert.equal(malformed.ok, false)
   assert.match(malformed.output, /invalid_command/u)
+  assert.equal(staleMergeCancellation.ok, true)
+  assert.deepEqual(cancellationCalls, [{
+    runId: RUN_ID,
+    version: 4,
+    confirmation: PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
+  }])
 })
 
 test("Stage 0 does not add self-development to ordinary OpenClaw command surfaces", async () => {
