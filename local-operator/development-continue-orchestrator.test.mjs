@@ -1312,6 +1312,39 @@ test("Phase 6K fixed runtime profile supplies reviewed local capabilities only",
   )
 })
 
+test("Phase 6F readiness uses a live model request and classifies revoked authentication before dispatch", async () => {
+  const run = makeRun("tests_passed")
+  const calls = []
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: makeReader(run).readRun,
+    childHandlers: {
+      executeIndependentReview: async () => {
+        calls.push("review")
+      }
+    },
+    trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
+      platform: "darwin",
+      statImpl: fakeRuntimeStatFor(),
+      accessImpl: async () => {},
+      execFileImpl: async (_path, args) => {
+        calls.push(args)
+        if (args[0] === "exec" && args.includes("--ephemeral")) {
+          const error = new Error("HTTP 401 token refresh failed SENSITIVE_TEST_SENTINEL")
+          error.stderr = "authentication required SENSITIVE_TEST_SENTINEL"
+          throw error
+        }
+        return { stdout: "ok\n", stderr: "" }
+      }
+    })
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, "codex_authentication_failed")
+  assert.equal(calls.includes("review"), false)
+  assert.equal(calls.some((entry) => Array.isArray(entry) && entry[0] === "exec"), true)
+  assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|token refresh/iu)
+})
+
 test("Phase 6K runtime profile defines one reviewed fixed test policy for each ordinary project", async () => {
   const expectedPolicies = new Map([
     ["khlim-assist", {

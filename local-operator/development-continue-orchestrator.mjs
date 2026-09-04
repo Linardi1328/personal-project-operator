@@ -451,10 +451,13 @@ async function resolveRuntimeOptions(run, boundary, options = {}, scope = ordina
       ok: true,
       runtimeOptions: normalizeRuntimeProfile(profile)
     }
-  } catch {
+  } catch (error) {
+    const reason = error?.failureClass === "authentication"
+      ? "codex_authentication_failed"
+      : "continue_runtime_not_ready"
     return {
       ok: false,
-      result: ownerActionResult(run, boundary.action, "continue_runtime_not_ready")
+      result: ownerActionResult(run, boundary.action, reason)
     }
   }
 }
@@ -566,6 +569,10 @@ async function childFailureResult(run, action, error, options = {}, scope = ordi
     typeof error?.failureClass === "string" &&
     codexFailureClasses.has(error.failureClass)
   ) ? error.failureClass : null
+  const reviewFailureClass = (
+    code === "REVIEW_EXECUTION_FAILED" &&
+    (error?.failureClass === "authentication" || error?.failureClass === "runtime")
+  ) ? error.failureClass : null
   let observed = null
 
   try {
@@ -608,7 +615,9 @@ async function childFailureResult(run, action, error, options = {}, scope = ordi
       : safeReason(
         codexFailureClass
           ? `codex_${codexFailureClass}_failed`
-          : error?.reasonCode || error?.reason || code.toLowerCase(),
+          : reviewFailureClass
+            ? `reviewer_${reviewFailureClass}_failed`
+            : error?.reasonCode || error?.reason || code.toLowerCase(),
         "child_operation_refused"
       )
   }, scope)

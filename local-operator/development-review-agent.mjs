@@ -1881,10 +1881,15 @@ function buildReviewDecisionEvidence(run, execution, config, decision, endedAt) 
       blockers: decision.blockers.length,
       securityFindings: decision.securityFindings.length,
       testsRequired: decision.testsRequired.length,
-      summaryHash: sha256Text(decision.summary),
+      ...(execution.runtimeFailureClass ? {} : {
+        summaryHash: sha256Text(decision.summary)
+      }),
       startedAt: execution.startedAt,
       endedAt,
       outcome,
+      ...(execution.runtimeFailureClass ? {
+        runtimeFailureClass: execution.runtimeFailureClass
+      } : {}),
       sandbox: INDEPENDENT_REVIEW_SANDBOX_ID,
       network: "none"
     }
@@ -1939,10 +1944,15 @@ function parseReviewerDecision(result, reviewedSha, maxOutputBytes) {
   }
 
   if (result?.exitCode !== 0) {
-    throw reviewError(
+    const failureText = `${String(result?.stderr ?? "")} ${String(result?.stdout ?? "")}`
+    const error = reviewError(
       "REVIEW_EXECUTION_FAILED",
       "Independent review failed before a verified decision was produced."
     )
+    error.failureClass = /(?:not logged in|authentication|authenticate|login required|token expired|token refresh|HTTP 401|unauthorized)/iu.test(failureText)
+      ? "authentication"
+      : "runtime"
+    throw error
   }
 
   let parsed
@@ -2146,7 +2156,7 @@ export async function invokeTrustedReviewForPrompt(config, invocation, options =
 async function transitionReviewDecision(run, config, execution, decision, options) {
   const endedAt = timestamp(nowDate(options))
   const evidence = [
-    ...(decision.decision === REVIEW_DECISIONS.APPROVED ? [] : [
+    ...(decision.decision === REVIEW_DECISIONS.APPROVED || execution.runtimeFailureClass ? [] : [
       buildReviewFindingsEvidence(run, execution, decision)
     ]),
     buildReviewDecisionEvidence(run, execution, config, decision, endedAt)
@@ -2191,7 +2201,10 @@ async function failClosedWithOwnerAction(run, config, execution, options, error)
     summary: "Independent review could not produce a valid approval decision."
   }
 
-  await transitionReviewDecision(run, config, execution, decision, options)
+  await transitionReviewDecision(run, config, {
+    ...execution,
+    runtimeFailureClass: error?.failureClass === "authentication" ? "authentication" : "runtime"
+  }, decision, options)
   throw error
 }
 

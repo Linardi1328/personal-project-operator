@@ -297,9 +297,11 @@ If Phase 6B returns `owner_action_required` or a malformed planned result, Phase
 
 ### Stage 0 - Local PPO Self-Development Controller
 
-Stage 0 adds `ppo-self-development` as a separate terminal-only macOS controller fixed to `Linardi1328/personal-project-operator`. It reuses the Phase 6B–6G engines, advances at most one boundary per continuation, stops at `merged`, provides read-only status/recovery, and requires exact-version local confirmation for quiescent cancellation or a structurally valid open self-test attempt that has remained stale for at least 30 minutes. A structurally valid stale unmerged `merge_ready` or `merge_started` state uses a separate exact confirmation so a base-advanced run can be retired without weakening SHA binding.
+Stage 0 adds `ppo-self-development` as a separate terminal-only macOS controller fixed to `Linardi1328/personal-project-operator`. It reuses the Phase 6B–6G engines, advances at most one boundary per continuation, stops at `merged`, provides read-only status/recovery, and requires exact-version local confirmation for quiescent cancellation or a structurally valid open self-test attempt that has remained stale for at least 30 minutes. A structurally valid stale unmerged `merge_ready` or `merge_started` state uses a separate exact confirmation so a base-advanced run can be retired without weakening SHA binding. `review-retry <run-id> <version> <head-sha> retry-phase6f-review-runtime-failure-v1 --local-owner-confirmed` is limited to a confirmed Phase 6F reviewer-runtime failure; it preserves the clean implementation SHA and exact-SHA test PASS evidence, returns the run to `tests_passed`, and does not reserve a hardening round.
 
 The controller is not imported by `ppo-command.mjs` or the OpenClaw bridge. The ordinary six-project registry and all `/ppo` routes remain unchanged. See `stage-0-ppo-self-development-controller.md`.
+
+Immediately before Phase 6F review or bounded hardening dispatch, the fixed runtime profile performs an ephemeral live Codex model request. Cached `codex login status` alone is not accepted as readiness. Authentication failures are reported separately from other runtime failures, and neither class is treated as a reviewer finding or allowed to reserve review/hardening work during readiness.
 
 ## Files
 

@@ -53,6 +53,7 @@ import {
 } from "./github-delivery-agent.mjs"
 import {
   inspectPersonalProjectOperatorSelfDevelopment,
+  recoverPersonalProjectOperatorSelfDevelopmentReviewRuntimeFailure,
   startPersonalProjectOperatorSelfDevelopment
 } from "./development-self-controller.mjs"
 import { handlePpoSelfDevelopmentCommand } from "./ppo-self-development-command.mjs"
@@ -361,6 +362,64 @@ test("Stage 0 recovery is read-only, self-scoped, and separately policy-bound", 
   assert.equal(result.outcome, "recovery_not_required")
   assert.equal(result.policyId, PPO_SELF_DEVELOPMENT_RECOVERY_POLICY_ID)
   assert.equal(result.run.project, SELF.id)
+})
+
+test("Stage 0 exposes exact-version Phase 6F runtime recovery for only the fixed self run", async () => {
+  const calls = []
+  const result = await recoverPersonalProjectOperatorSelfDevelopmentReviewRuntimeFailure(
+    RUN_ID,
+    12,
+    HEAD_SHA,
+    "retry-phase6f-review-runtime-failure-v1",
+    {
+      recoverReviewRuntimeFailure: async (request, options) => {
+        calls.push({ request, options })
+        return { ok: true, outcome: "review_runtime_failure_recovered" }
+      }
+    }
+  )
+
+  assert.equal(result.outcome, "review_runtime_failure_recovered")
+  assert.deepEqual(calls[0].request, {
+    runId: RUN_ID,
+    expectedVersion: 12,
+    expectedHeadSha: HEAD_SHA,
+    confirmation: "retry-phase6f-review-runtime-failure-v1"
+  })
+  assert.equal(calls[0].options.allowPersonalProjectOperatorSelfDevelopmentProject, true)
+})
+
+test("Stage 0 command exposes confirmation-gated exact-SHA review retry without an ordinary route", async () => {
+  const calls = []
+  const handled = await handlePpoSelfDevelopmentCommand([
+    "review-retry",
+    RUN_ID,
+    "12",
+    HEAD_SHA,
+    "retry-phase6f-review-runtime-failure-v1",
+    "--local-owner-confirmed"
+  ], {
+    recoverReviewRuntime: async (...args) => {
+      calls.push(args)
+      return {
+        ok: true,
+        outcome: "review_runtime_failure_recovered",
+        before: { status: "review_changes_requested", version: 12 },
+        run: {
+          runId: RUN_ID,
+          project: SELF.id,
+          status: "tests_passed",
+          version: 13,
+          headSha: HEAD_SHA,
+          reviewAttempt: 1
+        }
+      }
+    }
+  })
+
+  assert.equal(handled.ok, true)
+  assert.deepEqual(calls[0], [RUN_ID, 12, HEAD_SHA, "retry-phase6f-review-runtime-failure-v1"])
+  assert.match(handled.output, /After: tests_passed \(version 13\)/u)
 })
 
 test("Stage 0 cancellation requires a current canonical run, exact version, and exact local confirmation", async () => {

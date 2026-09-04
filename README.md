@@ -483,6 +483,8 @@ Phase 6E stores only metadata-only SHA-pinned test evidence and adds no terminal
 
 Phase 6F adds a local-only independent exact-SHA review agent and bounded hardening pipeline foundation:
 
+Customer Zero continuation also requires a successful ephemeral live Codex model request immediately before Phase 6F review or hardening dispatch. This detects revoked authentication that a local login-status check can miss, distinguishes authentication readiness from other runtime failures, and refuses attempt reservation when either is unavailable. The terminal-only PPO self-development controller exposes a confirmation-gated, exact-version/exact-SHA `review-retry` recovery for runtime failures; it retains the clean implementation and PASS evidence and does not consume a hardening round.
+
 ```text
 local-operator/development-review-agent.mjs
 local-operator/development-hardening-orchestrator.mjs

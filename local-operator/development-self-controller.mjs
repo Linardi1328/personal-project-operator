@@ -12,8 +12,12 @@ import {
   formatPersonalProjectOperatorSelfDevelopmentContinueResult
 } from "./development-continue-orchestrator.mjs"
 import {
+  loadPersonalProjectOperatorSelfDevelopmentRecoveryRuntimeProfile,
   loadPersonalProjectOperatorSelfDevelopmentRuntimeProfile
 } from "./development-continue-runtime-profile.mjs"
+import {
+  recoverReviewRuntimeFailure
+} from "./development-review-retry-recovery.mjs"
 import {
   executePersonalProjectOperatorSelfDevelopmentRecovery,
   formatPersonalProjectOperatorSelfDevelopmentRecoveryResult
@@ -174,6 +178,33 @@ export async function continuePersonalProjectOperatorSelfDevelopment(runId, opti
 
 export async function recoverPersonalProjectOperatorSelfDevelopment(runId, options = {}) {
   return await executePersonalProjectOperatorSelfDevelopmentRecovery(runId, options)
+}
+
+export async function recoverPersonalProjectOperatorSelfDevelopmentReviewRuntimeFailure(
+  runId,
+  expectedVersion,
+  expectedHeadSha,
+  confirmation,
+  options = {}
+) {
+  const recoverer = options.recoverReviewRuntimeFailure || recoverReviewRuntimeFailure
+
+  return await recoverer({
+    runId,
+    expectedVersion,
+    expectedHeadSha,
+    confirmation
+  }, {
+    ...options,
+    recoverReviewRuntimeFailure: undefined,
+    allowPersonalProjectOperatorSelfDevelopmentProject: true,
+    loadRuntimeProfile: options.loadRuntimeProfile || (async (request) => {
+      return await loadPersonalProjectOperatorSelfDevelopmentRecoveryRuntimeProfile(request, {
+        includeTestPolicy: false,
+        platform: options.platform
+      })
+    })
+  })
 }
 
 export async function stagePersonalProjectOperatorSelfDevelopmentRunCancellation(runId, options = {}) {
