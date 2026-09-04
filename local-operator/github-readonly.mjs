@@ -162,7 +162,7 @@ function validatePerPage(value) {
   return Number.isInteger(parsedValue) && parsedValue >= 1 && parsedValue <= MAX_ITEM_LIMIT
 }
 
-function validateEndpointQuery(endpoint, queryParams) {
+function validateEndpointQuery(endpoint, queryParams, approvedProjects) {
   const query = normalizeQueryParams(queryParams)
   const keys = Object.keys(query)
 
@@ -180,7 +180,7 @@ function validateEndpointQuery(endpoint, queryParams) {
     )
   }
 
-  for (const project of listPhase2GitHubProjects()) {
+  for (const project of approvedProjects) {
     const suffix = endpointSuffix(endpoint, project)
 
     if (suffix === null) {
@@ -246,10 +246,14 @@ function appendQueryParams(endpoint, queryParams = {}) {
   return queryString ? `${endpoint}?${queryString}` : endpoint
 }
 
-export function buildGhApiGetArgs(endpoint, queryParams = {}) {
-  validateEndpointQuery(endpoint, queryParams)
+function buildFixedGhApiGetArgs(endpoint, queryParams, approvedProjects) {
+  validateEndpointQuery(endpoint, queryParams, approvedProjects)
 
   return ["api", "--method", "GET", appendQueryParams(endpoint, queryParams)]
+}
+
+export function buildGhApiGetArgs(endpoint, queryParams = {}) {
+  return buildFixedGhApiGetArgs(endpoint, queryParams, listPhase2GitHubProjects())
 }
 
 function execFilePromise(execFileImpl, file, args, options) {
@@ -271,7 +275,7 @@ function execFilePromise(execFileImpl, file, args, options) {
   })
 }
 
-export function createGhApiGetRunner({ execFileImpl = execFile } = {}) {
+function createFixedGhApiGetRunner({ execFileImpl = execFile, approvedProjects }) {
   return async function runGhApiGet(request) {
     if (!request || request.method !== "GET") {
       throw new GitHubReadOnlyError(
@@ -280,7 +284,11 @@ export function createGhApiGetRunner({ execFileImpl = execFile } = {}) {
       )
     }
 
-    const args = buildGhApiGetArgs(request.endpoint, request.queryParams)
+    const args = buildFixedGhApiGetArgs(
+      request.endpoint,
+      request.queryParams || {},
+      approvedProjects
+    )
 
     return execFilePromise(execFileImpl, "gh", args, {
       encoding: "utf8",
@@ -289,6 +297,22 @@ export function createGhApiGetRunner({ execFileImpl = execFile } = {}) {
       timeout: 15000
     })
   }
+}
+
+export function createGhApiGetRunner({ execFileImpl = execFile } = {}) {
+  return createFixedGhApiGetRunner({
+    execFileImpl,
+    approvedProjects: listPhase2GitHubProjects()
+  })
+}
+
+export function createPersonalProjectOperatorSelfDevelopmentGhApiGetRunner({
+  execFileImpl = execFile
+} = {}) {
+  return createFixedGhApiGetRunner({
+    execFileImpl,
+    approvedProjects: [PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT]
+  })
 }
 
 function combinedFailureText(error) {
@@ -554,8 +578,13 @@ export function createGitHubReadOnlyClient(options = {}) {
 }
 
 export function createPersonalProjectOperatorSelfDevelopmentGitHubReadOnlyClient(options = {}) {
+  const { execFileImpl, ...clientOptions } = options
+
   return createFixedGitHubReadOnlyClient({
-    ...options,
+    ...clientOptions,
+    runner: clientOptions.runner || createPersonalProjectOperatorSelfDevelopmentGhApiGetRunner({
+      execFileImpl
+    }),
     projectResolver: resolvePersonalProjectOperatorSelfDevelopmentProject
   })
 }
