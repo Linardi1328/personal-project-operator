@@ -17,11 +17,11 @@ ppo-self-development cancel-confirm <run-id> <version> cancel-personal-project-o
 
 `start` reads the fixed `projects/personal-project-operator.md`, `ROADMAP.md`, and GitHub read-only snapshot. It accepts no task, repository, SHA, branch, runtime, policy, provider, or deployment input.
 
-`continue` advances at most one existing Phase 6B–6G boundary and stops at `merged`. It uses the fixed macOS source checkout, managed workspace root, Codex runtime, independent reviewer, and five-step PPO validation policy.
+`continue` advances at most one existing Phase 6B–6G boundary and stops at `merged`. It uses the fixed macOS source checkout, managed workspace root, Codex runtime, independent reviewer, and five-step PPO validation policy. Each gate has its own fixed bounded timeout: 60 seconds for syntax, 180 seconds for parallel regression, and 300 seconds each for serial regression, critical lifecycle, and integrated acceptance.
 
 `recover` performs one read-only Phase 6C–6G observation. It does not retry, repair, mutate the run, invoke Codex, run tests, write GitHub state, deploy, or roll back.
 
-Cancellation is allowed only from the existing quiescent status set. Staging is read-only. Confirmation is bound to the observed run id and version and requires the exact local-owner confirmation. It never interrupts a process, cleans a workspace, deletes a branch, closes a PR, or affects production.
+Cancellation is allowed from the existing quiescent status set. A self-development run stuck in `tests_in_progress` is also eligible only when its latest test evidence is an exact-SHA, structurally valid open PPO test reservation at least 30 minutes old. That cooling period is longer than the five gates' aggregate 19-minute command budget. Staging is read-only. Confirmation is bound to the observed run id and version and requires the exact local-owner confirmation. It never interrupts a process, cleans a workspace, deletes a branch, closes a PR, or affects production.
 
 ## Validation parity
 

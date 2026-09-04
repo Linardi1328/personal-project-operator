@@ -6,6 +6,7 @@ import { isAbsolute, relative, resolve as resolvePath, sep } from "node:path"
 import { promisify } from "node:util"
 import {
   DevelopmentRunStateError,
+  PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
   readDevelopmentRun,
   recordDevelopmentRunProgress,
   resolveApprovedDevelopmentRunProject,
@@ -28,6 +29,7 @@ export const MAX_TEST_ENV_KEYS = 16
 export const MAX_TEST_ENV_VALUE_CHARS = 1000
 export const MAX_TEST_OUTPUT_BYTES = 32 * 1024
 export const MAX_TEST_TIMEOUT_MS = 2 * 60 * 1000
+export const MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS = 5 * 60 * 1000
 export const MIN_TEST_TIMEOUT_MS = 1000
 export const MAX_TEST_GIT_OUTPUT_BYTES = 24 * 1024
 export const TEST_SANDBOX_BACKENDS = Object.freeze({
@@ -403,8 +405,8 @@ function normalizeTestArgs(args = []) {
   }))
 }
 
-function normalizeTimeoutMs(value) {
-  if (!Number.isInteger(value) || value < MIN_TEST_TIMEOUT_MS || value > MAX_TEST_TIMEOUT_MS) {
+function normalizeTimeoutMs(value, maxTimeoutMs = MAX_TEST_TIMEOUT_MS) {
+  if (!Number.isInteger(value) || value < MIN_TEST_TIMEOUT_MS || value > maxTimeoutMs) {
     throw testRunnerError(
       "TEST_POLICY_INVALID",
       "Automated test timeout policy is invalid."
@@ -484,7 +486,7 @@ function normalizeTrustedExecutables(paths) {
   return paths.map((entry) => normalizeExecutablePath(entry))
 }
 
-function normalizeTestStep(step, trustedExecutableSet) {
+function normalizeTestStep(step, trustedExecutableSet, maxTimeoutMs) {
   if (!step || typeof step !== "object" || Array.isArray(step)) {
     throw testRunnerError(
       "TEST_POLICY_INVALID",
@@ -527,7 +529,7 @@ function normalizeTestStep(step, trustedExecutableSet) {
     id,
     executablePath,
     args: normalizeTestArgs(step.args || []),
-    timeoutMs: normalizeTimeoutMs(step.timeoutMs),
+    timeoutMs: normalizeTimeoutMs(step.timeoutMs, maxTimeoutMs),
     maxOutputBytes: normalizeOutputBytes(step.maxOutputBytes || MAX_TEST_OUTPUT_BYTES),
     required: true
   }
@@ -549,6 +551,9 @@ function normalizeProjectTestPolicy(project, policy) {
   })
   const trustedExecutablePaths = normalizeTrustedExecutables(policy.trustedExecutablePaths)
   const trustedExecutableSet = new Set(trustedExecutablePaths)
+  const maxTimeoutMs = project.id === PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id
+    ? MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS
+    : MAX_TEST_TIMEOUT_MS
 
   if (!Array.isArray(policy.steps) || policy.steps.length === 0 || policy.steps.length > MAX_AUTOMATED_TEST_STEPS) {
     throw testRunnerError(
@@ -564,7 +569,7 @@ function normalizeProjectTestPolicy(project, policy) {
     trustedExecutablePaths,
     env: normalizePolicyEnv(policy.env || {}),
     sandbox: normalizeExecutionSandbox(policy.sandbox),
-    steps: policy.steps.map((step) => normalizeTestStep(step, trustedExecutableSet))
+    steps: policy.steps.map((step) => normalizeTestStep(step, trustedExecutableSet, maxTimeoutMs))
   }
 
   return {
