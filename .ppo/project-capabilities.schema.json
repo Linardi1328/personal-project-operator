@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Linardi1328/personal-project-operator/blob/main/.ppo/project-capabilities.schema.json",
+  "title": "PPO Customer Zero project capability manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "manifestId", "repository", "runtimePreparation", "localQualityGates", "github", "deployment"],
+  "properties": {
+    "$schema": { "const": "./project-capabilities.schema.json" },
+    "schemaVersion": { "const": 1 },
+    "manifestId": { "const": "personal-project-operator-customer-zero" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityVersion", "projectId", "owner", "name", "fullName", "defaultBranch", "remote"],
+      "properties": {
+        "identityVersion": { "const": 1 },
+        "projectId": { "const": "personal-project-operator" },
+        "owner": { "const": "Linardi1328" },
+        "name": { "const": "personal-project-operator" },
+        "fullName": { "const": "Linardi1328/personal-project-operator" },
+        "defaultBranch": { "const": "main" },
+        "remote": { "const": "https://github.com/Linardi1328/personal-project-operator.git" }
+      }
+    },
+    "runtimePreparation": { "$ref": "#/$defs/runtimePreparation" },
+    "localQualityGates": { "$ref": "#/$defs/localQualityGates" },
+    "github": { "$ref": "#/$defs/github" },
+    "deployment": { "$ref": "#/$defs/deployment" }
+  },
+  "$defs": {
+    "runtimePreparation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "mode", "platform", "script", "automatic", "ownerApprovalRequired"],
+      "properties": {
+        "version": { "const": 1 },
+        "mode": { "const": "repository-script" },
+        "platform": { "const": "ubuntu-24.04" },
+        "script": { "const": "deployment/scripts/bootstrap-ubuntu-24.04.sh" },
+        "automatic": { "const": false },
+        "ownerApprovalRequired": { "const": true }
+      }
+    },
+    "localQualityGates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "runner", "gates"],
+      "properties": {
+        "version": { "const": 1 },
+        "runner": { "const": "deployment/scripts/run-ppo-development-quality.mjs" },
+        "gates": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "timeoutMs", "required"],
+            "properties": {
+              "id": { "enum": ["syntax", "parallel-regression", "serial-regression", "critical-lifecycle", "integrated-acceptance"] },
+              "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 300000 },
+              "required": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "workflow", "requiredChecks"],
+      "properties": {
+        "version": { "const": 1 },
+        "workflow": { "const": ".github/workflows/ppo-pr-validation.yml" },
+        "requiredChecks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["workflow", "job", "context"],
+            "properties": {
+              "workflow": { "const": "PPO PR validation" },
+              "job": { "const": "validate" },
+              "context": { "const": "PPO PR validation / validate" }
+            }
+          }
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "provider", "profileId", "environment", "installDir", "service", "strategy", "automatic", "ownerApprovalRequired"],
+      "properties": {
+        "version": { "const": 1 },
+        "provider": { "const": "self-hosted-systemd" },
+        "profileId": { "const": "personal-project-operator-production" },
+        "environment": { "const": "production" },
+        "installDir": { "const": "/opt/personal-project-operator" },
+        "service": { "const": "ppo-openclaw.service" },
+        "strategy": { "const": "exact-sha" },
+        "automatic": { "const": false },
+        "ownerApprovalRequired": { "const": true }
+      }
+    }
+  }
+}

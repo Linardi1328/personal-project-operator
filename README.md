@@ -663,6 +663,8 @@ It is deliberately absent from `ppo-command.mjs`, the OpenClaw bridge, ordinary 
 
 The self-development test policy and GitHub PR validation share `deployment/scripts/run-ppo-development-quality.mjs`, which runs syntax, parallel regression, serial regression, two critical lifecycle stability rounds, and integrated acceptance. See [local-operator/stage-0-ppo-self-development-controller.md](local-operator/stage-0-ppo-self-development-controller.md).
 
+The declarative [Customer Zero capability manifest](.ppo/project-capabilities.v1.json) records the versioned repository identity, reviewed runtime-preparation entry point, local quality gates, required GitHub check, and deployment-provider metadata. Its strict schema is [co-located](.ppo/project-capabilities.schema.json). This metadata is descriptive only: it does not select runtime policy, trigger deployment, or broaden any command route.
+
 ## Command Menu System
 
 Commands are grouped into phone-friendly categories:

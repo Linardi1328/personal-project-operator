@@ -1,0 +1,55 @@
+{
+  "$schema": "./project-capabilities.schema.json",
+  "schemaVersion": 1,
+  "manifestId": "personal-project-operator-customer-zero",
+  "repository": {
+    "identityVersion": 1,
+    "projectId": "personal-project-operator",
+    "owner": "Linardi1328",
+    "name": "personal-project-operator",
+    "fullName": "Linardi1328/personal-project-operator",
+    "defaultBranch": "main",
+    "remote": "https://github.com/Linardi1328/personal-project-operator.git"
+  },
+  "runtimePreparation": {
+    "version": 1,
+    "mode": "repository-script",
+    "platform": "ubuntu-24.04",
+    "script": "deployment/scripts/bootstrap-ubuntu-24.04.sh",
+    "automatic": false,
+    "ownerApprovalRequired": true
+  },
+  "localQualityGates": {
+    "version": 1,
+    "runner": "deployment/scripts/run-ppo-development-quality.mjs",
+    "gates": [
+      { "id": "syntax", "timeoutMs": 60000, "required": true },
+      { "id": "parallel-regression", "timeoutMs": 180000, "required": true },
+      { "id": "serial-regression", "timeoutMs": 300000, "required": true },
+      { "id": "critical-lifecycle", "timeoutMs": 300000, "required": true },
+      { "id": "integrated-acceptance", "timeoutMs": 300000, "required": true }
+    ]
+  },
+  "github": {
+    "version": 1,
+    "workflow": ".github/workflows/ppo-pr-validation.yml",
+    "requiredChecks": [
+      {
+        "workflow": "PPO PR validation",
+        "job": "validate",
+        "context": "PPO PR validation / validate"
+      }
+    ]
+  },
+  "deployment": {
+    "version": 1,
+    "provider": "self-hosted-systemd",
+    "profileId": "personal-project-operator-production",
+    "environment": "production",
+    "installDir": "/opt/personal-project-operator",
+    "service": "ppo-openclaw.service",
+    "strategy": "exact-sha",
+    "automatic": false,
+    "ownerApprovalRequired": true
+  }
+}
