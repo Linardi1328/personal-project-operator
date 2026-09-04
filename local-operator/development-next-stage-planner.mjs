@@ -507,12 +507,24 @@ function actionLooksAmbiguous(nextAction) {
     nextAction.split("\n").filter((line) => /^\s*[-*]\s+/u.test(line)).length > 1
 }
 
+const declarativeDeploymentArtifactPattern =
+  /\bdeployment(?:-provider|\s+provider)?[-\s]+(?:metadata|manifest|schema|configuration|config|descriptor)s?\b/giu
+
+function containsDeploymentOperation(nextAction) {
+  const operationText = nextAction.replace(declarativeDeploymentArtifactPattern, "declarative-artifact")
+
+  return /\b(?:deploy(?:s|ed|ing|ments?)?|redeploy(?:s|ed|ing)?|roll\s*back|rollback|restart service|publish production)\b/iu.test(operationText)
+}
+
 function unsupportedStage(nextAction) {
+  if (containsDeploymentOperation(nextAction)) {
+    return "deployment"
+  }
+
   const checks = [
     ["merge", /\b(merge|approve PR|approve pull request|close PR|close pull request)\b/iu],
     ["git-mutation", /\b(create branch|branch creation|commit|push|checkout|rebase|cherry-pick)\b/iu],
     ["github-write", /\b(open PR|create PR|pull request automation|comment on|label|workflow dispatch|create issue)\b/iu],
-    ["deployment", /\b(deploy|deployment|restart service|rollback|publish production)\b/iu],
     ["external-action", /\b(auto-post|send customer|execute trade|brokerage|production account)\b/iu],
     ["test-agent", /\b(run tests|execute tests|automated tests|test execution)\b/iu],
     ["review-agent", /\b(review changes|approve review|request changes)\b/iu]

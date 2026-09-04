@@ -309,6 +309,8 @@ test("product-choice-dependent state requires owner action", async () => {
 test("unsafe or unapproved stages are refused", async () => {
   for (const nextAction of [
     "Deploy the production service.",
+    "Add production deployment automation.",
+    "Build a deployment workflow.",
     "Create branch and push implementation.",
     "Run tests automatically.",
     "Merge the pull request."
@@ -320,6 +322,22 @@ test("unsafe or unapproved stages are refused", async () => {
 
     assert.equal(plan.outcome, "owner_action_required", nextAction)
     assert.equal(plan.reasonCode, "UNSUPPORTED_STAGE", nextAction)
+  }
+})
+
+test("declarative deployment artifacts remain supported implementation work", async () => {
+  for (const nextAction of [
+    "Add versioned deployment-provider metadata to the capability manifest.",
+    "Add the deployment manifest schema.",
+    "Create a bounded deployment configuration descriptor."
+  ]) {
+    const plan = await planNextDevelopmentStage("khlim-assist", {
+      sources: sourcesFor("khlim-assist", { nextAction }),
+      githubClient: fakeGitHubClient()
+    })
+
+    assert.equal(plan.outcome, "planned", nextAction)
+    assert.equal(plan.next.stage, "implementation", nextAction)
   }
 })
 
