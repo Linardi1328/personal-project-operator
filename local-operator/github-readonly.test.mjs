@@ -6,6 +6,8 @@ import {
   buildGhApiGetArgs,
   createGhApiGetRunner,
   createGitHubReadOnlyClient,
+  createPersonalProjectOperatorSelfDevelopmentGhApiGetRunner,
+  createPersonalProjectOperatorSelfDevelopmentGitHubReadOnlyClient,
   listAllowedProjects,
   resolveProject,
   sanitizeGitHubText
@@ -594,6 +596,7 @@ for (const malformedRepoPayload of [
 for (const endpoint of [
   "/user",
   "/repos/octocat/Hello-World",
+  "/repos/Linardi1328/personal-project-operator",
   "/repos/Linardi1328/khlim-assist/hooks",
   "/repos/Linardi1328/khlim-assist/actions/secrets",
   "/orgs/Linardi1328"
@@ -675,6 +678,78 @@ for (const request of [
   assert.equal(calls[0].file, "gh")
   assert.deepEqual(calls[0].args, ["api", "--method", "GET", "/repos/Linardi1328/khlim-assist"])
   assert.equal(calls[0].options.shell, false)
+}
+
+{
+  const calls = []
+  const client = createPersonalProjectOperatorSelfDevelopmentGitHubReadOnlyClient({
+    execFileImpl: (file, args, options, callback) => {
+      calls.push({ file, args, options })
+      const endpoint = args[3]
+
+      if (endpoint.includes("/commits")) {
+        callback(null, JSON.stringify([{
+          sha: "a".repeat(40),
+          commit: {
+            message: "Fix PPO self-development GitHub transport",
+            author: {
+              name: "Richie",
+              date: "2026-09-04T00:00:00Z"
+            }
+          }
+        }]), "")
+        return
+      }
+
+      if (endpoint.includes("/pulls") || endpoint.includes("/issues")) {
+        callback(null, JSON.stringify([]), "")
+        return
+      }
+
+      callback(null, JSON.stringify({
+        full_name: "Linardi1328/personal-project-operator",
+        default_branch: "main",
+        private: false,
+        updated_at: "2026-09-04T00:00:00Z"
+      }), "")
+    },
+    now: () => new Date("2026-09-04T00:00:00.000Z")
+  })
+  const snapshot = await client.getProjectSnapshot("personal-project-operator")
+
+  assert.equal(snapshot.project.id, "personal-project-operator")
+  assert.equal(snapshot.project.fullName, "Linardi1328/personal-project-operator")
+  assert.equal(snapshot.repository.defaultBranch, "main")
+  assert.equal(snapshot.recentCommits[0].sha, "a".repeat(40))
+  assert.equal(snapshot.openPullRequests.length, 0)
+  assert.equal(snapshot.openIssues.length, 0)
+  assert.deepEqual(calls.map((call) => call.args[3]), [
+    "/repos/Linardi1328/personal-project-operator",
+    "/repos/Linardi1328/personal-project-operator/commits?per_page=5",
+    "/repos/Linardi1328/personal-project-operator/pulls?state=open&per_page=5",
+    "/repos/Linardi1328/personal-project-operator/issues?state=open&per_page=5"
+  ])
+  assert.equal(calls.every((call) => call.file === "gh" && call.options.shell === false), true)
+}
+
+{
+  const calls = []
+  const runner = createPersonalProjectOperatorSelfDevelopmentGhApiGetRunner({
+    execFileImpl: (file, args, options, callback) => {
+      calls.push({ file, args, options })
+      callback(null, JSON.stringify({ ok: true }), "")
+    }
+  })
+
+  await expectReadOnlyError(
+    () => runner({
+      method: "GET",
+      endpoint: "/repos/Linardi1328/khlim-assist",
+      queryParams: {}
+    }),
+    "UNSUPPORTED_ENDPOINT"
+  )
+  assert.equal(calls.length, 0, "self-development transport refuses ordinary project endpoints")
 }
 
 {
