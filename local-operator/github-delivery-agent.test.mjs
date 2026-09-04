@@ -48,6 +48,7 @@ import {
 import {
   GITHUB_DELIVERY_AGENT_ID,
   PHASE_6G_APPROVED_MERGE_METHOD,
+  PPO_PR_VALIDATION_WORKFLOW_FILE,
   REQUIRED_PPO_PR_VALIDATION_STEPS,
   createOrReconcileApprovedPullRequest,
   executeGitHubDeliveryToMergeReady,
@@ -64,6 +65,17 @@ const execFileAsync = promisify(execFile)
 const BASE_TIME = Date.parse("2026-08-21T12:00:00.000Z")
 const MERGE_SHA = "d".repeat(40)
 const MAIN_SHA = MERGE_SHA
+
+test("Phase 6G required CI steps exactly match the checked-in PR validation workflow", async () => {
+  const workflow = await readFile(
+    new URL(`../.github/workflows/${PPO_PR_VALIDATION_WORKFLOW_FILE}`, import.meta.url),
+    "utf8"
+  )
+  const workflowStepNames = [...workflow.matchAll(/^\s+- name:\s+(.+?)\s*$/gmu)]
+    .map((match) => match[1])
+
+  assert.deepEqual(workflowStepNames, REQUIRED_PPO_PR_VALIDATION_STEPS)
+})
 
 function makeClock() {
   let tick = 0
