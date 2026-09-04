@@ -1,0 +1,64 @@
+{
+  "$schema": "./customer-zero-project.schema.json",
+  "schemaVersion": "customer-zero-project-capability.v1",
+  "manifestVersion": 1,
+  "repository": {
+    "projectId": "personal-project-operator",
+    "fullName": "Linardi1328/personal-project-operator",
+    "defaultBranch": "main"
+  },
+  "runtimePreparation": {
+    "platform": "darwin",
+    "mode": "preconfigured",
+    "profileId": "phase-6k-fixed-local-runtime-profile",
+    "ownerManaged": true,
+    "callerOverridesAllowed": false
+  },
+  "localQualityGates": [
+    {
+      "id": "syntax",
+      "command": ["node", "deployment/scripts/run-ppo-development-quality.mjs", "syntax"],
+      "timeoutMs": 60000
+    },
+    {
+      "id": "parallel-regression",
+      "command": ["node", "deployment/scripts/run-ppo-development-quality.mjs", "parallel-regression"],
+      "timeoutMs": 180000
+    },
+    {
+      "id": "serial-regression",
+      "command": ["node", "deployment/scripts/run-ppo-development-quality.mjs", "serial-regression"],
+      "timeoutMs": 300000
+    },
+    {
+      "id": "critical-lifecycle",
+      "command": ["node", "deployment/scripts/run-ppo-development-quality.mjs", "critical-lifecycle"],
+      "timeoutMs": 300000
+    },
+    {
+      "id": "integrated-acceptance",
+      "command": ["node", "deployment/scripts/run-ppo-development-quality.mjs", "integrated-acceptance"],
+      "timeoutMs": 300000
+    }
+  ],
+  "github": {
+    "workflow": ".github/workflows/ppo-pr-validation.yml",
+    "job": "validate",
+    "requiredSteps": [
+      "Repository syntax checks",
+      "Parallel regression suite",
+      "Full serial regression suite",
+      "Critical Phase 6 lifecycle stability",
+      "Phase 6Q integrated user acceptance",
+      "Diff whitespace checks"
+    ]
+  },
+  "deploymentProvider": {
+    "id": "ppo-self-managed-ubuntu",
+    "kind": "self-managed-ubuntu-vps",
+    "profileId": "personal-project-operator-production",
+    "authority": "reviewed-agent",
+    "exactShaRequired": true,
+    "manifestCanDeploy": false
+  }
+}

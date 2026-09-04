@@ -63,6 +63,7 @@ function runNodeTests(files, options = []) {
 
 function allRegressionTests() {
   return [
+    ...regularFilesBelow("capabilities", (path) => path.endsWith(".test.mjs")),
     ...regularFilesBelow("local-operator", (path) => path.endsWith(".test.mjs")),
     ...regularFilesBelow("deployment", (path) => path.endsWith(".test.mjs")),
     "openclaw/plugins/ppo-local/test-bridge.mjs"
@@ -70,7 +71,7 @@ function allRegressionTests() {
 }
 
 function runSyntaxGate() {
-  const modules = ["local-operator", "deployment", "openclaw"]
+  const modules = ["capabilities", "local-operator", "deployment", "openclaw"]
     .flatMap((root) => regularFilesBelow(root, (path) => path.endsWith(".mjs")))
   const shellScripts = [
     ...regularFilesBelow("deployment", (path) => path.endsWith(".sh")),
@@ -104,6 +105,7 @@ function runCriticalLifecycleGate() {
 
 function runIntegratedAcceptanceGate() {
   runNodeTests([
+    "capabilities/customer-zero-project.test.mjs",
     "local-operator/phase-6q-integrated-acceptance.test.mjs",
     "local-operator/github-ppo-status.test.mjs",
     "local-operator/github-ppo-commands.test.mjs",
