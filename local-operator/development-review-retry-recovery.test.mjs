@@ -44,7 +44,10 @@ async function assertRejectsCode(promise, code) {
   )
 }
 
-function reviewEvidence(decision = "OWNER_ACTION_REQUIRED") {
+function reviewEvidence(
+  decision = "OWNER_ACTION_REQUIRED",
+  runtimeFailureClass = decision === "OWNER_ACTION_REQUIRED" ? "runtime" : null
+) {
   const genuineFindings = decision === "CHANGES_REQUESTED"
   const blockers = genuineFindings ? ["Fix a real review blocker."] : []
   const outcome = genuineFindings ? "changes_requested" : "owner_action_required"
@@ -88,10 +91,11 @@ function reviewEvidence(decision = "OWNER_ACTION_REQUIRED") {
         blockers: blockers.length,
         securityFindings: 0,
         testsRequired: 0,
-        summaryHash: "d".repeat(64),
+        ...(runtimeFailureClass ? {} : { summaryHash: "d".repeat(64) }),
         startedAt: "2026-08-25T11:38:00.000Z",
         endedAt: "2026-08-25T11:39:00.000Z",
         outcome,
+        ...(runtimeFailureClass ? { runtimeFailureClass } : {}),
         sandbox: "phase-6f-no-outbound-network-review-sandbox",
         network: "none"
       }
@@ -99,7 +103,10 @@ function reviewEvidence(decision = "OWNER_ACTION_REQUIRED") {
   ]
 }
 
-async function makeReviewFailureRun(decision = "OWNER_ACTION_REQUIRED") {
+async function makeReviewFailureRun(
+  decision = "OWNER_ACTION_REQUIRED",
+  runtimeFailureClass = decision === "OWNER_ACTION_REQUIRED" ? "runtime" : null
+) {
   const writeDataDir = await tempWriteDataDir()
   const now = makeClock()
   let run = await createDevelopmentRun({
@@ -155,7 +162,7 @@ async function makeReviewFailureRun(decision = "OWNER_ACTION_REQUIRED") {
     status: "review_changes_requested",
     actor: REVIEWER,
     reason: "phase-6f-independent-review-owner_action_required",
-    evidence: reviewEvidence(decision)
+    evidence: reviewEvidence(decision, runtimeFailureClass)
   }, {
     writeDataDir,
     now
@@ -334,6 +341,30 @@ test("recovery refuses dirty or mismatched reconciliation without changing state
 
 test("state recovery refuses genuine CHANGES_REQUESTED findings", async () => {
   const fixture = await makeReviewFailureRun("CHANGES_REQUESTED")
+
+  await assertRejectsCode(recoverDevelopmentRunReviewRuntimeFailureState(
+    fixture.run.runId,
+    {
+      expectedVersion: fixture.run.version,
+      expectedHeadSha: HEAD_SHA,
+      reviewAttempt: fixture.run.attempts.review,
+      confirmation: REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION
+    },
+    {
+      writeDataDir: fixture.writeDataDir,
+      now: fixture.now
+    }
+  ), "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED")
+
+  const stored = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  assert.equal(stored.version, fixture.run.version)
+  assert.equal(stored.status, "review_changes_requested")
+})
+
+test("state recovery refuses unclassified owner ambiguity with empty findings", async () => {
+  const fixture = await makeReviewFailureRun("OWNER_ACTION_REQUIRED", null)
 
   await assertRejectsCode(recoverDevelopmentRunReviewRuntimeFailureState(
     fixture.run.runId,

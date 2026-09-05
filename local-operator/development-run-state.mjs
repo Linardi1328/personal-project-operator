@@ -2964,26 +2964,12 @@ function assertReviewRuntimeFailureRecoveryCandidate(record, {
     decision.metadata?.mergeAllowed !== false ||
     decision.metadata?.blockers !== 0 ||
     decision.metadata?.securityFindings !== 0 ||
-    decision.metadata?.testsRequired !== 0
+    decision.metadata?.testsRequired !== 0 ||
+    !classifiedRuntimeFailure
   ) {
     throw runStateError(
       "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
       "Review runtime failure recovery requires an owner-action decision with no genuine review findings."
-    )
-  }
-
-  if (
-    !classifiedRuntimeFailure && (
-    !findings ||
-    findings.metadata?.decision !== "OWNER_ACTION_REQUIRED" ||
-    findings.metadata?.mergeAllowed !== false ||
-    findings.metadata?.blockers !== 0 ||
-    findings.metadata?.securityFindings !== 0 ||
-    findings.metadata?.testsRequired !== 0)
-  ) {
-    throw runStateError(
-      "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
-      "Review runtime failure recovery requires matching empty review findings evidence."
     )
   }
 
