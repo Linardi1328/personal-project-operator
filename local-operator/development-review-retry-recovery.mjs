@@ -239,7 +239,9 @@ export async function recoverReviewRuntimeFailure(request = {}, options = {}) {
   }
 }
 
-export function formatReviewRuntimeFailureRecovery(result) {
+export function formatReviewRuntimeFailureRecovery(result, options = {}) {
+  const nextCommand = options.nextCommand || "/ppo continue"
+
   return [
     "PPO Phase 6F Review Runtime Recovery",
     `Run: ${result.run.runId}`,
@@ -249,7 +251,7 @@ export function formatReviewRuntimeFailureRecovery(result) {
     `Head: ${result.run.headSha}`,
     `Review attempts: ${result.run.reviewAttempt}`,
     `Outcome: ${result.outcome}`,
-    `Next command: /ppo continue ${result.run.runId}`
+    `Next command: ${nextCommand} ${result.run.runId}`
   ].join("\n") + "\n"
 }
 

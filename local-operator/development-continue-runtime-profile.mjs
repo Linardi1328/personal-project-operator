@@ -170,12 +170,21 @@ const sanitizedProbeEnv = Object.freeze({
 })
 
 export class DevelopmentContinueRuntimeProfileError extends Error {
-  constructor(code, safeMessage) {
+  constructor(code, safeMessage, failureClass = "runtime") {
     super(safeMessage)
     this.name = "DevelopmentContinueRuntimeProfileError"
     this.code = code
     this.safeMessage = safeMessage
+    this.failureClass = failureClass
   }
+}
+
+function authenticationError() {
+  return new DevelopmentContinueRuntimeProfileError(
+    "CONTINUE_CODEX_AUTHENTICATION_FAILED",
+    "Live Codex authentication is not ready.",
+    "authentication"
+  )
 }
 
 function runtimeError() {
@@ -300,6 +309,58 @@ async function runReadOnlyProbe(executablePath, args, options = {}) {
       timeout: 5000
     })
   } catch {
+    throw runtimeError()
+  }
+}
+
+async function runLiveCodexAuthenticationProbe(paths, platform, options = {}) {
+  const execFileImpl = options.execFileImpl || execFileAsync
+
+  try {
+    const result = await execFileImpl(paths.codexExecutablePath, [
+      "exec",
+      "--ephemeral",
+      "--color",
+      "never",
+      "--sandbox",
+      "read-only",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--strict-config",
+      "--model",
+      CODEX_PRODUCTION_MODEL,
+      "-"
+    ], {
+      cwd: paths.workspaceRoot,
+      encoding: "utf8",
+      env: {
+        ...sanitizedProbeEnv,
+        HOME: platform === "darwin" ? "/Users/richie" : "/home/ppo",
+        CODEX_HOME: platform === "darwin" ? "/Users/richie/.codex" : "/home/ppo/.codex",
+        PATH: paths.executionPath
+      },
+      input: "Reply with exactly PPO_CODEX_AUTHENTICATED.\n",
+      maxBuffer: 4096,
+      shell: false,
+      timeout: 30000
+    })
+
+    // Successful completion proves the cached credential can make a live
+    // model request; `codex login status` alone only inspects local state.
+    void result
+  } catch (error) {
+    if (error instanceof DevelopmentContinueRuntimeProfileError) {
+      throw error
+    }
+    const failureText = `${String(error?.message ?? "")} ${String(error?.stderr ?? "")} ${String(error?.stdout ?? "")}`
+
+    if (/(?:not logged in|authentication|authenticate|login required|token expired|token refresh|HTTP 401|unauthorized)/iu.test(failureText)) {
+      throw authenticationError()
+    }
+
     throw runtimeError()
   }
 }
@@ -693,6 +754,12 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     ...options,
     probeEnv: codexRuntimeEnv
   })
+  if (
+    options.runtimeAction === "phase-6f-independent-review" ||
+    options.runtimeAction === "phase-6f-bounded-hardening"
+  ) {
+    await runLiveCodexAuthenticationProbe(paths, platform, options)
+  }
   await assertCodexNativeSandboxCapability(paths, platform, options)
 
   if (platform === "linux") {
@@ -773,7 +840,10 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   }
 
   const platform = options.platform || process.platform
-  return await loadRuntimeProfileForProject(projectId, platform, options)
+  return await loadRuntimeProfileForProject(projectId, platform, {
+    ...options,
+    runtimeAction: request.action
+  })
 }
 
 export async function loadPersonalProjectOperatorSelfDevelopmentRuntimeProfile(request = {}, options = {}) {
@@ -789,7 +859,10 @@ export async function loadPersonalProjectOperatorSelfDevelopmentRuntimeProfile(r
     throw runtimeError()
   }
 
-  return await loadRuntimeProfileForProject(projectId, platform, options)
+  return await loadRuntimeProfileForProject(projectId, platform, {
+    ...options,
+    runtimeAction: request.action
+  })
 }
 
 export async function loadDevelopmentRecoveryRuntimeProfile(request = {}, options = {}) {

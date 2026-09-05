@@ -8,6 +8,7 @@ import {
   formatPersonalProjectOperatorSelfDevelopmentResult,
   inspectPersonalProjectOperatorSelfDevelopment,
   recoverPersonalProjectOperatorSelfDevelopment,
+  recoverPersonalProjectOperatorSelfDevelopmentReviewRuntimeFailure,
   stagePersonalProjectOperatorSelfDevelopmentRunCancellation,
   startPersonalProjectOperatorSelfDevelopment
 } from "./development-self-controller.mjs"
@@ -16,6 +17,12 @@ import {
   PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION,
   PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION
 } from "./development-self-cancellation.mjs"
+import {
+  REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION
+} from "./development-run-state.mjs"
+import {
+  formatReviewRuntimeFailureRecovery
+} from "./development-review-retry-recovery.mjs"
 
 function unavailable() {
   return "PPO Self-Development\nStatus: unavailable\nOutcome: invalid_command\n"
@@ -30,6 +37,7 @@ export async function handlePpoSelfDevelopmentCommand(args, handlers = {}) {
   const inspect = handlers.inspect || inspectPersonalProjectOperatorSelfDevelopment
   const continueRun = handlers.continueRun || continuePersonalProjectOperatorSelfDevelopment
   const recover = handlers.recover || recoverPersonalProjectOperatorSelfDevelopment
+  const recoverReviewRuntime = handlers.recoverReviewRuntime || recoverPersonalProjectOperatorSelfDevelopmentReviewRuntimeFailure
   const stageCancellation = handlers.stageCancellation || stagePersonalProjectOperatorSelfDevelopmentRunCancellation
   const confirmCancellation = handlers.confirmCancellation || confirmPersonalProjectOperatorSelfDevelopmentRunCancellation
 
@@ -51,6 +59,24 @@ export async function handlePpoSelfDevelopmentCommand(args, handlers = {}) {
   if (args.length === 2 && args[0] === "recover" && exactRunId(args[1])) {
     const result = await recover(args[1])
     return { ok: result.ok, output: formatPersonalProjectOperatorSelfDevelopmentResult(result, "recover") }
+  }
+
+  if (
+    args.length === 6 &&
+    args[0] === "review-retry" &&
+    exactRunId(args[1]) &&
+    /^(?:0|[1-9][0-9]*)$/u.test(args[2]) &&
+    /^[a-f0-9]{40}$/u.test(args[3]) &&
+    args[4] === REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION &&
+    args[5] === "--local-owner-confirmed"
+  ) {
+    const result = await recoverReviewRuntime(args[1], Number(args[2]), args[3], args[4])
+    return {
+      ok: result.ok,
+      output: formatReviewRuntimeFailureRecovery(result, {
+        nextCommand: "ppo-self-development continue"
+      })
+    }
   }
 
   if (args.length === 2 && args[0] === "cancel" && exactRunId(args[1])) {

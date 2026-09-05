@@ -13,6 +13,7 @@ import {
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
+  formatReviewRuntimeFailureRecovery,
   recoverReviewRuntimeFailure
 } from "./development-review-retry-recovery.mjs"
 
@@ -43,7 +44,10 @@ async function assertRejectsCode(promise, code) {
   )
 }
 
-function reviewEvidence(decision = "OWNER_ACTION_REQUIRED") {
+function reviewEvidence(
+  decision = "OWNER_ACTION_REQUIRED",
+  runtimeFailureClass = decision === "OWNER_ACTION_REQUIRED" ? "runtime" : null
+) {
   const genuineFindings = decision === "CHANGES_REQUESTED"
   const blockers = genuineFindings ? ["Fix a real review blocker."] : []
   const outcome = genuineFindings ? "changes_requested" : "owner_action_required"
@@ -87,10 +91,11 @@ function reviewEvidence(decision = "OWNER_ACTION_REQUIRED") {
         blockers: blockers.length,
         securityFindings: 0,
         testsRequired: 0,
-        summaryHash: "d".repeat(64),
+        ...(runtimeFailureClass ? {} : { summaryHash: "d".repeat(64) }),
         startedAt: "2026-08-25T11:38:00.000Z",
         endedAt: "2026-08-25T11:39:00.000Z",
         outcome,
+        ...(runtimeFailureClass ? { runtimeFailureClass } : {}),
         sandbox: "phase-6f-no-outbound-network-review-sandbox",
         network: "none"
       }
@@ -98,7 +103,10 @@ function reviewEvidence(decision = "OWNER_ACTION_REQUIRED") {
   ]
 }
 
-async function makeReviewFailureRun(decision = "OWNER_ACTION_REQUIRED") {
+async function makeReviewFailureRun(
+  decision = "OWNER_ACTION_REQUIRED",
+  runtimeFailureClass = decision === "OWNER_ACTION_REQUIRED" ? "runtime" : null
+) {
   const writeDataDir = await tempWriteDataDir()
   const now = makeClock()
   let run = await createDevelopmentRun({
@@ -125,7 +133,24 @@ async function makeReviewFailureRun(decision = "OWNER_ACTION_REQUIRED") {
     run = await transitionDevelopmentRun(run.runId, {
       expectedVersion: run.version,
       status,
-      actor: "test-agent"
+      actor: "test-agent",
+      ...(status === "tests_passed" ? {
+        evidence: [{
+          kind: "test",
+          sha: HEAD_SHA,
+          source: "phase-6e-automated-test-runner",
+          summary: "Exact-SHA automated test policy passed.",
+          metadata: {
+            project: "khlim-digital-ecosystem",
+            implSha: HEAD_SHA,
+            outcome: "passed",
+            total: 1,
+            passed: 1,
+            failed: 0,
+            ambiguous: 0
+          }
+        }]
+      } : {})
     }, {
       writeDataDir,
       now
@@ -137,7 +162,7 @@ async function makeReviewFailureRun(decision = "OWNER_ACTION_REQUIRED") {
     status: "review_changes_requested",
     actor: REVIEWER,
     reason: "phase-6f-independent-review-owner_action_required",
-    evidence: reviewEvidence(decision)
+    evidence: reviewEvidence(decision, runtimeFailureClass)
   }, {
     writeDataDir,
     now
@@ -230,9 +255,37 @@ test("confirmed runtime failure recovery returns the exact run to tests_passed",
   assert.equal(stored.status, "tests_passed")
   assert.equal(stored.headSha, HEAD_SHA)
   assert.equal(stored.attempts.review, 1)
+  assert.equal(stored.attempts.implementation, fixture.run.attempts.implementation)
+  assert.equal(stored.attempts.test, fixture.run.attempts.test)
+  assert.equal(stored.evidence.test.length, fixture.run.evidence.test.length)
+  assert.deepEqual(stored.evidence.test, fixture.run.evidence.test)
+  assert.equal(stored.evidence.test.at(-1).sha, HEAD_SHA)
+  assert.equal(stored.evidence.test.at(-1).metadata.implSha, HEAD_SHA)
+  assert.equal(stored.evidence.test.at(-1).metadata.outcome, "passed")
+  assert.equal(stored.evidence.review.filter((entry) => entry.metadata?.outcome === "hardening_started").length, 0)
   assert.equal(stored.evidence.review.at(-1).source, "phase-6f-review-runtime-failure-recovery")
   assert.equal(stored.evidence.review.at(-1).metadata.outcome, "review_runtime_failure_recovered")
   assert.equal(stored.evidence.review.some((entry) => entry.metadata?.decision === "APPROVED"), false)
+})
+
+test("recovery formatter supports the terminal-only self-development continuation route", () => {
+  const output = formatReviewRuntimeFailureRecovery({
+    outcome: "review_runtime_failure_recovered",
+    before: { version: 12, status: "review_changes_requested" },
+    run: {
+      runId: "S".repeat(43),
+      project: "personal-project-operator",
+      version: 13,
+      status: "tests_passed",
+      headSha: HEAD_SHA,
+      reviewAttempt: 1
+    }
+  }, {
+    nextCommand: "ppo-self-development continue"
+  })
+
+  assert.match(output, new RegExp(`Next command: ppo-self-development continue ${"S".repeat(43)}`, "u"))
+  assert.doesNotMatch(output, /Next command: \/ppo continue/u)
 })
 
 test("ordinary transitions still refuse review_changes_requested to tests_passed", async () => {
@@ -288,6 +341,30 @@ test("recovery refuses dirty or mismatched reconciliation without changing state
 
 test("state recovery refuses genuine CHANGES_REQUESTED findings", async () => {
   const fixture = await makeReviewFailureRun("CHANGES_REQUESTED")
+
+  await assertRejectsCode(recoverDevelopmentRunReviewRuntimeFailureState(
+    fixture.run.runId,
+    {
+      expectedVersion: fixture.run.version,
+      expectedHeadSha: HEAD_SHA,
+      reviewAttempt: fixture.run.attempts.review,
+      confirmation: REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION
+    },
+    {
+      writeDataDir: fixture.writeDataDir,
+      now: fixture.now
+    }
+  ), "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED")
+
+  const stored = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  assert.equal(stored.version, fixture.run.version)
+  assert.equal(stored.status, "review_changes_requested")
+})
+
+test("state recovery refuses unclassified owner ambiguity with empty findings", async () => {
+  const fixture = await makeReviewFailureRun("OWNER_ACTION_REQUIRED", null)
 
   await assertRejectsCode(recoverDevelopmentRunReviewRuntimeFailureState(
     fixture.run.runId,

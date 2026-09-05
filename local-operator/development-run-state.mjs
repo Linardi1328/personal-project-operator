@@ -2949,6 +2949,10 @@ function assertReviewRuntimeFailureRecoveryCandidate(record, {
 
   const decision = latestIndependentReviewDecisionForRuntimeRecovery(record)
   const findings = matchingReviewFindingsForRuntimeRecovery(record, decision)
+  const classifiedRuntimeFailure = (
+    decision?.metadata?.runtimeFailureClass === "authentication" ||
+    decision?.metadata?.runtimeFailureClass === "runtime"
+  )
 
   if (
     !decision ||
@@ -2960,7 +2964,8 @@ function assertReviewRuntimeFailureRecoveryCandidate(record, {
     decision.metadata?.mergeAllowed !== false ||
     decision.metadata?.blockers !== 0 ||
     decision.metadata?.securityFindings !== 0 ||
-    decision.metadata?.testsRequired !== 0
+    decision.metadata?.testsRequired !== 0 ||
+    !classifiedRuntimeFailure
   ) {
     throw runStateError(
       "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
@@ -2968,23 +2973,11 @@ function assertReviewRuntimeFailureRecoveryCandidate(record, {
     )
   }
 
-  if (
-    !findings ||
-    findings.metadata?.decision !== "OWNER_ACTION_REQUIRED" ||
-    findings.metadata?.mergeAllowed !== false ||
-    findings.metadata?.blockers !== 0 ||
-    findings.metadata?.securityFindings !== 0 ||
-    findings.metadata?.testsRequired !== 0
-  ) {
-    throw runStateError(
-      "REVIEW_RUNTIME_RECOVERY_NOT_ALLOWED",
-      "Review runtime failure recovery requires matching empty review findings evidence."
-    )
+  if (findings) {
+    assertRuntimeRecoveryEmptyFindingList(findings.metadata?.blockerItems)
+    assertRuntimeRecoveryEmptyFindingList(findings.metadata?.securityItems)
+    assertRuntimeRecoveryEmptyFindingList(findings.metadata?.testItems)
   }
-
-  assertRuntimeRecoveryEmptyFindingList(findings.metadata?.blockerItems)
-  assertRuntimeRecoveryEmptyFindingList(findings.metadata?.securityItems)
-  assertRuntimeRecoveryEmptyFindingList(findings.metadata?.testItems)
 }
 
 async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, recovery, options = {}) {
