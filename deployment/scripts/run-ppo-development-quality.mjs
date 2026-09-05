@@ -93,6 +93,7 @@ function runCriticalLifecycleGate() {
     "local-operator/development-codex-execution-adapter.test.mjs",
     "local-operator/development-hardening-orchestrator.test.mjs",
     "local-operator/development-review-agent.test.mjs",
+    "local-operator/development-operation-lease.test.mjs",
     "local-operator/development-continue-orchestrator.test.mjs",
     "local-operator/development-recovery-coordinator.test.mjs",
     "local-operator/development-acceptance-gate.test.mjs"
@@ -122,6 +123,7 @@ function runIntegratedAcceptanceGate() {
     "local-operator/development-codex-execution-adapter.test.mjs",
     "local-operator/development-test-runner.test.mjs",
     "local-operator/development-review-agent.test.mjs",
+    "local-operator/development-operation-lease.test.mjs",
     "local-operator/development-hardening-orchestrator.test.mjs",
     "local-operator/github-delivery-agent.test.mjs",
     "local-operator/development-deployment-agent.test.mjs",

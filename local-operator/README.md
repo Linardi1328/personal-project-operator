@@ -303,6 +303,8 @@ The controller is not imported by `ppo-command.mjs` or the OpenClaw bridge. The 
 
 Immediately before Phase 6F review or bounded hardening dispatch, the fixed runtime profile performs an ephemeral live Codex model request. Cached `codex login status` alone is not accepted as readiness. Authentication failures are reported separately from other runtime failures, and neither class is treated as a reviewer finding or allowed to reserve review/hardening work during readiness.
 
+Phase 6D, 6E, and 6F continuation now use a private exact-run operation lease bound to phase, attempt, implementation SHA, owner process, and start time. A concurrent continuation refuses a live lease. If the owner disappears, the next continuation waits for the bounded orphan threshold and performs exactly one reconciliation step: Phase 6D commits and verifies recoverable exact-start edits or records a definitive retry boundary, Phase 6E records an ambiguous failed aggregate against the unchanged exact-SHA workspace before retry, and Phase 6F restores the retained exact-SHA implementation/test evidence to `tests_passed`. Mismatched leases, workspaces, SHAs, attempts, or run versions fail closed. Recovery never fabricates PASS or approval evidence and never consumes a hardening round.
+
 ## Files
 
 - `project-state.json`: local mock project state for current and placeholder projects.
@@ -341,6 +343,7 @@ Immediately before Phase 6F review or bounded hardening dispatch, the fixed runt
 - `development-production-verification-agent.mjs`: Phase 6I read-only PPO production verification agent.
 - `phase-6i-production-verification-agent.md`: Phase 6I local usage and safety boundary.
 - `development-continue-orchestrator.mjs`: Phase 6K controlled `/ppo continue <run-id>` orchestrator for ordinary six-project runs.
+- `development-operation-lease.mjs`: private exact-run Phase 6D/6E/6F owner leases and stale-owner inspection.
 - `development-recovery-coordinator.mjs`: Phase 6L local-only read-only development recovery coordinator for ordinary six-project runs.
 - `development-recovery-route.mjs`: Phase 6M controlled `/ppo recover <run-id>` route adapter around the Phase 6L coordinator.
 - `development-run-catalog.mjs`: Phase 6N local-only read-only development run catalog foundation for ordinary six-project runs.

@@ -79,9 +79,14 @@ function normalizeExpectedHeadSha(value) {
 }
 
 function stateOptions(options = {}) {
-  return typeof options.writeDataDir === "string"
-    ? { writeDataDir: options.writeDataDir }
-    : {}
+  return {
+    ...(typeof options.writeDataDir === "string"
+      ? { writeDataDir: options.writeDataDir }
+      : {}),
+    ...(options.allowPersonalProjectOperatorSelfDevelopmentProject === true
+      ? { allowPersonalProjectOperatorSelfDevelopmentProject: true }
+      : {})
+  }
 }
 
 async function loadRecoveryProfile(run, options = {}) {

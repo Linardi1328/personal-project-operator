@@ -760,6 +760,216 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
   }
 })
 
+test("Phase 6K reconciles dead exact-operation leases for Phase 6D, 6E, and 6F", async () => {
+  const now = () => new Date("2026-08-23T00:02:30.000Z")
+  const implementationRun = makeRun("implementation_in_progress", {
+    attempts: { implementation: 1 }
+  })
+  implementationRun.evidence.implementation = [codexAttemptEvidence(implementationRun)]
+  const testingRun = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  testingRun.evidence.test = [testStartedEvidence(testingRun)]
+  const reviewRun = makeRun("review_in_progress", {
+    stage: "review",
+    attempts: { review: 1 }
+  })
+  reviewRun.evidence.review = [{
+    kind: "review",
+    sha: reviewRun.headSha,
+    source: "phase-6f-independent-review-agent",
+    summary: "Review attempt fixture.",
+    metadata: {
+      project: reviewRun.project.id,
+      reviewer: "phase-6f-independent-review-agent",
+      attempt: 1,
+      reviewedSha: reviewRun.headSha,
+      promptHash: PROMPT_HASH,
+      startedAt: STARTED_AT,
+      outcome: "review_started"
+    }
+  }]
+  const cases = [{
+    run: implementationRun,
+    phase: "6D",
+    handler: "recoverOrphanedCodexExecution",
+    after: "implementation_ready"
+  }, {
+    run: testingRun,
+    phase: "6E",
+    handler: "recoverOrphanedAutomatedTesting",
+    after: "tests_in_progress"
+  }, {
+    run: reviewRun,
+    phase: "6F",
+    handler: "recoverReviewOrphan",
+    after: "tests_passed"
+  }]
+
+  for (const fixture of cases) {
+    const calls = []
+    const discarded = []
+    const targetAttempt = fixture.phase === "6D"
+      ? fixture.run.attempts.implementation
+      : fixture.phase === "6E"
+        ? fixture.run.attempts.test
+        : fixture.run.attempts.review
+    const operationLeaseManager = {
+      async inspect() {
+        return {
+          exists: true,
+          active: false,
+          stale: true,
+          lease: {
+            phase: fixture.phase,
+            attempt: targetAttempt,
+            headSha: fixture.run.headSha
+          }
+        }
+      },
+      async discardStale(runId, target) {
+        discarded.push({ runId, target })
+      }
+    }
+    const childHandlers = {
+      [fixture.handler]: async (...args) => {
+        calls.push(args)
+        const request = fixture.phase === "6F" ? args[0] : args[1]
+        return {
+          ok: true,
+          outcome: `${fixture.phase.toLowerCase()}_orphan_recovered`,
+          run: makeRun(fixture.after, {
+            version: fixture.run.version + 1,
+            headSha: fixture.run.headSha
+          })
+        }
+      }
+    }
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(fixture.run).readRun,
+      childHandlers,
+      operationLeaseManager,
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(fixture.run, { now })
+    })
+
+    assert.equal(result.ok, true, fixture.phase)
+    assert.equal(result.after, fixture.after, fixture.phase)
+    assert.equal(calls.length, 1, fixture.phase)
+    assert.equal(discarded.length, 1, fixture.phase)
+    assert.equal(discarded[0].target.phase, fixture.phase)
+    if (fixture.phase === "6F") {
+      assert.equal(calls[0][0].expectedVersion, fixture.run.version)
+      assert.equal(calls[0][0].expectedReviewAttempt, targetAttempt)
+    } else {
+      assert.equal(calls[0][1].expectedVersion, fixture.run.version)
+      assert.equal(calls[0][1].expectedAttempt, targetAttempt)
+    }
+  }
+})
+
+test("Phase 6K never reconciles a live, fresh, or mismatched operation lease", async () => {
+  const run = makeRun("tests_in_progress", {
+    attempts: { test: 1 }
+  })
+  run.evidence.test = [testStartedEvidence(run)]
+
+  for (const inspected of [{
+    active: true,
+    lease: { phase: "6E", attempt: 1, headSha: run.headSha }
+  }, {
+    active: false,
+    lease: { phase: "6D", attempt: 1, headSha: run.headSha }
+  }]) {
+    let recoveryCalls = 0
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: makeReader(run).readRun,
+      childHandlers: {
+        async recoverOrphanedAutomatedTesting() {
+          recoveryCalls += 1
+        }
+      },
+      operationLeaseManager: {
+        async inspect() {
+          return inspected
+        }
+      },
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run, {
+        now: () => new Date("2026-08-23T00:02:30.000Z")
+      })
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "automated_test_reconciliation_required")
+    assert.equal(recoveryCalls, 0)
+  }
+})
+
+test("Phase 6K reconciles a child-phase orphan owned by interrupted bounded hardening", async () => {
+  const run = makeRun("tests_in_progress", {
+    attempts: { test: 2, review: 1 }
+  })
+  run.evidence.implementation = [{
+    kind: "implementation",
+    sha: BASE_SHA,
+    source: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+    summary: "Hardening attempt fixture.",
+    metadata: {
+      project: run.project.id,
+      orchestrator: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+      outcome: "hardening_started",
+      sourceReviewSha: BASE_SHA,
+      reviewAttempt: 1
+    }
+  }]
+  run.evidence.test = [testStartedEvidence(run)]
+  let recoveryCalls = 0
+  let discardedTarget = null
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: makeReader(run).readRun,
+    childHandlers: {
+      recoverOrphanedAutomatedTesting: async (_runId, options) => {
+        recoveryCalls += 1
+        return {
+          ok: true,
+          outcome: "test_orphan_recovered_for_retry",
+          run: makeRun("tests_in_progress", {
+            version: options.expectedVersion + 1,
+            headSha: run.headSha
+          })
+        }
+      }
+    },
+    operationLeaseManager: {
+      async inspect() {
+        return {
+          active: false,
+          stale: true,
+          lease: {
+            phase: "6F",
+            action: "phase-6f-bounded-hardening",
+            attempt: 1,
+            headSha: BASE_SHA
+          }
+        }
+      },
+      async discardStale(_runId, target) {
+        discardedTarget = target
+      }
+    },
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run, {
+      now: () => new Date("2026-08-23T00:02:30.000Z")
+    })
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(recoveryCalls, 1)
+  assert.deepEqual(discardedTarget, {
+    phase: "6F",
+    attempt: 1,
+    headSha: BASE_SHA
+  })
+})
+
 test("Phase 6K rejects stale state before invoking a mutating child phase", async () => {
   const initial = makeRun("created", { version: 4 })
   const changed = makeRun("created", { version: 5 })
@@ -1343,6 +1553,30 @@ test("Phase 6F readiness uses a live model request and classifies revoked authen
   assert.equal(calls.includes("review"), false)
   assert.equal(calls.some((entry) => Array.isArray(entry) && entry[0] === "exec"), true)
   assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|token refresh/iu)
+})
+
+test("orphan reconciliation runtime loading does not depend on live Codex authentication", async () => {
+  const run = makeRun("review_in_progress")
+  let codexProbeCalls = 0
+  const profile = await loadDevelopmentContinueRuntimeProfile({
+    run,
+    action: "phase-6f-review-orphan-recovery"
+  }, {
+    platform: "darwin",
+    statImpl: fakeRuntimeStatFor(),
+    accessImpl: async () => {},
+    execFileImpl: async (path) => {
+      if (path.endsWith("/codex")) {
+        codexProbeCalls += 1
+        throw new Error("revoked authentication must not block reconciliation")
+      }
+
+      return { stdout: "ok\n", stderr: "" }
+    }
+  })
+
+  assert.deepEqual(Object.keys(profile.workspaceRegistry), [run.project.id])
+  assert.equal(codexProbeCalls, 0)
 })
 
 test("Phase 6K runtime profile defines one reviewed fixed test policy for each ordinary project", async () => {

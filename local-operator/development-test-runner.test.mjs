@@ -33,6 +33,7 @@ import {
   PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
   TEST_SANDBOX_BACKENDS,
   executeAutomatedTests,
+  recoverOrphanedAutomatedTesting,
   reconcileAutomatedTesting,
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
@@ -730,6 +731,54 @@ test("dirty workspace or HEAD changes during testing invalidate PASS evidence", 
 
   assert.equal(changedReloaded.status, "tests_in_progress")
   assert.equal(latestTestEvidence(changedReloaded).metadata.outcome, "workspace_changed")
+})
+
+test("orphaned automated testing closes ambiguously and permits one bounded retry", async () => {
+  const fixture = await makeImplementationReadyFixture()
+  const policyRegistry = trustedTestPolicyRegistry(fixture)
+
+  await assertRejectsCode(executeAutomatedTests(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    testPolicyRegistry: policyRegistry,
+    sandboxRunner: makeSandboxRunner(async () => ({ killed: true })),
+    now: fixture.now
+  }), "TEST_EXECUTION_AMBIGUOUS")
+
+  const open = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  const recovered = await recoverOrphanedAutomatedTesting(open.runId, {
+    expectedVersion: open.version,
+    expectedHeadSha: open.headSha,
+    expectedAttempt: open.attempts.test,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    testPolicyRegistry: policyRegistry,
+    now: fixture.now
+  })
+  const aggregate = recovered.run.evidence.test.at(-1)
+
+  assert.equal(recovered.ok, true)
+  assert.equal(recovered.outcome, "test_orphan_recovered_for_retry")
+  assert.equal(recovered.run.status, "tests_in_progress")
+  assert.equal(recovered.run.attempts.test, open.attempts.test)
+  assert.equal(aggregate.metadata.outcome, "failed")
+  assert.equal(aggregate.metadata.failed, 0)
+  assert.equal(aggregate.metadata.ambiguous, 1)
+
+  const retry = await executeAutomatedTests(open.runId, {
+    expectedVersion: recovered.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    testPolicyRegistry: policyRegistry,
+    sandboxRunner: makeSandboxRunner(async () => ({ exitCode: 0 })),
+    now: fixture.now
+  })
+
+  assert.equal(retry.run.status, "tests_passed")
+  assert.equal(retry.run.attempts.test, open.attempts.test + 1)
 })
 
 test("testing attempts are durable, bounded, and retryable only after definitive failed evidence", async () => {

@@ -39,6 +39,7 @@ import {
   buildCodexImplementationPrompt,
   executeCodexImplementation,
   formatDevelopmentCodexExecutionAdapterError,
+  recoverOrphanedCodexExecution,
   runSandboxedProcess,
   reconcileCodexExecution
 } from "./development-codex-execution-adapter.mjs"
@@ -1537,6 +1538,73 @@ test("interrupted Codex reconciliation reports unchanged, advanced, and mismatch
     workspaceRegistry: mismatched.registry
   })
   assert.equal(mismatchedResult.status, "mismatched")
+})
+
+test("orphaned Codex recovery preserves a dirty exact-start workspace as a verified commit", async () => {
+  const fixture = await makeImplementationFixture()
+
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedNativeDarwinCodexConfig(),
+    ...sandboxedCodexRunner(async () => ({ killed: true })),
+    now: fixture.now
+  }), "CODEX_EXECUTION_AMBIGUOUS")
+
+  await writeFile(join(fixture.location.workspacePath, "recovered.txt"), "preserved\n", "utf8")
+  const open = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  const result = await recoverOrphanedCodexExecution(open.runId, {
+    expectedVersion: open.version,
+    expectedHeadSha: open.headSha,
+    expectedAttempt: open.attempts.implementation,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedNativeDarwinCodexConfig(),
+    now: fixture.now
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "codex_orphan_implementation_preserved")
+  assert.equal(result.run.status, "implementation_ready")
+  assert.notEqual(result.run.headSha, open.headSha)
+  assert.equal(result.run.attempts.implementation, open.attempts.implementation)
+  assert.equal(result.run.evidence.implementation.at(-1).metadata.outcome, "implementation_ready")
+  assert.equal(await git(["status", "--porcelain=v1"], fixture.location.workspacePath), "")
+})
+
+test("orphaned no-change Codex recovery records a definitive retry boundary", async () => {
+  const fixture = await makeImplementationFixture()
+
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedNativeDarwinCodexConfig(),
+    ...sandboxedCodexRunner(async () => ({ interrupted: true })),
+    now: fixture.now
+  }), "CODEX_EXECUTION_AMBIGUOUS")
+
+  const open = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  const result = await recoverOrphanedCodexExecution(open.runId, {
+    expectedVersion: open.version,
+    expectedHeadSha: open.headSha,
+    expectedAttempt: open.attempts.implementation,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedNativeDarwinCodexConfig(),
+    now: fixture.now
+  })
+
+  assert.equal(result.outcome, "codex_orphan_recovered_for_retry")
+  assert.equal(result.run.status, "implementation_in_progress")
+  assert.equal(result.run.headSha, open.headSha)
+  assert.equal(result.run.evidence.implementation.at(-1).metadata.outcome, "execution_failed")
+  assert.equal(result.run.evidence.implementation.at(-1).metadata.failureClass, "runtime")
 })
 
 test("safe error formatting excludes raw execution output", async () => {

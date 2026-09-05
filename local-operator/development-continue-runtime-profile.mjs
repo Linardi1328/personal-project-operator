@@ -746,21 +746,25 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     PATH: paths.executionPath
   }
 
-  await runReadOnlyProbe(paths.codexExecutablePath, ["--version"], {
-    ...options,
-    probeEnv: codexRuntimeEnv
-  })
-  await runReadOnlyProbe(paths.codexExecutablePath, ["login", "status"], {
-    ...options,
-    probeEnv: codexRuntimeEnv
-  })
-  if (
-    options.runtimeAction === "phase-6f-independent-review" ||
-    options.runtimeAction === "phase-6f-bounded-hardening"
-  ) {
-    await runLiveCodexAuthenticationProbe(paths, platform, options)
+  const orphanRecovery = /-orphan-recovery$/u.test(options.runtimeAction || "")
+
+  if (!orphanRecovery) {
+    await runReadOnlyProbe(paths.codexExecutablePath, ["--version"], {
+      ...options,
+      probeEnv: codexRuntimeEnv
+    })
+    await runReadOnlyProbe(paths.codexExecutablePath, ["login", "status"], {
+      ...options,
+      probeEnv: codexRuntimeEnv
+    })
+    if (
+      options.runtimeAction === "phase-6f-independent-review" ||
+      options.runtimeAction === "phase-6f-bounded-hardening"
+    ) {
+      await runLiveCodexAuthenticationProbe(paths, platform, options)
+    }
+    await assertCodexNativeSandboxCapability(paths, platform, options)
   }
-  await assertCodexNativeSandboxCapability(paths, platform, options)
 
   if (platform === "linux") {
     await assertExecutable(paths.bubblewrapExecutablePath, options)
