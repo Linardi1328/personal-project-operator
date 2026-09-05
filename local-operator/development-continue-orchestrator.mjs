@@ -3,6 +3,7 @@ import {
   DEVELOPMENT_RUN_ID_PATTERN,
   DevelopmentRunStateError,
   PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
+  REVIEW_ORPHAN_RECOVERY_CONFIRMATION,
   readDevelopmentRun,
   readPersonalProjectOperatorSelfDevelopmentRun
 } from "./development-run-state.mjs"
@@ -14,14 +15,24 @@ import { prepareImplementationWorkspace } from "./development-workspace-manager.
 import {
   CODEX_EXECUTION_FAILURE_CLASSES,
   classifyCodexExecutionAttemptEvidence,
-  executeCodexImplementation
+  executeCodexImplementation,
+  recoverOrphanedCodexExecution
 } from "./development-codex-execution-adapter.mjs"
 import {
   classifyAutomatedTestAttemptEvidence,
   executeAutomatedTests,
+  recoverOrphanedAutomatedTesting,
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
 import { executeIndependentReview } from "./development-review-agent.mjs"
+import { recoverReviewOrphan } from "./development-review-orphan-recovery.mjs"
+import {
+  acquireDevelopmentOperationLease,
+  discardStaleDevelopmentOperationLease,
+  inspectDevelopmentOperationLease,
+  relinquishDevelopmentOperationLease,
+  releaseDevelopmentOperationLease
+} from "./development-operation-lease.mjs"
 import { executeBoundedHardening } from "./development-hardening-orchestrator.mjs"
 import {
   executePhase6GDelivery,
@@ -138,7 +149,8 @@ const forbiddenCallerOptionKeys = new Set([
 const orchestratorOptionKeys = new Set([
   "readRun",
   "childHandlers",
-  "trustedRuntimeProfileProvider"
+  "trustedRuntimeProfileProvider",
+  "operationLeaseManager"
 ])
 
 const runtimeProfileOptionKeys = new Set([
@@ -181,6 +193,10 @@ const statusActions = Object.freeze({
     action: "phase-6f-independent-review",
     handler: "executeIndependentReview"
   }),
+  review_in_progress: Object.freeze({
+    action: "phase-6f-review-orphan-recovery",
+    handler: "recoverReviewOrphan"
+  }),
   review_changes_requested: Object.freeze({
     action: "phase-6f-bounded-hardening",
     handler: "executeBoundedHardening"
@@ -197,7 +213,6 @@ const statusActions = Object.freeze({
 
 const blockedStatusReasons = Object.freeze({
   planning_in_progress: "planning_reconciliation_required",
-  review_in_progress: "review_reconciliation_required",
   tests_failed: "automated_test_failure_recovery_not_routed",
   merged: "development_delivery_complete_production_local_only",
   deploy_in_progress: "production_workflow_local_only",
@@ -219,6 +234,9 @@ const defaultChildHandlers = Object.freeze({
   executeCodexImplementation,
   executeAutomatedTests,
   executeIndependentReview,
+  recoverOrphanedCodexExecution,
+  recoverOrphanedAutomatedTesting,
+  recoverReviewOrphan,
   executeBoundedHardening,
   executePhase6GDelivery,
   executeShaPinnedMerge
@@ -228,6 +246,7 @@ const safeReasonPattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const safeOutcomePattern = /^[a-z][a-z0-9_:-]{0,79}$/u
 const shaPattern = /^[a-f0-9]{40}$/u
 const codexFailureClasses = new Set(CODEX_EXECUTION_FAILURE_CLASSES)
+const MIN_OPERATION_ORPHAN_AGE_MS = 60 * 1000
 
 export class DevelopmentContinueOrchestratorError extends Error {
   constructor(code, safeMessage) {
@@ -284,6 +303,142 @@ function safeHeadSha(value) {
 
 function projectIdFor(run) {
   return typeof run?.project?.id === "string" ? run.project.id : "unknown"
+}
+
+function latestPhaseEvidence(run, kind, source) {
+  const entries = Array.isArray(run?.evidence?.[kind]) ? run.evidence[kind] : []
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index]?.source === source) {
+      return entries[index]
+    }
+  }
+
+  return null
+}
+
+function hardeningLeaseMatchesRun(run, lease) {
+  const entries = Array.isArray(run?.evidence?.implementation)
+    ? run.evidence.implementation
+    : []
+
+  return entries.some((entry) => (
+    entry?.source === "phase-6f-bounded-hardening-orchestrator" &&
+    entry?.metadata?.orchestrator === "phase-6f-bounded-hardening-orchestrator" &&
+    entry?.metadata?.outcome === "hardening_started" &&
+    entry?.metadata?.sourceReviewSha === lease?.headSha &&
+    entry?.metadata?.reviewAttempt === lease?.attempt &&
+    entry?.metadata?.project === run?.project?.id
+  ))
+}
+
+function operationTarget(run, boundary) {
+  if (boundary.handler === "executeCodexImplementation") {
+    return {
+      phase: "6D",
+      attempt: run.attempts.implementation + 1,
+      headSha: run.headSha || run.baseSha
+    }
+  }
+
+  if (boundary.handler === "executeAutomatedTests") {
+    return {
+      phase: "6E",
+      attempt: run.attempts.test + 1,
+      headSha: run.headSha
+    }
+  }
+
+  if (boundary.handler === "executeIndependentReview") {
+    return {
+      phase: "6F",
+      attempt: run.attempts.review + 1,
+      headSha: run.headSha
+    }
+  }
+
+  if (boundary.handler === "executeBoundedHardening") {
+    return {
+      phase: "6F",
+      attempt: run.attempts.review,
+      headSha: run.headSha
+    }
+  }
+
+  return null
+}
+
+function openOperationTarget(run) {
+  if (run.status === "implementation_in_progress") {
+    const evidence = latestPhaseEvidence(run, "implementation", "phase-6d-codex-execution-adapter")
+
+    return evidence?.metadata?.outcome === "execution_started"
+      ? {
+          phase: "6D",
+          attempt: run.attempts.implementation,
+          headSha: run.headSha || run.baseSha,
+          startedAt: evidence.metadata.startedAt,
+          handler: "recoverOrphanedCodexExecution",
+          reason: "codex_reconciliation_required"
+        }
+      : null
+  }
+
+  if (run.status === "tests_in_progress") {
+    const evidence = latestPhaseEvidence(run, "test", "phase-6e-automated-test-runner")
+
+    return evidence?.metadata?.outcome === "testing_started"
+      ? {
+          phase: "6E",
+          attempt: run.attempts.test,
+          headSha: run.headSha,
+          startedAt: evidence.metadata.startedAt,
+          handler: "recoverOrphanedAutomatedTesting",
+          reason: "automated_test_reconciliation_required"
+        }
+      : null
+  }
+
+  if (run.status === "review_in_progress") {
+    const evidence = latestPhaseEvidence(run, "review", "phase-6f-independent-review-agent")
+
+    return ["review_started", "review_execution_ambiguous"].includes(evidence?.metadata?.outcome)
+      ? {
+          phase: "6F",
+          attempt: run.attempts.review,
+          headSha: run.headSha,
+          startedAt: evidence.metadata.startedAt,
+          handler: "recoverReviewOrphan",
+          reason: "review_reconciliation_required"
+        }
+      : null
+  }
+
+  return null
+}
+
+function defaultOperationLeaseManager(options = {}) {
+  if (options.readRun && !options.operationLeaseManager) {
+    return null
+  }
+
+  return options.operationLeaseManager || {
+    acquire: acquireDevelopmentOperationLease,
+    inspect: inspectDevelopmentOperationLease,
+    relinquish: relinquishDevelopmentOperationLease,
+    release: releaseDevelopmentOperationLease,
+    discardStale: discardStaleDevelopmentOperationLease
+  }
+}
+
+function operationAgeMs(target, runtimeOptions = {}) {
+  const startedAt = Date.parse(target?.startedAt || "")
+  const now = runtimeOptions.now instanceof Function ? runtimeOptions.now() : new Date()
+  const nowMs = now instanceof Date ? now.getTime() : Number.NaN
+
+  return Number.isFinite(startedAt) && Number.isFinite(nowMs)
+    ? nowMs - startedAt
+    : Number.NaN
 }
 
 function isAllowedProject(run, scope) {
@@ -369,7 +524,118 @@ function validateAttemptBoundary(run, boundary, runtimeOptions = {}, scope = ord
     return validateAutomatedTestRetryBoundary(run, boundary.action, runtimeOptions, scope)
   }
 
+  if (run.status === "review_in_progress") {
+    return ownerActionResult(run, boundary.action, "review_reconciliation_required", scope)
+  }
+
   return null
+}
+
+async function reconcileOrphanedAttempt(
+  run,
+  boundary,
+  runtimeOptions,
+  options,
+  scope
+) {
+  const target = openOperationTarget(run)
+
+  if (!target) {
+    return null
+  }
+
+  const leaseManager = defaultOperationLeaseManager(options)
+
+  if (!leaseManager) {
+    return ownerActionResult(run, boundary.action, target.reason, scope)
+  }
+
+  let inspected
+
+  try {
+    inspected = await leaseManager.inspect(run.runId, {
+      ...options,
+      ...runtimeOptions
+    })
+  } catch {
+    return ownerActionResult(run, boundary.action, "operation_lease_unavailable", scope)
+  }
+
+  const exactLease = (
+    inspected?.lease?.phase === target.phase &&
+    inspected.lease.attempt === target.attempt &&
+    inspected.lease.headSha === target.headSha
+  )
+  const interruptedHardeningLease = (
+    inspected?.lease?.phase === "6F" &&
+    inspected.lease.action === "phase-6f-bounded-hardening" &&
+    hardeningLeaseMatchesRun(run, inspected.lease)
+  )
+
+  if (
+    inspected?.active === true ||
+    !inspected?.lease ||
+    (!exactLease && !interruptedHardeningLease)
+  ) {
+    return ownerActionResult(run, boundary.action, target.reason, scope)
+  }
+
+  const ageMs = operationAgeMs(target, runtimeOptions)
+
+  if (!Number.isFinite(ageMs) || ageMs < MIN_OPERATION_ORPHAN_AGE_MS) {
+    return ownerActionResult(run, boundary.action, target.reason, scope)
+  }
+
+  const handler = childHandlers(options, scope)[target.handler]
+
+  if (typeof handler !== "function") {
+    return ownerActionResult(run, boundary.action, "operation_recovery_unavailable", scope)
+  }
+
+  try {
+    let recovered
+
+    if (target.phase === "6F") {
+      recovered = await handler({
+        runId: run.runId,
+        expectedVersion: run.version,
+        expectedHeadSha: target.headSha,
+        expectedReviewAttempt: target.attempt,
+        confirmation: REVIEW_ORPHAN_RECOVERY_CONFIRMATION
+      }, {
+        ...childOptions(options, run.version, runtimeOptions, scope),
+        loadRuntimeProfile: async () => ({
+          workspaceRegistry: runtimeOptions.workspaceRegistry
+        }),
+        processProbe: async () => ({ active: false })
+      })
+    } else {
+      recovered = await handler(run.runId, {
+        ...childOptions(options, run.version, runtimeOptions, scope),
+        expectedHeadSha: target.headSha,
+        expectedAttempt: target.attempt
+      })
+    }
+
+    await leaseManager.discardStale(run.runId, {
+      phase: inspected.lease.phase,
+      attempt: inspected.lease.attempt,
+      headSha: inspected.lease.headSha
+    }, {
+      ...options,
+      ...runtimeOptions
+    })
+
+    return childResultToContinueResult(
+      run,
+      `phase-${target.phase.toLowerCase()}-orphan-recovery`,
+      recovered,
+      null,
+      scope
+    )
+  } catch (error) {
+    return await childFailureResult(run, boundary.action, error, options, scope)
+  }
 }
 
 function childOptions(options, expectedVersion, runtimeOptions = {}, scope = ordinaryScope) {
@@ -457,7 +723,7 @@ async function resolveRuntimeOptions(run, boundary, options = {}, scope = ordina
       : "continue_runtime_not_ready"
     return {
       ok: false,
-      result: ownerActionResult(run, boundary.action, reason)
+      result: ownerActionResult(run, boundary.action, reason, scope)
     }
   }
 }
@@ -677,6 +943,18 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
     return runtime.result
   }
 
+  const orphanRecovery = await reconcileOrphanedAttempt(
+    current,
+    boundary,
+    runtime.runtimeOptions,
+    options,
+    scope
+  )
+
+  if (orphanRecovery) {
+    return orphanRecovery
+  }
+
   const openAttempt = validateAttemptBoundary(current, boundary, runtime.runtimeOptions, scope)
 
   if (openAttempt) {
@@ -692,6 +970,30 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
     )
   }
 
+  const leaseManager = defaultOperationLeaseManager(options)
+  const target = operationTarget(current, boundary)
+  let lease = null
+
+  if (leaseManager && target) {
+    try {
+      lease = await leaseManager.acquire({
+        runId: current.runId,
+        phase: target.phase,
+        action: boundary.action,
+        attempt: target.attempt,
+        headSha: target.headSha
+      }, {
+        ...options,
+        ...runtime.runtimeOptions
+      })
+    } catch (error) {
+      const reason = error?.code === "OPERATION_LEASE_HELD"
+        ? "phase_operation_active"
+        : "operation_lease_unavailable"
+      return ownerActionResult(current, boundary.action, reason, scope)
+    }
+  }
+
   try {
     const childResult = await handler(normalizedRunId, childOptions(options, current.version, runtime.runtimeOptions, scope))
     let afterRun = null
@@ -704,8 +1006,44 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
       }
     }
 
+    const observed = childResult?.run || afterRun
+
+    if (lease) {
+      if (openOperationTarget(observed)) {
+        await leaseManager.relinquish(lease, {
+          ...options,
+          ...runtime.runtimeOptions
+        })
+      } else {
+        await leaseManager.release(lease, {
+          ...options,
+          ...runtime.runtimeOptions
+        })
+      }
+    }
+
     return childResultToContinueResult(current, boundary.action, childResult, afterRun, scope)
   } catch (error) {
+    if (lease) {
+      try {
+        const observed = await readRun(normalizedRunId, options, scope)
+
+        if (openOperationTarget(observed)) {
+          await leaseManager.relinquish(lease, {
+            ...options,
+            ...runtime.runtimeOptions
+          })
+        } else {
+          await leaseManager.release(lease, {
+            ...options,
+            ...runtime.runtimeOptions
+          })
+        }
+      } catch {
+        // The lease remains fail-closed and expires if state cannot be reconciled.
+      }
+    }
+
     return await childFailureResult(current, boundary.action, error, options, scope)
   }
 }

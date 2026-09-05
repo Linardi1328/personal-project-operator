@@ -2661,6 +2661,131 @@ async function reconcileCodexExecutionInternal(runId, options = {}) {
   }
 }
 
+async function recoverOrphanedCodexExecutionInternal(runId, options = {}) {
+  const expectedVersion = options.expectedVersion
+  const expectedHeadSha = normalizeSha(options.expectedHeadSha, "Expected implementation head SHA")
+  const expectedAttempt = options.expectedAttempt
+
+  if (!Number.isInteger(expectedVersion) || !Number.isInteger(expectedAttempt) || expectedAttempt <= 0) {
+    throw adapterError(
+      "CODEX_ORPHAN_RECOVERY_TARGET_REQUIRED",
+      "Codex orphan recovery requires the exact run version, head SHA, and implementation attempt."
+    )
+  }
+
+  const config = normalizeCodexConfig(options.codexConfig)
+  const run = await readDevelopmentRun(runId, options)
+
+  if (
+    run.version !== expectedVersion ||
+    run.status !== "implementation_in_progress" ||
+    normalizeSha(run.headSha || run.baseSha, "Run implementation head SHA") !== expectedHeadSha ||
+    run.attempts.implementation !== expectedAttempt ||
+    classifyCodexExecutionAttemptEvidence(run) !== "open"
+  ) {
+    throw adapterError(
+      "CODEX_ORPHAN_RECOVERY_STATE_MISMATCH",
+      "Codex orphan recovery target no longer matches the open implementation attempt."
+    )
+  }
+
+  const latest = latestCurrentCodexAttemptEvidence(run).entry
+  const location = await resolveImplementationWorkspaceLocation(run, options)
+  const sourceBefore = await sourceFacts(location, options)
+  let facts = await workspaceFacts(location, options)
+
+  assertWorkspaceMatches(location, facts)
+
+  if (facts.headSha === expectedHeadSha && facts.dirtyStatus) {
+    await commitNativeCodexChanges(config, location, expectedHeadSha, options)
+    facts = await workspaceFacts(location, options)
+    assertWorkspaceMatches(location, facts)
+  }
+
+  const endedAt = timestamp(nowDate(options))
+
+  if (facts.headSha === expectedHeadSha) {
+    if (facts.dirtyStatus) {
+      throw adapterError(
+        "CODEX_ORPHAN_RECOVERY_DIRTY",
+        "Codex orphan recovery could not safely preserve the uncommitted implementation."
+      )
+    }
+
+    const execution = {
+      attempt: expectedAttempt,
+      expectedStartSha: expectedHeadSha,
+      promptHash: latest.metadata.promptHash,
+      startedAt: latest.metadata.startedAt,
+      endedAt,
+      failureClass: "runtime",
+      executionSandbox: {
+        backend: latest.metadata.backend,
+        platform: latest.metadata.platform
+      }
+    }
+    const recovered = await recordDefinitiveCodexFailure(run, location, execution, options)
+
+    return {
+      ok: true,
+      outcome: "codex_orphan_recovered_for_retry",
+      run: recovered,
+      recovery: {
+        disposition: "retry",
+        attempt: expectedAttempt,
+        headSha: expectedHeadSha
+      }
+    }
+  }
+
+  if (facts.dirtyStatus) {
+    throw adapterError(
+      "CODEX_ORPHAN_RECOVERY_MIXED_STATE",
+      "Codex orphan recovery refused a workspace containing both commits and uncommitted changes."
+    )
+  }
+
+  const verified = await verifyImplementationResult(run, location, sourceBefore, expectedHeadSha, options)
+  const hardeningContext = deriveHardeningRemediationContext(run)
+  const implementationEvidence = buildImplementationEvidence(run, location, verified, {
+    promptHash: latest.metadata.promptHash,
+    startedAt: latest.metadata.startedAt,
+    endedAt,
+    executionSandbox: {
+      backend: latest.metadata.backend,
+      platform: latest.metadata.platform
+    }
+  })
+  const transitioned = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status: "implementation_ready",
+    branch: location.branch,
+    headSha: verified.headSha,
+    actor: CODEX_EXECUTION_ADAPTER_ID,
+    reason: "phase-6d-codex-orphan-recovered",
+    evidence: [
+      implementationEvidence,
+      ...(hardeningContext ? [buildHardeningImplementationEvidence(run, verified, {
+        promptHash: latest.metadata.promptHash,
+        startedAt: latest.metadata.startedAt,
+        endedAt
+      }, hardeningContext)] : [])
+    ]
+  }, options)
+
+  return {
+    ok: true,
+    outcome: "codex_orphan_implementation_preserved",
+    run: transitioned,
+    recovery: {
+      disposition: "implementation_ready",
+      attempt: expectedAttempt,
+      headSha: verified.headSha,
+      changedFileCount: verified.changedFileCount
+    }
+  }
+}
+
 export async function executeCodexImplementation(runId, options = {}) {
   try {
     return await executeCodexImplementationInternal(runId, options)
@@ -2672,6 +2797,14 @@ export async function executeCodexImplementation(runId, options = {}) {
 export async function reconcileCodexExecution(runId, options = {}) {
   try {
     return await reconcileCodexExecutionInternal(runId, options)
+  } catch (error) {
+    throw safeAdapterFailure(error)
+  }
+}
+
+export async function recoverOrphanedCodexExecution(runId, options = {}) {
+  try {
+    return await recoverOrphanedCodexExecutionInternal(runId, options)
   } catch (error) {
     throw safeAdapterFailure(error)
   }

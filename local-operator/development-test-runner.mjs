@@ -1867,6 +1867,93 @@ async function reconcileAutomatedTestingInternal(runId, options = {}) {
   }
 }
 
+async function recoverOrphanedAutomatedTestingInternal(runId, options = {}) {
+  const expectedVersion = normalizeExpectedVersion(options.expectedVersion)
+  const expectedHeadSha = normalizeSha(options.expectedHeadSha, "Expected test head SHA")
+  const expectedAttempt = options.expectedAttempt
+
+  if (!Number.isInteger(expectedAttempt) || expectedAttempt <= 0) {
+    throw testRunnerError(
+      "TEST_ORPHAN_RECOVERY_TARGET_REQUIRED",
+      "Automated test orphan recovery requires the exact test attempt."
+    )
+  }
+
+  const policyRegistry = normalizeTestPolicyRegistry(options.testPolicyRegistry)
+  const run = await readDevelopmentRun(runId, options)
+  const policy = resolveProjectPolicy(run, policyRegistry)
+  const policyIdentity = {
+    policyId: policy.policyId,
+    policyHash: policy.policyHash,
+    requiredTestCount: policy.steps.length
+  }
+
+  if (
+    run.version !== expectedVersion ||
+    run.status !== "tests_in_progress" ||
+    run.headSha !== expectedHeadSha ||
+    run.attempts.test !== expectedAttempt ||
+    classifyAutomatedTestAttemptEvidence(run, policyIdentity) !== "open"
+  ) {
+    throw testRunnerError(
+      "TEST_ORPHAN_RECOVERY_STATE_MISMATCH",
+      "Automated test orphan recovery target no longer matches the open test attempt."
+    )
+  }
+
+  const reconciliation = await reconcileAutomatedTestingInternal(runId, options)
+
+  if (
+    reconciliation.status !== "open_attempt" ||
+    reconciliation.facts.headSha !== expectedHeadSha ||
+    reconciliation.facts.expectedHeadSha !== expectedHeadSha ||
+    reconciliation.facts.dirty !== false ||
+    reconciliation.evidence.latestAttempt !== expectedAttempt ||
+    reconciliation.evidence.latestSha !== expectedHeadSha
+  ) {
+    throw testRunnerError(
+      "TEST_ORPHAN_RECOVERY_RECONCILIATION_FAILED",
+      "Automated test orphan recovery requires an unchanged exact-SHA workspace and open attempt evidence."
+    )
+  }
+
+  const latest = latestAutomatedTestEvidence(run)
+  const execution = {
+    attempt: expectedAttempt,
+    implementationSha: expectedHeadSha,
+    startedAt: latest.metadata.startedAt,
+    startedMs: Date.parse(latest.metadata.startedAt)
+  }
+  const endedAt = timestamp(nowDate(options))
+  const evidence = [buildAggregateEvidence(
+    run,
+    policy,
+    execution,
+    "failed",
+    [{ outcome: "ambiguous" }],
+    endedAt
+  )]
+  const recovered = await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: "tests_in_progress",
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    reason: "phase-6e-automated-testing-orphan-recovered",
+    evidence
+  }, options)
+
+  return {
+    ok: true,
+    outcome: "test_orphan_recovered_for_retry",
+    run: recovered,
+    recovery: {
+      attempt: expectedAttempt,
+      headSha: expectedHeadSha,
+      policyId: policy.policyId,
+      policyHash: policy.policyHash
+    }
+  }
+}
+
 export async function executeAutomatedTests(runId, options = {}) {
   try {
     return await executeAutomatedTestsInternal(runId, options)
@@ -1878,6 +1965,14 @@ export async function executeAutomatedTests(runId, options = {}) {
 export async function reconcileAutomatedTesting(runId, options = {}) {
   try {
     return await reconcileAutomatedTestingInternal(runId, options)
+  } catch (error) {
+    throw safeTestRunnerFailure(error)
+  }
+}
+
+export async function recoverOrphanedAutomatedTesting(runId, options = {}) {
+  try {
+    return await recoverOrphanedAutomatedTestingInternal(runId, options)
   } catch (error) {
     throw safeTestRunnerFailure(error)
   }

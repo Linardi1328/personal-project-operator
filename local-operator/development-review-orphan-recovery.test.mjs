@@ -298,3 +298,88 @@ test("orphan recovery CLI refuses malformed invocation", () => {
   assert.equal(result.status, 2)
   assert.match(result.stderr, /Usage: recover-phase6f-review-orphan\.mjs/u)
 })
+
+test("orphan recovery preserves the Customer Zero project allowlist boundary", async () => {
+  const runId = "S".repeat(43)
+  const run = {
+    runId,
+    version: 9,
+    status: "review_in_progress",
+    stage: "review",
+    headSha: HEAD_SHA,
+    project: { id: "personal-project-operator" },
+    attempts: { review: 2 },
+    evidence: {
+      review: [{
+        kind: "review",
+        sha: HEAD_SHA,
+        source: REVIEWER,
+        metadata: {
+          reviewedSha: HEAD_SHA,
+          attempt: 2,
+          outcome: "review_started",
+          startedAt: new Date(START).toISOString()
+        }
+      }]
+    }
+  }
+  let readOptions = null
+  let stateOptions = null
+  const result = await recoverReviewOrphan({
+    runId,
+    expectedVersion: 9,
+    expectedHeadSha: HEAD_SHA,
+    expectedReviewAttempt: 2,
+    confirmation: REVIEW_ORPHAN_RECOVERY_CONFIRMATION
+  }, {
+    allowPersonalProjectOperatorSelfDevelopmentProject: true,
+    now: () => new Date(START + MIN_REVIEW_ORPHAN_AGE_MS + 1),
+    readRun: async (_runId, options) => {
+      readOptions = options
+      return run
+    },
+    loadRuntimeProfile: async () => ({ workspaceRegistry: { fixed: true } }),
+    reconcileReview: async () => ({
+      ok: true,
+      outcome: "independent_review_reconciled",
+      approvalValid: false,
+      implementationEvidenceValid: true,
+      testPassEvidenceValid: true,
+      status: "open_attempt",
+      openAttempt: true,
+      ambiguousAttempt: false,
+      run: {
+        runId,
+        version: 9,
+        status: "review_in_progress",
+        project: "personal-project-operator",
+        headSha: HEAD_SHA
+      },
+      facts: {
+        headSha: HEAD_SHA,
+        expectedHeadSha: HEAD_SHA,
+        dirty: false
+      },
+      evidence: {
+        latestOutcome: "review_started",
+        latestAttempt: 2,
+        latestSha: HEAD_SHA
+      }
+    }),
+    processProbe: async () => ({ active: false }),
+    recoverState: async (_runId, _recovery, options) => {
+      stateOptions = options
+      return {
+        ...run,
+        version: 10,
+        status: "tests_passed",
+        stage: "test"
+      }
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "review_orphan_recovered")
+  assert.equal(readOptions.allowPersonalProjectOperatorSelfDevelopmentProject, true)
+  assert.equal(stateOptions.allowPersonalProjectOperatorSelfDevelopmentProject, true)
+})
