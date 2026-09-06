@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs"
 import { access, lstat, stat } from "node:fs/promises"
 import { resolve as resolvePath } from "node:path"
 import { promisify } from "node:util"
+import { execFileWithInput } from "./exec-file-with-input.mjs"
 import {
   CODEX_PRODUCTION_MODEL,
   CODEX_SANDBOX_BACKENDS,
@@ -314,7 +315,7 @@ async function runReadOnlyProbe(executablePath, args, options = {}) {
 }
 
 async function runLiveCodexAuthenticationProbe(paths, platform, options = {}) {
-  const execFileImpl = options.execFileImpl || execFileAsync
+  const execFileImpl = options.execFileImpl || execFileWithInput
 
   try {
     const result = await execFileImpl(paths.codexExecutablePath, [
