@@ -22,15 +22,15 @@ High.
 
 ## Current phase
 
-Stage 1A — Customer Zero reviewer-runtime reliability hardening.
+Stage 1B — Customer Zero Phase 6 recovery acceptance.
 
 ## Last known status
 
-The Customer Zero capability-manifest foundation is merged with versioned repository identity, runtime preparation, local quality gates, required GitHub checks, and deployment-provider metadata. Existing self-development and ordinary-project behavior remains unchanged.
+The capability-manifest foundation and reviewer-runtime readiness/recovery are merged. PR #73 added exact operation leases and bounded orphan recovery for Phases 6D, 6E, and 6F at 002f47afc45b6eeadfb98d232d88b6e074a66339. Automated quality gates passed; live macOS interruption acceptance remains pending.
 
 ## Next action
 
-Add first-class Customer Zero Phase 6F reviewer-runtime readiness and recovery. Verify live Codex authentication before reserving review, classify authentication and runtime failures separately from review findings, and expose exact-version self-development recovery that preserves clean exact-SHA implementation and test evidence without consuming a hardening round.
+Add a disposable Customer Zero Phase 6D/6E/6F recovery acceptance runner following local-operator/phase-6-recovery-acceptance.md. Exercise real child-process interruption and existing recovery APIs in isolated fixtures, emit a bounded PASS/FAIL/SKIP matrix, and preserve exact-SHA evidence, attempt limits, and all existing safety boundaries.
 
 ## Codex fit
 
@@ -42,6 +42,7 @@ Good fit for small, backend-oriented orchestration changes. Preserve existing ex
 - Do not permit caller-selected repositories, runtimes, policies, providers, or deployment targets.
 - Do not add public signup, authentication, billing, teams, or production SaaS infrastructure.
 - Do not weaken exact-SHA evidence, bounded remediation, reconciliation, or owner approval.
+- Keep acceptance fixtures separate from existing development runs, managed workspaces, credentials, GitHub writes, and production.
 
 ## Known risks
 
