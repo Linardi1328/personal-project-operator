@@ -1,21 +1,20 @@
 #!/usr/bin/env node
-
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { DevelopmentOperationLeaseError, acquireDevelopmentOperationLease, inspectDevelopmentOperationLease } from "./development-operation-lease.mjs"
+import { MAX_DEVELOPMENT_OPERATION_LEASE_AGE_MS, DevelopmentOperationLeaseError, acquireDevelopmentOperationLease, inspectDevelopmentOperationLease } from "./development-operation-lease.mjs"
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)))
 const SELF = fileURLToPath(import.meta.url)
-const WAIT_MS = 15_000
+export const WAIT_MS = 15_000
 const RUN_ID = "R".repeat(43)
 
 export const RECOVERY_ACCEPTANCE_CASES = Object.freeze([
   { id: "OWN-01", suite: null, pattern: null, timing: "real-process" },
-  { id: "OWN-02", suite: "development-operation-lease.test.mjs", pattern: "recoverable only|non-private permissions", timing: "fixture-clock" },
+  { id: "OWN-02", suite: "development-operation-lease.test.mjs", pattern: "recoverable only|non-private permissions", timing: "real-process+fixture-clock" },
   { id: "6D-EDIT", suite: "development-codex-execution-adapter.test.mjs", pattern: "preserves a dirty exact-start", timing: "real-process" },
   { id: "6D-COMMIT", suite: "development-codex-execution-adapter.test.mjs", pattern: "adopts one clean descendant", timing: "real-process" },
   { id: "6D-NOCHANGE", suite: "development-codex-execution-adapter.test.mjs", pattern: "orphaned no-change", timing: "real-process" },
@@ -33,68 +32,115 @@ function boundedResult(entry, outcome, revision, reason) {
     adapter: entry.id.startsWith("OWN") || entry.id === "MAC-STALE" ? "none" : "deterministic-no-network", reason }
 }
 
-function childResult(command, args, options = {}) {
-  return new Promise((resolveResult) => {
-    const child = spawn(command, args, { ...options, shell: false, stdio: "ignore" })
-    const timer = setTimeout(() => child.kill("SIGKILL"), WAIT_MS)
-    child.once("exit", (code, signal) => { clearTimeout(timer); resolveResult(code === 0 && signal === null) })
-    child.once("error", () => { clearTimeout(timer); resolveResult(false) })
+function waitForEvent(child, event, waitMs = WAIT_MS) {
+  return new Promise((resolveEvent) => {
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.removeListener(event, onEvent)
+      child.removeListener("error", onError)
+      resolveEvent(value)
+    }
+    const onEvent = (...args) => finish({ ok: true, args })
+    const onError = () => finish({ ok: false, reason: "child-error" })
+    const timer = setTimeout(() => finish({ ok: false, reason: `${event}-timeout` }), waitMs)
+    child.once(event, onEvent)
+    child.once("error", onError)
   })
+}
+
+export async function terminateOwnedChild(child, options = {}) {
+  if (child.exitCode !== null || child.signalCode !== null) return { ok: true, reason: "already-exited" }
+  let signalled
+  try { signalled = child.kill("SIGTERM") } catch { return { ok: false, reason: "signal-failed" } }
+  if (!signalled) return { ok: false, reason: "signal-failed" }
+  let exited = await waitForEvent(child, "exit", options.waitMs)
+  if (exited.ok) return { ok: true, reason: "terminated-observed" }
+  try { signalled = child.kill("SIGKILL") } catch { return { ok: false, reason: "exit-timeout" } }
+  if (!signalled) return { ok: false, reason: "exit-timeout" }
+  exited = await waitForEvent(child, "exit", options.waitMs)
+  return exited.ok ? { ok: false, reason: "exit-timeout-killed-observed" } : { ok: false, reason: "cleanup-timeout" }
+}
+
+async function childResult(command, args, options = {}) {
+  const child = spawn(command, args, { ...options, shell: false, stdio: "ignore" })
+  const exited = await waitForEvent(child, "exit")
+  if (!exited.ok) { await terminateOwnedChild(child); return false }
+  return exited.args[0] === 0 && exited.args[1] === null
 }
 
 async function testedRevision() {
   const chunks = []
   const child = spawn("git", ["rev-parse", "HEAD"], { cwd: ROOT, shell: false, stdio: ["ignore", "pipe", "ignore"] })
   child.stdout.on("data", (chunk) => chunks.push(chunk))
-  const ok = await new Promise((resolveResult) => child.once("exit", (code) => resolveResult(code === 0)))
+  const exited = await waitForEvent(child, "exit")
   const revision = Buffer.concat(chunks).toString("utf8").trim()
-  assert.equal(ok && /^[a-f0-9]{40}$/u.test(revision), true)
+  assert.equal(exited.ok && exited.args[0] === 0 && /^[a-f0-9]{40}$/u.test(revision), true)
   return revision
 }
 
-async function ownedChildCase(revision) {
-  const writeDataDir = await mkdtemp(join(tmpdir(), "ppo-recovery-acceptance-"))
-  const child = spawn(process.execPath, [SELF, "--lease-child", writeDataDir, RUN_ID, revision], {
-    shell: false, stdio: ["ignore", "ignore", "ignore", "ipc"]
-  })
-  const ready = await new Promise((resolveReady) => {
-    const timer = setTimeout(() => resolveReady(false), WAIT_MS)
-    child.once("message", (message) => { clearTimeout(timer); resolveReady(message === "ready") })
-    child.once("exit", () => { clearTimeout(timer); resolveReady(false) })
-  })
-  if (!ready) return { ok: false, reason: "readiness-failed" }
-  const before = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-  let duplicateRefused = false
-  try {
-    await acquireDevelopmentOperationLease({ runId: RUN_ID, phase: "6D", action: "recovery-acceptance", attempt: 1, headSha: revision }, { writeDataDir })
-  } catch (error) {
-    duplicateRefused = error instanceof DevelopmentOperationLeaseError && error.code === "OPERATION_LEASE_HELD"
+async function startOwnedChild(writeDataDir, revision) {
+  const child = spawn(process.execPath, [SELF, "--lease-child", writeDataDir, RUN_ID, revision], { shell: false, stdio: ["ignore", "ignore", "ignore", "ipc"] })
+  const ready = await waitForEvent(child, "message")
+  if (!ready.ok || ready.args[0] !== "ready") {
+    const cleanup = await terminateOwnedChild(child)
+    return { child, ok: false, reason: cleanup.ok ? "readiness-failed" : cleanup.reason }
   }
-  child.kill("SIGTERM")
-  await new Promise((resolveExit) => child.once("exit", resolveExit))
+  return { child, ok: true }
+}
+
+async function interruptFixture(revision, verifyDuplicate = false) {
+  const writeDataDir = await mkdtemp(join(tmpdir(), "ppo-recovery-acceptance-"))
+  const started = await startOwnedChild(writeDataDir, revision)
+  if (!started.ok) return { ok: false, reason: started.reason }
+  const before = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
+  let duplicateRefused = true
+  if (verifyDuplicate) {
+    try {
+      await acquireDevelopmentOperationLease({ runId: RUN_ID, phase: "6D", action: "recovery-acceptance", attempt: 1, headSha: revision }, { writeDataDir })
+      duplicateRefused = false
+    } catch (error) { duplicateRefused = error instanceof DevelopmentOperationLeaseError && error.code === "OPERATION_LEASE_HELD" }
+  }
+  const stopped = await terminateOwnedChild(started.child)
   const after = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-  const ok = before.active && duplicateRefused && after.stale
+  const ok = before.active && duplicateRefused && stopped.ok && after.stale
   if (ok) await rm(writeDataDir, { recursive: true })
-  return { ok, reason: ok ? "owned-child-refused-then-stale" : "ownership-invariant-failed" }
+  return { ok, reason: ok ? "owned-child-interrupted-observed" : (stopped.reason || "ownership-invariant-failed") }
 }
 
 async function runSuite(entry) {
-  return await childResult(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${entry.pattern}`,
-    join(ROOT, "local-operator", entry.suite)], { cwd: ROOT })
+  return childResult(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${entry.pattern}`, join(ROOT, "local-operator", entry.suite)], { cwd: ROOT })
 }
 
-async function main() {
+async function runMacStale(revision) {
+  if (process.platform !== "darwin") return { outcome: "SKIP", reason: "unsupported-host" }
+  const writeDataDir = await mkdtemp(join(tmpdir(), "ppo-recovery-macos-stale-"))
+  const started = await startOwnedChild(writeDataDir, revision)
+  if (!started.ok) return { outcome: "FAIL", reason: started.reason }
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, MAX_DEVELOPMENT_OPERATION_LEASE_AGE_MS + 50))
+  const stale = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
+  const stopped = await terminateOwnedChild(started.child)
+  const ok = stale.stale && stopped.ok
+  if (ok) await rm(writeDataDir, { recursive: true })
+  return { outcome: ok ? "PASS" : "FAIL", reason: ok ? "configured-real-time-threshold-stale" : stopped.reason }
+}
+
+export async function main(options = {}) {
   const revision = await testedRevision()
   const results = []
-  const ownership = await ownedChildCase(revision)
-  results.push(boundedResult(RECOVERY_ACCEPTANCE_CASES[0], ownership.ok ? "PASS" : "FAIL", revision, ownership.reason))
-  for (const entry of RECOVERY_ACCEPTANCE_CASES.slice(1, -1)) {
-    const ok = await runSuite(entry)
-    results.push(boundedResult(entry, ok ? "PASS" : "FAIL", revision, ok ? "fixture-contract-satisfied" : "fixture-contract-failed"))
+  for (const entry of RECOVERY_ACCEPTANCE_CASES.slice(0, -1)) {
+    const interruption = await interruptFixture(revision, entry.id === "OWN-01")
+    const contract = interruption.ok && (entry.suite === null || await runSuite(entry))
+    results.push(boundedResult(entry, contract ? "PASS" : "FAIL", revision,
+      contract ? "interrupted-fixture-recovery-contract-satisfied" : interruption.ok ? "fixture-contract-failed" : interruption.reason))
   }
   const mac = RECOVERY_ACCEPTANCE_CASES.at(-1)
-  results.push(boundedResult(mac, process.platform === "darwin" && ownership.ok ? "PASS" : "SKIP", revision,
-    process.platform === "darwin" ? "dead-owner-real-time-stale" : "unsupported-host"))
+  const macResult = options.skipMac === true
+    ? { outcome: "SKIP", reason: "test-mode-host-check-not-run" }
+    : await runMacStale(revision)
+  results.push(boundedResult(mac, macResult.outcome, revision, macResult.reason))
   for (const result of results) process.stdout.write(`${JSON.stringify(result)}\n`)
   if (results.some(({ outcome }) => outcome !== "PASS")) process.exitCode = 1
 }
@@ -104,6 +150,4 @@ if (process.argv[2] === "--lease-child") {
   await acquireDevelopmentOperationLease({ runId, phase: "6D", action: "recovery-acceptance", attempt: 1, headSha }, { writeDataDir })
   process.send?.("ready")
   setInterval(() => {}, 1_000)
-} else if (process.argv[1] === SELF) {
-  await main()
-}
+} else if (process.argv[1] === SELF) await main({ skipMac: process.argv[2] === "--test-skip-mac" })
