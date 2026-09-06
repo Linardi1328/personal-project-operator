@@ -4,7 +4,7 @@
 
 Stage 1B implementation specification. The recovery changes in PR #73 are merged.
 Their automated checks passed; this document does not claim live macOS acceptance.
-The acceptance runner described below does not exist yet.
+The disposable acceptance runner is `phase-6-recovery-acceptance.mjs`.
 
 ## Deliverable
 
@@ -64,3 +64,24 @@ and verified. Record the full five-gate quality result, the fixture matrix, and
 the separate macOS result with the tested revision. Keep the macOS result pending
 until the owner executes the runner there. Do not automatically advance the next
 project task or mark the stage complete merely because the runner is merged.
+
+## Runner commands
+
+```sh
+node --test --test-concurrency=1 local-operator/phase-6-recovery-acceptance.test.mjs
+node local-operator/phase-6-recovery-acceptance.mjs
+```
+
+The runner emits one bounded JSON line per case. Deterministic no-network
+adapters validate recovery integration, not live model authentication, model
+quality, or GitHub delivery. A required SKIP makes host acceptance incomplete.
+Run and retain the five gate results separately; macOS remains pending until an
+owner executes the second command on macOS:
+
+```sh
+node deployment/scripts/run-ppo-development-quality.mjs syntax
+node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
+node deployment/scripts/run-ppo-development-quality.mjs serial-regression
+node deployment/scripts/run-ppo-development-quality.mjs critical-lifecycle
+node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
+```

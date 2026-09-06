@@ -1575,6 +1575,47 @@ test("orphaned Codex recovery preserves a dirty exact-start workspace as a verif
   assert.equal(await git(["status", "--porcelain=v1"], fixture.location.workspacePath), "")
 })
 
+test("orphaned Codex recovery adopts one clean descendant commit without duplicating it", async () => {
+  const fixture = await makeImplementationFixture()
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version, writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry, codexConfig: trustedNativeDarwinCodexConfig(),
+    ...sandboxedCodexRunner(async () => ({ killed: true })), now: fixture.now
+  }), "CODEX_EXECUTION_AMBIGUOUS")
+  await writeFile(join(fixture.location.workspacePath, "committed.txt"), "preserved\n", "utf8")
+  await git(["add", "committed.txt"], fixture.location.workspacePath)
+  await git(["commit", "-m", "completed before interruption"], fixture.location.workspacePath)
+  const committedSha = await git(["rev-parse", "HEAD"], fixture.location.workspacePath)
+  const open = await readDevelopmentRun(fixture.run.runId, { writeDataDir: fixture.writeDataDir })
+  const result = await recoverOrphanedCodexExecution(open.runId, {
+    expectedVersion: open.version, expectedHeadSha: open.headSha,
+    expectedAttempt: open.attempts.implementation, writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry, codexConfig: trustedNativeDarwinCodexConfig(), now: fixture.now
+  })
+  assert.equal(result.run.headSha, committedSha)
+  assert.equal(await git(["rev-list", "--count", `${open.headSha}..HEAD`], fixture.location.workspacePath), "1")
+  assert.equal(result.run.attempts.implementation, open.attempts.implementation)
+})
+
+test("orphaned Codex recovery refuses mixed committed and uncommitted work", async () => {
+  const fixture = await makeImplementationFixture()
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version, writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry, codexConfig: trustedNativeDarwinCodexConfig(),
+    ...sandboxedCodexRunner(async () => ({ interrupted: true })), now: fixture.now
+  }), "CODEX_EXECUTION_AMBIGUOUS")
+  await writeFile(join(fixture.location.workspacePath, "committed.txt"), "commit\n", "utf8")
+  await git(["add", "committed.txt"], fixture.location.workspacePath)
+  await git(["commit", "-m", "partial work"], fixture.location.workspacePath)
+  await writeFile(join(fixture.location.workspacePath, "dirty.txt"), "dirty\n", "utf8")
+  const open = await readDevelopmentRun(fixture.run.runId, { writeDataDir: fixture.writeDataDir })
+  await assertRejectsCode(recoverOrphanedCodexExecution(open.runId, {
+    expectedVersion: open.version, expectedHeadSha: open.headSha,
+    expectedAttempt: open.attempts.implementation, writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry, codexConfig: trustedNativeDarwinCodexConfig(), now: fixture.now
+  }), "CODEX_ORPHAN_RECOVERY_MIXED_STATE")
+})
+
 test("orphaned no-change Codex recovery records a definitive retry boundary", async () => {
   const fixture = await makeImplementationFixture()
 
