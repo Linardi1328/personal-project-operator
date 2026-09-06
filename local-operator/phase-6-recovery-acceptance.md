@@ -4,7 +4,7 @@
 
 Stage 1B implementation specification. The recovery changes in PR #73 are merged.
 Their automated checks passed; this document does not claim live macOS acceptance.
-The acceptance runner described below does not exist yet.
+The disposable acceptance runner is `phase-6-recovery-acceptance.mjs`.
 
 ## Deliverable
 
@@ -64,3 +64,41 @@ and verified. Record the full five-gate quality result, the fixture matrix, and
 the separate macOS result with the tested revision. Keep the macOS result pending
 until the owner executes the runner there. Do not automatically advance the next
 project task or mark the stage complete merely because the runner is merged.
+
+## Runner commands
+
+```sh
+node --test --test-concurrency=1 local-operator/phase-6-recovery-acceptance.test.mjs
+PPO_ACCEPTANCE_REVISION="$(git rev-parse HEAD)"
+node local-operator/phase-6-recovery-acceptance.mjs --expected-revision "$PPO_ACCEPTANCE_REVISION"
+```
+
+The runner emits one bounded JSON line per case. Deterministic no-network
+adapters validate recovery integration, not live model authentication, model
+quality, or GitHub delivery. A required SKIP makes host acceptance incomplete.
+Run and retain the five gate results separately; macOS remains pending until an
+owner executes the revision-bound runner command on macOS. Start from a clean
+checkout of the intended implementation revision. The fixture repositories fetch
+that exact revision locally and bind their real run records and leases to it.
+The runner interrupts its own children after the real phase API reserves work,
+then uses the existing continuation/recovery APIs on those same records.
+
+The model and sandbox boundary is simulated and labelled; these cases do not
+prove the external Codex service or sandbox enforcement. Git, run-state, lease,
+and recovery operations are real. General cases advance only the fixture clock
+by 61 seconds after the child exits. The macOS case waits 61 seconds after an
+observed child exit and uses the real clock; it does not wait for the 90-minute
+maximum lease age. Linux reports that case as SKIP and exits nonzero.
+Child cleanup is enforced in finally and observes process close. Failed private
+fixtures remain under the system temporary directory for diagnosis. No existing
+run is changed. Output is emitted after each case.
+
+Run the five quality gates separately:
+
+```sh
+node deployment/scripts/run-ppo-development-quality.mjs syntax
+node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
+node deployment/scripts/run-ppo-development-quality.mjs serial-regression
+node deployment/scripts/run-ppo-development-quality.mjs critical-lifecycle
+node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
+```
