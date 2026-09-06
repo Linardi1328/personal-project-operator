@@ -243,10 +243,13 @@ test("Stage 0 planner accepts the checked-in PPO project next action", async () 
   assert.equal(planned.ok, true)
   assert.equal(planned.outcome, "planned")
   assert.equal(planned.run.status, "planned")
-  assert.equal(
-    planned.run.task.includes("Phase 6F reviewer-runtime readiness and recovery"),
-    true
-  )
+  assert.equal(planned.run.project.id, SELF.id)
+  assert.equal(planned.run.project.fullName, SELF.fullName)
+  const nextAction = checkedInProjectDocument
+    .split(/^## Next action\s*$/m)[1]
+    ?.split(/^## /m)[0]?.trim()
+  assert.ok(nextAction, "Checked-in project must contain a nonempty Next action")
+  assert.equal(planned.run.task, nextAction)
 })
 
 test("Stage 0 start validates the self project and returns only bounded run metadata", async () => {
