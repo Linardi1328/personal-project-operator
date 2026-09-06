@@ -1,219 +1,226 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { mkdtemp, rm, writeFile, chmod, readFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { readFile, writeFile, rm } from "node:fs/promises"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { MAX_DEVELOPMENT_OPERATION_LEASE_AGE_MS, DevelopmentOperationLeaseError, acquireDevelopmentOperationLease, discardStaleDevelopmentOperationLease, inspectDevelopmentOperationLease } from "./development-operation-lease.mjs"
+import { fixture, read, advance, git, options } from "./phase-6-acceptance-fixture.mjs"
+import { inspectDevelopmentOperationLease } from "./development-operation-lease.mjs"
+import { recoverOrphanedCodexExecution } from "./development-codex-execution-adapter.mjs"
+import { recoverOrphanedAutomatedTesting } from "./development-test-runner.mjs"
+import { recoverReviewOrphan } from "./development-review-orphan-recovery.mjs"
+import { REVIEW_ORPHAN_RECOVERY_CONFIRMATION } from "./development-run-state.mjs"
 
-const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)))
 const SELF = fileURLToPath(import.meta.url)
-export const WAIT_MS = 15_000
-const RUN_ID = "R".repeat(43)
-
+const ROOT = fileURLToPath(new URL("../", import.meta.url))
 export const RECOVERY_ACCEPTANCE_CASES = Object.freeze([
-  { id: "OWN-01", suite: null, pattern: null, timing: "real-process" },
-  { id: "OWN-02", suite: null, pattern: null, timing: "real-process+fixture-clock" },
-  { id: "6D-EDIT", suite: "development-codex-execution-adapter.test.mjs", pattern: "preserves a dirty exact-start", timing: "real-process" },
-  { id: "6D-COMMIT", suite: "development-codex-execution-adapter.test.mjs", pattern: "adopts one clean descendant", timing: "real-process" },
-  { id: "6D-NOCHANGE", suite: "development-codex-execution-adapter.test.mjs", pattern: "orphaned no-change", timing: "real-process" },
-  { id: "6D-REFUSE", suite: "development-codex-execution-adapter.test.mjs", pattern: "refuses mixed committed|workspace HEAD must match", timing: "real-process" },
-  { id: "6E-OPEN", suite: "development-test-runner.test.mjs", pattern: "orphaned automated testing", timing: "real-process" },
-  { id: "6F-RESERVED", suite: "development-review-agent.test.mjs", pattern: "orphan recovery closes", timing: "real-process" },
-  { id: "6F-REFUSE", suite: "development-review-agent.test.mjs", pattern: "requires tests_passed|valid blockers", timing: "real-process" },
-  { id: "HARD-01", suite: "development-hardening-orchestrator.test.mjs", pattern: "ambiguous Codex, test, and review|maximum three hardening", timing: "real-process" },
-  { id: "REPLAY-01", suite: "development-test-runner.test.mjs", pattern: "only one final PASS|invalidates prior PASS", timing: "real-process" },
-  { id: "MAC-STALE", suite: null, pattern: null, timing: "real-time" }
+  "OWN-01", "OWN-02", "6D-EDIT", "6D-COMMIT", "6D-NOCHANGE", "6D-REFUSE",
+  "6E-OPEN", "6F-RESERVED", "6F-REFUSE", "6F-MISSING", "6F-FINDINGS", "HARD-01", "REPLAY-01", "MAC-STALE"
 ])
-
-function boundedResult(entry, outcome, revision, reason) {
-  return { id: entry.id, outcome, revision, platform: process.platform, timing: entry.timing,
-    adapter: entry.id.startsWith("OWN") || entry.id === "MAC-STALE" ? "none" : "deterministic-no-network", reason }
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+export function readinessFailureCode(value) {
+  return typeof value === "string" && /^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/u.test(value)
+    ? value : "unclassified"
+}
+async function bounded(promise, ms, label) {
+  let timer
+  try { return await Promise.race([promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Error(label)), ms)
+  })]) } finally { clearTimeout(timer) }
 }
 
-function waitForEvent(child, event, waitMs = WAIT_MS) {
-  return new Promise((resolveEvent) => {
-    let settled = false
-    const finish = (value) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      child.removeListener(event, onEvent)
-      child.removeListener("error", onError)
-      resolveEvent(value)
-    }
-    const onEvent = (...args) => finish({ ok: true, args })
-    const onError = () => finish({ ok: false, reason: "child-error" })
-    const timer = setTimeout(() => finish({ ok: false, reason: `${event}-timeout` }), waitMs)
-    child.once(event, onEvent)
-    child.once("error", onError)
+// Listeners are attached before signalling. Every exit path observes close.
+export async function withOwnedChild(f, mode, operation, hooks = {}) {
+  const child = spawn(process.execPath, [SELF, "--fixture-child"], {
+    shell: false, stdio: ["ignore", "ignore", "ignore", "ipc"], env: { PATH: process.env.PATH }
   })
-}
-
-export async function terminateOwnedChild(child, options = {}) {
-  if (child.exitCode !== null || child.signalCode !== null) return { ok: true, reason: "already-exited" }
-  let signalled
-  try { signalled = child.kill("SIGTERM") } catch { return { ok: false, reason: "signal-failed" } }
-  if (!signalled) return { ok: false, reason: "signal-failed" }
-  let exited = await waitForEvent(child, "exit", options.waitMs)
-  if (exited.ok) return { ok: true, reason: "terminated-observed" }
-  try { signalled = child.kill("SIGKILL") } catch { return { ok: false, reason: "exit-timeout" } }
-  if (!signalled) return { ok: false, reason: "exit-timeout" }
-  exited = await waitForEvent(child, "exit", options.waitMs)
-  return exited.ok ? { ok: false, reason: "exit-timeout-killed-observed" } : { ok: false, reason: "cleanup-timeout" }
-}
-
-async function childResult(command, args, options = {}) {
-  const child = spawn(command, args, { ...options, shell: false, stdio: "ignore" })
-  const exited = await waitForEvent(child, "exit")
-  if (!exited.ok) { await terminateOwnedChild(child); return false }
-  return exited.args[0] === 0 && exited.args[1] === null
-}
-
-async function gitOutput(args) {
-  const chunks = []
-  const child = spawn("git", args, { cwd: ROOT, shell: false, stdio: ["ignore", "pipe", "ignore"] })
-  child.stdout.on("data", (chunk) => chunks.push(chunk))
-  const exited = await waitForEvent(child, "exit")
-  assert.equal(exited.ok && exited.args[0] === 0, true)
-  return Buffer.concat(chunks).toString("utf8").trim()
+  let closed = false
+  child.on("error", () => {})
+  const exit = new Promise(resolve => child.once("close", (code, signal) => { closed = true; resolve({ code, signal }) }))
+  const ready = new Promise((resolve, reject) => {
+    child.once("message", m => m === "ready" ? resolve()
+      : reject(Error(`readiness-failed: ${readinessFailureCode(m?.code)}`)))
+    child.once("error", reject)
+    child.once("exit", () => reject(Error("exit-before-ready")))
+  })
+  ready.catch(() => {})
+  const stop = async () => {
+    if (!closed) {
+      child.kill("SIGTERM")
+      try { await bounded(exit, 2000, "term-timeout") }
+      catch { child.kill("SIGKILL"); await bounded(exit, 2000, "cleanup-timeout") }
+    }
+    return exit
+  }
+  try {
+    hooks.spawned?.(child)
+    child.send({ f, mode }, () => {})
+    await bounded(ready, hooks.readyTimeoutMs || 15000, "ready-timeout")
+    await hooks.ready?.(child)
+    return await operation({ child, stop })
+  } finally { await stop(); assert.equal(closed, true) }
 }
 
 export async function verifyTestedSource(expectedRevision) {
   assert.match(expectedRevision || "", /^[a-f0-9]{40}$/u)
-  const revision = await gitOutput(["rev-parse", "HEAD"])
-  assert.equal(revision, expectedRevision)
-  assert.equal(await gitOutput(["status", "--porcelain=v1", "--untracked-files=all"]), "")
-  return revision
+  assert.equal(await git(["rev-parse", "HEAD"], ROOT), expectedRevision)
+  assert.equal(await git(["status", "--porcelain=v1", "--untracked-files=all"], ROOT), "")
+  return expectedRevision
 }
 
-async function startOwnedChild(writeDataDir, revision) {
-  const child = spawn(process.execPath, [SELF, "--lease-child", writeDataDir, RUN_ID, revision], { shell: false, stdio: ["ignore", "ignore", "ignore", "ipc"] })
-  const ready = await waitForEvent(child, "message")
-  if (!ready.ok || ready.args[0] !== "ready") {
-    const cleanup = await terminateOwnedChild(child)
-    return { child, ok: false, reason: cleanup.ok ? "readiness-failed" : cleanup.reason }
-  }
-  return { child, ok: true }
+async function refused(f, invoke) {
+  const before = await read(f)
+  assert.equal((await invoke()).ok, false)
+  assert.deepEqual(await read(f), before)
 }
 
-async function interruptFixture(revision, verifyDuplicate = false) {
-  const writeDataDir = await mkdtemp(join(tmpdir(), "ppo-recovery-acceptance-"))
-  const started = await startOwnedChild(writeDataDir, revision)
-  if (!started.ok) return { ok: false, reason: started.reason }
-  const before = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-  let duplicateRefused = true
-  if (verifyDuplicate) {
+async function replay(f, before) {
+  const opts = { ...options(f, 61000), expectedVersion: before.version, expectedHeadSha: before.headSha,
+    expectedAttempt: f.phase === "6E" ? before.attempts.test : before.attempts.implementation }
+  const current = await read(f)
+  const call = f.phase === "6F"
+    ? () => recoverReviewOrphan({ runId: f.runId, expectedVersion: before.version, expectedHeadSha: before.headSha,
+      expectedReviewAttempt: before.attempts.review, confirmation: REVIEW_ORPHAN_RECOVERY_CONFIRMATION }, opts)
+    : () => (f.phase === "6E" ? recoverOrphanedAutomatedTesting : recoverOrphanedCodexExecution)(f.runId, opts)
+  await assert.rejects(call)
+  assert.deepEqual(await read(f), current)
+}
+
+export async function runCase(id, revision, hooks = {}) {
+  assert.ok(RECOVERY_ACCEPTANCE_CASES.includes(id))
+  if (id === "MAC-STALE" && process.platform !== "darwin") return "SKIP"
+  if (id === "6F-MISSING" || id === "6F-FINDINGS") {
+    const f = await fixture(ROOT, revision, id === "6F-FINDINGS" ? "HARD" : "6F", { missingTestEvidence: id === "6F-MISSING" })
+    const before = await read(f)
+    let passed = false
     try {
-      await acquireDevelopmentOperationLease({ runId: RUN_ID, phase: "6D", action: "recovery-acceptance", attempt: 1, headSha: revision }, { writeDataDir })
-      duplicateRefused = false
-    } catch (error) { duplicateRefused = error instanceof DevelopmentOperationLeaseError && error.code === "OPERATION_LEASE_HELD" }
+      if (id === "6F-MISSING") {
+        let invoked = false
+        await refused(f, () => advance(f, () => { invoked = true; throw Error("Must not invoke reviewer") }))
+        assert.equal(invoked, false)
+      }
+      await assert.rejects(() => recoverReviewOrphan({ runId: f.runId, expectedVersion: before.version,
+        expectedHeadSha: before.headSha, expectedReviewAttempt: Math.max(1, before.attempts.review),
+        confirmation: REVIEW_ORPHAN_RECOVERY_CONFIRMATION }, options(f, 61000)))
+      assert.deepEqual(await read(f), before)
+      passed = true
+      return "PASS"
+    } finally { if (passed) await rm(f.temp, { recursive: true }) }
   }
-  const stopped = await terminateOwnedChild(started.child)
-  const after = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-  const ok = before.active && duplicateRefused && stopped.ok && after.stale
-  if (ok) await rm(writeDataDir, { recursive: true })
-  return { ok, reason: ok ? "owned-child-interrupted-observed" : (stopped.reason || "ownership-invariant-failed") }
-}
-
-async function ownershipRefusals(revision) {
-  const writeDataDir = await mkdtemp(join(tmpdir(), "ppo-recovery-ownership-"))
-  const snapshot = async () => {
-    const inspected = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-    return JSON.stringify(inspected)
-  }
+  const phase = id.startsWith("6E") || id === "REPLAY-01" ? "6E" : id.startsWith("6F") ? "6F" : id === "HARD-01" ? "HARD" : "6D"
+  const f = await fixture(ROOT, revision, phase)
+  let passed = false
   try {
-    // Missing leases must never be invented by inspection or stale discard.
-    const missingBefore = await snapshot()
-    const missing = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-    const missingDiscarded = await discardStaleDevelopmentOperationLease(RUN_ID, {
-      phase: "6D", attempt: 1, headSha: revision
-    }, { writeDataDir })
-    const missingAfter = await snapshot()
-    if (missing.exists || missingDiscarded || missingBefore !== missingAfter) return { ok: false, reason: "missing-lease-mutated" }
-
-    const started = await startOwnedChild(writeDataDir, revision)
-    if (!started.ok) return { ok: false, reason: started.reason }
-    const freshBefore = await snapshot()
-    let freshRefused = false
-    try {
-      await acquireDevelopmentOperationLease({ runId: RUN_ID, phase: "6D", action: "different", attempt: 1, headSha: revision }, { writeDataDir })
-    } catch (error) { freshRefused = error instanceof DevelopmentOperationLeaseError && error.code === "OPERATION_LEASE_HELD" }
-    const freshAfter = await snapshot()
-    const stopped = await terminateOwnedChild(started.child)
-    if (!freshRefused || freshBefore !== freshAfter || !stopped.ok) return { ok: false, reason: "fresh-lease-not-refused" }
-
-    const stale = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-    const mismatchedBefore = await snapshot()
-    let mismatchRefused = false
-    try {
-      await acquireDevelopmentOperationLease({ runId: RUN_ID, phase: "6E", action: "different", attempt: 2, headSha: revision }, { writeDataDir })
-    } catch (error) { mismatchRefused = error instanceof DevelopmentOperationLeaseError }
-    if (!stale.stale || !mismatchRefused || mismatchedBefore !== await snapshot()) return { ok: false, reason: "mismatched-lease-not-refused" }
-
-    const leasePath = join(writeDataDir, "development-runs", "operation-leases", `${RUN_ID}.json`)
-    await writeFile(leasePath, "{malformed", { mode: 0o600 })
-    await chmod(leasePath, 0o600)
-    const malformedBefore = await gitOutputForFile(leasePath)
-    let malformedRefused = false
-    try { await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir }) } catch (error) { malformedRefused = error instanceof DevelopmentOperationLeaseError }
-    if (!malformedRefused || malformedBefore !== await gitOutputForFile(leasePath)) return { ok: false, reason: "malformed-lease-not-refused" }
-    await rm(writeDataDir, { recursive: true })
-    return { ok: true, reason: "all-lease-refusals-observed" }
-  } catch { return { ok: false, reason: "ownership-refusal-check-failed" } }
-}
-
-async function gitOutputForFile(path) {
-  return readFile(path, "utf8")
-}
-
-async function runSuite(entry) {
-  return childResult(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${entry.pattern}`, join(ROOT, "local-operator", entry.suite)], { cwd: ROOT })
-}
-
-async function runMacStale(revision) {
-  if (process.platform !== "darwin") return { outcome: "SKIP", reason: "unsupported-host" }
-  const writeDataDir = await mkdtemp(join(tmpdir(), "ppo-recovery-macos-stale-"))
-  const started = await startOwnedChild(writeDataDir, revision)
-  if (!started.ok) return { outcome: "FAIL", reason: started.reason }
-  await new Promise((resolveDelay) => setTimeout(resolveDelay, MAX_DEVELOPMENT_OPERATION_LEASE_AGE_MS + 50))
-  const stale = await inspectDevelopmentOperationLease(RUN_ID, { writeDataDir })
-  const stopped = await terminateOwnedChild(started.child)
-  const ok = stale.stale && stopped.ok
-  if (ok) await rm(writeDataDir, { recursive: true })
-  return { outcome: ok ? "PASS" : "FAIL", reason: ok ? "configured-real-time-threshold-stale" : stopped.reason }
-}
-
-export async function main(options = {}) {
-  const revision = await verifyTestedSource(options.expectedRevision)
-  const results = []
-  for (const entry of RECOVERY_ACCEPTANCE_CASES.slice(0, -1)) {
-    const interruption = entry.id === "OWN-02"
-      ? await ownershipRefusals(revision)
-      : await interruptFixture(revision, entry.id === "OWN-01")
-    const contract = interruption.ok && (entry.suite === null || await runSuite(entry))
-    results.push(boundedResult(entry, contract ? "PASS" : "FAIL", revision,
-      contract ? "interrupted-fixture-recovery-contract-satisfied" : interruption.ok ? "fixture-contract-failed" : interruption.reason))
+    const mode = id === "6D-COMMIT" ? "commit" : id === "6D-REFUSE" ? "mixed" : id === "6D-NOCHANGE" || id.startsWith("OWN") || id === "MAC-STALE" ? "nochange" : "edit"
+    await withOwnedChild(f, mode, async ({ child, stop }) => {
+      const open = await read(f)
+      const lease = await inspectDevelopmentOperationLease(f.runId, options(f))
+      assert.equal(lease.lease.ownerPid, child.pid)
+      assert.equal(lease.active, true)
+      assert.equal(lease.lease.headSha, open.headSha)
+      await refused(f, () => advance(f))
+      await hooks.afterReservation?.(f)
+      assert.equal((await stop()).signal, "SIGTERM")
+      assert.equal((await inspectDevelopmentOperationLease(f.runId, options(f))).stale, true)
+      await refused(f, () => advance(f))
+      if (id === "OWN-02") {
+        const path = join(f.writeDataDir, "development-runs", "operation-leases", `${f.runId}.json`)
+        const original = await readFile(path, "utf8")
+        for (const replacement of [JSON.stringify({ ...JSON.parse(original), headSha: "0".repeat(40) }), "{malformed", null]) {
+          if (replacement === null) await rm(path)
+          else await writeFile(path, replacement, { mode: 0o600 })
+          await refused(f, () => advance(f, undefined, 61000))
+        }
+        await writeFile(path, original, { mode: 0o600 })
+      }
+      if (id === "6D-REFUSE") { await refused(f, () => advance(f, undefined, 61000)); return }
+      if (id === "6F-REFUSE") {
+        await writeFile(join(f.location.workspacePath, "unexpected.txt"), "dirty\n")
+        await refused(f, () => advance(f, undefined, 61000))
+        await rm(join(f.location.workspacePath, "unexpected.txt"))
+      }
+      if (id === "MAC-STALE") await delay(61000)
+      const result = await advance(f, undefined, id === "MAC-STALE" ? 0 : 61000)
+      assert.equal(result.ok, true, JSON.stringify(result))
+      const after = await read(f)
+      assert.deepEqual(after.attempts, open.attempts)
+      assert.ok(after.version > open.version)
+      if (phase === "6D" || phase === "HARD") {
+        assert.equal(after.status, mode === "nochange" ? "implementation_in_progress" : "implementation_ready")
+        if (mode !== "nochange") {
+          assert.equal(await git(["status", "--porcelain"], f.location.workspacePath), "")
+          assert.equal(await git(["rev-list", "--count", `${open.headSha}..HEAD`], f.location.workspacePath), "1")
+          assert.equal(await readFile(join(f.location.workspacePath, "interrupted.txt"), "utf8"), `${revision}\n`)
+        }
+      } else if (phase === "6E") {
+        assert.equal(after.evidence.test.at(-1).metadata.outcome, "failed")
+        assert.equal(after.evidence.test.at(-1).metadata.ambiguous, 1)
+        assert.equal(after.evidence.test.some(e => e.metadata.outcome === "passed"), false)
+      } else {
+        assert.equal(after.status, "tests_passed")
+        assert.deepEqual(after.evidence.test, open.evidence.test)
+        assert.equal(after.evidence.review.some(e => e.metadata.decision === "APPROVED"), false)
+      }
+      if (phase === "HARD") {
+        assert.equal(open.evidence.implementation.filter(e => e.metadata.outcome === "hardening_started").length, 1)
+        assert.equal(after.evidence.implementation.filter(e => e.metadata.outcome === "hardening_started").length, 1)
+        assert.ok(after.evidence.implementation.some(e => e.metadata.resultingSha === after.headSha))
+      }
+      await replay(f, open)
+      if (phase === "6E") {
+        let steps = 0
+        const retried = await advance(f, async () => { steps++; return { exitCode: 0, stdout: "", stderr: "" } }, 62000)
+        assert.equal(retried.ok, true, JSON.stringify(retried))
+        assert.equal((await read(f)).status, "tests_passed")
+        assert.equal(steps, 2)
+        assert.equal((await read(f)).attempts.test, open.attempts.test + 1)
+      }
+    }, hooks)
+    passed = true
+    return "PASS"
+  } finally {
+    // Failed fixtures are retained. Successful cleanup follows observed child exit.
+    if (passed) await rm(f.temp, { recursive: true })
   }
-  const mac = RECOVERY_ACCEPTANCE_CASES.at(-1)
-  const macResult = options.skipMac === true
-    ? { outcome: "SKIP", reason: "test-mode-host-check-not-run" }
-    : await runMacStale(revision)
-  results.push(boundedResult(mac, macResult.outcome, revision, macResult.reason))
-  for (const result of results) process.stdout.write(`${JSON.stringify(result)}\n`)
-  if (results.some(({ outcome }) => outcome !== "PASS")) process.exitCode = 1
 }
 
-if (process.argv[2] === "--lease-child") {
-  const [, , , writeDataDir, runId, headSha] = process.argv
-  await acquireDevelopmentOperationLease({ runId, phase: "6D", action: "recovery-acceptance", attempt: 1, headSha }, { writeDataDir })
-  process.send?.("ready")
-  setInterval(() => {}, 1_000)
+export async function main(expectedRevision) {
+  const revision = await verifyTestedSource(expectedRevision)
+  for (const id of RECOVERY_ACCEPTANCE_CASES) {
+    let outcome
+    try { outcome = await runCase(id, revision) } catch { outcome = "FAIL" }
+    process.stdout.write(`${JSON.stringify({ id, outcome, revision, platform: process.platform,
+      timing: id === "MAC-STALE" ? "real-time" : "real-process+fixture-clock", adapter: "deterministic-model-and-sandbox-boundary" })}\n`)
+    if (outcome !== "PASS") process.exitCode = 1
+  }
+}
+
+if (process.argv[1] === SELF && process.argv[2] === "--fixture-child" && process.send) {
+  process.once("message", async ({ f, mode }) => {
+    try {
+      const result = await advance(f, async () => {
+        if (f.phase === "6D" || f.phase === "HARD") {
+          if (mode !== "nochange") await writeFile(join(f.location.workspacePath, "interrupted.txt"), `${f.revision}\n`)
+          if (mode === "commit" || mode === "mixed") {
+            await git(["add", "interrupted.txt"], f.location.workspacePath)
+            await git(["commit", "-m", "fixture interrupted implementation"], f.location.workspacePath)
+          }
+          if (mode === "mixed") await writeFile(join(f.location.workspacePath, "partial.txt"), "unfinished\n")
+        }
+        if (mode === "ignore-term") process.on("SIGTERM", () => {})
+        if (mode !== "silent") process.send("ready")
+        setInterval(() => {}, 1000)
+        await new Promise(() => {})
+      })
+      process.send({ type: "failed", code: readinessFailureCode(result?.reason || result?.outcome) })
+    } catch (error) {
+      process.send({ type: "failed", code: readinessFailureCode(error?.code) })
+    }
+  })
 } else if (process.argv[1] === SELF) {
-  const args = process.argv.slice(2)
-  const revisionIndex = args.indexOf("--expected-revision")
-  const expectedRevision = revisionIndex >= 0 ? args[revisionIndex + 1] : null
-  try { await main({ expectedRevision, skipMac: args.includes("--test-skip-mac") }) }
-  catch { process.stderr.write("recovery acceptance refused: source-revision-mismatch-or-dirty\n"); process.exitCode = 1 }
+  try {
+    assert.equal(process.argv.length, 4)
+    assert.equal(process.argv[2], "--expected-revision")
+    await main(process.argv[3])
+  } catch { process.stderr.write("recovery acceptance refused: invalid-command-or-source\n"); process.exitCode = 1 }
 }
