@@ -25,6 +25,16 @@ const execFileAsync = promisify(execFile)
 
 export const DEVELOPMENT_CONTINUE_RUNTIME_PROFILE_ID = "phase-6k-fixed-local-runtime-profile"
 
+// Metadata only: does not load a runtime or run readiness probes.
+export function describePersonalProjectOperatorQualityPolicy() {
+  const policy = nodeCommandSuitePolicy(reviewedProjectTestPolicies[PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id], fixedDarwinPaths, null)
+  return {
+    profileId: DEVELOPMENT_CONTINUE_RUNTIME_PROFILE_ID,
+    gates: policy.steps.map(step => ({ id: step.id,
+      command: ["node", ...step.args], timeoutMs: step.timeoutMs }))
+  }
+}
+
 const fixedDarwinPaths = Object.freeze({
   codexExecutablePath: "/Users/richie/.local/bin/codex",
   gitExecutablePath: "/opt/homebrew/bin/git",

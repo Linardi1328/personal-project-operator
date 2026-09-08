@@ -1,5 +1,16 @@
 # Roadmap
 
+## Stage 1C — Read-only Customer Zero capability validator
+
+- Add a fixed local PPO manifest validator with bounded PASS/FAIL output.
+- Compare v1 schema, repository/runtime metadata, runtime quality-gate definitions,
+  runner gate names, and local GitHub workflow steps and commands.
+- Preserve declarative deployment boundaries and refuse caller paths or options.
+- No readiness probes, subprocesses, configuration writes, GitHub requests, or deployments.
+- PR #77 diagnostics are merged and owner-reported macOS focused regression passed (25 tests).
+  The intermittent readiness cause remains undiagnosed.
+- Broader project manifests remain a later task after PPO validation is accepted.
+
 ## Customer Zero delivery checkpoint — 2026-09-07
 
 - Capability manifest foundation and reviewer-runtime recovery are delivered.
