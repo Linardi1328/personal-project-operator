@@ -1,5 +1,26 @@
 # Roadmap
 
+## Customer Zero Stage 1 closure scope
+
+Stage 1 covers local declarative capability metadata and validation for PPO and
+the six existing ordinary development projects. It does not add project runtime
+installation, remote workflow discovery, provider execution, or production access.
+
+- 1A–1B: PPO manifest foundation, reviewer readiness/recovery, and interruption
+  acceptance fixtures delivered; intermittent readiness root cause remains open.
+- 1C–1D: PPO validator and quality-gate enforcement delivered in PRs #78–79.
+- 1E: fixed ordinary-project policy catalog derived from existing runtime policy
+  builders, with strict registry, command, timeout, and authority parity checks.
+- 1F: combined local validation through `node capabilities/validate-stage1.mjs`,
+  integrated before every PPO quality workload. Mutation and read-only CLI tests.
+
+Local parity PASS is not end-to-end acceptance. The combined command explicitly
+reports SKIP for ordinary-project remote workflow and host acceptance, which have
+not been established by local metadata. No provider identity or default branch is
+invented. Broader deployment or live multi-project acceptance needs a separate
+scoped test plan. Run the five quality gates on the final revision and retain the
+owner macOS results before closing host acceptance.
+
 ## Stage 1D — Capability validation in quality gates
 
 - Stage 1C was merged in PR #78; owner macOS validation passed.

@@ -1,5 +1,19 @@
 # Customer Zero project capabilities
 
+## Stage 1 combined validation
+
+Run `node capabilities/validate-stage1.mjs` with no arguments. Every PPO quality
+gate uses this combined check. It preserves the seven PPO checks, adds strict
+parity against `ordinary-projects.json`, and reports six explicit SKIP records for
+unverified remote/host acceptance. Exit zero means local configuration parity
+only; SKIP never establishes readiness or deployment approval.
+
+The versioned ordinary policy catalog covers all six existing ordinary projects.
+It is a separate format from the PPO v1 manifest because remote workflow/provider
+details are unverified. Symbolic approved tool references describe existing policy
+and cannot be executed through the catalog. Updating runtime policy requires a
+reviewed catalog update; the validator never regenerates metadata automatically.
+
 `personal-project-operator.json` is the version 1 capability manifest for the fixed Customer Zero repository. Its schema is `customer-zero-project.schema.json`.
 
 The manifest records existing runtime preparation, local quality gates, GitHub validation, and deployment-provider boundaries. It is descriptive configuration only: reading it grants no repository, runtime, GitHub, deployment, credential, or production authority. Existing reviewed controllers remain the source of operational authorization and continue to reject caller-selected overrides.

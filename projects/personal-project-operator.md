@@ -22,9 +22,14 @@ High.
 
 ## Current phase
 
-Stage 1D — Capability validation enforced by quality gates.
+Stage 1E–1F — Ordinary policy coverage and combined local acceptance.
 
 ## Last known status
+
+PR #79 quality-gate enforcement is merged and owner Mac validation passed. Stage 1
+now includes fixed policy metadata for the six ordinary projects and combined
+local validation. Remote workflows, host readiness, and deployment providers for
+those projects remain explicitly unverified, not inferred from policy parity.
 
 PR #78 delivered the fixed read-only capability validator at abd42304ded9d8f807b6ca515b19d7d0e23b9935. GitHub validation and owner-run macOS validation passed. This stage runs that validator before every approved quality-gate workload so configuration drift fails delivery checks automatically.
 
@@ -32,7 +37,7 @@ The capability-manifest foundation and reviewer-runtime readiness/recovery are m
 
 ## Next action
 
-Owner action required: review quality-gate enforcement and validate the syntax gate on the approved macOS checkout. Do not repeat completed validator implementation. Define broader project support separately after this integration is accepted.
+Owner action required: review the Stage 1 policy catalog and run the combined validation plus all five quality gates on the approved macOS checkout. Retain the exact tested revision. Do not treat SKIP records as acceptance or repeat completed implementation. Scope live multi-project acceptance separately.
 
 ## Codex fit
 
