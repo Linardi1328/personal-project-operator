@@ -4,7 +4,7 @@ import { promisify } from "node:util"
 import { readFile, rm } from "node:fs/promises"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
-import { RECOVERY_ACCEPTANCE_CASES, runCase, withOwnedChild, readinessFailureCode } from "./phase-6-recovery-acceptance.mjs"
+import { RECOVERY_ACCEPTANCE_CASES, runCase, withOwnedChild, readinessFailureCode, acceptanceCaseResult } from "./phase-6-recovery-acceptance.mjs"
 import { fixture, git, options, PROJECT } from "./phase-6-acceptance-fixture.mjs"
 import { resolveAutomatedTestPolicyIdentity } from "./development-test-runner.mjs"
 
@@ -27,6 +27,36 @@ for (const platform of ["darwin", "linux"]) {
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url))
 const revision = await git(["rev-parse", "HEAD"], ROOT)
+for (const mode of ["fail-before-ready", "silent"]) {
+  test(`matrix reports ${mode} and observes child cleanup`, { timeout: 20000 }, async () => {
+    const f = await fixture(ROOT, revision, "6D")
+    let child
+    try {
+      const result = await acceptanceCaseResult("OWN-01", revision, () =>
+        withOwnedChild(f, mode, () => { throw Error("unexpected ready") }, {
+          spawned(c) { child = c }, readyTimeoutMs: mode === "silent" ? 300 : 15000
+        }))
+      assert.equal(result.outcome, "FAIL")
+      assert.equal(result.reason, mode === "silent" ? "ready-timeout" : "readiness-failed")
+      assert.equal(result.childReason, mode === "silent" ? undefined : "FIXTURE_PRE_READY_FAILURE")
+      assert.ok(JSON.stringify(result).length < 600)
+      assert.ok(child.exitCode !== null || child.signalCode !== null)
+      assert.throws(() => process.kill(child.pid, 0), e => e.code === "ESRCH")
+    } finally {
+      if (child && (child.exitCode !== null || child.signalCode !== null)) await rm(f.temp, { recursive: true })
+    }
+  })
+}
+
+test("matrix excludes arbitrary exception content and labels SKIP", async () => {
+  const result = await acceptanceCaseResult("OWN-01", revision, () => {
+    throw Object.assign(Error("secret /private/path"), { reason: "secret", code: "SECRET" })
+  })
+  assert.equal(result.reason, "case-failed")
+  assert.doesNotMatch(JSON.stringify(result), /secret|private|SECRET/)
+  assert.equal((await acceptanceCaseResult("MAC-STALE", revision, () => "SKIP")).reason, "unsupported-host")
+  assert.equal((await acceptanceCaseResult("OWN-01", revision, () => "PASS")).reason, undefined)
+})
 for (const id of RECOVERY_ACCEPTANCE_CASES.filter(id => id !== "MAC-STALE")) {
   test(`same-fixture interruption and recovery: ${id}`, { timeout: 30000 }, async () => {
     assert.equal(await runCase(id, revision), "PASS")

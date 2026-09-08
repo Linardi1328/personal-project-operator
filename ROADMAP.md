@@ -1,5 +1,13 @@
 # Roadmap
 
+## Customer Zero delivery checkpoint — 2026-09-07
+
+- Capability manifest foundation and reviewer-runtime recovery are delivered.
+- PR #76 merged the disposable Phase 6 recovery acceptance runner at `f24c57719beb93c46d742dcd4089c0d2f6daf42f`.
+- CI and owner-run macOS acceptance passed on PR head `304cc9ed1dd3714b1c6d71047263e4296ecd7b6a`; the owner subsequently reported critical lifecycle passing on merged main.
+- The intermittent child-readiness failure remains undiagnosed. The diagnostics follow-up retains bounded failure reasons in matrix output and tests pre-readiness failure cleanup. It does not claim to fix the intermittent cause.
+- Further host validation must identify the tested revision. Do not restart the completed runner implementation task or infer live authentication, production deployment, or full Phase 6 production acceptance from fixture results.
+
 ## Phase 0 - Documentation Foundation
 
 - Create repo structure.
