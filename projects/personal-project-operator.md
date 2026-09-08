@@ -22,7 +22,7 @@ High.
 
 ## Current phase
 
-Stage 1B delivered — Customer Zero recovery acceptance diagnostics follow-up.
+Stage 1C — Read-only Customer Zero capability validation.
 
 ## Last known status
 
@@ -30,7 +30,7 @@ The capability-manifest foundation and reviewer-runtime readiness/recovery are m
 
 ## Next action
 
-Owner action required: validate the diagnostics follow-up on macOS and retain the exact tested revision and matrix output. If the intermittent readiness failure recurs, inspect the bounded reason before defining a repair. Do not rebuild the delivered acceptance runner or claim the intermittent cause is fixed without reproducing it.
+Owner action required: review the read-only PPO capability validator and run `node capabilities/validate-ppo.mjs` on the approved macOS checkout after delivery. The diagnostics follow-up was merged in PR #77 at 3401036 and all 25 focused tests passed on macOS. Do not repeat completed implementation tasks. Define broader project support only after this fixed PPO validator is accepted.
 
 ## Codex fit
 

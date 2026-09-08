@@ -3,3 +3,21 @@
 `personal-project-operator.json` is the version 1 capability manifest for the fixed Customer Zero repository. Its schema is `customer-zero-project.schema.json`.
 
 The manifest records existing runtime preparation, local quality gates, GitHub validation, and deployment-provider boundaries. It is descriptive configuration only: reading it grants no repository, runtime, GitHub, deployment, credential, or production authority. Existing reviewed controllers remain the source of operational authorization and continue to reject caller-selected overrides.
+
+## Read-only PPO validator
+
+Run `node capabilities/validate-ppo.mjs` from this checkout. No arguments are accepted.
+The command reads fixed local files, emits at most seven JSON PASS/FAIL records,
+and exits nonzero on a mismatch or unreadable input. It never follows paths from
+the manifest, probes credentials, launches gates, contacts GitHub, or deploys.
+
+Checks cover the current v1 schema vocabulary, approved PPO repository/runtime
+metadata, actual runtime gate definitions, runner gate names, and the local
+workflow's job, step names, and commands. Deployment metadata is checked against
+the approved declarative boundary, not a live provider. This is configuration
+parity validation, not host readiness, remote branch protection, or CI evidence.
+
+The workflow reader intentionally accepts only the reviewed simple YAML shape.
+Changed formatting or unsupported YAML constructs fail closed and require review.
+The schema evaluator supports only the vocabulary used by the checked-in v1
+schema and does not resolve references or implement arbitrary JSON Schema drafts.
