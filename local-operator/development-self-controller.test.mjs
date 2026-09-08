@@ -226,7 +226,7 @@ test("Stage 0 planner creates a fixed PPO run while the ordinary planner still r
   )
 })
 
-test("Stage 0 planner accepts the checked-in PPO project next action", async () => {
+test("Stage 0 planner leaves the checked-in owner validation action gated", async () => {
   const writeDataDir = await tempWriteDataDir()
   const checkedInProjectDocument = await readFile(
     new URL("../projects/personal-project-operator.md", import.meta.url),
@@ -240,16 +240,17 @@ test("Stage 0 planner accepts the checked-in PPO project next action", async () 
     }
   })
 
-  assert.equal(planned.ok, true)
-  assert.equal(planned.outcome, "planned")
-  assert.equal(planned.run.status, "planned")
-  assert.equal(planned.run.project.id, SELF.id)
-  assert.equal(planned.run.project.fullName, SELF.fullName)
+  assert.equal(planned.ok, false)
+  assert.equal(planned.outcome, "owner_action_required")
+  assert.equal(planned.run, null)
+  assert.equal(planned.plan.next, null)
+  assert.equal(planned.plan.project.id, SELF.id)
   const nextAction = checkedInProjectDocument
     .split(/^## Next action\s*$/m)[1]
     ?.split(/^## /m)[0]?.trim()
   assert.ok(nextAction, "Checked-in project must contain a nonempty Next action")
-  assert.equal(planned.run.task, nextAction)
+  assert.match(nextAction, /^Owner action required:/)
+  assert.equal(planned.plan.current.nextAction, nextAction)
 })
 
 test("Stage 0 start validates the self project and returns only bounded run metadata", async () => {
