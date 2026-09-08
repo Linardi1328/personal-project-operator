@@ -22,15 +22,15 @@ High.
 
 ## Current phase
 
-Stage 1B — Customer Zero Phase 6 recovery acceptance.
+Stage 1B delivered — Customer Zero recovery acceptance diagnostics follow-up.
 
 ## Last known status
 
-The capability-manifest foundation and reviewer-runtime readiness/recovery are merged. PR #73 added exact operation leases and bounded orphan recovery for Phases 6D, 6E, and 6F at 002f47afc45b6eeadfb98d232d88b6e074a66339. Automated quality gates passed; live macOS interruption acceptance remains pending.
+The capability-manifest foundation and reviewer-runtime readiness/recovery are merged. PR #76 delivered the disposable recovery acceptance runner at f24c57719beb93c46d742dcd4089c0d2f6daf42f. CI and owner-run macOS acceptance passed on PR head 304cc9ed1dd3714b1c6d71047263e4296ecd7b6a. The owner also reported critical-lifecycle passing on merged main on 2026-09-07 with Node v24.20.0. An intermittent readiness failure remains undiagnosed; passing reruns do not establish a fix. The diagnostics follow-up preserves bounded failure reasons in matrix output and adds deterministic pre-readiness failure coverage.
 
 ## Next action
 
-Add a disposable Customer Zero Phase 6D/6E/6F recovery acceptance runner following local-operator/phase-6-recovery-acceptance.md. Exercise real child-process interruption and existing recovery APIs in isolated fixtures, emit a bounded PASS/FAIL/SKIP matrix, and preserve exact-SHA evidence, attempt limits, and all existing safety boundaries.
+Owner action required: validate the diagnostics follow-up on macOS and retain the exact tested revision and matrix output. If the intermittent readiness failure recurs, inspect the bounded reason before defining a repair. Do not rebuild the delivered acceptance runner or claim the intermittent cause is fixed without reproducing it.
 
 ## Codex fit
 

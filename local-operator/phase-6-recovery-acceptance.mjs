@@ -18,6 +18,12 @@ export const RECOVERY_ACCEPTANCE_CASES = Object.freeze([
   "6E-OPEN", "6F-RESERVED", "6F-REFUSE", "6F-MISSING", "6F-FINDINGS", "HARD-01", "REPLAY-01", "MAC-STALE"
 ])
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+const failureDetails = new WeakMap()
+function acceptanceError(reason, childReason) {
+  const error = new Error(childReason ? `${reason}: ${childReason}` : reason)
+  failureDetails.set(error, { reason, ...(childReason ? { childReason } : {}) })
+  return error
+}
 export function readinessFailureCode(value) {
   return typeof value === "string" && /^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/u.test(value)
     ? value : "unclassified"
@@ -25,7 +31,7 @@ export function readinessFailureCode(value) {
 async function bounded(promise, ms, label) {
   let timer
   try { return await Promise.race([promise, new Promise((_, reject) => {
-    timer = setTimeout(() => reject(Error(label)), ms)
+    timer = setTimeout(() => reject(acceptanceError(label)), ms)
   })]) } finally { clearTimeout(timer) }
 }
 
@@ -39,9 +45,9 @@ export async function withOwnedChild(f, mode, operation, hooks = {}) {
   const exit = new Promise(resolve => child.once("close", (code, signal) => { closed = true; resolve({ code, signal }) }))
   const ready = new Promise((resolve, reject) => {
     child.once("message", m => m === "ready" ? resolve()
-      : reject(Error(`readiness-failed: ${readinessFailureCode(m?.code)}`)))
-    child.once("error", reject)
-    child.once("exit", () => reject(Error("exit-before-ready")))
+      : reject(acceptanceError("readiness-failed", readinessFailureCode(m?.code))))
+    child.once("error", () => reject(acceptanceError("child-process-error")))
+    child.once("exit", () => reject(acceptanceError("exit-before-ready")))
   })
   ready.catch(() => {})
   const stop = async () => {
@@ -184,20 +190,38 @@ export async function runCase(id, revision, hooks = {}) {
   }
 }
 
+export async function acceptanceCaseResult(id, revision, execute = runCase) {
+  assert.ok(RECOVERY_ACCEPTANCE_CASES.includes(id))
+  let outcome, details = {}
+  try {
+    outcome = await execute(id, revision)
+    assert.ok(["PASS", "FAIL", "SKIP"].includes(outcome))
+    if (outcome === "SKIP") details = { reason: "unsupported-host" }
+    if (outcome === "FAIL") details = { reason: "case-failed" }
+  } catch (error) {
+    outcome = "FAIL"
+    details = failureDetails.get(error) || { reason: "case-failed" }
+  }
+  return { id, outcome, revision, platform: process.platform,
+    timing: id === "MAC-STALE" ? "real-time" : "real-process+fixture-clock",
+    adapter: "deterministic-model-and-sandbox-boundary", ...details }
+}
+
 export async function main(expectedRevision) {
   const revision = await verifyTestedSource(expectedRevision)
   for (const id of RECOVERY_ACCEPTANCE_CASES) {
-    let outcome
-    try { outcome = await runCase(id, revision) } catch { outcome = "FAIL" }
-    process.stdout.write(`${JSON.stringify({ id, outcome, revision, platform: process.platform,
-      timing: id === "MAC-STALE" ? "real-time" : "real-process+fixture-clock", adapter: "deterministic-model-and-sandbox-boundary" })}\n`)
-    if (outcome !== "PASS") process.exitCode = 1
+    const result = await acceptanceCaseResult(id, revision)
+    process.stdout.write(`${JSON.stringify(result)}\n`)
+    if (result.outcome !== "PASS") process.exitCode = 1
   }
 }
 
 if (process.argv[1] === SELF && process.argv[2] === "--fixture-child" && process.send) {
   process.once("message", async ({ f, mode }) => {
     try {
+      if (mode === "fail-before-ready") {
+        throw Object.assign(new Error("fixture startup failure"), { code: "FIXTURE_PRE_READY_FAILURE" })
+      }
       const result = await advance(f, async () => {
         if (f.phase === "6D" || f.phase === "HARD") {
           if (mode !== "nochange") await writeFile(join(f.location.workspacePath, "interrupted.txt"), `${f.revision}\n`)

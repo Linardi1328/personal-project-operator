@@ -73,7 +73,14 @@ PPO_ACCEPTANCE_REVISION="$(git rev-parse HEAD)"
 node local-operator/phase-6-recovery-acceptance.mjs --expected-revision "$PPO_ACCEPTANCE_REVISION"
 ```
 
-The runner emits one bounded JSON line per case. Deterministic no-network
+The runner emits one bounded JSON line per case.
+Failures include a bounded `reason`; child readiness failures additionally include
+the sanitized `childReason` code. Unknown exceptions use `case-failed` without
+copying error messages, stacks, paths, or process output. Unsupported cases carry
+`unsupported-host` and still make the command exit nonzero. These diagnostics do
+not establish that the intermittent readiness failure has been fixed.
+
+Deterministic no-network
 adapters validate recovery integration, not live model authentication, model
 quality, or GitHub delivery. A required SKIP makes host acceptance incomplete.
 Run and retain the five gate results separately; macOS remains pending until an
