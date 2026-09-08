@@ -1,0 +1,212 @@
+{
+  "schemaVersion": "customer-zero-ordinary-policy-catalog.v1",
+  "projects": [
+    {
+      "projectId": "khlim-assist",
+      "repository": "Linardi1328/khlim-assist",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "phase-6e-khlim-assist-fixed-python-quality-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "ruff",
+          "command": [
+            "python3.12",
+            "-m",
+            "ruff",
+            "check",
+            "--no-cache",
+            "."
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "mypy",
+          "command": [
+            "python3.12",
+            "-m",
+            "mypy",
+            "--no-incremental",
+            "backend/app"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "pytest",
+          "command": [
+            "python3.12",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "backend/tests"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    },
+    {
+      "projectId": "ledgerpilot-ai",
+      "repository": "Linardi1328/ledgerpilot-ai",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "phase-6e-ledgerpilot-ai-fixed-python-pytest-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "pytest",
+          "command": [
+            "python3.12",
+            "-m",
+            "pytest",
+            "tests"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    },
+    {
+      "projectId": "spy-market-agent",
+      "repository": "Linardi1328/spy-market-agent",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "phase-6e-spy-market-agent-fixed-python-pytest-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "pytest",
+          "command": [
+            "python3.12",
+            "-m",
+            "pytest",
+            "tests"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    },
+    {
+      "projectId": "portfolio",
+      "repository": "Linardi1328/richie-linardi-portfolio-website",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "phase-6e-portfolio-fixed-next-quality-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "typecheck",
+          "command": [
+            "node",
+            "approved:portfolioTypecheck",
+            "--noEmit"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "eslint",
+          "command": [
+            "node",
+            "approved:portfolioEslint",
+            "."
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    },
+    {
+      "projectId": "rbl-content-engine",
+      "repository": "Linardi1328/rbl-content-engine",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "phase-6e-rbl-content-engine-fixed-python-unittest-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "compile",
+          "command": [
+            "python3.12",
+            "-m",
+            "compileall",
+            "-q",
+            "src",
+            "tests"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "unittest",
+          "command": [
+            "python3.12",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-p",
+            "test_*.py",
+            "-v"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    },
+    {
+      "projectId": "khlim-digital-ecosystem",
+      "repository": "Linardi1328/khlim-digital-ecosystem",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "phase-6e-khlim-digital-ecosystem-fixed-node-foundation-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "foundation-test",
+          "command": [
+            "node",
+            "--test",
+            "tests/foundation.test.mjs"
+          ],
+          "timeoutMs": 120000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    }
+  ]
+}

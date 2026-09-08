@@ -150,7 +150,7 @@ if (!allowedGates.has(gate) || process.argv.length !== 3) {
 
 // Every approved gate validates the fixed checkout before running its workload.
 // The validator is read-only and never calls this runner, so there is no recursion.
-run(process.execPath, ["capabilities/validate-ppo.mjs"])
+run(process.execPath, ["capabilities/validate-stage1.mjs"])
 
 if (gate === "syntax") {
   runSyntaxGate()

@@ -35,6 +35,30 @@ export function describePersonalProjectOperatorQualityPolicy() {
   }
 }
 
+// Fixed registry only. Symbolic tool names describe policy; they are never executed.
+export function describeOrdinaryProjectCapabilities() {
+  const paths = {
+    pythonExecutablePath: "python3.12", nodeExecutablePath: "node",
+    executionPath: "", nodeToolPaths: {
+      portfolioTypecheck: "approved:portfolioTypecheck",
+      portfolioEslint: "approved:portfolioEslint"
+    }
+  }
+  return listOrdinaryDevelopmentProjects().map(project => {
+    const policy = testPolicyForProject(project.id, paths, null)
+    return {
+      projectId: project.id, repository: project.fullName,
+      runtimeProfileId: DEVELOPMENT_CONTINUE_RUNTIME_PROFILE_ID,
+      policyId: policy.policyId, policyVersion: policy.policyVersion,
+      gates: policy.steps.map(step => ({ id: step.id,
+        command: [step.executablePath, ...step.args], timeoutMs: step.timeoutMs,
+        required: step.required, shell: step.shell })),
+      githubWorkflow: "unverified", deploymentProvider: "unverified",
+      manifestCanExecute: false, manifestCanDeploy: false
+    }
+  })
+}
+
 const fixedDarwinPaths = Object.freeze({
   codexExecutablePath: "/Users/richie/.local/bin/codex",
   gitExecutablePath: "/opt/homebrew/bin/git",
