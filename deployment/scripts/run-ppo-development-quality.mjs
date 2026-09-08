@@ -148,6 +148,10 @@ if (!allowedGates.has(gate) || process.argv.length !== 3) {
   fail("Usage: run-ppo-development-quality.mjs <approved-gate>")
 }
 
+// Every approved gate validates the fixed checkout before running its workload.
+// The validator is read-only and never calls this runner, so there is no recursion.
+run(process.execPath, ["capabilities/validate-ppo.mjs"])
+
 if (gate === "syntax") {
   runSyntaxGate()
 } else if (gate === "parallel-regression") {

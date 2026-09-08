@@ -7,6 +7,10 @@ The manifest records existing runtime preparation, local quality gates, GitHub v
 ## Read-only PPO validator
 
 Run `node capabilities/validate-ppo.mjs` from this checkout. No arguments are accepted.
+Every approved quality gate also runs this command before its workload. A failed
+or unavailable validator stops the gate with a nonzero exit code, including in
+GitHub PR validation and PPO self-development. Gate names, commands, and timeout
+policies remain unchanged; validation PASS alone is not a quality-gate PASS.
 The command reads fixed local files, emits at most seven JSON PASS/FAIL records,
 and exits nonzero on a mismatch or unreadable input. It never follows paths from
 the manifest, probes credentials, launches gates, contacts GitHub, or deploys.

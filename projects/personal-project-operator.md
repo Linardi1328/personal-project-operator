@@ -22,15 +22,17 @@ High.
 
 ## Current phase
 
-Stage 1C — Read-only Customer Zero capability validation.
+Stage 1D — Capability validation enforced by quality gates.
 
 ## Last known status
+
+PR #78 delivered the fixed read-only capability validator at abd42304ded9d8f807b6ca515b19d7d0e23b9935. GitHub validation and owner-run macOS validation passed. This stage runs that validator before every approved quality-gate workload so configuration drift fails delivery checks automatically.
 
 The capability-manifest foundation and reviewer-runtime readiness/recovery are merged. PR #76 delivered the disposable recovery acceptance runner at f24c57719beb93c46d742dcd4089c0d2f6daf42f. CI and owner-run macOS acceptance passed on PR head 304cc9ed1dd3714b1c6d71047263e4296ecd7b6a. The owner also reported critical-lifecycle passing on merged main on 2026-09-07 with Node v24.20.0. An intermittent readiness failure remains undiagnosed; passing reruns do not establish a fix. The diagnostics follow-up preserves bounded failure reasons in matrix output and adds deterministic pre-readiness failure coverage.
 
 ## Next action
 
-Owner action required: review the read-only PPO capability validator and run `node capabilities/validate-ppo.mjs` on the approved macOS checkout after delivery. The diagnostics follow-up was merged in PR #77 at 3401036 and all 25 focused tests passed on macOS. Do not repeat completed implementation tasks. Define broader project support only after this fixed PPO validator is accepted.
+Owner action required: review quality-gate enforcement and validate the syntax gate on the approved macOS checkout. Do not repeat completed validator implementation. Define broader project support separately after this integration is accepted.
 
 ## Codex fit
 
