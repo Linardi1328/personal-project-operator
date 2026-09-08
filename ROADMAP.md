@@ -1,5 +1,14 @@
 # Roadmap
 
+## Stage 1D — Capability validation in quality gates
+
+- Stage 1C was merged in PR #78; owner macOS validation passed.
+- Run the fixed read-only validator before every approved quality-gate workload.
+- Stop on drift, unreadable inputs, or validator execution failure. Preserve the
+  five existing gate commands, timeout policies, and GitHub workflow steps.
+- Exercise real runner failures in disposable fixtures without launching gate
+  workloads. Keep production authority and broader project support unchanged.
+
 ## Stage 1C — Read-only Customer Zero capability validator
 
 - Add a fixed local PPO manifest validator with bounded PASS/FAIL output.
