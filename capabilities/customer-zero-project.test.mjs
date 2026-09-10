@@ -7,9 +7,9 @@ const repositoryRoot = new URL("../", import.meta.url)
 const expectedGateTimeouts = new Map([
   ["syntax", 60_000],
   ["parallel-regression", 180_000],
-  ["serial-regression", 300_000],
-  ["critical-lifecycle", 300_000],
-  ["integrated-acceptance", 300_000]
+  ["serial-regression", 600_000],
+  ["critical-lifecycle", 600_000],
+  ["integrated-acceptance", 600_000]
 ])
 
 async function readJson(path) {

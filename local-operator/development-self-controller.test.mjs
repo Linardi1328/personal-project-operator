@@ -733,9 +733,9 @@ test("Stage 0 fixed runtime uses five repository-wide gates and refuses Linux se
   assert.deepEqual(policy.steps.map((step) => step.timeoutMs), [
     60_000,
     180_000,
-    300_000,
-    300_000,
-    300_000
+    600_000,
+    600_000,
+    600_000
   ])
   assert.equal(Math.max(...policy.steps.map((step) => step.timeoutMs)), MAX_PPO_SELF_DEVELOPMENT_TEST_TIMEOUT_MS)
   assert.ok(
