@@ -29,7 +29,7 @@ export const PPO_SELF_DEVELOPMENT_CANCELLATION_POLICY_ID = "stage-0-local-ppo-se
 export const PPO_SELF_DEVELOPMENT_CANCELLATION_CONFIRMATION = "cancel-personal-project-operator-run"
 export const PPO_SELF_DEVELOPMENT_STALE_MERGE_CANCELLATION_CONFIRMATION =
   "cancel-stale-unmerged-personal-project-operator-run"
-export const PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS = 30 * 60 * 1000
+export const PPO_SELF_DEVELOPMENT_STALE_TEST_ATTEMPT_MIN_AGE_MS = 60 * 60 * 1000
 export const PPO_SELF_DEVELOPMENT_STALE_MERGE_STATE_MIN_AGE_MS = 30 * 60 * 1000
 export const PPO_SELF_DEVELOPMENT_STALE_TEST_CANCELLATION_REASON =
   "owner_requested_stale_self_test_cancellation"

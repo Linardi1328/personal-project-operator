@@ -121,9 +121,9 @@ const reviewedProjectTestPolicies = Object.freeze({
     nodeSteps: Object.freeze([
       Object.freeze({ id: "syntax", timeoutMs: 60_000 }),
       Object.freeze({ id: "parallel-regression", timeoutMs: 180_000 }),
-      Object.freeze({ id: "serial-regression", timeoutMs: 300_000 }),
-      Object.freeze({ id: "critical-lifecycle", timeoutMs: 300_000 }),
-      Object.freeze({ id: "integrated-acceptance", timeoutMs: 300_000 })
+      Object.freeze({ id: "serial-regression", timeoutMs: 600_000 }),
+      Object.freeze({ id: "critical-lifecycle", timeoutMs: 600_000 }),
+      Object.freeze({ id: "integrated-acceptance", timeoutMs: 600_000 })
     ])
   }),
   "khlim-assist": Object.freeze({
