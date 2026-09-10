@@ -1,5 +1,13 @@
 # Roadmap
 
+## Customer Zero product direction
+
+See [Customer Zero product evolution](CUSTOMER_ZERO_ROADMAP.md) for the approved
+strategic reference, bounded Stage 2 architecture plan, review protocol, and
+Stages 3–7. Stage 2 is SaaS-ready architecture; live multi-project acceptance is
+Stage 3. Public SaaS, billing and production changes are not authorized by this
+planning update. Stage 2 implementation and independent review remain pending.
+
 ## Customer Zero Stage 1 closure scope
 
 Stage 1 covers local declarative capability metadata and validation for PPO and
