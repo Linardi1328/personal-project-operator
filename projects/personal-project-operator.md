@@ -22,9 +22,11 @@ High.
 
 ## Current phase
 
-Stage 1E–1F — Ordinary policy coverage and combined local acceptance.
+Stage 2A — Explicit Customer Zero ownership context.
 
 ## Last known status
+
+Stage 1 local and macOS fixture acceptance passed at fd83d37ab9cb3ee5ade45df9a76ad6fba8c24842. The Stage 2 architecture scope is documented in CUSTOMER_ZERO_ROADMAP.md; implementation and independent review remain pending.
 
 PR #79 quality-gate enforcement is merged and owner Mac validation passed. Stage 1
 now includes fixed policy metadata for the six ordinary projects and combined
@@ -37,7 +39,7 @@ The capability-manifest foundation and reviewer-runtime readiness/recovery are m
 
 ## Next action
 
-Owner action required: review the Stage 1 policy catalog and run the combined validation plus all five quality gates on the approved macOS checkout. Retain the exact tested revision. Do not treat SKIP records as acceptance or repeat completed implementation. Scope live multi-project acceptance separately.
+Add the Stage 2A ownership-context foundation described in CUSTOMER_ZERO_ROADMAP.md: stable owner, workspace and project identifiers with one fixed Customer Zero binding, reusable strict validation, and refusal tests. Preserve existing registry authorization and personal command behavior. No public authentication, tenant onboarding, credential changes, run-store migration or provider execution.
 
 ## Codex fit
 
