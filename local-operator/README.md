@@ -449,6 +449,8 @@ Phase 2C uses the same read-only client for `/ppo status`. Issue counts are cons
 
 Phase 3A generates local prompt text only. It reads only fixed mapped project docs plus approved GitHub read-only context. It does not invoke Codex, call OpenAI APIs, create commits, open PRs, or change target repos.
 
+Customer Zero Stage 2A adds a reusable strict ownership-context validator and one fixed local binding in `ownership-context.mjs` and `customer-zero-ownership.mjs`. Contexts contain stable `ownerId`, `workspaceId`, and `projectId` values only. The generic validator has no owner-name dependency; the Customer Zero adapter fixes its owner and workspace identifiers and continues to derive approved projects from `github-project-registry.mjs`. Caller-selected accounts, repositories, credentials, workspace roots, unknown projects, and mismatched workspace relationships are refused. This foundation does not add authentication, onboarding, provider execution, or run-store changes.
+
 Phase 3B generates local planning text only. `codex-budget`, `prompt-size`, and `split-task` do not invoke Codex, call OpenAI APIs, call another model, execute plans, inspect Codex usage, add GitHub endpoints, mutate repositories, or deploy services. Planning task and draft text is inert data; shell-looking punctuation and paths are not executed or interpreted.
 
 Phase 3C routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` through `ppo_local`. It preserves direct OpenClaw tool dispatch with no model turn, no new OpenClaw tools, no new permissions, no writes, and no new GitHub endpoints.
