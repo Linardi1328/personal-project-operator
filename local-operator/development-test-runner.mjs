@@ -1384,6 +1384,25 @@ export function classifyAutomatedTestAttemptEvidence(run, policyIdentity) {
   return "invalid"
 }
 
+// Retry eligibility only: never reinterpret historical PASS or open evidence.
+export function canRetryPreviousPpoTimeoutPolicy(run, options = {}) {
+  if (run.status !== "tests_in_progress" || run.project?.id !== PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT.id) return false
+  const registry = normalizeTestPolicyRegistry(options.testPolicyRegistry)
+  const policy = resolveProjectPolicy(run, registry)
+  const ids = ["syntax", "parallel-regression", "serial-regression", "critical-lifecycle", "integrated-acceptance"]
+  const budgets = [60000, 180000, 600000, 600000, 600000]
+  if (policy.policyId !== "stage-0-ppo-self-development-fixed-quality-policy" || policy.policyVersion !== "1" || policy.steps.length !== ids.length) return false
+  if (!policy.steps.every((step, index) => step.id === ids[index] && step.timeoutMs === budgets[index] &&
+    JSON.stringify(step.args) === JSON.stringify(["deployment/scripts/run-ppo-development-quality.mjs", step.id]))) return false
+  const { policyHash, ...previous } = policy
+  previous.steps = policy.steps.map((step, index) => ({ ...step, timeoutMs: index < 2 ? step.timeoutMs : 300000 }))
+  return classifyAutomatedTestAttemptEvidence(run, {
+    policyId: policy.policyId,
+    policyHash: stableHash(previous),
+    requiredTestCount: ids.length
+  }) === "definitive_failed"
+}
+
 function assertNoOpenTestAttempt(run) {
   const latest = latestAutomatedTestEvidence(run)
 

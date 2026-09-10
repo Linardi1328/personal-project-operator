@@ -33,6 +33,7 @@ import {
   PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
   TEST_SANDBOX_BACKENDS,
   executeAutomatedTests,
+  canRetryPreviousPpoTimeoutPolicy,
   recoverOrphanedAutomatedTesting,
   reconcileAutomatedTesting,
   resolveAutomatedTestPolicyIdentity
@@ -1001,4 +1002,32 @@ test("automated test runner adds no GitHub write, merge, deploy, or OpenClaw rou
 
   assert.deepEqual(invokedExecutables, [process.execPath])
   assert.equal(calls.some((call) => /gh|openclaw|docker|kubectl|systemctl/u.test(call.executablePath)), false)
+})
+
+
+test("previous PPO timeout failure permits fresh retry only with matching evidence and policy", () => {
+  const project = PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
+  const ids = ["syntax", "parallel-regression", "serial-regression", "critical-lifecycle", "integrated-acceptance"]
+  const policy = { policyId: "stage-0-ppo-self-development-fixed-quality-policy", policyVersion: "1",
+    trustedExecutablePaths: [process.execPath], env: {}, sandbox: trustedSandbox(),
+    steps: ids.map((id, i) => ({ ...testStep(), id, args: ["deployment/scripts/run-ppo-development-quality.mjs", id], timeoutMs: [60000,180000,300000,300000,300000][i] })) }
+  const run = { project, status: "tests_in_progress", headSha: "a".repeat(40), attempts: { test: 2 }, evidence: { test: [] } }
+  const old = resolveAutomatedTestPolicyIdentity(run, { testPolicyRegistry: { [project.id]: policy } })
+  run.evidence.test.push({ kind: "test", source: AUTOMATED_TEST_RUNNER_ID, sha: run.headSha, metadata: {
+    project: project.id, runner: AUTOMATED_TEST_RUNNER_ID, implSha: run.headSha, attempt: 2,
+    policyId: old.policyId, policyHash: old.policyHash, sandbox: AUTOMATED_TEST_SANDBOX_ID, network: "none",
+    startedAt: "2026-09-10T09:19:55Z", endedAt: "2026-09-10T22:40:08Z", outcome: "failed", total: 5, passed: 0, failed: 0, ambiguous: 1
+  } })
+  const options = { testPolicyRegistry: { [project.id]: { ...policy, steps: policy.steps.map((s,i) => ({ ...s, timeoutMs: i < 2 ? s.timeoutMs : 600000 })) } } }
+  const snapshot = JSON.stringify(run)
+  assert.equal(canRetryPreviousPpoTimeoutPolicy(run, options), true)
+  assert.equal(JSON.stringify(run), snapshot)
+  for (const change of [{ outcome: "testing_started" }, { outcome: "passed", passed: 5, ambiguous: 0 }, { policyHash: "b".repeat(64) }, { attempt: 1 }, { implSha: "c".repeat(40) }, { network: "outbound" }]) {
+    const invalid = structuredClone(run)
+    Object.assign(invalid.evidence.test[0].metadata, change)
+    assert.equal(canRetryPreviousPpoTimeoutPolicy(invalid, options), false)
+  }
+  const changed = structuredClone(options)
+  changed.testPolicyRegistry[project.id].env = { SAFE_FLAG: "changed" }
+  assert.equal(canRetryPreviousPpoTimeoutPolicy(run, changed), false)
 })
