@@ -28,10 +28,12 @@ acceptance.
 
 ## Stage 2 — SaaS-ready architecture
 
-Status: Stage 2A implemented, independently reviewed and merged; Stage 2B queued.
-Stages 2B–2E and joint owner acceptance remain pending. One owner and one workspace
-remain the only operational configuration. No public authentication, billing, invitations,
-tenant onboarding, database rewrite, or new execution authority.
+Status: Stage 2A is independently reviewed and merged. A combined Stage 2B–2E
+implementation candidate now supplies the remaining architecture, compatibility,
+metrics, integration, and handoff foundations. Independent review, CI, merge, and
+joint exact-revision owner acceptance remain pending. One owner and one workspace
+remain the only operational configuration. No public authentication, billing,
+invitations, tenant onboarding, database rewrite, or new execution authority.
 
 ### 2A — Explicit ownership context
 
@@ -53,6 +55,11 @@ no dependency on the owner's name, while the deployment binding remains fixed.
 
 ### 2B — Integration and provider contracts
 
+Implementation candidate: fixed workspace-owned reference contracts select the
+existing Codex adapter for backend work. Antigravity reports unavailable, while
+Lovable and Vercel report disabled. Every selection forbids fallback and grants no
+execution authority.
+
 Define workspace-owned connection references with no credential values. Codex is
 the backend provider; Antigravity is the preferred frontend provider; Lovable is
 optional and disabled by default. Reuse the Codex execution adapter. Unsupported
@@ -65,6 +72,13 @@ unknown, mismatched, or unavailable connections fail closed. No fabricated
 Antigravity/Vercel success and no unrestricted GitHub credentials for workers.
 
 ### 2C — Run and evidence ownership compatibility
+
+Implementation candidate: a read-through compatibility resolver binds both legacy
+run objects and future explicit-context run objects to the one fixed Customer Zero
+context. The canonical run schema and store remain unchanged, so there is no bulk,
+implicit, or rollback-requiring migration in Stage 2. A strict evidence guard blocks
+project/context reuse, and the reserved RunUnit interface adds no lifecycle state or
+parallel execution.
 
 Bind new run context to the existing durable store. Design and test explicit
 legacy-record handling before changing stored records. A legacy run may resolve
@@ -79,6 +93,11 @@ tests and a reviewed compatibility strategy.
 
 ### 2D — Safe operational metrics
 
+Implementation candidate: a bounded read-only projection reports only validated
+recorded metadata. It neither mutates a run nor exports task, prompt, source, raw-log,
+token, credential, or inferred-cost content. Missing observations remain explicit
+unknowns.
+
 Add bounded read-only projections over existing run metadata: project, provider
 when known, attempts, remediation rounds, recorded outcomes, recorded stage
 durations and explicit owner interventions. Missing observations stay unknown.
@@ -89,6 +108,11 @@ Exit: projections do not mutate runs and enforce ownership and output bounds;
 malformed/legacy/missing evidence does not fabricate metrics.
 
 ### 2E — Integration and handoff
+
+Implementation candidate: `customer-zero-stage2.mjs` composes ownership, provider,
+compatibility, and metrics inspection behind one read-only API. The integrated quality
+gate includes its refusal suite. Exact-revision Mac instructions and limitations are in
+`local-operator/customer-zero-stage2-acceptance.md`.
 
 Integrate only the approved foundations into existing entry points. Document the
 compatibility guarantees and an exact-revision owner acceptance procedure. Run
@@ -108,10 +132,11 @@ subphase is too large, split it before execution. Stop on ambiguous outcomes;
 reconcile through existing APIs. Never mark self-review as independent approval,
 manually invent PASS evidence, or bypass a gate to finish the stage.
 
-The next implementation task is 2B only; 2A's independent review and delivery
-are complete. Advance to 2C after 2B's independent review and delivery; retain
-the phase review outcomes and tested revisions.
-Runtime access on the approved host is required to execute that lifecycle.
+The owner authorized one combined 2B–2E implementation candidate after 2A. That
+candidate must still receive exact-SHA tests, independent review, CI, and reviewed
+delivery before it can be called merged implementation. Joint owner acceptance is a
+later, separate result and cannot be inferred from implementation checks. Runtime
+access on the approved host is required for that acceptance.
 
 ## Later stages — planned, not implemented
 

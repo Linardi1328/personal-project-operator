@@ -226,7 +226,7 @@ test("Stage 0 planner creates a fixed PPO run while the ordinary planner still r
   )
 })
 
-test("Stage 0 planner accepts the bounded current Customer Zero next action", async () => {
+test("Stage 0 planner stops when Stage 2 implementation has no next implementation action", async () => {
   const writeDataDir = await tempWriteDataDir()
   const checkedInProjectDocument = await readFile(
     new URL("../projects/personal-project-operator.md", import.meta.url),
@@ -240,17 +240,16 @@ test("Stage 0 planner accepts the bounded current Customer Zero next action", as
     }
   })
 
-  assert.equal(planned.ok, true)
-  assert.equal(planned.outcome, "planned")
-  assert.equal(planned.run.status, "planned")
-  assert.equal(planned.run.project.id, SELF.id)
+  assert.equal(planned.ok, false)
+  assert.equal(planned.outcome, "owner_action_required")
+  assert.equal(planned.plan.reasonCode, "ALREADY_COMPLETE")
+  assert.equal(planned.run, null)
   const nextAction = checkedInProjectDocument
     .split(/^## Next action\s*$/m)[1]
     ?.split(/^## /m)[0]?.trim()
   assert.ok(nextAction, "Checked-in project must contain a nonempty Next action")
-  assert.match(nextAction, /^Add Stage 2B contracts from CUSTOMER_ZERO_ROADMAP\.md:/)
-  assert.match(nextAction, /no new execution authority, credential handling or run-store migration\.$/)
-  assert.equal(planned.run.task, nextAction)
+  assert.match(nextAction, /^No next action for implementation\./)
+  assert.match(nextAction, /joint exact-revision owner acceptance remains pending\.$/)
 })
 
 test("Stage 0 start validates the self project and returns only bounded run metadata", async () => {
