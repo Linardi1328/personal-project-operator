@@ -28,11 +28,18 @@ acceptance.
 
 ## Stage 2 — SaaS-ready architecture
 
-Status: scoped, implementation pending. One owner and one workspace remain the
-only operational configuration. No public authentication, billing, invitations,
+Status: Stage 2A implemented, independently reviewed and merged; Stage 2B queued.
+Stages 2B–2E and joint owner acceptance remain pending. One owner and one workspace
+remain the only operational configuration. No public authentication, billing, invitations,
 tenant onboarding, database rewrite, or new execution authority.
 
 ### 2A — Explicit ownership context
+
+Completed through run Z1VdSpMAI4g8yTl_vvozjS5j66-ReF7ZZkMyWLE_X8Q:
+managed tests and independent review passed on implementation
+4fa8aa743fbabc3fc514683f70e93b50e0076c9c; delivery merged at
+8ea179fde72258f45fc1993244530863b5ae19e6. This is implementation completion,
+not joint Stage 2 acceptance or production tenant-isolation evidence.
 
 Introduce stable owner/workspace/project identifiers and one reviewed Customer
 Zero binding. Keep the current registry as the authorization boundary; separate
@@ -101,8 +108,9 @@ subphase is too large, split it before execution. Stop on ambiguous outcomes;
 reconcile through existing APIs. Never mark self-review as independent approval,
 manually invent PASS evidence, or bypass a gate to finish the stage.
 
-The first implementation task is 2A only. Advance to 2B after 2A's independent
-review and delivery; retain the phase review outcomes and tested revisions.
+The next implementation task is 2B only; 2A's independent review and delivery
+are complete. Advance to 2C after 2B's independent review and delivery; retain
+the phase review outcomes and tested revisions.
 Runtime access on the approved host is required to execute that lifecycle.
 
 ## Later stages — planned, not implemented
