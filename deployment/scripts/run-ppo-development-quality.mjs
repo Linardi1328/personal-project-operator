@@ -108,6 +108,7 @@ function runCriticalLifecycleGate() {
 function runIntegratedAcceptanceGate() {
   runNodeTests([
     "capabilities/customer-zero-project.test.mjs",
+    "local-operator/ownership-context.test.mjs",
     "local-operator/phase-6q-integrated-acceptance.test.mjs",
     "local-operator/github-ppo-status.test.mjs",
     "local-operator/github-ppo-commands.test.mjs",
