@@ -20,6 +20,7 @@ import {
 } from "./development-codex-execution-adapter.mjs"
 import {
   classifyAutomatedTestAttemptEvidence,
+  canRetryPreviousPpoTimeoutPolicy,
   executeAutomatedTests,
   recoverOrphanedAutomatedTesting,
   resolveAutomatedTestPolicyIdentity
@@ -508,7 +509,7 @@ function validateAutomatedTestRetryBoundary(run, action, runtimeOptions, scope) 
     return ownerActionResult(run, action, "automated_test_reconciliation_required", scope)
   }
 
-  if (classification === "definitive_failed") {
+  if (classification === "definitive_failed" || canRetryPreviousPpoTimeoutPolicy(run, runtimeOptions)) {
     return null
   }
 

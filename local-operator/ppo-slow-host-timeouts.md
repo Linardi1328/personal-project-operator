@@ -12,12 +12,18 @@ The PPO-only maximum is 600 seconds; stale-test cancellation waits 60 minutes to
 stay beyond the maximum allowed suite duration. Stale merge cancellation remains
 30 minutes. Capability metadata must match these budgets.
 
-## Existing open attempts
+## Existing attempts
 
-Do not install this policy and blindly retry an open old-policy attempt. Timeout
-changes change the policy hash; the existing identity checks must remain strict.
-Reconcile old attempts under their original policy before any migration. A closed
-old-policy attempt still needs an explicitly reviewed migration/retry path; this
-budget change alone does not authorize it. Never rewrite evidence or manufacture
-PASS records. Preserve the Stage 2A implementation and run while that migration is
-prepared. This change is not an instruction to cancel or recreate the run.
+Open attempts must first be reconciled under the original policy. The retry
+boundary accepts a closed failed aggregate under the exact predecessor policy:
+only the three 300-second budgets may differ from the current 600-second policy.
+Project, SHA, attempt, commands, executable paths, environment, sandbox, version
+and aggregate validation remain mandatory. Old PASS and open evidence cannot
+use this compatibility path. No evidence is rewritten or credited as a new PASS.
+The existing runner reserves a fresh attempt and enforces its normal version,
+workspace, sandbox and attempt-limit checks before execution.
+
+Install the reviewed host repair before retrying a reconciled old-policy run.
+The managed implementation workspace remains unchanged. Its later delivery must
+still pass existing base-drift reconciliation and exact-SHA tests/review; these
+changes do not authorize bypassing those checks or merging stale policy files.
