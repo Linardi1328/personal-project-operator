@@ -299,7 +299,7 @@ If Phase 6B returns `owner_action_required` or a malformed planned result, Phase
 
 Stage 0 adds `ppo-self-development` as a separate terminal-only macOS controller fixed to `Linardi1328/personal-project-operator`. It reuses the Phase 6B–6G engines, advances at most one boundary per continuation, stops at `merged`, provides read-only status/recovery, and requires exact-version local confirmation for quiescent cancellation or a structurally valid open self-test attempt that has remained stale for at least 30 minutes. A structurally valid stale unmerged `merge_ready` or `merge_started` state uses a separate exact confirmation so a base-advanced run can be retired without weakening SHA binding. `review-retry <run-id> <version> <head-sha> retry-phase6f-review-runtime-failure-v1 --local-owner-confirmed` is limited to a confirmed Phase 6F reviewer-runtime failure; it preserves the clean implementation SHA and exact-SHA test PASS evidence, returns the run to `tests_passed`, and does not reserve a hardening round.
 
-## Customer Zero Stage 2A ownership context
+## Customer Zero Stage 2 ownership and SaaS-ready contracts
 
 `ownership-context.mjs` provides reusable strict validation for stable `ownerId`,
 `workspaceId`, and `projectId` values. It rejects incomplete contexts, unreviewed
@@ -312,6 +312,32 @@ derived from the existing approved GitHub/development registry. The registry
 remains the authorization boundary. This foundation does not accept account,
 repository, credential, or workspace-root overrides and does not add public
 authentication, onboarding, provider execution, or run-store migration.
+
+`customer-zero-provider-contracts.mjs` adds deterministic, project-bound provider
+contracts. Codex is the only available backend and points to the existing Phase 6D
+adapter. Antigravity is the preferred frontend but explicitly unavailable; Lovable is
+optional and disabled; Vercel preview/deployment is disabled until a separately tested
+adapter exists. Connection references contain stable ownership and provider identifiers
+only. Unknown capabilities, extra fields, mismatched workspaces/connections, and caller
+provider selection fail closed. No contract grants network, credential, GitHub, preview,
+deployment, or production authority.
+
+`development-run-ownership-context.mjs` is a read-through compatibility layer over the
+existing canonical run store. Legacy runs resolve only to their approved fixed Customer
+Zero binding. Future explicit-context run objects must match that same binding. Evidence
+with incomplete or mismatched ownership cannot be reused. The reserved RunUnit interface
+adds no new state, execution authority, or parallelism; Stage 2 performs no run-store
+migration or bulk rewrite.
+
+`development-run-metrics.mjs` projects bounded read-only operational metadata: project,
+recorded provider when known, attempts, hardening rounds, recorded outcomes, recorded
+durations, and explicit owner interventions. Missing values stay unknown. It never emits
+prompts, source, raw logs, task bodies, tokens, credentials, or inferred costs.
+
+`customer-zero-stage2.mjs` integrates these foundations as one read-only inspection API.
+It is not a new command and is not imported by `/ppo`, OpenClaw, provider execution, or
+production delivery routes. See `customer-zero-stage2-acceptance.md` for the separate
+exact-revision owner acceptance procedure.
 
 The controller is not imported by `ppo-command.mjs` or the OpenClaw bridge. The ordinary six-project registry and all `/ppo` routes remain unchanged. See `stage-0-ppo-self-development-controller.md`.
 

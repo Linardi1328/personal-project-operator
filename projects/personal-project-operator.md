@@ -22,11 +22,11 @@ High.
 
 ## Current phase
 
-Stage 2B — Integration and provider contracts.
+Stage 2 implementation handoff — joint acceptance pending.
 
 ## Last known status
 
-Stage 1 local and macOS fixture acceptance passed at fd83d37ab9cb3ee5ade45df9a76ad6fba8c24842. Stage 2A completed managed exact-SHA tests and independent review at 4fa8aa743fbabc3fc514683f70e93b50e0076c9c in run Z1VdSpMAI4g8yTl_vvozjS5j66-ReF7ZZkMyWLE_X8Q, then merged at 8ea179fde72258f45fc1993244530863b5ae19e6. Stage 2B is queued; Stages 2B–2E and joint Stage 2 acceptance remain pending.
+Stage 1 local and macOS fixture acceptance passed at fd83d37ab9cb3ee5ade45df9a76ad6fba8c24842. Stage 2A completed managed exact-SHA tests and independent review at 4fa8aa743fbabc3fc514683f70e93b50e0076c9c in run Z1VdSpMAI4g8yTl_vvozjS5j66-ReF7ZZkMyWLE_X8Q, then merged at 8ea179fde72258f45fc1993244530863b5ae19e6. The combined Stage 2B–2E implementation candidate now provides deterministic provider contracts, legacy run/evidence ownership compatibility, bounded read-only metrics, an integrated inspection facade, and exact-revision handoff instructions. Independent review, CI, merge, and joint Stage 2 acceptance remain pending; no production provider integration or tenant-isolation claim has been made.
 
 PR #79 quality-gate enforcement is merged and owner Mac validation passed. Stage 1
 now includes fixed policy metadata for the six ordinary projects and combined
@@ -39,7 +39,7 @@ The capability-manifest foundation and reviewer-runtime readiness/recovery are m
 
 ## Next action
 
-Add Stage 2B contracts from CUSTOMER_ZERO_ROADMAP.md: workspace-owned connection references without secrets, ownership validation and deterministic approved-policy provider resolution. Reuse Codex backend adapter; prefer Antigravity frontend with explicit unavailable results and no fallback. Keep Lovable and Vercel adapters disabled. Add refusal tests. Preserve registry authorization and personal commands; no new execution authority, credential handling or run-store migration.
+No next action for implementation. Review and merge the combined Stage 2B–2E candidate, then follow local-operator/customer-zero-stage2-acceptance.md with the owner; joint exact-revision owner acceptance remains pending.
 
 ## Codex fit
 
