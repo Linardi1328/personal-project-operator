@@ -1,8 +1,30 @@
 # Customer Zero Stage 2 acceptance
 
+## Recorded joint acceptance
+
+Stage 2 was jointly accepted on the owner Mac on 2026-09-17 at exact merged
+revision `304685483d01da15afa8c618a4493158458c4562` with Node v24.20.0.
+
+- The focused ownership and Stage 2 suite passed 14 of 14 tests.
+- Syntax, parallel regression, serial regression, critical lifecycle, and
+  integrated acceptance all exited zero.
+- The recovery regression suite passed 25 of 25 tests, and the revision-bound
+  recovery matrix exited zero with no required SKIP.
+- HEAD remained at the accepted revision and the working tree remained clean.
+- The retained owner log basenames are
+  `ppo-stage2-serial-20260911-174654.log`,
+  `ppo-stage2-final-gates-20260917-163912.log`, and
+  `ppo-stage2-recovery-20260917-165437.log`.
+
+The six ordinary-project `remote-and-host-acceptance` observations remain explicit
+SKIP because local policy parity is not remote/host evidence. They are Stage 3
+readiness work and were not required recovery-matrix cases. This acceptance does
+not prove public multi-tenancy, live Antigravity or Vercel availability, production
+deployment, provider cost, or ordinary-project host readiness.
+
 ## Status and boundary
 
-This procedure verifies the merged Stage 2 ownership, provider-contract,
+The procedure below verifies the merged Stage 2 ownership, provider-contract,
 run-compatibility, metrics, and integration foundations on the approved owner Mac. It is
 performed after implementation review, CI, and merge. Passing implementation tests alone
 does not record joint owner acceptance, production provider readiness, or tenant isolation.
