@@ -22,11 +22,11 @@ High.
 
 ## Current phase
 
-Stage 2 implementation handoff — joint acceptance pending.
+Stage 3A — KHLIM Assist pilot readiness.
 
 ## Last known status
 
-Stage 1 local and macOS fixture acceptance passed at fd83d37ab9cb3ee5ade45df9a76ad6fba8c24842. Stage 2A completed managed exact-SHA tests and independent review at 4fa8aa743fbabc3fc514683f70e93b50e0076c9c in run Z1VdSpMAI4g8yTl_vvozjS5j66-ReF7ZZkMyWLE_X8Q, then merged at 8ea179fde72258f45fc1993244530863b5ae19e6. The combined Stage 2B–2E implementation candidate now provides deterministic provider contracts, legacy run/evidence ownership compatibility, bounded read-only metrics, an integrated inspection facade, and exact-revision handoff instructions. Independent review, CI, merge, and joint Stage 2 acceptance remain pending; no production provider integration or tenant-isolation claim has been made.
+Stage 2 is closed. Stage 2A completed managed exact-SHA tests and independent review at 4fa8aa743fbabc3fc514683f70e93b50e0076c9c, then merged at 8ea179fde72258f45fc1993244530863b5ae19e6. The combined Stage 2B–2E implementation passed CI and merged in PR #87. Joint owner-Mac acceptance passed on 2026-09-17 at exact revision 304685483d01da15afa8c618a4493158458c4562 with Node v24.20.0: 14 focused tests, all five quality gates, 25 recovery tests, and the revision-bound recovery matrix passed; HEAD and the working tree remained exact and clean. Six ordinary-project remote/host observations remain explicit SKIP for Stage 3 readiness. No live Antigravity/Vercel integration, production deployment, public multi-tenancy, or provider-cost claim was established.
 
 PR #79 quality-gate enforcement is merged and owner Mac validation passed. Stage 1
 now includes fixed policy metadata for the six ordinary projects and combined
@@ -39,7 +39,7 @@ The capability-manifest foundation and reviewer-runtime readiness/recovery are m
 
 ## Next action
 
-No next action for implementation. Review and merge the combined Stage 2B–2E candidate, then follow local-operator/customer-zero-stage2-acceptance.md with the owner; joint exact-revision owner acceptance remains pending.
+Add the Stage 3A KHLIM Assist pilot-readiness boundary described in CUSTOMER_ZERO_STAGE3_PLAN.md: non-mutating fixed-project checks for repository identity, clean exact revision, approved runtime and tool policy, GitHub validation workflow presence, required host dependencies, and explicit PASS/FAIL/SKIP evidence. It grants no execution or mutation authority and excludes Codex or provider invocation, GitHub changes, preview operations, production operations, and customer messaging.
 
 ## Codex fit
 
@@ -52,6 +52,8 @@ Good fit for small, backend-oriented orchestration changes. Preserve existing ex
 - Do not add public signup, authentication, billing, teams, or production SaaS infrastructure.
 - Do not weaken exact-SHA evidence, bounded remediation, reconciliation, or owner approval.
 - Keep acceptance fixtures separate from existing development runs, managed workspaces, credentials, GitHub writes, and production.
+- Do not treat a Stage 3 plan, SKIP, provider contract, merged PR, or preview as production approval.
+- Keep KHLIM Assist participant auto-replies disabled throughout the first pilot.
 
 ## Known risks
 
@@ -59,3 +61,6 @@ Good fit for small, backend-oriented orchestration changes. Preserve existing ex
 - Runtime and validation drift can allow locally accepted changes to fail in GitHub CI.
 - Credential-presence checks can report a revoked Codex refresh token as logged in unless readiness includes a live authenticated probe.
 - Broad architecture work can hide unrelated behavior changes and make review ineffective.
+- Remote/host policy parity can be mistaken for observed readiness unless every SKIP remains explicit.
+- Provider adapters can leak credentials, broaden network authority, or hide fallback unless each integration is separately bounded and tested.
+- A real internal task can affect KHLIM operations if the no-auto-send and owner-release boundaries are weakened.

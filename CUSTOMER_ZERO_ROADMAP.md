@@ -28,12 +28,16 @@ acceptance.
 
 ## Stage 2 — SaaS-ready architecture
 
-Status: Stage 2A is independently reviewed and merged. A combined Stage 2B–2E
-implementation candidate now supplies the remaining architecture, compatibility,
-metrics, integration, and handoff foundations. Independent review, CI, merge, and
-joint exact-revision owner acceptance remain pending. One owner and one workspace
+Status: closed and jointly accepted. Stage 2A was independently reviewed and
+merged, and the combined Stage 2B–2E implementation passed CI and merged in PR
+#87. Owner-Mac acceptance passed on 2026-09-17 at exact revision
+`304685483d01da15afa8c618a4493158458c4562` with Node v24.20.0: the focused
+suite passed 14 of 14, all five quality gates exited zero, the recovery suite
+passed 25 of 25, the revision-bound recovery matrix exited zero with no required
+SKIP, and the checkout remained exact and clean. One owner and one workspace
 remain the only operational configuration. No public authentication, billing,
-invitations, tenant onboarding, database rewrite, or new execution authority.
+invitations, tenant onboarding, database rewrite, or new execution authority was
+added. See `local-operator/customer-zero-stage2-acceptance.md`.
 
 ### 2A — Explicit ownership context
 
@@ -55,7 +59,7 @@ no dependency on the owner's name, while the deployment binding remains fixed.
 
 ### 2B — Integration and provider contracts
 
-Implementation candidate: fixed workspace-owned reference contracts select the
+Implemented: fixed workspace-owned reference contracts select the
 existing Codex adapter for backend work. Antigravity reports unavailable, while
 Lovable and Vercel report disabled. Every selection forbids fallback and grants no
 execution authority.
@@ -73,7 +77,7 @@ Antigravity/Vercel success and no unrestricted GitHub credentials for workers.
 
 ### 2C — Run and evidence ownership compatibility
 
-Implementation candidate: a read-through compatibility resolver binds both legacy
+Implemented: a read-through compatibility resolver binds both legacy
 run objects and future explicit-context run objects to the one fixed Customer Zero
 context. The canonical run schema and store remain unchanged, so there is no bulk,
 implicit, or rollback-requiring migration in Stage 2. A strict evidence guard blocks
@@ -93,7 +97,7 @@ tests and a reviewed compatibility strategy.
 
 ### 2D — Safe operational metrics
 
-Implementation candidate: a bounded read-only projection reports only validated
+Implemented: a bounded read-only projection reports only validated
 recorded metadata. It neither mutates a run nor exports task, prompt, source, raw-log,
 token, credential, or inferred-cost content. Missing observations remain explicit
 unknowns.
@@ -109,7 +113,7 @@ malformed/legacy/missing evidence does not fabricate metrics.
 
 ### 2E — Integration and handoff
 
-Implementation candidate: `customer-zero-stage2.mjs` composes ownership, provider,
+Implemented: `customer-zero-stage2.mjs` composes ownership, provider,
 compatibility, and metrics inspection behind one read-only API. The integrated quality
 gate includes its refusal suite. Exact-revision Mac instructions and limitations are in
 `local-operator/customer-zero-stage2-acceptance.md`.
@@ -132,11 +136,11 @@ subphase is too large, split it before execution. Stop on ambiguous outcomes;
 reconcile through existing APIs. Never mark self-review as independent approval,
 manually invent PASS evidence, or bypass a gate to finish the stage.
 
-The owner authorized one combined 2B–2E implementation candidate after 2A. That
-candidate must still receive exact-SHA tests, independent review, CI, and reviewed
-delivery before it can be called merged implementation. Joint owner acceptance is a
-later, separate result and cannot be inferred from implementation checks. Runtime
-access on the approved host is required for that acceptance.
+The owner authorized one combined 2B–2E implementation candidate after 2A. It
+received review, CI, reviewed delivery, and separate joint exact-revision owner
+acceptance. Stage 2 is closed. Stage 3 must preserve these boundaries and cannot
+reinterpret architectural acceptance as provider, deployment, production, or
+multi-tenant proof.
 
 ## Later stages — planned, not implemented
 
@@ -152,3 +156,4 @@ GitHub remains the canonical external code record; PPO remains the authority for
 execution, evidence and release. Production always requires owner approval.
 Netlify and additional provider integrations stay deferred. Stage 3 live testing
 is not Stage 2 architectural completion, and a UI is not proof of product value.
+The bounded Stage 3 plan is defined in `CUSTOMER_ZERO_STAGE3_PLAN.md`.

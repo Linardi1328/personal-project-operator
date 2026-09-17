@@ -4,10 +4,10 @@
 
 See [Customer Zero product evolution](CUSTOMER_ZERO_ROADMAP.md) for the approved
 strategic reference, bounded Stage 2 architecture plan, review protocol, and
-Stages 3–7. Stage 2 is SaaS-ready architecture; live multi-project acceptance is
-Stage 3. Public SaaS, billing and production changes are not authorized by this
-planning update. Stage 2A is merged; the Stage 2B–2E implementation candidate is
-pending independent review, CI, merge, and joint exact-revision owner acceptance.
+Stages 3–7. Stage 2 SaaS-ready architecture was jointly accepted at exact merged
+revision `304685483d01da15afa8c618a4493158458c4562`. Stage 3 is bounded internal
+real-world usage and is detailed in `CUSTOMER_ZERO_STAGE3_PLAN.md`. Public SaaS,
+billing, external-user access, and automatic production changes are not authorized.
 
 ## Customer Zero Stage 1 closure scope
 
