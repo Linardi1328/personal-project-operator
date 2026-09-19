@@ -113,7 +113,7 @@ function fakePlan(overrides = {}) {
     outcome: "planned",
     project: {
       id: STAGE3A_PROJECT_ID,
-      fullName: STAGE3A_REPOSITORY
+      repo: STAGE3A_REPOSITORY
     },
     baseSha: SHA,
     next: {
