@@ -292,7 +292,7 @@ function validatePlan(plan, exactRevision) {
   return (
     plan?.outcome === "planned" &&
     plan?.project?.id === STAGE3A_PROJECT_ID &&
-    plan?.project?.fullName === STAGE3A_REPOSITORY &&
+    plan?.project?.repo === STAGE3A_REPOSITORY &&
     plan?.baseSha === exactRevision &&
     plan?.next?.stage === "implementation" &&
     plan?.next?.task === STAGE3B_TASK
