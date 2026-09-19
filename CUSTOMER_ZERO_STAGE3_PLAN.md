@@ -2,7 +2,7 @@
 
 ## Status and entry evidence
 
-Status: planned, not implemented.
+Status: in progress. Stage 3A is implemented and merged. Stage 3B implementation is being reviewed; no live Stage 3B run evidence is claimed yet.
 
 Stage 3 may begin because Stage 2 was jointly accepted on the owner Mac on
 2026-09-17 at exact merged revision
