@@ -110,6 +110,7 @@ function runIntegratedAcceptanceGate() {
     "capabilities/customer-zero-project.test.mjs",
     "local-operator/ownership-context.test.mjs",
     "local-operator/customer-zero-stage2.test.mjs",
+    "local-operator/customer-zero-stage3a-readiness.test.mjs",
     "local-operator/phase-6q-integrated-acceptance.test.mjs",
     "local-operator/github-ppo-status.test.mjs",
     "local-operator/github-ppo-commands.test.mjs",
