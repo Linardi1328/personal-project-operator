@@ -141,6 +141,34 @@ test("Stage 3A emits bounded PASS evidence for a clean exact KHLIM Assist checko
   assert.equal(serialized.includes("stderr"), false)
 })
 
+test("Stage 3A workflow probe preserves HOME without forwarding token environment", async () => {
+  let workflowEnv = null
+  const runner = fakeCommandRunner()
+
+  const report = await observeKhlimAssistStage3Readiness({}, options({
+    commandRunner: async (request) => {
+      if (request.file === "gh") {
+        workflowEnv = request.env
+      }
+      return runner(request)
+    }
+  }))
+
+  assert.equal(report.ready, true)
+  assert.ok(workflowEnv)
+  assert.equal(workflowEnv.HOME, process.env.HOME)
+  assert.equal(workflowEnv.PATH, process.env.PATH || "/usr/bin:/bin")
+  assert.equal(workflowEnv.TERM, "dumb")
+  assert.equal(workflowEnv.NO_COLOR, "1")
+  assert.equal(workflowEnv.GIT_TERMINAL_PROMPT, "0")
+  assert.equal(Object.hasOwn(workflowEnv, "GH_TOKEN"), false)
+  assert.equal(Object.hasOwn(workflowEnv, "GITHUB_TOKEN"), false)
+  assert.deepEqual(
+    Object.keys(workflowEnv).sort(),
+    ["GIT_TERMINAL_PROMPT", "HOME", "NO_COLOR", "PATH", "TERM"]
+  )
+})
+
 test("Stage 3A refuses caller-selected targets", async () => {
   await assert.rejects(
     () => observeKhlimAssistStage3Readiness({ projectId: "ledgerpilot-ai" }, options()),
