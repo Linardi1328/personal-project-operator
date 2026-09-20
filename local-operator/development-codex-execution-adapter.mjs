@@ -2297,7 +2297,7 @@ function buildExecutionFailureEvidence(run, location, execution) {
       remotePolicy: "deny",
       sandbox: CODEX_EXECUTION_SANDBOX_ID,
       backend: execution.executionSandbox.backend,
-      platform: execution.executionSandbox.platform,
+      ...(execution.failureClass === "usage_limit" ? {} : { platform: execution.executionSandbox.platform }),
       network: "none"
     }
   }
