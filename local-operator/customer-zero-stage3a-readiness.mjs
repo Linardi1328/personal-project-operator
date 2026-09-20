@@ -137,6 +137,7 @@ async function observeWorkflow(commandRunner, now) {
         "/repos/Linardi1328/khlim-assist/actions/workflows/ppo-pr-validation.yml"
       ],
       env: {
+        HOME: process.env.HOME,
         PATH: process.env.PATH || "/usr/bin:/bin",
         TERM: "dumb",
         NO_COLOR: "1",
