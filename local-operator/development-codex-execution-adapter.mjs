@@ -48,6 +48,7 @@ export const CODEX_EXECUTION_FAILURE_CLASSES = Object.freeze([
   "git_verification",
   "no_change",
   "nonzero_exit",
+  "usage_limit",
   "runtime",
   "source_changed",
   "workspace_invalid",
@@ -1464,22 +1465,110 @@ function ambiguousExecutionError() {
   return error
 }
 
+function parseCodexUsageLimitRetryAfter(output) {
+  const match = String(output || "").match(
+    /try again at\s+([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,\s+(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/iu
+  )
+
+  if (!match) {
+    return null
+  }
+
+  const months = new Map([
+    ["jan", 0],
+    ["feb", 1],
+    ["mar", 2],
+    ["apr", 3],
+    ["may", 4],
+    ["jun", 5],
+    ["jul", 6],
+    ["aug", 7],
+    ["sep", 8],
+    ["oct", 9],
+    ["nov", 10],
+    ["dec", 11]
+  ])
+  const month = months.get(match[1].slice(0, 3).toLowerCase())
+  const day = Number.parseInt(match[2], 10)
+  const year = Number.parseInt(match[3], 10)
+  const minute = Number.parseInt(match[5], 10)
+  let hour = Number.parseInt(match[4], 10)
+
+  if (
+    month === undefined ||
+    !Number.isInteger(day) ||
+    day < 1 ||
+    day > 31 ||
+    !Number.isInteger(year) ||
+    year < 2000 ||
+    year > 2200 ||
+    !Number.isInteger(hour) ||
+    hour < 1 ||
+    hour > 12 ||
+    !Number.isInteger(minute) ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null
+  }
+
+  if (match[6].toUpperCase() === "AM") {
+    hour = hour === 12 ? 0 : hour
+  } else {
+    hour = hour === 12 ? 12 : hour + 12
+  }
+
+  const retryAt = new Date(year, month, day, hour, minute, 0, 0)
+
+  if (
+    Number.isNaN(retryAt.getTime()) ||
+    retryAt.getFullYear() !== year ||
+    retryAt.getMonth() !== month ||
+    retryAt.getDate() !== day ||
+    retryAt.getHours() !== hour ||
+    retryAt.getMinutes() !== minute
+  ) {
+    return null
+  }
+
+  return retryAt.toISOString()
+}
+
+function safeUsageLimitRetryAfter(value) {
+  if (typeof value !== "string" || value.length > 80) {
+    return null
+  }
+
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
+}
+
 function classifyCodexNonzeroExit(result) {
   const output = `${String(result?.stdout ?? "")}\n${String(result?.stderr ?? "")}`
 
+  if (
+    /you(?:'|’)ve hit your usage limit/iu.test(output) ||
+    /usage limit[\s\S]{0,240}(?:purchase more credits|try again at)/iu.test(output)
+  ) {
+    return {
+      failureClass: "usage_limit",
+      retryAfter: parseCodexUsageLimitRetryAfter(output)
+    }
+  }
+
   if (/token_invalidated|refresh_token_invalidated|log out and sign in again|session has ended/iu.test(output)) {
-    return "authentication"
+    return { failureClass: "authentication", retryAfter: null }
   }
 
   if (/not inside a trusted directory|skip-git-repo-check|trusted directory/iu.test(output)) {
-    return "workspace_trust"
+    return { failureClass: "workspace_trust", retryAfter: null }
   }
 
   if (/error loading config\.toml|unknown configuration field|unknown config/iu.test(output)) {
-    return "configuration"
+    return { failureClass: "configuration", retryAfter: null }
   }
 
-  return "nonzero_exit"
+  return { failureClass: "nonzero_exit", retryAfter: null }
 }
 
 function classifyCodexFailure(error) {
@@ -1775,7 +1864,11 @@ async function invokeCodex(config, invocation, options = {}) {
       "CODEX_EXECUTION_FAILED",
       "Codex execution exited without a verified implementation."
     )
-    failure.failureClass = classifyCodexNonzeroExit(result)
+    const classification = classifyCodexNonzeroExit(result)
+    failure.failureClass = classification.failureClass
+    if (classification.retryAfter) {
+      failure.retryAfter = classification.retryAfter
+    }
     throw failure
   }
 
@@ -2198,6 +2291,9 @@ function buildExecutionFailureEvidence(run, location, execution) {
       endedAt: execution.endedAt,
       outcome: "execution_failed",
       failureClass: execution.failureClass,
+      ...(execution.failureClass === "usage_limit" && safeUsageLimitRetryAfter(execution.retryAfter)
+        ? { retryAfter: safeUsageLimitRetryAfter(execution.retryAfter) }
+        : {}),
       remotePolicy: "deny",
       sandbox: CODEX_EXECUTION_SANDBOX_ID,
       backend: execution.executionSandbox.backend,
@@ -2374,6 +2470,21 @@ export function classifyCodexExecutionAttemptEvidence(run) {
     boundedEvidenceText(metadata.endedAt, 80) &&
     (metadata.failureClass === undefined || codexFailureClasses.has(metadata.failureClass))
   ) {
+    const retryAfter = metadata.retryAfter
+    const retryAfterIso = retryAfter === undefined ? null : safeUsageLimitRetryAfter(retryAfter)
+
+    if (
+      (metadata.failureClass !== "usage_limit" && retryAfter !== undefined) ||
+      (metadata.failureClass === "usage_limit" && retryAfter !== undefined && !retryAfterIso) ||
+      (
+        metadata.failureClass === "usage_limit" &&
+        retryAfterIso &&
+        Date.parse(retryAfterIso) <= Date.parse(metadata.endedAt)
+      )
+    ) {
+      return "invalid"
+    }
+
     return "definitive_failed"
   }
 
@@ -2389,6 +2500,32 @@ function assertNoOpenCodexAttempt(run) {
       "Previous Codex execution attempt requires reconciliation before retrying."
     )
   }
+}
+
+function assertCodexUsageLimitWindow(run, options = {}) {
+  const latest = latestCurrentCodexAttemptEvidence(run)
+
+  if (
+    latest.malformed ||
+    latest.entry?.metadata?.outcome !== "execution_failed" ||
+    latest.entry?.metadata?.failureClass !== "usage_limit"
+  ) {
+    return
+  }
+
+  const retryAfter = safeUsageLimitRetryAfter(latest.entry.metadata.retryAfter)
+
+  if (!retryAfter || nowDate(options).getTime() >= Date.parse(retryAfter)) {
+    return
+  }
+
+  const error = adapterError(
+    "CODEX_USAGE_LIMIT_ACTIVE",
+    "Codex implementation is unavailable until the recorded usage-limit retry time."
+  )
+  error.failureClass = "usage_limit"
+  error.retryAfter = retryAfter
+  throw error
 }
 
 function assertCodexAttemptAvailable(run) {
@@ -2503,6 +2640,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
   }
 
   assertNoOpenCodexAttempt(run)
+  assertCodexUsageLimitWindow(run, options)
   assertCodexAttemptAvailable(run)
 
   const hardeningContext = deriveHardeningRemediationContext(run)
@@ -2547,6 +2685,7 @@ async function executeCodexImplementationInternal(runId, options = {}) {
 
     execution.endedAt = timestamp(nowDate(options))
     execution.failureClass = classifyCodexFailure(error)
+    execution.retryAfter = error?.retryAfter
     await recordDefinitiveCodexFailure(attemptRun, postReservation.location, execution, options)
     throw error
   }
