@@ -751,6 +751,8 @@ function baseResult({
   retryAfter = null,
   buildSummary = null
 }, scope = ordinaryScope) {
+  const normalizedRetryAfter = safeRetryAfter(retryAfter)
+
   return {
     ok,
     project,
@@ -763,7 +765,7 @@ function baseResult({
     headSha: safeHeadSha(headSha),
     buildSummary: safeDevelopmentBuildSummary(buildSummary),
     reason: reason ? safeReason(reason) : null,
-    retryAfter: safeRetryAfter(retryAfter),
+    ...(normalizedRetryAfter ? { retryAfter: normalizedRetryAfter } : {}),
     policyId: scope.policyId,
     policyHash: scope.policyHash
   }
