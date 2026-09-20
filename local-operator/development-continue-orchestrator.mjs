@@ -302,6 +302,15 @@ function safeHeadSha(value) {
   return normalized && shaPattern.test(normalized) ? normalized : null
 }
 
+function safeRetryAfter(value) {
+  if (typeof value !== "string" || value.length > 80) {
+    return null
+  }
+
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
+}
+
 function projectIdFor(run) {
   return typeof run?.project?.id === "string" ? run.project.id : "unknown"
 }
@@ -739,6 +748,7 @@ function baseResult({
   after = before,
   headSha = null,
   reason = null,
+  retryAfter = null,
   buildSummary = null
 }, scope = ordinaryScope) {
   return {
@@ -753,6 +763,7 @@ function baseResult({
     headSha: safeHeadSha(headSha),
     buildSummary: safeDevelopmentBuildSummary(buildSummary),
     reason: reason ? safeReason(reason) : null,
+    retryAfter: safeRetryAfter(retryAfter),
     policyId: scope.policyId,
     policyHash: scope.policyHash
   }
@@ -832,7 +843,7 @@ async function childFailureResult(run, action, error, options = {}, scope = ordi
   const code = typeof error?.code === "string" ? error.code : "CHILD_OPERATION_FAILED"
   const stale = code === "STALE_RUN_VERSION"
   const codexFailureClass = (
-    code === "CODEX_EXECUTION_FAILED" &&
+    (code === "CODEX_EXECUTION_FAILED" || code === "CODEX_USAGE_LIMIT_ACTIVE") &&
     typeof error?.failureClass === "string" &&
     codexFailureClasses.has(error.failureClass)
   ) ? error.failureClass : null
@@ -877,11 +888,14 @@ async function childFailureResult(run, action, error, options = {}, scope = ordi
     after: observed?.status || run.status,
     headSha: observed?.headSha || run.headSha,
     buildSummary: observed?.task || run.task,
+    retryAfter: codexFailureClass === "usage_limit" ? error?.retryAfter : null,
     reason: stale
       ? "stale_run_version"
       : safeReason(
         codexFailureClass
-          ? `codex_${codexFailureClass}_failed`
+          ? codexFailureClass === "usage_limit"
+            ? "codex_usage_limit_reached"
+            : `codex_${codexFailureClass}_failed`
           : reviewFailureClass
             ? `reviewer_${reviewFailureClass}_failed`
             : error?.reasonCode || error?.reason || code.toLowerCase(),
@@ -1087,12 +1101,18 @@ function formatDevelopmentContinueResultForScope(result, scope) {
     if (result.ok === false && result.reason) {
       lines.push(`Reason: ${result.reason}`)
     }
+    if (result.retryAfter) {
+      lines.push(`Retry after: ${result.retryAfter}`)
+    }
   } else {
     lines.push(`Status: ${result.status || result.before || "unknown"}`)
     lines.push(`Outcome: ${result.outcome}`)
 
     if (result.reason) {
       lines.push(`Reason: ${result.reason}`)
+    }
+    if (result.retryAfter) {
+      lines.push(`Retry after: ${result.retryAfter}`)
     }
   }
 
