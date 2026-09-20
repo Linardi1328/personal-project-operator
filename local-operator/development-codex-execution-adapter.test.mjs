@@ -37,6 +37,7 @@ import {
   PHASE_6F_INDEPENDENT_REVIEW_AGENT_ID,
   PHASE_6F_REVIEW_FINDINGS_OUTCOME,
   buildCodexImplementationPrompt,
+  classifyCodexExecutionAttemptEvidence,
   executeCodexImplementation,
   formatDevelopmentCodexExecutionAdapterError,
   recoverOrphanedCodexExecution,
@@ -1379,6 +1380,78 @@ test("definitive Codex failures retain only bounded actionable classifications",
     assert.equal(evidence.metadata.failureClass, fixtureCase.failureClass)
     assert.doesNotMatch(JSON.stringify(reloaded), /token_invalidated|config\.toml|skip-git-repo-check/iu)
   }
+})
+
+test("Codex usage limits store bounded retry metadata and block attempts until the retry window expires", async () => {
+  let currentTime = new Date(2026, 8, 20, 20, 0, 0, 0)
+  const now = () => new Date(currentTime)
+  const fixture = await makeImplementationFixture({ now })
+  let codexCalls = 0
+  const usageLimitText = "ERROR: You've hit your usage limit. Visit Codex settings to purchase more credits or try again at Sep 22nd, 2026 11:09 PM."
+  const expectedRetryAfter = new Date(2026, 8, 22, 23, 9, 0, 0).toISOString()
+
+  await assertRejectsCode(executeCodexImplementation(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedCodexConfig(),
+    ...sandboxedCodexRunner(async () => {
+      codexCalls += 1
+      return { exitCode: 1, stdout: "", stderr: usageLimitText }
+    }),
+    now
+  }), "CODEX_EXECUTION_FAILED")
+
+  const limited = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+  const limitedEvidence = limited.evidence.implementation.at(-1)
+
+  assert.equal(codexCalls, 1)
+  assert.equal(limited.status, "implementation_in_progress")
+  assert.equal(limited.attempts.implementation, fixture.run.attempts.implementation + 1)
+  assert.equal(limitedEvidence.metadata.outcome, "execution_failed")
+  assert.equal(limitedEvidence.metadata.failureClass, "usage_limit")
+  assert.equal(limitedEvidence.metadata.retryAfter, expectedRetryAfter)
+  assert.equal(classifyCodexExecutionAttemptEvidence(limited), "definitive_failed")
+  assert.doesNotMatch(JSON.stringify(limited), /hit your usage limit|purchase more credits|Codex settings/iu)
+
+  await assertRejectsCode(executeCodexImplementation(limited.runId, {
+    expectedVersion: limited.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedCodexConfig(),
+    ...sandboxedCodexRunner(async () => {
+      codexCalls += 1
+      return { exitCode: 1, stderr: usageLimitText }
+    }),
+    now
+  }), "CODEX_USAGE_LIMIT_ACTIVE")
+
+  const stillLimited = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(codexCalls, 1)
+  assert.equal(stillLimited.version, limited.version)
+  assert.equal(stillLimited.attempts.implementation, limited.attempts.implementation)
+
+  currentTime = new Date(2026, 8, 23, 0, 0, 0, 0)
+  const successfulCalls = []
+  const resumed = await executeCodexImplementation(stillLimited.runId, {
+    expectedVersion: stillLimited.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    codexConfig: trustedCodexConfig(),
+    ...sandboxedCodexRunner(makeCommitRunner(successfulCalls)),
+    now
+  })
+
+  assert.equal(resumed.ok, true)
+  assert.equal(resumed.run.status, "implementation_ready")
+  assert.equal(resumed.run.attempts.implementation, limited.attempts.implementation + 1)
+  assert.equal(codexCalls, 1)
+  assert.equal(successfulCalls.length, 1)
 })
 
 test("definitive implementation retries persist attempt counters, survive reload, and enforce max", async () => {

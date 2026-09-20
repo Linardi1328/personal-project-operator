@@ -2361,6 +2361,38 @@ test("Phase 6K surfaces bounded Codex failure classifications without raw output
   assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|token_invalidated/iu)
 })
 
+test("Phase 6K surfaces Codex usage-limit windows without exposing raw provider output", async () => {
+  const retryAfter = "2026-09-22T15:09:00.000Z"
+
+  for (const code of ["CODEX_EXECUTION_FAILED", "CODEX_USAGE_LIMIT_ACTIVE"]) {
+    const run = makeRun("implementation_in_progress")
+    const reader = makeReader(run)
+    const result = await executeDevelopmentContinue(RUN_ID, {
+      readRun: reader.readRun,
+      childHandlers: {
+        executeCodexImplementation: async () => {
+          const error = new Error("SENSITIVE_TEST_SENTINEL You've hit your usage limit. purchase more credits")
+          error.code = code
+          error.failureClass = "usage_limit"
+          error.retryAfter = retryAfter
+          throw error
+        }
+      },
+      trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+    })
+    const output = formatDevelopmentContinueResult(result)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.action, "phase-6d-codex-implementation")
+    assert.equal(result.reason, "codex_usage_limit_reached")
+    assert.equal(result.retryAfter, retryAfter)
+    assert.match(output, /Reason: codex_usage_limit_reached/u)
+    assert.match(output, /Retry after: 2026-09-22T15:09:00\.000Z/u)
+    assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|purchase more credits|hit your usage limit/iu)
+    assert.doesNotMatch(output, /SENSITIVE_TEST_SENTINEL|purchase more credits|hit your usage limit/iu)
+  }
+})
+
 test("Phase 6K bounds child failure output when post-failure reload is unavailable", async () => {
   const run = makeRun("created")
   const calls = []
