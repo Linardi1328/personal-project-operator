@@ -138,3 +138,25 @@ implementation may begin
 ```
 
 V0.2 still does not invoke Antigravity or another worker. A reviewed provider/readiness adapter remains the next execution boundary.
+
+
+## V0.3 trusted readiness and execution authorization
+
+Capacity metadata is not execution authority.
+
+Software Factory V0.3 adds a local attestation boundary:
+
+- callers request a reviewed worker probe rather than supplying readiness facts to be signed;
+- the reviewed probe result is signed with a private PPO-local HMAC key stored outside Git with restrictive permissions;
+- the signed payload binds control-plane version, issuer, worker, integration state, capacity state, observation time, and a random nonce;
+- authorization revalidates the current development-run version, lifecycle status, capability policy, latest checkpoint version, worker binding, signature, freshness, and owner-approval requirements;
+- successful authorization consumes the attestation nonce so the same readiness proof cannot authorize a second execution;
+- owner-reported capacity may remain useful for informational checkpoints, but it is not sufficient for autonomous execution.
+
+The attestation key, signature, and nonce are not written into development-run evidence or dispatch checkpoints.
+
+A historical checkpoint is never sufficient to authorize work. Execution requires a fresh verified readiness attestation.
+
+Production deployment remains explicitly owner-gated regardless of worker capacity.
+
+V0.3 still does not invoke Antigravity. The next boundary is a reviewed Antigravity runtime probe and execution adapter. Until that exists, production code receives `FACTORY_RUNTIME_PROBE_UNAVAILABLE` instead of fabricating readiness.
