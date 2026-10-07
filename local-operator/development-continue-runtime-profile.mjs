@@ -765,6 +765,20 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     throw runtimeError()
   }
 
+  if (options.runtimeAction === "software-factory-antigravity-implementation") {
+    await assertDirectory(sourceRepoPath, options)
+    await assertDirectory(paths.workspaceRoot, options)
+
+    return {
+      workspaceRegistry: {
+        [projectId]: {
+          sourceRepoPath,
+          workspaceRoot: paths.workspaceRoot
+        }
+      }
+    }
+  }
+
   await assertExecutable(paths.codexExecutablePath, options)
   await assertExecutable(paths.gitExecutablePath, options)
   await assertExecutable(paths.reviewExecutablePath, options)
