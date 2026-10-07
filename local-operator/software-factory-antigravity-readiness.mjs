@@ -69,7 +69,7 @@ function fixedExecutableCandidates(platform) {
   return ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS[platform] || []
 }
 
-function classifyProbeText(text) {
+export function classifyAntigravityProbeText(text) {
   if (quotaPattern.test(text)) {
     return { integration: "configured", capacity: "exhausted" }
   }
@@ -139,7 +139,48 @@ function assertAntigravityCapability(capability) {
   return policy
 }
 
-export function createAntigravityReadinessAdapter(dependencies = {}) {
+export async function validateAntigravityExecutableCandidate(path) {
+  if (typeof path !== "string" || path !== resolvePath(path)) {
+    throw readinessError(
+      "ANTIGRAVITY_PROBE_UNTRUSTED",
+      "Reviewed Antigravity readiness executable is not trusted."
+    )
+  }
+
+  const linkInfo = await lstat(path).catch(() => null)
+
+  if (!linkInfo) {
+    throw readinessError(
+      "ANTIGRAVITY_PROBE_UNAVAILABLE",
+      "Reviewed Antigravity readiness executable is unavailable."
+    )
+  }
+
+  if (linkInfo.isSymbolicLink()) {
+    throw readinessError(
+      "ANTIGRAVITY_PROBE_UNTRUSTED",
+      "Reviewed Antigravity readiness executable is not trusted."
+    )
+  }
+
+  const canonical = await realpath(path).catch(() => null)
+  const info = canonical ? await stat(canonical).catch(() => null) : null
+
+  if (
+    canonical !== path ||
+    !info?.isFile?.() ||
+    (info.mode & 0o022) !== 0
+  ) {
+    throw readinessError(
+      "ANTIGRAVITY_PROBE_UNTRUSTED",
+      "Reviewed Antigravity readiness executable is not trusted."
+    )
+  }
+
+  return canonical
+}
+
+function createAntigravityReadinessAdapter(dependencies = {}) {
   const platform = dependencies.platform || process.platform
   const candidates = dependencies.executableCandidates || fixedExecutableCandidates(platform)
   const execFileImpl = dependencies.execFileImpl || execFileAsync
@@ -236,6 +277,16 @@ export function createAntigravityReadinessAdapter(dependencies = {}) {
         stderr: result.stderr || ""
       }
     } catch (error) {
+      if (
+        error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+        error?.code === "ENOBUFS"
+      ) {
+        throw readinessError(
+          "ANTIGRAVITY_PROBE_OUTPUT_INVALID",
+          "Antigravity readiness output exceeded the reviewed size bound."
+        )
+      }
+
       if (error?.killed || error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT") {
         return {
           exitCode: 124,
@@ -260,8 +311,6 @@ export function createAntigravityReadinessAdapter(dependencies = {}) {
 
     const executablePath = await resolveReviewedExecutable()
     const models = await runCommand(executablePath, ["models"])
-    const modelText = boundedOutput(models.stdout, models.stderr)
-    const modelClassification = classifyProbeText(modelText)
 
     if (models.timedOut) {
       throw readinessError(
@@ -269,6 +318,9 @@ export function createAntigravityReadinessAdapter(dependencies = {}) {
         "Antigravity readiness probe timed out."
       )
     }
+
+    const modelText = boundedOutput(models.stdout, models.stderr)
+    const modelClassification = classifyAntigravityProbeText(modelText)
 
     if (models.exitCode !== 0 || modelClassification?.integration === "unconfigured") {
       return {
@@ -281,8 +333,9 @@ export function createAntigravityReadinessAdapter(dependencies = {}) {
       executablePath,
       ["-p", "/usage", "--print-timeout", "10s"]
     )
-    const usageText = boundedOutput(usage.stdout, usage.stderr)
-    const usageClassification = classifyProbeText(usageText)
+    const usageClassification = usage.timedOut
+      ? null
+      : classifyAntigravityProbeText(boundedOutput(usage.stdout, usage.stderr))
 
     return {
       exitCode: models.exitCode,
@@ -295,7 +348,7 @@ export function createAntigravityReadinessAdapter(dependencies = {}) {
   async function probe() {
     const result = await runReviewedProbe()
     const text = boundedOutput(result.stdout, result.stderr)
-    const classified = result.classification || classifyProbeText(text)
+    const classified = result.classification || classifyAntigravityProbeText(text)
     const observedAt = normalizedNow(nowImpl).toISOString()
 
     if (classified) {
