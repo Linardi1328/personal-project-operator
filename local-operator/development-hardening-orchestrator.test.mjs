@@ -717,7 +717,7 @@ test("latest exact-SHA CHANGES_REQUESTED evidence with validated findings is req
         workspaceId: approved.location.workspaceId,
         workspaceRef: approved.location.workspaceRef,
         adapter: CODEX_EXECUTION_ADAPTER_ID,
-        attempt: 1,
+        attempt: approvedInProgress.attempts.implementation,
         promptHash: "a".repeat(64),
         outcome: "implementation_ready",
         changedFiles: 1
