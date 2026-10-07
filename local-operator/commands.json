@@ -5,7 +5,11 @@
     {
       "id": "project",
       "label": "Project Control",
-      "aliases": ["project", "projects", "control"],
+      "aliases": [
+        "project",
+        "projects",
+        "control"
+      ],
       "commands": [
         {
           "command": "/status",
@@ -64,6 +68,13 @@
           "safety": "Phase 6K one-boundary continuation only; each result provides the next safe command."
         },
         {
+          "command": "/factory-run",
+          "arguments": "<run-id>",
+          "description": "Advance one run autonomously through reviewed development boundaries until release-ready or blocked.",
+          "phase1Simulator": false,
+          "safety": "Software Factory V0.6 bounded multi-boundary driver; fixed step limit, no automatic merge, no production deployment."
+        },
+        {
           "command": "/recover",
           "arguments": "<run-id>",
           "description": "Inspect an interrupted or ambiguous run.",
@@ -96,7 +107,11 @@
     {
       "id": "codex",
       "label": "Codex Workflow",
-      "aliases": ["codex", "prompt", "prompts"],
+      "aliases": [
+        "codex",
+        "prompt",
+        "prompts"
+      ],
       "commands": [
         {
           "command": "/codex",
@@ -131,7 +146,11 @@
     {
       "id": "usage",
       "label": "Usage & Limits",
-      "aliases": ["usage", "limits", "budget"],
+      "aliases": [
+        "usage",
+        "limits",
+        "budget"
+      ],
       "commands": [
         {
           "command": "/codex-usage",
@@ -152,7 +171,11 @@
     {
       "id": "system",
       "label": "System & Safety",
-      "aliases": ["system", "safety", "safe"],
+      "aliases": [
+        "system",
+        "safety",
+        "safe"
+      ],
       "commands": [
         {
           "command": "/vps-health",
@@ -187,7 +210,11 @@
     {
       "id": "expansion",
       "label": "Expansion",
-      "aliases": ["expansion", "content", "backlog"],
+      "aliases": [
+        "expansion",
+        "content",
+        "backlog"
+      ],
       "commands": [
         {
           "command": "/content",
