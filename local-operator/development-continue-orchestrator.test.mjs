@@ -666,7 +666,7 @@ test("Phase 6K dispatches each supported status to exactly one reviewed child bo
   const cases = [
     ["created", "planExistingDevelopmentRun", "phase-6b-plan", "planned"],
     ["planned", "prepareImplementationWorkspace", "phase-6c-prepare-workspace", "implementation_in_progress"],
-    ["implementation_in_progress", "executeCodexImplementation", "phase-6d-codex-implementation", "implementation_ready"],
+    ["implementation_in_progress", "executeSoftwareFactoryImplementation", "phase-6d-codex-implementation", "implementation_ready"],
     ["implementation_ready", "executeAutomatedTests", "phase-6e-automated-tests", "tests_passed"],
     ["tests_passed", "executeIndependentReview", "phase-6f-independent-review", "review_passed"],
     ["review_changes_requested", "executeBoundedHardening", "phase-6f-bounded-hardening", "review_passed"],
@@ -744,7 +744,7 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
   for (const [run, reason] of cases) {
     const reader = makeReader(run)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready",
+      executeSoftwareFactoryImplementation: "implementation_ready",
       executeAutomatedTests: "tests_passed",
       executeIndependentReview: "review_passed",
       planExistingDevelopmentRun: "planned"
@@ -999,7 +999,7 @@ test("Phase 6K refuses malformed durable evidence instead of dispatching", async
   })
   const reader = makeReader(run)
   const children = makeChildHandlers({
-    executeCodexImplementation: "implementation_ready"
+    executeSoftwareFactoryImplementation: "implementation_ready"
   })
   const result = await executeDevelopmentContinue(RUN_ID, {
     readRun: reader.readRun,
@@ -1056,7 +1056,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   for (const run of [wrongSourceRun, wrongShaRun, malformedRun]) {
     const reader = makeReader(run)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -1073,7 +1073,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   {
     const reader = makeReader(staleAttemptRun)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -1094,7 +1094,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   {
     const reader = makeReader(openRun)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -1116,7 +1116,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   {
     const reader = makeReader(definitiveFailureRun)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -2029,14 +2029,14 @@ test("Phase 6K refuses missing Linux Git readiness before Antigravity child muta
   const result = await executeDevelopmentContinue(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir,
     childHandlers: {
-      executeCodexImplementation: async () => {
+      executeSoftwareFactoryImplementation: async () => {
         childCalls += 1
         return { ok: true, outcome: "implementation_ready", run: fixture.run }
       }
     },
     trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
       platform: "linux",
-      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
+      statImpl: fakeRuntimeStatFor({ missing: new Set([gitPath]) }),
       accessImpl: async () => {},
       execFileImpl: fakeRuntimeExecFile,
       linuxSandboxCapabilityProbe: async () => true
@@ -2243,7 +2243,7 @@ test("Phase 6K resumes interrupted hardening when no current Codex attempt is re
   })
   const reader = makeReader(run)
   const children = makeChildHandlers({
-    executeCodexImplementation: "implementation_ready"
+    executeSoftwareFactoryImplementation: "implementation_ready"
   })
   const result = await executeDevelopmentContinue(RUN_ID, {
     readRun: reader.readRun,
@@ -2385,7 +2385,7 @@ test("Phase 6K surfaces bounded Codex failure classifications without raw output
   const result = await executeDevelopmentContinue(RUN_ID, {
     readRun: reader.readRun,
     childHandlers: {
-      executeCodexImplementation: async () => {
+      executeSoftwareFactoryImplementation: async () => {
         const error = new Error("SENSITIVE_TEST_SENTINEL 401 token_invalidated")
         error.code = "CODEX_EXECUTION_FAILED"
         error.failureClass = "authentication"
@@ -2410,7 +2410,7 @@ test("Phase 6K surfaces Codex usage-limit windows without exposing raw provider 
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
       childHandlers: {
-        executeCodexImplementation: async () => {
+        executeSoftwareFactoryImplementation: async () => {
           const error = new Error("SENSITIVE_TEST_SENTINEL You've hit your usage limit. purchase more credits")
           error.code = code
           error.failureClass = "usage_limit"
@@ -2493,7 +2493,7 @@ test("Phase 6K stops at merged and never dispatches production or terminal statu
     const children = makeChildHandlers({
       executePhase6GDelivery: "merged",
       executeShaPinnedMerge: "merged",
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -2788,6 +2788,20 @@ test("Software Factory implementation capability selection is deterministic and 
     ),
     "implementation.backend"
   )
+
+  for (const task of [
+    "Return a page of results from the API.",
+    "Accept multipart form data in the backend endpoint.",
+    "Handle failure in the API retry policy."
+  ]) {
+    assert.equal(
+      resolveSoftwareFactoryImplementationCapability(
+        makeRun("implementation_in_progress", { task })
+      ),
+      "implementation.backend",
+      task
+    )
+  }
 })
 
 test("Software Factory coordinator records blocked capacity without authorizing or executing", async () => {
