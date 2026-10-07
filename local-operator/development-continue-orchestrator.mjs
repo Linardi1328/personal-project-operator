@@ -711,18 +711,6 @@ export function resolveSoftwareFactoryImplementationCapability(run) {
   return "implementation.backend"
 }
 
-async function latestCheckpointVersion(runId, options = {}) {
-  try {
-    const checkpoint = await readSoftwareFactoryDispatchCheckpoint(runId, options)
-    return checkpoint.checkpointVersion
-  } catch (error) {
-    if (error?.code === "FACTORY_CHECKPOINT_NOT_FOUND") {
-      return 0
-    }
-    throw error
-  }
-}
-
 export function createSoftwareFactoryImplementationCoordinator(dependencies = {}) {
   const readRunImpl = dependencies.readRun || readDevelopmentRun
   const readCheckpointImpl = dependencies.readCheckpoint || readSoftwareFactoryDispatchCheckpoint
@@ -801,7 +789,7 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
 
 const executeSoftwareFactoryImplementation = createSoftwareFactoryImplementationCoordinator()
 
-function boundaryForStatusfunction boundaryForStatus(status, scope) {
+function boundaryForStatus(status, scope) {
   const boundary = statusActions[status]
 
   if (
