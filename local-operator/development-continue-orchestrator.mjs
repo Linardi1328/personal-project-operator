@@ -694,7 +694,7 @@ async function reconcileOrphanedAttempt(
 }
 
 
-function implementationCapabilityFor(run) {
+export function resolveSoftwareFactoryImplementationCapability(run) {
   const planning = Array.isArray(run?.evidence?.planning)
     ? run.evidence.planning.map((entry) => entry?.summary || "").join("\n")
     : ""
@@ -723,63 +723,85 @@ async function latestCheckpointVersion(runId, options = {}) {
   }
 }
 
-async function executeSoftwareFactoryImplementation(runId, options = {}) {
-  const run = await readDevelopmentRun(runId, options)
+export function createSoftwareFactoryImplementationCoordinator(dependencies = {}) {
+  const readRunImpl = dependencies.readRun || readDevelopmentRun
+  const readCheckpointImpl = dependencies.readCheckpoint || readSoftwareFactoryDispatchCheckpoint
+  const recordReadinessImpl = dependencies.recordReadiness || recordTrustedAntigravityReadiness
+  const authorizeImpl = dependencies.authorize || authorizeAntigravityDispatch
+  const executeImpl = dependencies.execute || executeAntigravityImplementation
 
-  if (run.status !== "implementation_in_progress" || run.version !== options.expectedVersion) {
-    throw continueError(
-      "CONTINUE_ANTIGRAVITY_RUN_STALE",
-      "Software factory implementation run changed before Antigravity dispatch."
-    )
-  }
-
-  const capability = implementationCapabilityFor(run)
-  const expectedCheckpointVersion = await latestCheckpointVersion(run.runId, options)
-  const checkpoint = await recordTrustedAntigravityReadiness({
-    runId: run.runId,
-    runVersion: run.version,
-    capability,
-    expectedCheckpointVersion,
-    failedAttempts: run.attempts.implementation
-  }, options)
-
-  if (checkpoint.dispatch?.outcome !== "ready" || checkpoint.dispatch?.consumeAttempt !== true) {
-    return {
-      ok: false,
-      outcome: checkpoint.dispatch?.outcome || "blocked_external",
-      reason: String(checkpoint.dispatch?.reasonCode || "antigravity_not_ready").toLowerCase(),
-      run
+  async function latestVersion(runId, options = {}) {
+    try {
+      const checkpoint = await readCheckpointImpl(runId, options)
+      return checkpoint.checkpointVersion
+    } catch (error) {
+      if (error?.code === "FACTORY_CHECKPOINT_NOT_FOUND") {
+        return 0
+      }
+      throw error
     }
   }
 
-  let authorization
+  return async function executeSoftwareFactoryImplementation(runId, options = {}) {
+    const run = await readRunImpl(runId, options)
 
-  try {
-    authorization = await authorizeAntigravityDispatch({
+    if (run.status !== "implementation_in_progress" || run.version !== options.expectedVersion) {
+      throw continueError(
+        "CONTINUE_ANTIGRAVITY_RUN_STALE",
+        "Software factory implementation run changed before Antigravity dispatch."
+      )
+    }
+
+    const capability = resolveSoftwareFactoryImplementationCapability(run)
+    const expectedCheckpointVersion = await latestVersion(run.runId, options)
+    const checkpoint = await recordReadinessImpl({
       runId: run.runId,
       runVersion: run.version,
       capability,
-      checkpointVersion: checkpoint.checkpointVersion
+      expectedCheckpointVersion,
+      failedAttempts: run.attempts.implementation
     }, options)
-  } catch (error) {
-    if (error?.code === "ANTIGRAVITY_AUTHORIZATION_NOT_READY") {
+
+    if (checkpoint.dispatch?.outcome !== "ready" || checkpoint.dispatch?.consumeAttempt !== true) {
       return {
         ok: false,
-        outcome: "blocked_capacity",
-        reason: "antigravity_authorization_not_ready",
+        outcome: checkpoint.dispatch?.outcome || "blocked_external",
+        reason: String(checkpoint.dispatch?.reasonCode || "antigravity_not_ready").toLowerCase(),
         run
       }
     }
-    throw error
-  }
 
-  return executeAntigravityImplementation(run.runId, authorization, {
-    ...options,
-    expectedVersion: run.version
-  })
+    let authorization
+
+    try {
+      authorization = await authorizeImpl({
+        runId: run.runId,
+        runVersion: run.version,
+        capability,
+        checkpointVersion: checkpoint.checkpointVersion
+      }, options)
+    } catch (error) {
+      if (error?.code === "ANTIGRAVITY_AUTHORIZATION_NOT_READY") {
+        return {
+          ok: false,
+          outcome: "blocked_capacity",
+          reason: "antigravity_authorization_not_ready",
+          run
+        }
+      }
+      throw error
+    }
+
+    return executeImpl(run.runId, authorization, {
+      ...options,
+      expectedVersion: run.version
+    })
+  }
 }
 
-function boundaryForStatus(status, scope) {
+const executeSoftwareFactoryImplementation = createSoftwareFactoryImplementationCoordinator()
+
+function boundaryForStatusfunction boundaryForStatus(status, scope) {
   const boundary = statusActions[status]
 
   if (
