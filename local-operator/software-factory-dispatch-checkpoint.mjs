@@ -514,7 +514,8 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
   let published = false
 
   try {
-    await ensurePrivateDir(root)
+    const ensurePrivateDirImpl = options.ensurePrivateDirImpl || ensurePrivateDir
+    await ensurePrivateDirImpl(root)
     handle = await open(tempPath, "wx", 0o600)
     await handle.writeFile(`${JSON.stringify(checkpoint)}\n`, "utf8")
     await handle.sync()
