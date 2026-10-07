@@ -37,7 +37,7 @@ The initial control-plane policy reflects the standardized engineering stack:
 | debugging | Antigravity | standard | `debugging-and-error-recovery` |
 | runtime browser inspection | Chrome DevTools | none | runtime evidence |
 | code review | CodeRabbit | none | review evidence |
-| frontend review | Vercel Web Design Guidelines | none | `web-design-guidelines` |
+| frontend review | Antigravity | standard | `web-design-guidelines` |
 | security review | ChatGPT | deep | independent review |
 | release review | ChatGPT | deep | independent review |
 | preview deployment | Vercel | none | exact reviewed SHA |
@@ -59,7 +59,7 @@ Provider-specific adapters may map these classes to current models later. This k
 Escalation is deterministic:
 
 - economy work escalates to standard after one failed attempt;
-- standard work escalates to deep after two failed attempts;
+- economy or standard reasoning work escalates to deep after two failed attempts;
 - high-risk reasoning work uses deep immediately;
 - deterministic tool work remains `none` regardless of retries.
 
