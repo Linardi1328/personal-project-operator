@@ -207,7 +207,7 @@ function matchingReviewFindingsEvidence(run, decisionEvidence) {
   return null
 }
 
-export function latestHardeningEvidence(run, outcome = null) {
+function latestHardeningEvidence(run, outcome = null) {
   const implementationEvidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
   const reviewEvidence = Array.isArray(run?.evidence?.review) ? run.evidence.review : []
   const evidence = [...implementationEvidence, ...reviewEvidence]
@@ -237,7 +237,7 @@ function hardeningRoundCount(run) {
   )).length
 }
 
-export function validateChangesRequestedReview(run) {
+function validateChangesRequestedReview(run) {
   const reviewedSha = normalizeSha(run.headSha, "Run head SHA")
   const decisionEvidence = latestIndependentReviewDecisionEvidence(run)
 
@@ -346,6 +346,9 @@ function buildHardeningStartedEvidence(run, context, round, startedAt, implement
       securityFindingCount: context.securityFindings.length,
       testRequirementCount: context.testsRequired.length,
       remediationHash: context.remediationHash,
+      blockerItems: [...context.blockers],
+      securityItems: [...context.securityFindings],
+      testItems: [...context.testsRequired],
       startedAt,
       outcome: "hardening_started",
       implementationAdapter: implementationAdapterId,
@@ -622,20 +625,16 @@ async function reconcileBoundedHardeningInternal(runId, options = {}) {
   }
 }
 
-export function createBoundedHardeningOrchestrator(dependencies = {}) {
-  return async function executeConfiguredBoundedHardening(runId, options = {}) {
-    try {
-      return await executeBoundedHardeningInternal(runId, options, dependencies)
-    } catch (error) {
-      throw safeHardeningFailure(error)
-    }
-  }
-}
-
-const defaultBoundedHardeningOrchestrator = createBoundedHardeningOrchestrator()
-
 export async function executeBoundedHardening(runId, options = {}) {
-  return defaultBoundedHardeningOrchestrator(runId, options)
+  const dependencies = options.hardeningDependencies || {}
+  const executionOptions = { ...options }
+  delete executionOptions.hardeningDependencies
+
+  try {
+    return await executeBoundedHardeningInternal(runId, executionOptions, dependencies)
+  } catch (error) {
+    throw safeHardeningFailure(error)
+  }
 }
 
 export async function reconcileBoundedHardening(runId, options = {}) {
