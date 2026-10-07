@@ -101,6 +101,9 @@ function makeReviewRemediationRun() {
       blockerCount: blockers.length,
       securityFindingCount: securityFindings.length,
       testRequirementCount: testsRequired.length,
+      blockerItems: blockers,
+      securityItems: securityFindings,
+      testItems: testsRequired,
       remediationHash: hash,
       outcome: "hardening_started"
     }
