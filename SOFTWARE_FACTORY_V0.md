@@ -272,3 +272,46 @@ The Software Factory can now drive an ordinary PPO development run through multi
 The existing `/ppo continue <run-id>` route remains available for one-boundary manual control and diagnosis.
 
 The V0.6 driver does not add new implementation, testing, or review logic. It removes manual message-passing by composing the existing reviewed boundaries.
+
+
+## V0.7 autonomous deterministic test remediation
+
+Software Factory V0.7 closes the deterministic test-failure loop without treating worker quota pressure as an implementation failure.
+
+A required test command that returns a verified nonzero exit now commits `tests_failed` with the existing metadata-only Phase 6E evidence. Raw stdout and stderr remain discarded.
+
+The factory then follows this bounded path:
+
+```text
+implementation_ready
+        |
+deterministic tests
+        v
+tests_failed
+        |
+validate exact trusted test evidence
+        |
+probe Antigravity debugging readiness
+   +----+----+
+   |         |
+blocked     ready
+   |         |
+stay        v
+tests_failed implementation_in_progress
+(no attempt)  + test-remediation marker
+                  |
+                  v
+          Antigravity debugging
+                  |
+                  v
+          implementation_ready
+                  |
+                  v
+              retest
+```
+
+The remediation marker binds the debugging attempt to the failed implementation SHA and trusted test attempt. While that SHA remains current, normal Software Factory implementation routing must select the `debugging` capability and its `debugging-and-error-recovery` skill.
+
+Antigravity receives only bounded failure metadata: the source test attempt, failed/total counts, and up to five reviewed test IDs. Raw test output, stack traces, credentials, and arbitrary failure text are never forwarded.
+
+Existing persistent implementation/test attempt caps and the V0.6 autonomous-run step limit remain authoritative. Production actions remain outside this loop.

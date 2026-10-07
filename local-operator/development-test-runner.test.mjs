@@ -602,7 +602,7 @@ test("passing tests use explicit argv with shell=false, sanitized env, no-networ
   }
 })
 
-test("one required test failure remains tests_in_progress with metadata-only failed evidence", async () => {
+test("one required deterministic test failure transitions to tests_failed with metadata-only evidence", async () => {
   const fixture = await makeImplementationReadyFixture()
   const calls = []
   const registry = trustedTestPolicyRegistry(fixture, {
@@ -631,7 +631,7 @@ test("one required test failure remains tests_in_progress with metadata-only fai
   })
   const latest = latestTestEvidence(reloaded)
 
-  assert.equal(reloaded.status, "tests_in_progress")
+  assert.equal(reloaded.status, "tests_failed")
   assert.equal(reloaded.attempts.test, 1)
   assert.equal(latest.metadata.outcome, "failed")
   assert.equal(latest.sha, fixture.headSha)
@@ -782,45 +782,43 @@ test("orphaned automated testing closes ambiguously and permits one bounded retr
   assert.equal(retry.run.attempts.test, open.attempts.test + 1)
 })
 
-test("testing attempts are durable, bounded, and retryable only after definitive failed evidence", async () => {
+test("deterministic failed evidence parks the run and direct test retry is refused until remediation", async () => {
   const fixture = await makeImplementationReadyFixture()
 
-  for (let attempt = 1; attempt <= MAX_AUTOMATED_TEST_ATTEMPTS; attempt += 1) {
-    const current = await readDevelopmentRun(fixture.run.runId, {
-      writeDataDir: fixture.writeDataDir
-    })
+  await assertRejectsCode(executeAutomatedTests(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    testPolicyRegistry: trustedTestPolicyRegistry(fixture, {
+      steps: [testStep({ args: ["--eval", "process.exit(1)"] })]
+    }),
+    sandboxRunner: makeSandboxRunner(async () => ({ exitCode: 1 })),
+    now: fixture.now
+  }), "TEST_POLICY_FAILED")
 
-    await assertRejectsCode(executeAutomatedTests(fixture.run.runId, {
-      expectedVersion: current.version,
-      writeDataDir: fixture.writeDataDir,
-      workspaceRegistry: fixture.registry,
-      testPolicyRegistry: trustedTestPolicyRegistry(fixture, {
-        steps: [testStep({ args: ["--eval", "process.exit(1)"] })]
-      }),
-      sandboxRunner: makeSandboxRunner(async () => ({ exitCode: 1 })),
-      now: fixture.now
-    }), "TEST_POLICY_FAILED")
-
-    const reloaded = await readDevelopmentRun(fixture.run.runId, {
-      writeDataDir: fixture.writeDataDir
-    })
-
-    assert.equal(reloaded.status, "tests_in_progress")
-    assert.equal(reloaded.attempts.test, attempt)
-    assert.equal(latestTestEvidence(reloaded).metadata.outcome, "failed")
-  }
-
-  const exhausted = await readDevelopmentRun(fixture.run.runId, {
+  const failed = await readDevelopmentRun(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir
   })
 
+  assert.equal(failed.status, "tests_failed")
+  assert.equal(failed.attempts.test, 1)
+  assert.equal(latestTestEvidence(failed).metadata.outcome, "failed")
+
   await assertRejectsCode(executeAutomatedTests(fixture.run.runId, {
-    expectedVersion: exhausted.version,
+    expectedVersion: failed.version,
     writeDataDir: fixture.writeDataDir,
     workspaceRegistry: fixture.registry,
     testPolicyRegistry: trustedTestPolicyRegistry(fixture),
     sandboxRunner: makeSandboxRunner(async () => ({ exitCode: 0 }))
-  }), "TEST_ATTEMPT_LIMIT_REACHED")
+  }), "TEST_RUN_NOT_READY")
+
+  const unchanged = await readDevelopmentRun(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(unchanged.version, failed.version)
+  assert.equal(unchanged.status, "tests_failed")
+  assert.equal(unchanged.attempts.test, 1)
 })
 
 test("optimistic concurrency allows only one final PASS transition for a run version", async () => {
