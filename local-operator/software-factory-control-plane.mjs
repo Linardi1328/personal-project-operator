@@ -88,7 +88,7 @@ export const SOFTWARE_FACTORY_WORKERS = deepFreeze({
   antigravity: {
     workerId: "antigravity",
     kind: "implementation",
-    adapterId: null,
+    adapterId: "software-factory-v0-antigravity-execution",
     readinessAdapterId: "software-factory-v0-antigravity-readiness"
   },
   "github-ci": {

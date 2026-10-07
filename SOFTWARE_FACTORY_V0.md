@@ -175,3 +175,29 @@ PPO can issue a short-lived in-memory Antigravity dispatch authorization only wh
 Authorization validity is tied to the adapter instance's private in-memory identity set. A serialized or reconstructed object cannot be replayed as valid authorization.
 
 V0.3 still does not invoke Antigravity for implementation work. The next execution slice must consume this authorization at the execution boundary and independently preserve PPO's exact-run, workspace, attempt, and evidence guarantees.
+
+
+## V0.4 sandboxed Antigravity implementation execution
+
+V0.4 introduces the first Antigravity implementation executor while preserving the existing PPO development-run lifecycle.
+
+Execution requires all of the following before an implementation attempt is consumed:
+
+- a current short-lived authorization from the reviewed Antigravity readiness adapter;
+- an exact current `implementation_in_progress` run version;
+- a matching prepared PPO isolated workspace at the expected HEAD;
+- a canonical reviewed Antigravity and Git executable;
+- Antigravity settings with `toolPermission: "always-proceed"`;
+- explicit `read_file(*)` and `write_file(*)` allow rules;
+- the PPO workspace inside an Antigravity trusted workspace; and
+- non-workspace access not enabled.
+
+PPO does not change those global Antigravity settings automatically.
+
+The executor invokes Antigravity in non-interactive print mode with `--sandbox`. It never passes `--dangerously-skip-permissions`.
+
+The prompt forbids remote Git mutation, deployment, infrastructure mutation, credentials changes, unrelated refactors, and commits. PPO independently preserves successful changes in a local commit, verifies that the protected source repository did not change, verifies that the resulting HEAD descends from the authorized start SHA, and records only bounded structured evidence.
+
+If Antigravity fails after the implementation attempt begins, PPO verifies the protected source repo and restores the disposable isolated workspace to the authorized start SHA before recording a definitive failure. This prevents failed attempts from leaving a dirty worktree that blocks future recovery.
+
+V0.4 intentionally does not yet replace the existing Continue orchestrator's Codex execution route. The adapter must first pass repository CI and independent review. The next slice will route implementation through readiness → checkpoint → authorization → Antigravity execution, while preserving capacity blocks as non-attempt conditions.
