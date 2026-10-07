@@ -37,7 +37,7 @@ export const ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS = Object.freeze({
   ])
 })
 
-const quotaPattern = /(?:quota (?:reached|exhausted)|limit(?:s)? exhausted|baseline model quota reached|individual quota reached|resets in)/iu
+const quotaPattern = /(?:quota (?:reached|exhausted)|limit(?:s)? exhausted|baseline model quota reached|individual quota reached)/iu
 const rateLimitPattern = /(?:rate limit(?:ed)?|too many requests|429)/iu
 const authPattern = /(?:not authenticated|authentication required|sign in|login required|unauthorized|401)/iu
 const unsafeOutputPattern = /(?:github_pat_|gh[opusr]_|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:])/iu
