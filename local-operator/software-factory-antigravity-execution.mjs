@@ -117,7 +117,7 @@ function permissionAllowSet(settings) {
   return new Set(Array.isArray(allow) ? allow.filter((value) => typeof value === "string") : [])
 }
 
-export function validateAntigravityAutomationSettings(settings, workspacePath) {
+export function validateAntigravityAutomationSettings(settings, workspaceRoot, workspacePath) {
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
     throw executionError(
       "ANTIGRAVITY_AUTOMATION_SETTINGS_REQUIRED",
@@ -154,14 +154,22 @@ export function validateAntigravityAutomationSettings(settings, workspacePath) {
   const trusted = Array.isArray(settings.trustedWorkspaces)
     ? settings.trustedWorkspaces.filter((value) => typeof value === "string")
     : []
+  const canonicalManagedRoot = resolvePath(workspaceRoot)
   const canonicalWorkspace = resolvePath(workspacePath)
   const trustedMatch = trusted.some((root) => {
     if (!isAbsolute(root)) {
       return false
     }
     const canonicalRoot = resolvePath(root)
-    const rel = relative(canonicalRoot, canonicalWorkspace)
-    return !rel || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+    const rootWithinManaged = (() => {
+      const rel = relative(canonicalManagedRoot, canonicalRoot)
+      return !rel || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+    })()
+    const workspaceWithinTrusted = (() => {
+      const rel = relative(canonicalRoot, canonicalWorkspace)
+      return !rel || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+    })()
+    return rootWithinManaged && workspaceWithinTrusted
   })
 
   if (!trustedMatch) {
@@ -206,7 +214,7 @@ async function validateRegularPrivateFile(path, safeCode, safeMessage) {
   return canonical
 }
 
-async function readAutomationSettings(homePath, workspacePath) {
+async function readAutomationSettings(homePath, workspaceRoot, workspacePath) {
   const path = fixedSettingsPath(homePath)
   await validateRegularPrivateFile(
     path,
@@ -225,7 +233,7 @@ async function readAutomationSettings(homePath, workspacePath) {
       "configuration"
     )
   }
-  return validateAntigravityAutomationSettings(settings, workspacePath)
+  return validateAntigravityAutomationSettings(settings, workspaceRoot, workspacePath)
 }
 
 async function resolveReviewedAgy(platform) {
@@ -622,18 +630,27 @@ async function executeInternal(runId, authorization, options = {}) {
     )
   }
 
-  const platform = options.platform || process.platform
+  const platform = process.platform
   const agyPath = await resolveReviewedAgy(platform)
   const gitPath = await validateGitExecutable(fixedGitPath(platform))
-  const homePath = resolvePath(options.homePath || process.env.HOME || "")
-  if (!homePath || !isAbsolute(homePath)) {
+  const configuredHome = process.env.HOME
+  if (typeof configuredHome !== "string" || !configuredHome.trim() || !isAbsolute(configuredHome)) {
     throw executionError(
       "ANTIGRAVITY_HOME_INVALID",
       "Antigravity home directory is unavailable.",
       "configuration"
     )
   }
-  await readAutomationSettings(homePath, location.workspacePath)
+  const homePath = resolvePath(configuredHome)
+  const homeReal = await realpath(homePath).catch(() => null)
+  if (homeReal !== homePath) {
+    throw executionError(
+      "ANTIGRAVITY_HOME_INVALID",
+      "Antigravity home directory is unavailable.",
+      "configuration"
+    )
+  }
+  await readAutomationSettings(homePath, location.workspaceRoot, location.workspacePath)
   const env = sanitizedEnv(homePath, agyPath, gitPath)
   const expectedStartSha = normalizeSha(run.headSha || run.baseSha, "Run implementation head SHA")
   const workspaceBefore = await gitFacts(gitPath, location.workspacePath, env)
