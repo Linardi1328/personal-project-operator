@@ -41,7 +41,6 @@ const quotaPattern = /(?:quota (?:reached|exhausted)|limit(?:s)? exhausted|basel
 const rateLimitPattern = /(?:rate limit(?:ed)?|too many requests|429)/iu
 const authPattern = /(?:not authenticated|authentication required|sign in|login required|unauthorized|401)/iu
 const unsafeOutputPattern = /(?:github_pat_|gh[opusr]_|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:])/iu
-const authorizationSet = new WeakSet()
 
 export class SoftwareFactoryReadinessError extends Error {
   constructor(code, safeMessage) {
@@ -56,85 +55,18 @@ function readinessError(code, safeMessage) {
   return new SoftwareFactoryReadinessError(code, safeMessage)
 }
 
-function nowDate(options = {}) {
-  const value = options.now ? options.now() : new Date()
+function defaultNow() {
+  return new Date()
+}
+
+function normalizedNow(nowImpl) {
+  const value = nowImpl()
   const date = value instanceof Date ? value : new Date(value)
   return Number.isNaN(date.getTime()) ? new Date() : date
 }
 
-function fixedExecutableCandidates(platform = process.platform) {
+function fixedExecutableCandidates(platform) {
   return ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS[platform] || []
-}
-
-async function validateReviewedExecutable(path, options = {}) {
-  if (typeof path !== "string" || path !== resolvePath(path)) {
-    throw readinessError(
-      "ANTIGRAVITY_PROBE_UNTRUSTED",
-      "Reviewed Antigravity readiness executable is not trusted."
-    )
-  }
-
-  const lstatImpl = options.lstatImpl || lstat
-  const realpathImpl = options.realpathImpl || realpath
-  const statImpl = options.statImpl || stat
-  const linkInfo = await lstatImpl(path).catch(() => null)
-
-  if (!linkInfo) {
-    throw readinessError(
-      "ANTIGRAVITY_PROBE_UNAVAILABLE",
-      "Reviewed Antigravity readiness executable is unavailable."
-    )
-  }
-
-  if (linkInfo.isSymbolicLink()) {
-    throw readinessError(
-      "ANTIGRAVITY_PROBE_UNTRUSTED",
-      "Reviewed Antigravity readiness executable is not trusted."
-    )
-  }
-
-  const canonical = await realpathImpl(path).catch(() => null)
-  const info = canonical ? await statImpl(canonical).catch(() => null) : null
-
-  if (
-    canonical !== path ||
-    !info?.isFile?.() ||
-    (info.mode & 0o022) !== 0
-  ) {
-    throw readinessError(
-      "ANTIGRAVITY_PROBE_UNTRUSTED",
-      "Reviewed Antigravity readiness executable is not trusted."
-    )
-  }
-
-  return canonical
-}
-
-async function resolveReviewedExecutable(options = {}) {
-  if (options.testExecutablePath) {
-    if (options.allowTestOverrides !== true) {
-      throw readinessError(
-        "ANTIGRAVITY_PROBE_UNTRUSTED",
-        "Reviewed Antigravity readiness executable is not trusted."
-      )
-    }
-    return validateReviewedExecutable(options.testExecutablePath, options)
-  }
-
-  for (const candidate of fixedExecutableCandidates(options.platform)) {
-    try {
-      return await validateReviewedExecutable(candidate, options)
-    } catch (error) {
-      if (error?.code !== "ANTIGRAVITY_PROBE_UNAVAILABLE") {
-        throw error
-      }
-    }
-  }
-
-  throw readinessError(
-    "ANTIGRAVITY_PROBE_UNAVAILABLE",
-    "Reviewed Antigravity readiness executable is unavailable."
-  )
 }
 
 function classifyProbeText(text) {
@@ -194,142 +126,6 @@ function boundedOutput(stdout, stderr) {
   return combined
 }
 
-async function runReviewedProbe(options = {}) {
-  if (options.probeRunner) {
-    if (options.allowTestOverrides !== true) {
-      throw readinessError(
-        "ANTIGRAVITY_PROBE_UNTRUSTED",
-        "Reviewed Antigravity readiness probe override is not trusted."
-      )
-    }
-    return options.probeRunner()
-  }
-
-  const executablePath = await resolveReviewedExecutable(options)
-  const execFileImpl = options.execFileImpl || execFileAsync
-  const common = {
-    cwd: "/",
-    encoding: "utf8",
-    timeout: ANTIGRAVITY_READINESS_TIMEOUT_MS,
-    maxBuffer: ANTIGRAVITY_READINESS_MAX_OUTPUT_BYTES,
-    shell: false,
-    env: {
-      PATH: "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
-      HOME: process.env.HOME || "",
-      TERM: "dumb",
-      NO_COLOR: "1",
-      CI: "true",
-      GIT_TERMINAL_PROMPT: "0"
-    }
-  }
-
-  let models
-
-  try {
-    const result = await execFileImpl(executablePath, ["models"], common)
-    models = {
-      exitCode: 0,
-      stdout: result.stdout || "",
-      stderr: result.stderr || ""
-    }
-  } catch (error) {
-    if (error?.killed || error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT") {
-      throw readinessError(
-        "ANTIGRAVITY_PROBE_TIMEOUT",
-        "Antigravity readiness probe timed out."
-      )
-    }
-
-    models = {
-      exitCode: Number.isInteger(error?.code) ? error.code : 1,
-      stdout: error?.stdout || "",
-      stderr: error?.stderr || ""
-    }
-  }
-
-  const modelText = boundedOutput(models.stdout, models.stderr)
-  const modelClassification = classifyProbeText(modelText)
-
-  if (models.exitCode !== 0 || modelClassification?.integration === "unconfigured") {
-    return {
-      ...models,
-      classification: modelClassification
-    }
-  }
-
-  let usage
-
-  try {
-    const result = await execFileImpl(
-      executablePath,
-      ["-p", "/usage", "--print-timeout", "10s"],
-      common
-    )
-    usage = {
-      exitCode: 0,
-      stdout: result.stdout || "",
-      stderr: result.stderr || ""
-    }
-  } catch (error) {
-    usage = {
-      exitCode: Number.isInteger(error?.code) ? error.code : 1,
-      stdout: error?.stdout || "",
-      stderr: error?.stderr || ""
-    }
-  }
-
-  const usageText = boundedOutput(usage.stdout, usage.stderr)
-  const usageClassification = classifyProbeText(usageText)
-
-  return {
-    exitCode: models.exitCode,
-    stdout: `${models.stdout || ""}\n${usage.stdout || ""}`,
-    stderr: `${models.stderr || ""}\n${usage.stderr || ""}`,
-    classification: usageClassification || modelClassification || null
-  }
-}
-
-export async function probeAntigravityReadiness(options = {}) {
-  const result = await runReviewedProbe(options)
-  const text = boundedOutput(result.stdout, result.stderr)
-  const classified = result.classification || classifyProbeText(text)
-  const observedAt = nowDate(options).toISOString()
-
-  if (classified) {
-    return Object.freeze({
-      schemaVersion: ANTIGRAVITY_READINESS_SCHEMA_VERSION,
-      adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
-      workerId: "antigravity",
-      sourceId: "reviewed-runtime-probe",
-      observedAt,
-      integration: classified.integration,
-      capacity: classified.capacity
-    })
-  }
-
-  if (result.exitCode !== 0) {
-    return Object.freeze({
-      schemaVersion: ANTIGRAVITY_READINESS_SCHEMA_VERSION,
-      adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
-      workerId: "antigravity",
-      sourceId: "reviewed-runtime-probe",
-      observedAt,
-      integration: "unconfigured",
-      capacity: "unavailable"
-    })
-  }
-
-  return Object.freeze({
-    schemaVersion: ANTIGRAVITY_READINESS_SCHEMA_VERSION,
-    adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
-    workerId: "antigravity",
-    sourceId: "reviewed-runtime-probe",
-    observedAt,
-    integration: "configured",
-    capacity: "unknown"
-  })
-}
-
 function assertAntigravityCapability(capability) {
   const policy = describeSoftwareFactoryCapability(capability)
 
@@ -343,136 +139,348 @@ function assertAntigravityCapability(capability) {
   return policy
 }
 
-export async function recordTrustedAntigravityReadiness(input, options = {}) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw readinessError(
-      "ANTIGRAVITY_READINESS_INPUT_INVALID",
-      "Antigravity readiness input is invalid."
-    )
-  }
+export function createAntigravityReadinessAdapter(dependencies = {}) {
+  const platform = dependencies.platform || process.platform
+  const candidates = dependencies.executableCandidates || fixedExecutableCandidates(platform)
+  const execFileImpl = dependencies.execFileImpl || execFileAsync
+  const lstatImpl = dependencies.lstatImpl || lstat
+  const realpathImpl = dependencies.realpathImpl || realpath
+  const statImpl = dependencies.statImpl || stat
+  const nowImpl = dependencies.now || defaultNow
+  const readRunImpl = dependencies.readRun || readDevelopmentRun
+  const readCheckpointImpl = dependencies.readCheckpoint || readSoftwareFactoryDispatchCheckpoint
+  const recordCheckpointImpl = dependencies.recordCheckpoint || recordSoftwareFactoryDispatchCheckpoint
+  const probeRunner = dependencies.probeRunner || null
+  const authorizationSet = new WeakSet()
 
-  assertAntigravityCapability(input.capability)
-  const observation = await probeAntigravityReadiness(options)
-
-  return recordSoftwareFactoryDispatchCheckpoint({
-    runId: input.runId,
-    runVersion: input.runVersion,
-    capability: input.capability,
-    expectedCheckpointVersion: input.expectedCheckpointVersion ?? 0,
-    failedAttempts: input.failedAttempts,
-    risk: input.risk,
-    observation: {
-      workerId: observation.workerId,
-      integration: observation.integration,
-      capacity: observation.capacity,
-      sourceId: observation.sourceId,
-      observedAt: observation.observedAt
+  async function validateReviewedExecutable(path) {
+    if (typeof path !== "string" || path !== resolvePath(path)) {
+      throw readinessError(
+        "ANTIGRAVITY_PROBE_UNTRUSTED",
+        "Reviewed Antigravity readiness executable is not trusted."
+      )
     }
-  }, options)
-}
 
-function authorizationAgeValid(authorization, now) {
-  const issuedMs = Date.parse(authorization.issuedAt)
-  const age = now.getTime() - issuedMs
-  return age >= 0 && age <= ANTIGRAVITY_AUTHORIZATION_MAX_AGE_MS
-}
+    const linkInfo = await lstatImpl(path).catch(() => null)
 
-export async function authorizeAntigravityDispatch(input, options = {}) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    if (!linkInfo) {
+      throw readinessError(
+        "ANTIGRAVITY_PROBE_UNAVAILABLE",
+        "Reviewed Antigravity readiness executable is unavailable."
+      )
+    }
+
+    if (linkInfo.isSymbolicLink()) {
+      throw readinessError(
+        "ANTIGRAVITY_PROBE_UNTRUSTED",
+        "Reviewed Antigravity readiness executable is not trusted."
+      )
+    }
+
+    const canonical = await realpathImpl(path).catch(() => null)
+    const info = canonical ? await statImpl(canonical).catch(() => null) : null
+
+    if (
+      canonical !== path ||
+      !info?.isFile?.() ||
+      (info.mode & 0o022) !== 0
+    ) {
+      throw readinessError(
+        "ANTIGRAVITY_PROBE_UNTRUSTED",
+        "Reviewed Antigravity readiness executable is not trusted."
+      )
+    }
+
+    return canonical
+  }
+
+  async function resolveReviewedExecutable() {
+    for (const candidate of candidates) {
+      try {
+        return await validateReviewedExecutable(candidate)
+      } catch (error) {
+        if (error?.code !== "ANTIGRAVITY_PROBE_UNAVAILABLE") {
+          throw error
+        }
+      }
+    }
+
     throw readinessError(
-      "ANTIGRAVITY_AUTHORIZATION_INPUT_INVALID",
-      "Antigravity dispatch authorization input is invalid."
+      "ANTIGRAVITY_PROBE_UNAVAILABLE",
+      "Reviewed Antigravity readiness executable is unavailable."
     )
   }
 
-  const policy = assertAntigravityCapability(input.capability)
-  const reader = options.readRun || readDevelopmentRun
-  const run = await reader(normalizeDevelopmentRunId(input.runId), options)
+  async function runCommand(executablePath, args) {
+    const common = {
+      cwd: "/",
+      encoding: "utf8",
+      timeout: ANTIGRAVITY_READINESS_TIMEOUT_MS,
+      maxBuffer: ANTIGRAVITY_READINESS_MAX_OUTPUT_BYTES,
+      shell: false,
+      env: {
+        PATH: "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+        HOME: process.env.HOME || "",
+        TERM: "dumb",
+        NO_COLOR: "1",
+        CI: "true",
+        GIT_TERMINAL_PROMPT: "0"
+      }
+    }
 
-  if (
-    run.version !== input.runVersion ||
-    isDevelopmentRunTerminalStatus(run.status)
-  ) {
-    throw readinessError(
-      "ANTIGRAVITY_AUTHORIZATION_RUN_STALE",
-      "Development run is not current for Antigravity dispatch."
-    )
+    try {
+      const result = await execFileImpl(executablePath, args, common)
+      return {
+        exitCode: 0,
+        stdout: result.stdout || "",
+        stderr: result.stderr || ""
+      }
+    } catch (error) {
+      if (error?.killed || error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT") {
+        return {
+          exitCode: 124,
+          stdout: error?.stdout || "",
+          stderr: error?.stderr || "",
+          timedOut: true
+        }
+      }
+
+      return {
+        exitCode: Number.isInteger(error?.code) ? error.code : 1,
+        stdout: error?.stdout || "",
+        stderr: error?.stderr || ""
+      }
+    }
   }
 
-  const checkpoint = await readSoftwareFactoryDispatchCheckpoint(run.runId, options)
+  async function runReviewedProbe() {
+    if (probeRunner) {
+      return probeRunner()
+    }
 
-  const checkpointExpiresAt = Date.parse(checkpoint?.observation?.expiresAt || "")
-  const now = nowDate(options)
+    const executablePath = await resolveReviewedExecutable()
+    const models = await runCommand(executablePath, ["models"])
+    const modelText = boundedOutput(models.stdout, models.stderr)
+    const modelClassification = classifyProbeText(modelText)
 
-  if (
-    checkpoint.runVersion !== run.version ||
-    checkpoint.capability !== input.capability ||
-    checkpoint.workerId !== "antigravity" ||
-    checkpoint.checkpointVersion !== input.checkpointVersion ||
-    checkpoint.dispatch?.outcome !== "ready" ||
-    checkpoint.dispatch?.consumeAttempt !== true ||
-    checkpoint.observation?.sourceId !== "reviewed-runtime-probe" ||
-    checkpoint.observation?.fresh !== true ||
-    !Number.isFinite(checkpointExpiresAt) ||
-    checkpointExpiresAt < now.getTime()
-  ) {
-    throw readinessError(
-      "ANTIGRAVITY_AUTHORIZATION_BINDING_MISMATCH",
-      "Software factory checkpoint does not authorize this Antigravity dispatch."
+    if (models.timedOut) {
+      throw readinessError(
+        "ANTIGRAVITY_PROBE_TIMEOUT",
+        "Antigravity readiness probe timed out."
+      )
+    }
+
+    if (models.exitCode !== 0 || modelClassification?.integration === "unconfigured") {
+      return {
+        ...models,
+        classification: modelClassification
+      }
+    }
+
+    const usage = await runCommand(
+      executablePath,
+      ["-p", "/usage", "--print-timeout", "10s"]
     )
+    const usageText = boundedOutput(usage.stdout, usage.stderr)
+    const usageClassification = classifyProbeText(usageText)
+
+    return {
+      exitCode: models.exitCode,
+      stdout: `${models.stdout || ""}\n${usage.stdout || ""}`,
+      stderr: `${models.stderr || ""}\n${usage.stderr || ""}`,
+      classification: usageClassification || modelClassification || null
+    }
   }
 
-  const observation = await probeAntigravityReadiness({
-    ...options,
-    now: () => now
+  async function probe() {
+    const result = await runReviewedProbe()
+    const text = boundedOutput(result.stdout, result.stderr)
+    const classified = result.classification || classifyProbeText(text)
+    const observedAt = normalizedNow(nowImpl).toISOString()
+
+    if (classified) {
+      return Object.freeze({
+        schemaVersion: ANTIGRAVITY_READINESS_SCHEMA_VERSION,
+        adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
+        workerId: "antigravity",
+        sourceId: "reviewed-runtime-probe",
+        observedAt,
+        integration: classified.integration,
+        capacity: classified.capacity
+      })
+    }
+
+    if (result.exitCode !== 0) {
+      return Object.freeze({
+        schemaVersion: ANTIGRAVITY_READINESS_SCHEMA_VERSION,
+        adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
+        workerId: "antigravity",
+        sourceId: "reviewed-runtime-probe",
+        observedAt,
+        integration: "unconfigured",
+        capacity: "unavailable"
+      })
+    }
+
+    return Object.freeze({
+      schemaVersion: ANTIGRAVITY_READINESS_SCHEMA_VERSION,
+      adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
+      workerId: "antigravity",
+      sourceId: "reviewed-runtime-probe",
+      observedAt,
+      integration: "configured",
+      capacity: "unknown"
+    })
+  }
+
+  async function record(input, options = {}) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw readinessError(
+        "ANTIGRAVITY_READINESS_INPUT_INVALID",
+        "Antigravity readiness input is invalid."
+      )
+    }
+
+    assertAntigravityCapability(input.capability)
+    const observation = await probe()
+
+    return recordCheckpointImpl({
+      runId: input.runId,
+      runVersion: input.runVersion,
+      capability: input.capability,
+      expectedCheckpointVersion: input.expectedCheckpointVersion ?? 0,
+      failedAttempts: input.failedAttempts,
+      risk: input.risk,
+      observation: {
+        workerId: observation.workerId,
+        integration: observation.integration,
+        capacity: observation.capacity,
+        sourceId: observation.sourceId,
+        observedAt: observation.observedAt
+      }
+    }, options)
+  }
+
+  async function authorize(input, options = {}) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw readinessError(
+        "ANTIGRAVITY_AUTHORIZATION_INPUT_INVALID",
+        "Antigravity dispatch authorization input is invalid."
+      )
+    }
+
+    const policy = assertAntigravityCapability(input.capability)
+    const run = await readRunImpl(normalizeDevelopmentRunId(input.runId), options)
+
+    if (
+      run.version !== input.runVersion ||
+      isDevelopmentRunTerminalStatus(run.status)
+    ) {
+      throw readinessError(
+        "ANTIGRAVITY_AUTHORIZATION_RUN_STALE",
+        "Development run is not current for Antigravity dispatch."
+      )
+    }
+
+    const checkpoint = await readCheckpointImpl(run.runId, options)
+    const checkpointExpiresAt = Date.parse(checkpoint?.observation?.expiresAt || "")
+    const now = normalizedNow(nowImpl)
+
+    if (
+      checkpoint.runVersion !== run.version ||
+      checkpoint.capability !== input.capability ||
+      checkpoint.workerId !== "antigravity" ||
+      checkpoint.checkpointVersion !== input.checkpointVersion ||
+      checkpoint.dispatch?.outcome !== "ready" ||
+      checkpoint.dispatch?.consumeAttempt !== true ||
+      checkpoint.observation?.sourceId !== "reviewed-runtime-probe" ||
+      checkpoint.observation?.fresh !== true ||
+      !Number.isFinite(checkpointExpiresAt) ||
+      checkpointExpiresAt < now.getTime()
+    ) {
+      throw readinessError(
+        "ANTIGRAVITY_AUTHORIZATION_BINDING_MISMATCH",
+        "Software factory checkpoint does not authorize this Antigravity dispatch."
+      )
+    }
+
+    const observation = await probe()
+
+    if (
+      observation.integration !== "configured" ||
+      !SOFTWARE_FACTORY_CAPACITY_STATES.includes(observation.capacity) ||
+      !["available", "degraded"].includes(observation.capacity)
+    ) {
+      throw readinessError(
+        "ANTIGRAVITY_AUTHORIZATION_NOT_READY",
+        "Antigravity is not currently ready for dispatch."
+      )
+    }
+
+    const authorization = Object.freeze({
+      kind: "software-factory-antigravity-dispatch-authorization",
+      adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
+      runId: run.runId,
+      runVersion: run.version,
+      projectId: run.project.id,
+      capability: input.capability,
+      workerId: policy.workerId,
+      modelClass: checkpoint.modelClass,
+      skills: [...checkpoint.skills],
+      checkpointVersion: checkpoint.checkpointVersion,
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + ANTIGRAVITY_AUTHORIZATION_MAX_AGE_MS).toISOString()
+    })
+
+    authorizationSet.add(authorization)
+    return authorization
+  }
+
+  function assertAuthorization(authorization) {
+    if (!authorizationSet.has(authorization)) {
+      throw readinessError(
+        "ANTIGRAVITY_AUTHORIZATION_INVALID",
+        "Antigravity dispatch authorization is invalid."
+      )
+    }
+
+    const issuedMs = Date.parse(authorization.issuedAt)
+    const age = normalizedNow(nowImpl).getTime() - issuedMs
+
+    if (age < 0 || age > ANTIGRAVITY_AUTHORIZATION_MAX_AGE_MS) {
+      throw readinessError(
+        "ANTIGRAVITY_AUTHORIZATION_EXPIRED",
+        "Antigravity dispatch authorization expired."
+      )
+    }
+
+    return authorization
+  }
+
+  return Object.freeze({
+    probe,
+    record,
+    authorize,
+    assertAuthorization
   })
-
-  if (
-    observation.integration !== "configured" ||
-    !SOFTWARE_FACTORY_CAPACITY_STATES.includes(observation.capacity) ||
-    !["available", "degraded"].includes(observation.capacity)
-  ) {
-    throw readinessError(
-      "ANTIGRAVITY_AUTHORIZATION_NOT_READY",
-      "Antigravity is not currently ready for dispatch."
-    )
-  }
-
-  const authorization = Object.freeze({
-    kind: "software-factory-antigravity-dispatch-authorization",
-    adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
-    runId: run.runId,
-    runVersion: run.version,
-    projectId: run.project.id,
-    capability: input.capability,
-    workerId: policy.workerId,
-    modelClass: checkpoint.modelClass,
-    skills: [...checkpoint.skills],
-    checkpointVersion: checkpoint.checkpointVersion,
-    issuedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + ANTIGRAVITY_AUTHORIZATION_MAX_AGE_MS).toISOString()
-  })
-
-  authorizationSet.add(authorization)
-  return authorization
 }
 
-export function assertAntigravityDispatchAuthorization(authorization, options = {}) {
-  if (!authorizationSet.has(authorization)) {
-    throw readinessError(
-      "ANTIGRAVITY_AUTHORIZATION_INVALID",
-      "Antigravity dispatch authorization is invalid."
-    )
-  }
+const defaultAntigravityReadinessAdapter = createAntigravityReadinessAdapter()
 
-  if (!authorizationAgeValid(authorization, nowDate(options))) {
-    throw readinessError(
-      "ANTIGRAVITY_AUTHORIZATION_EXPIRED",
-      "Antigravity dispatch authorization expired."
-    )
-  }
+export function probeAntigravityReadiness() {
+  return defaultAntigravityReadinessAdapter.probe()
+}
 
-  return authorization
+export function recordTrustedAntigravityReadiness(input, options = {}) {
+  return defaultAntigravityReadinessAdapter.record(input, options)
+}
+
+export function authorizeAntigravityDispatch(input, options = {}) {
+  return defaultAntigravityReadinessAdapter.authorize(input, options)
+}
+
+export function assertAntigravityDispatchAuthorization(authorization) {
+  return defaultAntigravityReadinessAdapter.assertAuthorization(authorization)
 }
 
 export function formatSoftwareFactoryReadinessError(error) {
