@@ -602,7 +602,7 @@ test("passing tests use explicit argv with shell=false, sanitized env, no-networ
   }
 })
 
-test("one required test failure remains tests_in_progress with metadata-only failed evidence", async () => {
+test("one required deterministic test failure transitions to tests_failed with metadata-only evidence", async () => {
   const fixture = await makeImplementationReadyFixture()
   const calls = []
   const registry = trustedTestPolicyRegistry(fixture, {
@@ -631,7 +631,7 @@ test("one required test failure remains tests_in_progress with metadata-only fai
   })
   const latest = latestTestEvidence(reloaded)
 
-  assert.equal(reloaded.status, "tests_in_progress")
+  assert.equal(reloaded.status, "tests_failed")
   assert.equal(reloaded.attempts.test, 1)
   assert.equal(latest.metadata.outcome, "failed")
   assert.equal(latest.sha, fixture.headSha)
