@@ -106,7 +106,7 @@ export function classifyAntigravityProbeText(text) {
   return null
 }
 
-function boundedOutput(stdout, stderr) {
+export function validateAntigravityProbeOutput(stdout, stderr) {
   const combined = `${String(stdout ?? "")}\n${String(stderr ?? "")}`
 
   if (Buffer.byteLength(combined, "utf8") > ANTIGRAVITY_READINESS_MAX_OUTPUT_BYTES) {
@@ -372,7 +372,7 @@ function createAntigravityReadinessAdapter(dependencies = {}) {
       )
     }
 
-    const modelText = boundedOutput(models.stdout, models.stderr)
+    const modelText = validateAntigravityProbeOutput(models.stdout, models.stderr)
     const modelClassification = classifyAntigravityProbeText(modelText)
 
     if (models.exitCode !== 0 || modelClassification?.integration === "unconfigured") {
@@ -388,7 +388,7 @@ function createAntigravityReadinessAdapter(dependencies = {}) {
     )
     const usageClassification = usage.timedOut
       ? null
-      : classifyAntigravityProbeText(boundedOutput(usage.stdout, usage.stderr))
+      : classifyAntigravityProbeText(validateAntigravityProbeOutput(usage.stdout, usage.stderr))
 
     return {
       exitCode: models.exitCode,
@@ -400,7 +400,7 @@ function createAntigravityReadinessAdapter(dependencies = {}) {
 
   async function probe() {
     const result = await runReviewedProbe()
-    const text = boundedOutput(result.stdout, result.stderr)
+    const text = validateAntigravityProbeOutput(result.stdout, result.stderr)
     const classified = result.classification || classifyAntigravityProbeText(text)
     const observedAt = normalizedNow(nowImpl).toISOString()
 
