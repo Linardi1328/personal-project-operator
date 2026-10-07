@@ -16,6 +16,7 @@ import {
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
 import {
+  REVIEWED_CODEX_EXECUTION_ADAPTER_ID,
   classifyReviewedImplementationEvidence
 } from "./software-factory-implementation-evidence.mjs"
 import {
@@ -26,6 +27,7 @@ import {
 const execFileAsync = promisify(execFile)
 
 export const INDEPENDENT_REVIEW_AGENT_ID = "phase-6f-independent-review-agent"
+export const PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE = REVIEWED_CODEX_EXECUTION_ADAPTER_ID
 export const REMOTE_PR_REVIEW_AGENT_ID = "phase-6g-remote-pr-review-agent"
 export const INDEPENDENT_REVIEW_SANDBOX_ID = "phase-6f-no-outbound-network-review-sandbox"
 export const PHASE_6E_TEST_EVIDENCE_SOURCE = "phase-6e-automated-test-runner"
