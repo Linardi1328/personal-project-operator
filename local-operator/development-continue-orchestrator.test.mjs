@@ -762,6 +762,40 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
 })
 
 
+
+test("Phase 6K treats committed deterministic test failure as durable progress", async () => {
+  const before = makeRun("implementation_ready", {
+    version: 20,
+    attempts: { test: 0 }
+  })
+  const failed = makeRun("tests_failed", {
+    version: 22,
+    attempts: { test: 1 },
+    headSha: before.headSha
+  })
+  failed.evidence.test = [testFailureEvidence(failed)]
+  let current = before
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: async () => current,
+    childHandlers: {
+      executeAutomatedTests: async () => {
+        current = failed
+        const error = new Error("deterministic test failure")
+        error.code = "TEST_POLICY_FAILED"
+        error.outcome = "tests_failed"
+        throw error
+      }
+    },
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(before)
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "tests_failed")
+  assert.equal(result.before, "implementation_ready")
+  assert.equal(result.after, "tests_failed")
+  assert.equal(result.reason, "deterministic_tests_failed")
+})
+
 test("Phase 6K routes tests_failed into Software Factory test remediation", async () => {
   const run = makeRun("tests_failed", {
     attempts: { test: 1 }
