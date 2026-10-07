@@ -50,7 +50,12 @@ import {
   relinquishDevelopmentOperationLease,
   releaseDevelopmentOperationLease
 } from "./development-operation-lease.mjs"
-import { executeBoundedHardening } from "./development-hardening-orchestrator.mjs"
+import {
+  HARDENING_ORCHESTRATOR_ID,
+  createBoundedHardeningOrchestrator,
+  executeBoundedHardening,
+  latestHardeningEvidence
+} from "./development-hardening-orchestrator.mjs"
 import {
   executePhase6GDelivery,
   executeShaPinnedMerge
@@ -262,6 +267,7 @@ const defaultChildHandlers = Object.freeze({
   recoverReviewOrphan,
   prepareSoftwareFactoryTestRemediation,
   executeBoundedHardening,
+  executeSoftwareFactoryBoundedHardening,
   executePhase6GDelivery,
   executeShaPinnedMerge
 })
@@ -708,6 +714,16 @@ async function reconcileOrphanedAttempt(
 
 
 export function resolveSoftwareFactoryImplementationCapability(run) {
+  const hardening = latestHardeningEvidence(run, "hardening_started")
+
+  if (
+    hardening?.source === HARDENING_ORCHESTRATOR_ID &&
+    hardening?.sha === run?.headSha &&
+    hardening?.metadata?.outcome === "hardening_started"
+  ) {
+    return "debugging"
+  }
+
   const remediation = latestSoftwareFactoryTestRemediation(run)
 
   if (
@@ -816,20 +832,29 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
 
 const defaultSoftwareFactoryImplementationCoordinator = createSoftwareFactoryImplementationCoordinator()
 
-async function executeSoftwareFactoryImplementation(runId, options = {}) {
+export async function executeSoftwareFactoryImplementation(runId, options = {}) {
   return defaultSoftwareFactoryImplementationCoordinator(runId, options)
 }
+
+const executeSoftwareFactoryBoundedHardening = createBoundedHardeningOrchestrator({
+  executeImplementation: executeSoftwareFactoryImplementation,
+  implementationAdapterId: ANTIGRAVITY_EXECUTION_ADAPTER_ID
+})
 
 function boundaryForStatus(status, scope) {
   const boundary = statusActions[status]
 
-  if (
-    scope.id === "ordinary" &&
-    status === "implementation_in_progress"
-  ) {
+  if (scope.id === "ordinary" && status === "implementation_in_progress") {
     return Object.freeze({
       action: "phase-6d-codex-implementation",
       handler: "executeSoftwareFactoryImplementation"
+    })
+  }
+
+  if (scope.id === "ordinary" && status === "review_changes_requested") {
+    return Object.freeze({
+      action: "software-factory-review-remediation",
+      handler: "executeSoftwareFactoryBoundedHardening"
     })
   }
 
