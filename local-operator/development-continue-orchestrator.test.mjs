@@ -2017,7 +2017,7 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable Codex 
   )
 })
 
-test("Phase 6K refuses missing Linux runtime readiness before child or policy-store mutation", async () => {
+test("Software Factory implementation runtime no longer depends on Codex or Linux bubblewrap readiness", async () => {
   const bubblewrapPath = "/usr/bin/bwrap"
   const fixture = await createStoredRun("implementation_in_progress")
   const before = await readDevelopmentRun(fixture.run.runId, {
@@ -2036,17 +2036,19 @@ test("Phase 6K refuses missing Linux runtime readiness before child or policy-st
       platform: "linux",
       statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
       accessImpl: async () => {},
-      execFileImpl: fakeRuntimeExecFile,
-      linuxSandboxCapabilityProbe: async () => true
+      execFileImpl: async () => {
+        throw new Error("Codex readiness must not be probed for Antigravity implementation")
+      },
+      linuxSandboxCapabilityProbe: async () => false
     })
   })
   const after = await readDevelopmentRun(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir
   })
 
-  assert.equal(result.ok, false)
-  assert.equal(result.reason, "continue_runtime_not_ready")
-  assert.equal(childCalls, 0)
+  assert.equal(result.ok, true)
+  assert.equal(result.action, "software-factory-antigravity-implementation")
+  assert.equal(childCalls, 1)
   assert.equal(after.version, before.version)
   assert.equal(after.status, before.status)
   assert.equal(await pathExists(join(fixture.writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR)), false)
