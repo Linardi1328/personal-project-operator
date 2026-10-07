@@ -923,7 +923,7 @@ async function recoverOrphanedInternal(runId, options = {}) {
   }
 
   const homePath = resolvePath(configuredHome)
-  const env = sanitizedEnv(homePath, ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS[platform]?.[0] || dirname(gitPath), gitPath)
+  const env = sanitizedEnv(homePath, gitPath, gitPath)
   const sourcePath = options.workspaceRegistry?.[run.project.id]?.sourceRepoPath
 
   if (!sourcePath) {
@@ -959,6 +959,22 @@ async function recoverOrphanedInternal(runId, options = {}) {
   const started = antigravityAttemptEvidence(run).find(
     (entry) => entry?.metadata?.outcome === "execution_started"
   )
+
+  if (
+    !started ||
+    typeof started?.metadata?.promptHash !== "string" ||
+    typeof started?.metadata?.startedAt !== "string" ||
+    typeof started?.metadata?.capability !== "string" ||
+    typeof started?.metadata?.modelClass !== "string" ||
+    !Number.isInteger(started?.metadata?.checkpointVersion)
+  ) {
+    throw executionError(
+      "ANTIGRAVITY_ORPHAN_RECOVERY_EVIDENCE_INVALID",
+      "Antigravity orphan recovery evidence is incomplete; owner reconciliation is required.",
+      "workspace_invalid"
+    )
+  }
+
   const endedAt = timestamp(options)
   const recovered = await recordDevelopmentRunProgress(run.runId, {
     expectedVersion: run.version,
@@ -966,14 +982,14 @@ async function recoverOrphanedInternal(runId, options = {}) {
     actor: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
     reason: "software-factory-antigravity-orphan-recovered",
     evidence: [executionEvidence(run, location, {
-      capability: started?.metadata?.capability || "implementation.backend",
-      modelClass: started?.metadata?.modelClass || "standard",
-      checkpointVersion: started?.metadata?.checkpointVersion || 0
+      capability: started.metadata.capability,
+      modelClass: started.metadata.modelClass,
+      checkpointVersion: started.metadata.checkpointVersion
     }, {
       sha: expectedHeadSha,
       attempt: expectedAttempt,
-      promptHash: started?.metadata?.promptHash || "0".repeat(64),
-      startedAt: started?.metadata?.startedAt || endedAt,
+      promptHash: started.metadata.promptHash,
+      startedAt: started.metadata.startedAt,
       endedAt,
       outcome: "execution_failed",
       failureClass: "runtime"
