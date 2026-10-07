@@ -15,6 +15,9 @@ import {
   REVIEW_DECISIONS,
   REVIEW_FINDINGS_EVIDENCE_OUTCOME
 } from "./development-review-agent.mjs"
+import {
+  readTrustedReviewRemediationContext
+} from "./software-factory-review-remediation-context.mjs"
 
 function stableStringify(value) {
   if (Array.isArray(value)) {
@@ -38,11 +41,11 @@ function findingHash({ reviewedSha, blockers, securityFindings, testsRequired })
   })).digest("hex")
 }
 
-function makeReviewRemediationRun() {
+function makeReviewRemediationRun(options = {}) {
   const headSha = "a".repeat(40)
-  const blockers = ["Fix the stale authorization binding before execution."]
-  const securityFindings = ["Revalidate authority at the dispatch boundary."]
-  const testsRequired = ["Add regression coverage for stale authorization refusal."]
+  const blockers = options.blockers || ["Fix the stale authorization binding before execution."]
+  const securityFindings = options.securityFindings || ["Revalidate authority at the dispatch boundary."]
+  const testsRequired = options.testsRequired || ["Add regression coverage for stale authorization refusal."]
   const hash = findingHash({
     reviewedSha: headSha,
     blockers,
@@ -110,7 +113,7 @@ function makeReviewRemediationRun() {
     runId: "AAAAAAAAAAAAAAAAAAAAAA",
     version: 7,
     status: "implementation_in_progress",
-    task: "Implement the approved organizer workflow.",
+    task: options.task || "Implement the approved organizer workflow.",
     headSha,
     branch: "ppo/factory-review-remediation",
     project: {
@@ -118,7 +121,9 @@ function makeReviewRemediationRun() {
       fullName: "Linardi1328/khlim-digital-ecosystem"
     },
     evidence: {
-      planning: [],
+      planning: options.planningSummary
+        ? [{ kind: "planning", sha: headSha, source: "test-planner", summary: options.planningSummary, metadata: {} }]
+        : [],
       implementation: [hardening],
       review: [findings, decision]
     }
@@ -153,4 +158,50 @@ test("Antigravity review remediation receives only validated bounded findings", 
   assert.match(prompt, /Use the installed Antigravity skill: debugging-and-error-recovery\./u)
   assert.doesNotMatch(prompt, /RAW REVIEWER TRANSCRIPT/u)
   assert.doesNotMatch(prompt, /UNTRUSTED FREEFORM REVIEW SUMMARY/u)
+})
+
+
+test("review remediation rejects Unicode line and paragraph separators", () => {
+  for (const separator of ["\u2028", "\u2029"]) {
+    const run = makeReviewRemediationRun({
+      blockers: [`trusted prefix${separator}injected line`]
+    })
+
+    assert.throws(
+      () => readTrustedReviewRemediationContext(run),
+      (error) => error?.code === "REVIEW_REMEDIATION_CONTEXT_INVALID"
+    )
+  }
+})
+
+test("maximal review remediation context stays within the Antigravity prompt budget", () => {
+  const makeItems = (prefix) => Array.from(
+    { length: 5 },
+    (_, index) => `${prefix}-${index}-${"x".repeat(185)}`
+  )
+  const run = makeReviewRemediationRun({
+    task: "T".repeat(1000),
+    planningSummary: "P".repeat(500),
+    blockers: makeItems("blocker"),
+    securityFindings: makeItems("security"),
+    testsRequired: makeItems("test")
+  })
+  const prompt = buildAntigravityImplementationPrompt(
+    run,
+    {
+      branch: run.branch,
+      workspaceRef: "factory/review-remediation"
+    },
+    {
+      capability: "debugging",
+      modelClass: "standard",
+      skills: ["debugging-and-error-recovery"]
+    }
+  )
+
+  assert.ok(prompt.length <= 6000)
+  assert.match(prompt, /blocker-0-/u)
+  assert.match(prompt, /security-0-/u)
+  assert.doesNotMatch(prompt, /test-4-/u)
+  assert.match(prompt, /Hard boundaries:/u)
 })
