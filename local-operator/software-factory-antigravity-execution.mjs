@@ -394,6 +394,54 @@ function failureClassFromOutput(stdout, stderr, error = null) {
   return "nonzero_exit"
 }
 
+
+function antigravityAttemptEvidence(run) {
+  const entries = Array.isArray(run?.evidence?.implementation)
+    ? run.evidence.implementation
+    : []
+  const attempt = run?.attempts?.implementation
+
+  return Number.isInteger(attempt) && attempt > 0
+    ? entries.filter((entry) => (
+        entry?.source === ANTIGRAVITY_EXECUTION_ADAPTER_ID &&
+        entry?.metadata?.attempt === attempt
+      ))
+    : []
+}
+
+export function classifyAntigravityExecutionAttemptEvidence(run) {
+  const entries = antigravityAttemptEvidence(run)
+
+  if (entries.length === 0) {
+    return "none"
+  }
+
+  const outcomes = entries.map((entry) => entry?.metadata?.outcome)
+  const startedCount = outcomes.filter((outcome) => outcome === "execution_started").length
+  const failedCount = outcomes.filter((outcome) => outcome === "execution_failed").length
+  const readyCount = outcomes.filter((outcome) => outcome === "implementation_ready").length
+
+  if (startedCount !== 1 || failedCount > 1 || readyCount > 1 || (failedCount > 0 && readyCount > 0)) {
+    return "invalid"
+  }
+
+  const lastOutcome = outcomes.at(-1)
+
+  if (lastOutcome === "execution_started") {
+    return "open"
+  }
+
+  if (lastOutcome === "execution_failed") {
+    return "definitive_failed"
+  }
+
+  if (lastOutcome === "implementation_ready") {
+    return "completed"
+  }
+
+  return "invalid"
+}
+
 export function buildAntigravityExecutionArgs(prompt) {
   const normalizedPrompt = normalizeSafeText(prompt, {
     maxChars: ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS,
@@ -832,6 +880,126 @@ async function executeInternal(runId, authorization, options = {}) {
     }
   }
 }
+
+async function recoverOrphanedInternal(runId, options = {}) {
+  const expectedVersion = options.expectedVersion
+  const expectedHeadSha = normalizeSha(options.expectedHeadSha, "Expected implementation head SHA")
+  const expectedAttempt = options.expectedAttempt
+
+  if (!Number.isInteger(expectedVersion) || !Number.isInteger(expectedAttempt) || expectedAttempt <= 0) {
+    throw executionError(
+      "ANTIGRAVITY_ORPHAN_RECOVERY_TARGET_REQUIRED",
+      "Antigravity orphan recovery requires the exact run version, head SHA, and implementation attempt.",
+      "configuration"
+    )
+  }
+
+  const run = await readDevelopmentRun(runId, options)
+  if (
+    run.version !== expectedVersion ||
+    run.status !== "implementation_in_progress" ||
+    normalizeSha(run.headSha || run.baseSha, "Run implementation head SHA") !== expectedHeadSha ||
+    run.attempts.implementation !== expectedAttempt ||
+    classifyAntigravityExecutionAttemptEvidence(run) !== "open"
+  ) {
+    throw executionError(
+      "ANTIGRAVITY_ORPHAN_RECOVERY_STATE_MISMATCH",
+      "Antigravity orphan recovery target no longer matches the open implementation attempt.",
+      "workspace_invalid"
+    )
+  }
+
+  const location = await resolveImplementationWorkspaceLocation(run, options)
+  const platform = options.platform || process.platform
+  const gitPath = await validateGitExecutable(fixedGitPath(platform))
+  const configuredHome = process.env.HOME
+
+  if (typeof configuredHome !== "string" || !configuredHome.trim() || !isAbsolute(configuredHome)) {
+    throw executionError(
+      "ANTIGRAVITY_HOME_INVALID",
+      "Antigravity home directory is unavailable.",
+      "configuration"
+    )
+  }
+
+  const homePath = resolvePath(configuredHome)
+  const env = sanitizedEnv(homePath, ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS[platform]?.[0] || dirname(gitPath), gitPath)
+  const sourcePath = options.workspaceRegistry?.[run.project.id]?.sourceRepoPath
+
+  if (!sourcePath) {
+    throw executionError(
+      "ANTIGRAVITY_SOURCE_REGISTRY_REQUIRED",
+      "Project source repository path is required for orphan recovery.",
+      "configuration"
+    )
+  }
+
+  const sourceReal = await realpath(sourcePath).catch(() => null)
+  const workspaceReal = await realpath(location.workspacePath).catch(() => null)
+
+  if (sourceReal !== sourcePath || workspaceReal !== location.workspacePath) {
+    throw executionError(
+      "ANTIGRAVITY_ORPHAN_RECOVERY_UNTRUSTED",
+      "Antigravity orphan recovery paths are unavailable or non-canonical.",
+      "workspace_trust"
+    )
+  }
+
+  const sourceFacts = await gitFacts(gitPath, sourceReal, env)
+  if (sourceFacts.headSha !== expectedHeadSha || sourceFacts.statusText) {
+    throw executionError(
+      "ANTIGRAVITY_RECONCILIATION_REQUIRED",
+      "Protected source repository changed or is not clean; owner reconciliation is required.",
+      "source_changed"
+    )
+  }
+
+  await restoreWorkspace(gitPath, location.workspacePath, expectedHeadSha, env)
+
+  const started = antigravityAttemptEvidence(run).find(
+    (entry) => entry?.metadata?.outcome === "execution_started"
+  )
+  const endedAt = timestamp(options)
+  const recovered = await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: "implementation_in_progress",
+    actor: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+    reason: "software-factory-antigravity-orphan-recovered",
+    evidence: [executionEvidence(run, location, {
+      capability: started?.metadata?.capability || "implementation.backend",
+      modelClass: started?.metadata?.modelClass || "standard",
+      checkpointVersion: started?.metadata?.checkpointVersion || 0
+    }, {
+      sha: expectedHeadSha,
+      attempt: expectedAttempt,
+      promptHash: started?.metadata?.promptHash || "0".repeat(64),
+      startedAt: started?.metadata?.startedAt || endedAt,
+      endedAt,
+      outcome: "execution_failed",
+      failureClass: "runtime"
+    })]
+  }, options)
+
+  return {
+    ok: true,
+    outcome: "antigravity_orphan_recovered_for_retry",
+    run: recovered,
+    recovery: {
+      disposition: "retry",
+      attempt: expectedAttempt,
+      headSha: expectedHeadSha
+    }
+  }
+}
+
+export async function recoverOrphanedAntigravityExecution(runId, options = {}) {
+  try {
+    return await recoverOrphanedInternal(runId, options)
+  } catch (error) {
+    throw safeFailure(error)
+  }
+}
+
 
 export async function executeAntigravityImplementation(runId, authorization, options = {}) {
   try {
