@@ -6,6 +6,7 @@ import {
   buildAntigravityExecutionArgs,
   buildAntigravityImplementationPrompt,
   classifyAntigravityExecutionAttemptEvidence,
+  resolveLiveAntigravityModel,
   validateAntigravityAutomationSettings
 } from "./software-factory-antigravity-execution.mjs"
 
@@ -113,11 +114,16 @@ test("untrusted workspace is refused", () => {
   )
 })
 
-test("execution argv is non-interactive and sandboxed without dangerous permission bypass", () => {
-  const args = buildAntigravityExecutionArgs("Implement the bounded task.")
+test("execution argv pins the routed model and stays sandboxed without dangerous permission bypass", () => {
+  const args = buildAntigravityExecutionArgs(
+    "Implement the bounded task.",
+    "gemini-3.8-flash-high"
+  )
   assert.deepEqual(args, [
     "-p",
     "Implement the bounded task.",
+    "--model",
+    "gemini-3.8-flash-high",
     "--sandbox",
     "--print-timeout",
     "10m"
@@ -260,5 +266,64 @@ test("Antigravity attempt evidence rejects malformed or conflicting terminal out
       attemptRun([antigravityAttemptEntry("execution_failed", 1)], 2)
     ),
     "none"
+  )
+})
+
+
+test("live model resolution uses bounded agy models output before execution", async () => {
+  const calls = []
+  const selection = await resolveLiveAntigravityModel(
+    "/opt/homebrew/bin/agy",
+    { PATH: "/opt/homebrew/bin:/usr/bin:/bin" },
+    "standard",
+    {
+      modelCatalogExecImpl: async (path, args, options) => {
+        calls.push({ path, args, options })
+        return {
+          stdout: [
+            "gemini-3.8-flash-medium Gemini 3.8 Flash (Medium)",
+            "gemini-3.8-flash-high Gemini 3.8 Flash (High)",
+            "gemini-3.1-pro-high Gemini 3.1 Pro (High)"
+          ].join("\n"),
+          stderr: ""
+        }
+      }
+    }
+  )
+
+  assert.equal(selection.modelSlug, "gemini-3.8-flash-high")
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].args, ["models"])
+  assert.equal(calls[0].options.shell, false)
+})
+
+test("live model resolution fails before execution when no suitable deep model exists", async () => {
+  await assert.rejects(
+    resolveLiveAntigravityModel(
+      "/opt/homebrew/bin/agy",
+      { PATH: "/opt/homebrew/bin:/usr/bin:/bin" },
+      "deep",
+      {
+        modelCatalogExecImpl: async () => ({
+          stdout: "gemini-3.8-flash-high Gemini 3.8 Flash (High)\n",
+          stderr: ""
+        })
+      }
+    ),
+    (error) => (
+      error?.code === "ANTIGRAVITY_MODEL_UNAVAILABLE" &&
+      error?.failureClass === "configuration"
+    )
+  )
+})
+
+test("execution argv refuses missing or malformed routed model slugs", () => {
+  assert.throws(
+    () => buildAntigravityExecutionArgs("Implement.", ""),
+    (error) => error?.code === "ANTIGRAVITY_MODEL_SELECTION_INVALID"
+  )
+  assert.throws(
+    () => buildAntigravityExecutionArgs("Implement.", "../expensive-model"),
+    (error) => error?.code === "ANTIGRAVITY_MODEL_SELECTION_INVALID"
   )
 })

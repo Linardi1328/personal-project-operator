@@ -24,6 +24,11 @@ import {
 import {
   readTrustedReviewRemediationContext
 } from "./software-factory-review-remediation-context.mjs"
+import {
+  ANTIGRAVITY_MODEL_CATALOG_MAX_CHARS,
+  AntigravityModelRoutingError,
+  resolveAntigravityModelSelection
+} from "./software-factory-antigravity-model-routing.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -602,7 +607,21 @@ export function classifyAntigravityExecutionAttemptEvidence(run) {
   return "invalid"
 }
 
-export function buildAntigravityExecutionArgs(prompt) {
+function normalizeModelSlug(value) {
+  const normalized = String(value ?? "").trim()
+
+  if (!/^[a-z0-9][a-z0-9._-]{1,119}$/u.test(normalized)) {
+    throw executionError(
+      "ANTIGRAVITY_MODEL_SELECTION_INVALID",
+      "Antigravity selected model is outside the reviewed policy.",
+      "configuration"
+    )
+  }
+
+  return normalized
+}
+
+export function buildAntigravityExecutionArgs(prompt, modelSlug) {
   const normalizedPrompt = normalizeSafeText(prompt, {
     maxChars: ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS,
     code: "ANTIGRAVITY_PROMPT_UNSAFE",
@@ -611,15 +630,53 @@ export function buildAntigravityExecutionArgs(prompt) {
   return Object.freeze([
     "-p",
     normalizedPrompt,
+    "--model",
+    normalizeModelSlug(modelSlug),
     "--sandbox",
     "--print-timeout",
     "10m"
   ])
 }
 
-async function invokeAntigravity(agyPath, cwd, prompt, env) {
+export async function resolveLiveAntigravityModel(agyPath, env, modelClass, options = {}) {
+  const execImpl = options.modelCatalogExecImpl || execFileAsync
+  let result
+
   try {
-    const result = await execFileAsync(agyPath, buildAntigravityExecutionArgs(prompt), {
+    result = await execImpl(agyPath, ["models"], {
+      cwd: "/",
+      env,
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: ANTIGRAVITY_MODEL_CATALOG_MAX_CHARS,
+      shell: false
+    })
+  } catch {
+    throw executionError(
+      "ANTIGRAVITY_MODEL_CATALOG_UNAVAILABLE",
+      "Antigravity model catalog is unavailable; no implementation attempt was started.",
+      "configuration"
+    )
+  }
+
+  try {
+    return resolveAntigravityModelSelection(modelClass, String(result?.stdout ?? ""))
+  } catch (error) {
+    if (error instanceof AntigravityModelRoutingError) {
+      throw executionError(
+        error.code,
+        error.safeMessage,
+        "configuration"
+      )
+    }
+
+    throw error
+  }
+}
+
+async function invokeAntigravity(agyPath, cwd, prompt, modelSlug, env) {
+  try {
+    const result = await execFileAsync(agyPath, buildAntigravityExecutionArgs(prompt, modelSlug), {
       cwd,
       env,
       encoding: "utf8",
@@ -782,6 +839,7 @@ function executionEvidence(run, location, authorization, data) {
       ...(data.failureClass ? { failureClass: data.failureClass } : {}),
       capability: authorization.capability,
       modelClass: authorization.modelClass,
+      ...(data.modelSlug ? { modelSlug: data.modelSlug } : {}),
       checkpointVersion: authorization.checkpointVersion,
       remotePolicy: "deny",
       networkPolicy: "antigravity-sandbox",
@@ -899,6 +957,12 @@ async function executeInternal(runId, authorization, options = {}) {
 
   const prompt = buildAntigravityImplementationPrompt(run, location, checkedAuthorization)
   const promptHash = sha256Text(prompt)
+  const modelSelection = await resolveLiveAntigravityModel(
+    agyPath,
+    env,
+    checkedAuthorization.modelClass,
+    options
+  )
   const startedAt = timestamp(options)
   const nextAttempt = run.attempts.implementation + 1
   const attemptRun = await recordDevelopmentRunProgress(run.runId, {
@@ -911,6 +975,7 @@ async function executeInternal(runId, authorization, options = {}) {
       sha: expectedStartSha,
       attempt: nextAttempt,
       promptHash,
+      modelSlug: modelSelection.modelSlug,
       startedAt,
       outcome: "execution_started"
     })]
@@ -919,7 +984,13 @@ async function executeInternal(runId, authorization, options = {}) {
   let verified
 
   try {
-    await invokeAntigravity(agyPath, location.workspacePath, prompt, env)
+    await invokeAntigravity(
+      agyPath,
+      location.workspacePath,
+      prompt,
+      modelSelection.modelSlug,
+      env
+    )
 
     const sourceAfterExecution = await gitFacts(gitPath, sourceReal, env)
     if (!sameSourceFacts(sourceBefore, sourceAfterExecution)) {
@@ -976,6 +1047,7 @@ async function executeInternal(runId, authorization, options = {}) {
           sha: expectedStartSha,
           attempt: attemptRun.attempts.implementation,
           promptHash,
+          modelSlug: modelSelection.modelSlug,
           startedAt,
           endedAt,
           outcome: "execution_failed",
@@ -1017,6 +1089,7 @@ async function executeInternal(runId, authorization, options = {}) {
       sha: verified.headSha,
       attempt: attemptRun.attempts.implementation,
       promptHash,
+      modelSlug: modelSelection.modelSlug,
       startedAt,
       endedAt,
       outcome: "implementation_ready",
