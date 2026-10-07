@@ -17,6 +17,7 @@ import {
   assertAntigravityDispatchAuthorization,
   ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS
 } from "./software-factory-antigravity-readiness.mjs"
+import { latestSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -327,6 +328,43 @@ function latestPlanningSummary(run) {
   return evidence.at(-1)?.summary || null
 }
 
+function boundedTestRemediationPromptLines(run, authorization) {
+  if (authorization?.capability !== "debugging") {
+    return []
+  }
+
+  const evidence = latestSoftwareFactoryTestRemediation(run)
+
+  if (!evidence || evidence.sha !== run?.headSha) {
+    return []
+  }
+
+  const metadata = evidence.metadata || {}
+  const attempt = Number.isInteger(metadata.sourceTestAttempt) ? metadata.sourceTestAttempt : null
+  const failed = Number.isInteger(metadata.failedTests) ? metadata.failedTests : null
+  const total = Number.isInteger(metadata.totalTests) ? metadata.totalTests : null
+  const ids = Array.isArray(metadata.failedTestIds)
+    ? metadata.failedTestIds
+      .filter((value) => typeof value === "string" && value.length > 0 && value.length <= 80)
+      .slice(0, 5)
+    : []
+
+  if (!attempt || failed === null || failed <= 0 || total === null || total <= 0) {
+    return []
+  }
+
+  return [
+    "",
+    "Trusted failed-test context:",
+    `- Source test attempt: ${attempt}.`,
+    `- Failed required test steps: ${failed} of ${total}.`,
+    ...(ids.length > 0
+      ? [`- Failed test ids: ${ids.map((id) => normalizeSafeText(id, { maxChars: 80 })).join(", ")}.`]
+      : ["- Failed test ids were not available in bounded metadata."]),
+    "- Reproduce the relevant failure locally, identify the root cause, make the smallest correct fix, and leave final verification to PPO."
+  ]
+}
+
 export function buildAntigravityImplementationPrompt(run, workspace, authorization) {
   const task = normalizeSafeText(run?.task, {
     maxChars: 1000,
@@ -353,6 +391,7 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
     "Task:",
     task,
     ...(planning ? ["", "Planning context:", normalizeSafeText(planning, { maxChars: 500 })] : []),
+    ...boundedTestRemediationPromptLines(run, authorization),
     "",
     "Required skills:",
     ...skillLines,
