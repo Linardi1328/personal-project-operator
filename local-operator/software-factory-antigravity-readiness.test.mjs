@@ -155,6 +155,16 @@ test("usage output with remaining quota is classified as available", async () =>
   assert.equal(observation.capacity, "available")
 })
 
+test("reset timestamp does not imply exhaustion when quota remains", async () => {
+  const adapter = adapterFromProbe(async () => probeResult({
+    stdout: "Gemini 3.8 Flash (Low)\n40% remaining · Resets in 1h 26m"
+  }))
+  const observation = await adapter.probe()
+
+  assert.equal(observation.integration, "configured")
+  assert.equal(observation.capacity, "available")
+})
+
 test("low remaining quota is classified as degraded", async () => {
   const adapter = adapterFromProbe(async () => probeResult({
     stdout: "Gemini 3.8 Flash (Low)\n15% remaining · Refreshes in 15m"
