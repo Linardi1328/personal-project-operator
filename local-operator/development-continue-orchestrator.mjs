@@ -704,11 +704,15 @@ export function resolveSoftwareFactoryImplementationCapability(run) {
     : ""
   const text = `${run?.task || ""}\n${planning}`.toLowerCase()
 
-  if (/\b(frontend|ui|ux|browser|css|layout|responsive|component|page|form|accessibility|cta|visual|render|dom)\b/u.test(text)) {
+  const explicitFrontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side)\b/u
+  const contextualFrontend = /\b(?:page|form|component)\s+(?:ui|layout|rendering|styling|interaction|accessibility)\b|\b(?:rendered|visual)\s+(?:page|form|component)\b/u
+  const explicitDebugging = /\bdebug(?:ging)?\b|\bdiagnos(?:e|is|tic)\b|\binvestigat(?:e|ion)\b|\broot cause\b|\bfailing (?:test|build|ci)\b|\breproduce (?:bug|issue|failure)\b|\bfix (?:bug|error|crash)\b/u
+
+  if (explicitFrontend.test(text) || contextualFrontend.test(text)) {
     return "implementation.frontend"
   }
 
-  if (/\b(debug|diagnos|investigat|root cause|failing test|failure)\b/u.test(text)) {
+  if (explicitDebugging.test(text)) {
     return "debugging"
   }
 
@@ -833,22 +837,12 @@ function childOptions(options, expectedVersion, runtimeOptions = {}, scope = ord
 }
 
 function childHandlers(options = {}, scope = ordinaryScope) {
-  const overrides = options.childHandlers || {}
-  const compatibilityImplementationHandler = (
-    scope.id === "ordinary" &&
-    typeof overrides.executeSoftwareFactoryImplementation !== "function" &&
-    typeof overrides.executeCodexImplementation === "function"
-  )
-    ? { executeSoftwareFactoryImplementation: overrides.executeCodexImplementation }
-    : {}
-
   return {
     ...defaultChildHandlers,
     ...(scope.id === "self-development" ? {
       planExistingDevelopmentRun: planExistingPersonalProjectOperatorSelfDevelopmentRun
     } : {}),
-    ...overrides,
-    ...compatibilityImplementationHandler
+    ...(options.childHandlers || {})
   }
 }
 
