@@ -15,12 +15,14 @@ import {
 import {
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
+import {
+  classifyReviewedImplementationEvidence
+} from "./software-factory-implementation-evidence.mjs"
 
 const execFileAsync = promisify(execFile)
 
 export const AUTOMATED_TEST_RUNNER_ID = "phase-6e-automated-test-runner"
 export const AUTOMATED_TEST_SANDBOX_ID = "phase-6e-no-outbound-network-test-sandbox"
-export const PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE = "phase-6d-codex-execution-adapter"
 export const MAX_AUTOMATED_TEST_STEPS = 5
 export const MAX_AUTOMATED_TEST_ATTEMPTS = 5
 export const MAX_TEST_ARG_COUNT = 32
@@ -1173,32 +1175,23 @@ function assertWorkspaceMatches(location, facts) {
   }
 }
 
-function latestPhase6DImplementationEvidence(run) {
-  const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
-
-  for (let index = evidence.length - 1; index >= 0; index -= 1) {
-    const entry = evidence[index]
-
-    if (
-      entry?.source === PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE ||
-      entry?.metadata?.adapter === PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE
-    ) {
-      return entry
-    }
-  }
-
-  return null
-}
-
 function assertImplementationEvidenceMatches(run, implementationSha) {
-  const evidence = latestPhase6DImplementationEvidence(run)
+  const reviewed = classifyReviewedImplementationEvidence(run)
+  const evidence = reviewed.entry
 
-  if (!evidence || evidence.sha !== implementationSha) {
+  if (
+    reviewed.classification !== "completed" ||
+    !evidence ||
+    evidence.sha !== implementationSha ||
+    evidence.metadata?.outcome !== "implementation_ready"
+  ) {
     throw testRunnerError(
       "TEST_IMPLEMENTATION_EVIDENCE_MISMATCH",
-      "Phase 6D implementation evidence SHA does not match the run head SHA."
+      "Reviewed implementation evidence does not prove the current run head is implementation-ready."
     )
   }
+
+  return evidence
 }
 
 function latestAutomatedTestEvidence(run) {
