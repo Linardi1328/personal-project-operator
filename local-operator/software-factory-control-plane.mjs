@@ -110,11 +110,6 @@ export const SOFTWARE_FACTORY_WORKERS = deepFreeze({
     kind: "review-tool",
     adapterId: null
   },
-  "vercel-web-guidelines": {
-    workerId: "vercel-web-guidelines",
-    kind: "review-skill",
-    adapterId: null
-  },
   vercel: {
     workerId: "vercel",
     kind: "deployment-tool",
@@ -184,8 +179,8 @@ export const SOFTWARE_FACTORY_CAPABILITY_POLICY = deepFreeze({
     skills: []
   },
   "review.frontend": {
-    workerId: "vercel-web-guidelines",
-    modelClass: "none",
+    workerId: "antigravity",
+    modelClass: "standard",
     ownerApprovalRequired: false,
     skills: ["web-design-guidelines"]
   },
@@ -256,18 +251,6 @@ function normalizeRisk(value) {
   return normalized
 }
 
-function upgradeModelClass(modelClass) {
-  if (modelClass === "economy") {
-    return "standard"
-  }
-
-  if (modelClass === "standard") {
-    return "deep"
-  }
-
-  return modelClass
-}
-
 export function resolveSoftwareFactoryModelClass(capability, options = {}) {
   const normalizedCapability = normalizeCapability(capability)
   const policy = SOFTWARE_FACTORY_CAPABILITY_POLICY[normalizedCapability]
@@ -289,7 +272,7 @@ export function resolveSoftwareFactoryModelClass(capability, options = {}) {
   if (risk === "high" && MODEL_CLASS_RANK[modelClass] < MODEL_CLASS_RANK.deep) {
     modelClass = "deep"
   } else if (failedAttempts >= 2 && MODEL_CLASS_RANK[modelClass] < MODEL_CLASS_RANK.deep) {
-    modelClass = upgradeModelClass(modelClass)
+    modelClass = "deep"
   } else if (failedAttempts >= 1 && modelClass === "economy") {
     modelClass = "standard"
   }
