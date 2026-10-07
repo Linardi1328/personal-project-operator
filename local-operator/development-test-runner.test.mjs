@@ -38,6 +38,9 @@ import {
   reconcileAutomatedTesting,
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
+import {
+  REVIEWED_ANTIGRAVITY_EXECUTION_ADAPTER_ID
+} from "./software-factory-implementation-evidence.mjs"
 
 const execFileAsync = promisify(execFile)
 const TRUSTED_GIT_EXECUTABLE = process.env.PPO_TEST_GIT_EXECUTABLE || "/usr/bin/git"
@@ -164,19 +167,20 @@ async function makeImplementationReadyFixture(options = {}) {
   await git(["commit", "-m", "phase 6d implementation"], location.workspacePath)
 
   const headSha = await git(["rev-parse", "HEAD"], location.workspacePath)
+  const implementationAdapterId = options.implementationAdapterId || PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE
   const implementationEvidence = options.implementationEvidence === false
     ? []
     : [{
       kind: "implementation",
       sha: options.implementationEvidenceSha || headSha,
-      source: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-      summary: "Codex implementation completed and verified locally.",
+      source: implementationAdapterId,
+      summary: "Reviewed implementation completed and verified locally.",
       metadata: {
         project: fixture.project.id,
         branch: location.branch,
         workspaceId: location.workspaceId,
         workspaceRef: location.workspaceRef,
-        adapter: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
+        adapter: implementationAdapterId,
         attempt: 1,
         outcome: "implementation_ready"
       }
@@ -186,8 +190,8 @@ async function makeImplementationReadyFixture(options = {}) {
     status: "implementation_ready",
     branch: location.branch,
     headSha,
-    actor: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-    reason: "phase-6d-codex-implementation-ready",
+    actor: implementationAdapterId,
+    reason: "reviewed-implementation-ready",
     evidence: implementationEvidence
   }, {
     writeDataDir: fixture.writeDataDir,
@@ -401,6 +405,29 @@ test("automated tests require implementation_ready, exact expected version, and 
   }), "TEST_IMPLEMENTATION_EVIDENCE_MISMATCH")
 
   assert.equal(calls.length, 0)
+})
+
+test("Antigravity implementation_ready evidence can enter automated testing", async () => {
+  const fixture = await makeImplementationReadyFixture({
+    implementationAdapterId: REVIEWED_ANTIGRAVITY_EXECUTION_ADAPTER_ID
+  })
+
+  const result = await executeAutomatedTests(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    testPolicyRegistry: trustedTestPolicyRegistry(fixture),
+    sandboxRunner: makeSandboxRunner(async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: ""
+    })),
+    now: fixture.now
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.run.status, "tests_passed")
+  assert.equal(result.run.headSha, fixture.headSha)
 })
 
 test("workspace reconciliation requires the exact isolated branch, HEAD, and a clean workspace", async () => {
