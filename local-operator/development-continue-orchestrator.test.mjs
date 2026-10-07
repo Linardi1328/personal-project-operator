@@ -1971,7 +1971,7 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable Codex 
   await assert.rejects(
     () => loadFakeRuntimeProfileFor("khlim-assist", {
       platform: "linux",
-      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
+      statImpl: fakeRuntimeStatFor({ missing: new Set([gitPath]) }),
       linuxSandboxCapabilityProbe: async () => true
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
@@ -2019,8 +2019,8 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable Codex 
   )
 })
 
-test("Phase 6K refuses missing Linux runtime readiness before child or policy-store mutation", async () => {
-  const bubblewrapPath = "/usr/bin/bwrap"
+test("Phase 6K refuses missing Linux Git readiness before Antigravity child mutation", async () => {
+  const gitPath = "/usr/bin/git"
   const fixture = await createStoredRun("implementation_in_progress")
   const before = await readDevelopmentRun(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir
@@ -2052,6 +2052,44 @@ test("Phase 6K refuses missing Linux runtime readiness before child or policy-st
   assert.equal(after.version, before.version)
   assert.equal(after.status, before.status)
   assert.equal(await pathExists(join(fixture.writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR)), false)
+})
+
+
+
+test("Phase 6K ordinary Antigravity implementation no longer requires Linux Codex sandbox readiness", async () => {
+  const bubblewrapPath = "/usr/bin/bwrap"
+  const fixture = await createStoredRun("implementation_in_progress")
+  let childCalls = 0
+
+  const result = await executeDevelopmentContinue(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir,
+    childHandlers: {
+      executeSoftwareFactoryImplementation: async (_runId, options) => {
+        childCalls += 1
+        return {
+          ok: true,
+          outcome: "implementation_ready",
+          run: {
+            ...fixture.run,
+            version: options.expectedVersion + 1,
+            status: "implementation_ready"
+          }
+        }
+      }
+    },
+    trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
+      platform: "linux",
+      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
+      accessImpl: async () => {},
+      execFileImpl: fakeRuntimeExecFile,
+      linuxSandboxCapabilityProbe: async () => false
+    })
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(result.after, "implementation_ready")
+  assert.equal(childCalls, 1)
 })
 
 test("Phase 6K refuses missing project test runtime before Phase 6E mutation", async () => {
