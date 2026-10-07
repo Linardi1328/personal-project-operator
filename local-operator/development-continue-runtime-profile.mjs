@@ -781,6 +781,27 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     }
   }
 
+  if (options.runtimeHandler === "prepareSoftwareFactoryTestRemediation") {
+    await assertExecutable(paths.gitExecutablePath, options)
+    await assertDirectory(sourceRepoPath, options)
+    await assertDirectory(paths.workspaceRoot, options)
+
+    const testSandbox = buildTestSandbox(paths, platform)
+
+    return {
+      workspaceRegistry: {
+        [projectId]: {
+          sourceRepoPath,
+          workspaceRoot: paths.workspaceRoot
+        }
+      },
+      testPolicyRegistry: {
+        [projectId]: testPolicyForProject(projectId, projectPaths, testSandbox)
+      },
+      platform
+    }
+  }
+
   await assertExecutable(paths.codexExecutablePath, options)
   await assertExecutable(paths.gitExecutablePath, options)
   await assertExecutable(paths.reviewExecutablePath, options)
