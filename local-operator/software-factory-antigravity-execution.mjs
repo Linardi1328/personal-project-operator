@@ -687,11 +687,13 @@ async function executeInternal(runId, authorization, options = {}) {
     })]
   }, options)
 
+  let verified
+
   try {
     await invokeAntigravity(agyPath, location.workspacePath, prompt, env)
-  } catch (error) {
-    const sourceAfterFailure = await gitFacts(gitPath, sourceReal, env)
-    if (!sameSourceFacts(sourceBefore, sourceAfterFailure)) {
+
+    const sourceAfterExecution = await gitFacts(gitPath, sourceReal, env)
+    if (!sameSourceFacts(sourceBefore, sourceAfterExecution)) {
       throw executionError(
         "ANTIGRAVITY_SOURCE_CHANGED",
         "Antigravity execution modified the protected source repository.",
@@ -699,48 +701,79 @@ async function executeInternal(runId, authorization, options = {}) {
       )
     }
 
-    await restoreWorkspace(gitPath, location.workspacePath, expectedStartSha, env)
+    verified = await commitWorkspace(
+      gitPath,
+      location.workspacePath,
+      expectedStartSha,
+      env
+    )
+
+    const sourceAfterCommit = await gitFacts(gitPath, sourceReal, env)
+    if (!sameSourceFacts(sourceBefore, sourceAfterCommit)) {
+      throw executionError(
+        "ANTIGRAVITY_SOURCE_CHANGED",
+        "Protected source repository changed during PPO preservation.",
+        "source_changed"
+      )
+    }
+  } catch (error) {
+    const failureClass = error?.failureClass || "runtime"
+    let cleanupError = null
+
+    try {
+      await restoreWorkspace(gitPath, location.workspacePath, expectedStartSha, env)
+    } catch (restoreError) {
+      cleanupError = restoreError
+    }
+
+    let sourceChanged = failureClass === "source_changed"
+    try {
+      const sourceAfterFailure = await gitFacts(gitPath, sourceReal, env)
+      sourceChanged = sourceChanged || !sameSourceFacts(sourceBefore, sourceAfterFailure)
+    } catch {
+      sourceChanged = true
+    }
+
+    const finalFailureClass = sourceChanged ? "source_changed" : failureClass
     const endedAt = timestamp(options)
-    await recordDevelopmentRunProgress(attemptRun.runId, {
-      expectedVersion: attemptRun.version,
-      status: "implementation_in_progress",
-      actor: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
-      reason: "software-factory-antigravity-execution-failed",
-      evidence: [executionEvidence(attemptRun, location, checkedAuthorization, {
-        sha: expectedStartSha,
-        attempt: attemptRun.attempts.implementation,
-        promptHash,
-        startedAt,
-        endedAt,
-        outcome: "execution_failed",
-        failureClass: error?.failureClass || "runtime"
-      })]
-    }, options)
+
+    try {
+      await recordDevelopmentRunProgress(attemptRun.runId, {
+        expectedVersion: attemptRun.version,
+        status: "implementation_in_progress",
+        actor: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+        reason: "software-factory-antigravity-execution-failed",
+        evidence: [executionEvidence(attemptRun, location, checkedAuthorization, {
+          sha: expectedStartSha,
+          attempt: attemptRun.attempts.implementation,
+          promptHash,
+          startedAt,
+          endedAt,
+          outcome: "execution_failed",
+          failureClass: finalFailureClass
+        })]
+      }, options)
+    } catch {
+      throw executionError(
+        "ANTIGRAVITY_RECONCILIATION_REQUIRED",
+        "Antigravity execution outcome could not be recorded safely; reconcile the run before retrying.",
+        "workspace_invalid"
+      )
+    }
+
+    if (cleanupError) {
+      throw cleanupError
+    }
+
+    if (sourceChanged) {
+      throw executionError(
+        "ANTIGRAVITY_SOURCE_CHANGED",
+        "Antigravity execution changed or made the protected source repository unverifiable.",
+        "source_changed"
+      )
+    }
+
     throw error
-  }
-
-  const sourceAfterExecution = await gitFacts(gitPath, sourceReal, env)
-  if (!sameSourceFacts(sourceBefore, sourceAfterExecution)) {
-    throw executionError(
-      "ANTIGRAVITY_SOURCE_CHANGED",
-      "Antigravity execution modified the protected source repository.",
-      "source_changed"
-    )
-  }
-
-  const verified = await commitWorkspace(
-    gitPath,
-    location.workspacePath,
-    expectedStartSha,
-    env
-  )
-  const sourceAfterCommit = await gitFacts(gitPath, sourceReal, env)
-  if (!sameSourceFacts(sourceBefore, sourceAfterCommit)) {
-    throw executionError(
-      "ANTIGRAVITY_SOURCE_CHANGED",
-      "Protected source repository changed during PPO preservation.",
-      "source_changed"
-    )
   }
 
   const endedAt = timestamp(options)
