@@ -41,6 +41,12 @@ import {
 } from "./github-delivery-agent.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 import { safeDevelopmentBuildSummary } from "./development-build-summary.mjs"
+import { executeSoftwareFactoryImplementation } from "./software-factory-implementation-route.mjs"
+import {
+  ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+  classifyAntigravityExecutionAttemptEvidence,
+  recoverOrphanedAntigravityExecution
+} from "./software-factory-antigravity-execution.mjs"
 
 export const DEVELOPMENT_CONTINUE_ORCHESTRATOR_ID = "phase-6k-controlled-ppo-continue-orchestrator"
 export const PHASE_6K_CONTINUE_POLICY_ID = "phase-6k-controlled-ppo-continue"
@@ -179,8 +185,8 @@ const statusActions = Object.freeze({
     handler: "prepareImplementationWorkspace"
   }),
   implementation_in_progress: Object.freeze({
-    action: "phase-6d-codex-implementation",
-    handler: "executeCodexImplementation"
+    action: "software-factory-antigravity-implementation",
+    handler: "executeSoftwareFactoryImplementation"
   }),
   implementation_ready: Object.freeze({
     action: "phase-6e-automated-tests",
@@ -212,6 +218,14 @@ const statusActions = Object.freeze({
   })
 })
 
+const selfDevelopmentStatusActions = Object.freeze({
+  ...statusActions,
+  implementation_in_progress: Object.freeze({
+    action: "phase-6d-codex-implementation",
+    handler: "executeCodexImplementation"
+  })
+})
+
 const blockedStatusReasons = Object.freeze({
   planning_in_progress: "planning_reconciliation_required",
   tests_failed: "automated_test_failure_recovery_not_routed",
@@ -233,9 +247,11 @@ const defaultChildHandlers = Object.freeze({
   planExistingDevelopmentRun,
   prepareImplementationWorkspace,
   executeCodexImplementation,
+  executeSoftwareFactoryImplementation,
   executeAutomatedTests,
   executeIndependentReview,
   recoverOrphanedCodexExecution,
+  recoverOrphanedAntigravityExecution,
   recoverOrphanedAutomatedTesting,
   recoverReviewOrphan,
   executeBoundedHardening,
@@ -343,7 +359,10 @@ function hardeningLeaseMatchesRun(run, lease) {
 }
 
 function operationTarget(run, boundary) {
-  if (boundary.handler === "executeCodexImplementation") {
+  if (
+    boundary.handler === "executeCodexImplementation" ||
+    boundary.handler === "executeSoftwareFactoryImplementation"
+  ) {
     return {
       phase: "6D",
       attempt: run.attempts.implementation + 1,
@@ -380,6 +399,23 @@ function operationTarget(run, boundary) {
 
 function openOperationTarget(run) {
   if (run.status === "implementation_in_progress") {
+    const antigravityEvidence = latestPhaseEvidence(
+      run,
+      "implementation",
+      ANTIGRAVITY_EXECUTION_ADAPTER_ID
+    )
+
+    if (antigravityEvidence?.metadata?.outcome === "execution_started") {
+      return {
+        phase: "6D",
+        attempt: run.attempts.implementation,
+        headSha: run.headSha || run.baseSha,
+        startedAt: antigravityEvidence.metadata.startedAt,
+        handler: "recoverOrphanedAntigravityExecution",
+        reason: "antigravity_reconciliation_required"
+      }
+    }
+
     const evidence = latestPhaseEvidence(run, "implementation", "phase-6d-codex-execution-adapter")
 
     return evidence?.metadata?.outcome === "execution_started"
@@ -470,17 +506,35 @@ function projectRefusedResult(run, scope) {
 }
 
 function validateImplementationAttemptBoundary(run, action, scope) {
-  const classification = classifyCodexExecutionAttemptEvidence(run)
+  const antigravityClassification = classifyAntigravityExecutionAttemptEvidence(run)
 
-  if (classification === "invalid") {
+  if (antigravityClassification !== "none") {
+    if (antigravityClassification === "invalid") {
+      return ownerActionResult(run, action, "antigravity_evidence_invalid", scope)
+    }
+
+    if (antigravityClassification === "open") {
+      return ownerActionResult(run, action, "antigravity_reconciliation_required", scope)
+    }
+
+    if (antigravityClassification === "definitive_failed") {
+      return null
+    }
+
+    return ownerActionResult(run, action, "antigravity_evidence_invalid", scope)
+  }
+
+  const codexClassification = classifyCodexExecutionAttemptEvidence(run)
+
+  if (codexClassification === "invalid") {
     return ownerActionResult(run, action, "codex_evidence_invalid", scope)
   }
 
-  if (classification === "open") {
+  if (codexClassification === "open") {
     return ownerActionResult(run, action, "codex_reconciliation_required", scope)
   }
 
-  if (classification === "none" || classification === "definitive_failed") {
+  if (codexClassification === "none" || codexClassification === "definitive_failed") {
     return null
   }
 
@@ -938,7 +992,8 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
     return projectRefusedResult(initial, scope)
   }
 
-  const boundary = statusActions[initial.status]
+  const actionTable = scope.id === "self-development" ? selfDevelopmentStatusActions : statusActions
+  const boundary = actionTable[initial.status]
 
   if (!boundary) {
     return blockedStatusResult(initial, scope)
