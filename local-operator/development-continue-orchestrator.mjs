@@ -30,6 +30,11 @@ import {
 } from "./software-factory-antigravity-readiness.mjs"
 import { readSoftwareFactoryDispatchCheckpoint } from "./software-factory-dispatch-checkpoint.mjs"
 import {
+  SOFTWARE_FACTORY_TEST_REMEDIATION_ID,
+  latestSoftwareFactoryTestRemediation,
+  prepareSoftwareFactoryTestRemediation
+} from "./software-factory-test-remediation.mjs"
+import {
   classifyAutomatedTestAttemptEvidence,
   canRetryPreviousPpoTimeoutPolicy,
   executeAutomatedTests,
@@ -201,6 +206,10 @@ const statusActions = Object.freeze({
     action: "phase-6e-automated-test-retry",
     handler: "executeAutomatedTests"
   }),
+  tests_failed: Object.freeze({
+    action: "software-factory-test-remediation",
+    handler: "prepareSoftwareFactoryTestRemediation"
+  }),
   tests_passed: Object.freeze({
     action: "phase-6f-independent-review",
     handler: "executeIndependentReview"
@@ -225,7 +234,6 @@ const statusActions = Object.freeze({
 
 const blockedStatusReasons = Object.freeze({
   planning_in_progress: "planning_reconciliation_required",
-  tests_failed: "automated_test_failure_recovery_not_routed",
   merged: "development_delivery_complete_production_local_only",
   deploy_in_progress: "production_workflow_local_only",
   deploy_failed: "production_workflow_local_only",
@@ -252,6 +260,7 @@ const defaultChildHandlers = Object.freeze({
   recoverOrphanedCodexExecution,
   recoverOrphanedAutomatedTesting,
   recoverReviewOrphan,
+  prepareSoftwareFactoryTestRemediation,
   executeBoundedHardening,
   executePhase6GDelivery,
   executeShaPinnedMerge
@@ -699,6 +708,16 @@ async function reconcileOrphanedAttempt(
 
 
 export function resolveSoftwareFactoryImplementationCapability(run) {
+  const remediation = latestSoftwareFactoryTestRemediation(run)
+
+  if (
+    remediation?.source === SOFTWARE_FACTORY_TEST_REMEDIATION_ID &&
+    remediation?.sha === run?.headSha &&
+    remediation?.metadata?.capability === "debugging"
+  ) {
+    return "debugging"
+  }
+
   const planning = Array.isArray(run?.evidence?.planning)
     ? run.evidence.planning.map((entry) => entry?.summary || "").join("\n")
     : ""
@@ -1032,6 +1051,24 @@ async function childFailureResult(run, action, error, options = {}, scope = ordi
     }
   } catch {
     observed = null
+  }
+
+  if (
+    code === "TEST_POLICY_FAILED" &&
+    observed?.status === "tests_failed"
+  ) {
+    return baseResult({
+      ok: true,
+      runId: run.runId,
+      project: projectIdFor(run),
+      before: run.status,
+      action,
+      outcome: "tests_failed",
+      after: observed.status,
+      headSha: observed.headSha || run.headSha,
+      buildSummary: observed.task || run.task,
+      reason: "deterministic_tests_failed"
+    }, scope)
   }
 
   if (!observed && !stale) {
