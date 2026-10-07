@@ -201,3 +201,53 @@ The prompt forbids remote Git mutation, deployment, infrastructure mutation, cre
 If Antigravity fails after the implementation attempt begins, PPO verifies the protected source repo and restores the disposable isolated workspace to the authorized start SHA before recording a definitive failure. This prevents failed attempts from leaving a dirty worktree that blocks future recovery.
 
 V0.4 intentionally does not yet replace the existing Continue orchestrator's Codex execution route. The adapter must first pass repository CI and independent review. The next slice will route implementation through readiness → checkpoint → authorization → Antigravity execution, while preserving capacity blocks as non-attempt conditions.
+
+
+## V0.5 Continue orchestration through Antigravity
+
+V0.5 connects the existing Phase 6 Continue loop to the reviewed Software Factory implementation path for ordinary projects.
+
+For a new ordinary `implementation_in_progress` run, Continue now performs:
+
+```text
+current run
+   |
+deterministic capability selection
+   |
+trusted Antigravity readiness probe
+   |
+durable dispatch checkpoint
+   |
+ready? ---- no ----> blocked_capacity / blocked_external
+   |                         |
+  yes                        +--> no implementation attempt consumed
+   |
+second fresh dispatch authorization
+   |
+sandboxed Antigravity implementation
+   |
+implementation_ready
+```
+
+Capability selection is deterministic. Explicit frontend/browser/UI impact is frontend-biased, explicit debugging work uses the debugging capability, and remaining bounded implementation work uses backend implementation.
+
+The public Phase 6D Continue action label is preserved for compatibility, but the ordinary-project worker behind that boundary is now the Software Factory Antigravity coordinator. PPO self-development continues to use the legacy Codex implementation route until a separate self-development migration is reviewed.
+
+### Legacy and orphan recovery
+
+V0.5 preserves legacy Codex in-flight recovery. New Antigravity attempts record distinct evidence under the Antigravity execution adapter.
+
+An interrupted Antigravity attempt is recoverable only when:
+
+- the current run, version, implementation attempt, and expected head SHA match the open evidence;
+- the operation lease is no longer active and matches the exact attempt;
+- the protected source repository remains clean at the expected start SHA; and
+- the disposable PPO workspace can be restored to the expected start SHA.
+
+Successful orphan recovery records a definitive runtime failure without incrementing the implementation attempt again, then allows a later Continue call to retry through a fresh readiness/checkpoint/authorization cycle.
+
+Protected source-repository drift or unverifiable state remains fail-closed and requires owner/reconciliation action.
+
+### Runtime profile
+
+Ordinary Antigravity Phase 6D dispatch no longer requires Codex executable/authentication readiness. Its trusted runtime profile is reduced to the reviewed project source/workspace registry and Git boundary required by the Software Factory path. Later test/review/hardening phases retain their existing reviewed runtimes.
