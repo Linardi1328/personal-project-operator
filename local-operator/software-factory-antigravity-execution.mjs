@@ -357,8 +357,12 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
     "Required skills:",
     ...skillLines,
     "",
+    "Execution behavior:",
+    "- This PPO task and its plan are already approved. Do not start a second planning or artifact-approval cycle.",
+    "- Execute the bounded implementation directly and finish in this non-interactive session.",
+    "",
     "Hard boundaries:",
-    "- Edit only files inside the current workspace.",
+    "- Edit only files inside the current workspace."
     "- Do not access or modify files outside the workspace.",
     "- Do not push, fetch, pull, merge, rebase, reset, cherry-pick, tag, or modify any remote Git state.",
     "- Do not deploy, publish, restart services, modify infrastructure, or call production systems.",
