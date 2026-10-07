@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  ANTIGRAVITY_EXECUTION_ADAPTER_ID,
   ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS,
   buildAntigravityExecutionArgs,
   buildAntigravityImplementationPrompt,
+  classifyAntigravityExecutionAttemptEvidence,
   validateAntigravityAutomationSettings
 } from "./software-factory-antigravity-execution.mjs"
 
@@ -186,5 +188,77 @@ test("overly broad trusted home directory does not satisfy PPO workspace trust",
       "/Users/richie/.local/share/personal-project-operator/development-workspaces/project/run"
     ),
     (error) => error?.code === "ANTIGRAVITY_WORKSPACE_NOT_TRUSTED"
+  )
+})
+
+
+function attemptRun(entries, attempt = 1) {
+  return {
+    attempts: { implementation: attempt },
+    evidence: { implementation: entries }
+  }
+}
+
+function antigravityAttemptEntry(outcome, attempt = 1) {
+  return {
+    kind: "implementation",
+    sha: "a".repeat(40),
+    source: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+    metadata: {
+      attempt,
+      outcome,
+      capability: "implementation.backend",
+      modelClass: "standard",
+      checkpointVersion: 1
+    }
+  }
+}
+
+test("Antigravity attempt evidence classifies open, failed, and completed attempts", () => {
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(
+      attemptRun([antigravityAttemptEntry("execution_started")])
+    ),
+    "open"
+  )
+
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(
+      attemptRun([
+        antigravityAttemptEntry("execution_started"),
+        antigravityAttemptEntry("execution_failed")
+      ])
+    ),
+    "definitive_failed"
+  )
+
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(
+      attemptRun([
+        antigravityAttemptEntry("execution_started"),
+        antigravityAttemptEntry("implementation_ready")
+      ])
+    ),
+    "completed"
+  )
+})
+
+test("Antigravity attempt evidence rejects malformed or conflicting terminal outcomes", () => {
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(
+      attemptRun([
+        antigravityAttemptEntry("execution_started"),
+        antigravityAttemptEntry("execution_failed"),
+        antigravityAttemptEntry("implementation_ready")
+      ])
+    ),
+    "invalid"
+  )
+
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(
+      attemptRun([antigravityAttemptEntry("execution_failed", 1)], 2)
+    ),
+    "none"
   )
 })
