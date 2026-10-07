@@ -180,6 +180,60 @@ export async function validateAntigravityExecutableCandidate(path) {
   return canonical
 }
 
+export function classifyAntigravityCommandFailure(error) {
+  if (
+    error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+    error?.code === "ENOBUFS"
+  ) {
+    return "output_invalid"
+  }
+
+  if (error?.killed || error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT") {
+    return "timeout"
+  }
+
+  return "failure"
+}
+
+export function validateAntigravityDispatchCheckpointBinding({ run, checkpoint, input, now }) {
+  const checkpointExpiresAt = Date.parse(checkpoint?.observation?.expiresAt || "")
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime()
+
+  if (
+    !run ||
+    !checkpoint ||
+    !input ||
+    !Number.isFinite(nowMs) ||
+    run.version !== input.runVersion ||
+    isDevelopmentRunTerminalStatus(run.status) ||
+    checkpoint.runVersion !== run.version ||
+    checkpoint.capability !== input.capability ||
+    checkpoint.workerId !== "antigravity" ||
+    checkpoint.checkpointVersion !== input.checkpointVersion ||
+    checkpoint.dispatch?.outcome !== "ready" ||
+    checkpoint.dispatch?.consumeAttempt !== true ||
+    checkpoint.observation?.sourceId !== "reviewed-runtime-probe" ||
+    checkpoint.observation?.fresh !== true ||
+    !Number.isFinite(checkpointExpiresAt) ||
+    checkpointExpiresAt < nowMs
+  ) {
+    throw readinessError(
+      "ANTIGRAVITY_AUTHORIZATION_BINDING_MISMATCH",
+      "Software factory checkpoint does not authorize this Antigravity dispatch."
+    )
+  }
+
+  return Object.freeze({
+    runId: run.runId,
+    runVersion: run.version,
+    checkpointVersion: checkpoint.checkpointVersion,
+    capability: checkpoint.capability,
+    workerId: checkpoint.workerId,
+    modelClass: checkpoint.modelClass,
+    skills: [...(checkpoint.skills || [])]
+  })
+}
+
 function createAntigravityReadinessAdapter(dependencies = {}) {
   const platform = dependencies.platform || process.platform
   const candidates = dependencies.executableCandidates || fixedExecutableCandidates(platform)
@@ -277,17 +331,16 @@ function createAntigravityReadinessAdapter(dependencies = {}) {
         stderr: result.stderr || ""
       }
     } catch (error) {
-      if (
-        error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
-        error?.code === "ENOBUFS"
-      ) {
+      const failureClass = classifyAntigravityCommandFailure(error)
+
+      if (failureClass === "output_invalid") {
         throw readinessError(
           "ANTIGRAVITY_PROBE_OUTPUT_INVALID",
           "Antigravity readiness output exceeded the reviewed size bound."
         )
       }
 
-      if (error?.killed || error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT") {
+      if (failureClass === "timeout") {
         return {
           exitCode: 124,
           stdout: error?.stdout || "",
@@ -439,26 +492,13 @@ function createAntigravityReadinessAdapter(dependencies = {}) {
     }
 
     const checkpoint = await readCheckpointImpl(run.runId, options)
-    const checkpointExpiresAt = Date.parse(checkpoint?.observation?.expiresAt || "")
     const now = normalizedNow(nowImpl)
-
-    if (
-      checkpoint.runVersion !== run.version ||
-      checkpoint.capability !== input.capability ||
-      checkpoint.workerId !== "antigravity" ||
-      checkpoint.checkpointVersion !== input.checkpointVersion ||
-      checkpoint.dispatch?.outcome !== "ready" ||
-      checkpoint.dispatch?.consumeAttempt !== true ||
-      checkpoint.observation?.sourceId !== "reviewed-runtime-probe" ||
-      checkpoint.observation?.fresh !== true ||
-      !Number.isFinite(checkpointExpiresAt) ||
-      checkpointExpiresAt < now.getTime()
-    ) {
-      throw readinessError(
-        "ANTIGRAVITY_AUTHORIZATION_BINDING_MISMATCH",
-        "Software factory checkpoint does not authorize this Antigravity dispatch."
-      )
-    }
+    const binding = validateAntigravityDispatchCheckpointBinding({
+      run,
+      checkpoint,
+      input,
+      now
+    })
 
     const observation = await probe()
 
@@ -481,9 +521,9 @@ function createAntigravityReadinessAdapter(dependencies = {}) {
       projectId: run.project.id,
       capability: input.capability,
       workerId: policy.workerId,
-      modelClass: checkpoint.modelClass,
-      skills: [...checkpoint.skills],
-      checkpointVersion: checkpoint.checkpointVersion,
+      modelClass: binding.modelClass,
+      skills: [...binding.skills],
+      checkpointVersion: binding.checkpointVersion,
       issuedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + ANTIGRAVITY_AUTHORIZATION_MAX_AGE_MS).toISOString()
     })
