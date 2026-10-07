@@ -410,6 +410,9 @@ test("first checkpoint creation synchronizes new store and run directory entries
   }, {
     writeDataDir: fixture.writeDataDir,
     now: () => new Date("2026-10-07T10:00:04.000Z"),
+    syncParentDirectoryImpl: async (path) => {
+      synced.push(path)
+    },
     syncDirectoryImpl: async (path) => {
       synced.push(path)
     }
