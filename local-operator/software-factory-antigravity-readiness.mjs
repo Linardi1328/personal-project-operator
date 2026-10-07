@@ -337,10 +337,20 @@ export async function authorizeAntigravityDispatch(input, options = {}) {
 
   const checkpoint = await readSoftwareFactoryDispatchCheckpoint(run.runId, options)
 
+  const checkpointExpiresAt = Date.parse(checkpoint?.observation?.expiresAt || "")
+  const now = nowDate(options)
+
   if (
     checkpoint.runVersion !== run.version ||
     checkpoint.capability !== input.capability ||
-    checkpoint.workerId !== "antigravity"
+    checkpoint.workerId !== "antigravity" ||
+    checkpoint.checkpointVersion !== input.checkpointVersion ||
+    checkpoint.dispatch?.outcome !== "ready" ||
+    checkpoint.dispatch?.consumeAttempt !== true ||
+    checkpoint.observation?.sourceId !== "reviewed-runtime-probe" ||
+    checkpoint.observation?.fresh !== true ||
+    !Number.isFinite(checkpointExpiresAt) ||
+    checkpointExpiresAt < now.getTime()
   ) {
     throw readinessError(
       "ANTIGRAVITY_AUTHORIZATION_BINDING_MISMATCH",
@@ -348,7 +358,10 @@ export async function authorizeAntigravityDispatch(input, options = {}) {
     )
   }
 
-  const observation = await probeAntigravityReadiness(options)
+  const observation = await probeAntigravityReadiness({
+    ...options,
+    now: () => now
+  })
 
   if (
     observation.integration !== "configured" ||
@@ -361,7 +374,6 @@ export async function authorizeAntigravityDispatch(input, options = {}) {
     )
   }
 
-  const now = nowDate(options)
   const authorization = Object.freeze({
     kind: "software-factory-antigravity-dispatch-authorization",
     adapterId: ANTIGRAVITY_READINESS_ADAPTER_ID,
@@ -370,8 +382,8 @@ export async function authorizeAntigravityDispatch(input, options = {}) {
     projectId: run.project.id,
     capability: input.capability,
     workerId: policy.workerId,
-    modelClass: policy.modelClass,
-    skills: [...policy.skills],
+    modelClass: checkpoint.modelClass,
+    skills: [...checkpoint.skills],
     checkpointVersion: checkpoint.checkpointVersion,
     issuedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + ANTIGRAVITY_AUTHORIZATION_MAX_AGE_MS).toISOString()
