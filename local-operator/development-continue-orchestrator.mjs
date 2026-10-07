@@ -871,13 +871,6 @@ function boundaryForStatus(status, scope) {
     })
   }
 
-  if (scope.id === "ordinary" && status === "review_changes_requested") {
-    return Object.freeze({
-      action: "software-factory-review-remediation",
-      handler: "executeSoftwareFactoryBoundedHardening"
-    })
-  }
-
   return boundary
 }
 
@@ -903,6 +896,9 @@ function childOptions(options, expectedVersion, runtimeOptions = {}, scope = ord
 function childHandlers(options = {}, scope = ordinaryScope) {
   return {
     ...defaultChildHandlers,
+    ...(scope.id === "ordinary" ? {
+      executeBoundedHardening: executeSoftwareFactoryBoundedHardening
+    } : {}),
     ...(scope.id === "self-development" ? {
       planExistingDevelopmentRun: planExistingPersonalProjectOperatorSelfDevelopmentRun
     } : {}),
