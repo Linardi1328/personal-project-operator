@@ -42,6 +42,14 @@ export class SoftwareFactoryDispatchCheckpointError extends Error {
   }
 }
 
+export class SoftwareFactoryDispatchCheckpointAmbiguousError extends SoftwareFactoryDispatchCheckpointError {
+  constructor(code, safeMessage) {
+    super(code, safeMessage)
+    this.name = "SoftwareFactoryDispatchCheckpointAmbiguousError"
+    this.stateCommitted = true
+  }
+}
+
 function checkpointError(code, safeMessage) {
   return new SoftwareFactoryDispatchCheckpointError(code, safeMessage)
 }
@@ -505,6 +513,7 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
   const finalPath = join(root, checkpointFileName(nextVersion))
   const tempPath = join(root, `.pending-${randomUUID()}.json`)
   let handle
+  let published = false
 
   try {
     handle = await open(tempPath, "wx", 0o600)
@@ -513,7 +522,9 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
     await handle.close()
     handle = null
     await link(tempPath, finalPath)
-    await syncDirectory(root)
+    published = true
+    const syncDirectoryImpl = options.syncDirectoryImpl || syncDirectory
+    await syncDirectoryImpl(root)
   } catch (error) {
     if (error?.code === "EEXIST") {
       throw checkpointError(
@@ -524,6 +535,13 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
 
     if (error instanceof SoftwareFactoryDispatchCheckpointError) {
       throw error
+    }
+
+    if (published) {
+      throw new SoftwareFactoryDispatchCheckpointAmbiguousError(
+        "FACTORY_CHECKPOINT_DURABILITY_AMBIGUOUS",
+        "Software factory checkpoint may already be committed; read the latest checkpoint before retrying."
+      )
     }
 
     throw checkpointError(
