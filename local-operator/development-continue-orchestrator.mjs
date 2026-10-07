@@ -52,9 +52,7 @@ import {
 } from "./development-operation-lease.mjs"
 import {
   HARDENING_ORCHESTRATOR_ID,
-  createBoundedHardeningOrchestrator,
-  executeBoundedHardening,
-  latestHardeningEvidence
+  executeBoundedHardening
 } from "./development-hardening-orchestrator.mjs"
 import {
   executePhase6GDelivery,
@@ -713,8 +711,25 @@ async function reconcileOrphanedAttempt(
 }
 
 
+function latestHardeningStartedEvidence(run) {
+  const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+    if (
+      entry?.source === HARDENING_ORCHESTRATOR_ID &&
+      entry?.metadata?.orchestrator === HARDENING_ORCHESTRATOR_ID &&
+      entry?.metadata?.outcome === "hardening_started"
+    ) {
+      return entry
+    }
+  }
+
+  return null
+}
+
 export function resolveSoftwareFactoryImplementationCapability(run) {
-  const hardening = latestHardeningEvidence(run, "hardening_started")
+  const hardening = latestHardeningStartedEvidence(run)
 
   if (
     hardening?.source === HARDENING_ORCHESTRATOR_ID &&
@@ -836,10 +851,15 @@ export async function executeSoftwareFactoryImplementation(runId, options = {}) 
   return defaultSoftwareFactoryImplementationCoordinator(runId, options)
 }
 
-const executeSoftwareFactoryBoundedHardening = createBoundedHardeningOrchestrator({
-  executeImplementation: executeSoftwareFactoryImplementation,
-  implementationAdapterId: ANTIGRAVITY_EXECUTION_ADAPTER_ID
-})
+async function executeSoftwareFactoryBoundedHardening(runId, options = {}) {
+  return executeBoundedHardening(runId, {
+    ...options,
+    hardeningDependencies: {
+      executeImplementation: executeSoftwareFactoryImplementation,
+      implementationAdapterId: ANTIGRAVITY_EXECUTION_ADAPTER_ID
+    }
+  })
+}
 
 function boundaryForStatus(status, scope) {
   const boundary = statusActions[status]
