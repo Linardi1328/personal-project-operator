@@ -11,8 +11,8 @@ import {
   recordSoftwareFactoryDispatchCheckpoint
 } from "./software-factory-dispatch-checkpoint.mjs"
 import {
-  attestReviewedRuntimeCapacity,
   authorizeSoftwareFactoryExecution,
+  probeAndAttestSoftwareFactoryWorkerCapacity,
   verifySoftwareFactoryCapacityAttestation
 } from "./software-factory-capacity-attestation.mjs"
 
@@ -84,8 +84,9 @@ async function checkpointFor(fixture, capability = "implementation.frontend") {
 
 test("reviewed runtime probe can mint and verify a fresh attestation", async () => {
   const fixture = await makeImplementationRun()
-  const attestation = await attestReviewedRuntimeCapacity(probe(), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe()
   })
   const verified = await verifySoftwareFactoryCapacityAttestation(attestation, {
     writeDataDir: fixture.writeDataDir,
@@ -100,8 +101,9 @@ test("reviewed runtime probe can mint and verify a fresh attestation", async () 
 
 test("tampered capacity attestation is rejected", async () => {
   const fixture = await makeImplementationRun()
-  const attestation = await attestReviewedRuntimeCapacity(probe(), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe()
   })
 
   await assert.rejects(
@@ -118,10 +120,11 @@ test("tampered capacity attestation is rejected", async () => {
 
 test("expired attestation is rejected", async () => {
   const fixture = await makeImplementationRun()
-  const attestation = await attestReviewedRuntimeCapacity(probe({
-    observedAt: "2026-10-07T10:00:00.000Z"
-  }), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe({
+      observedAt: "2026-10-07T10:00:00.000Z"
+    })
   })
 
   await assert.rejects(
@@ -136,8 +139,9 @@ test("expired attestation is rejected", async () => {
 test("fresh verified attestation can authorize current implementation execution", async () => {
   const fixture = await makeImplementationRun()
   const checkpoint = await checkpointFor(fixture)
-  const attestation = await attestReviewedRuntimeCapacity(probe(), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe()
   })
 
   const authorization = await authorizeSoftwareFactoryExecution({
@@ -161,8 +165,9 @@ test("fresh verified attestation can authorize current implementation execution"
 test("attestation replay is rejected after successful authorization", async () => {
   const fixture = await makeImplementationRun()
   const checkpoint = await checkpointFor(fixture)
-  const attestation = await attestReviewedRuntimeCapacity(probe(), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe()
   })
   const input = {
     runId: fixture.run.runId,
@@ -186,8 +191,9 @@ test("attestation replay is rejected after successful authorization", async () =
 test("stale checkpoint version cannot authorize execution", async () => {
   const fixture = await makeImplementationRun()
   const checkpoint = await checkpointFor(fixture)
-  const attestation = await attestReviewedRuntimeCapacity(probe(), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe()
   })
 
   await assert.rejects(
@@ -208,10 +214,9 @@ test("stale checkpoint version cannot authorize execution", async () => {
 test("wrong worker attestation cannot authorize capability", async () => {
   const fixture = await makeImplementationRun()
   const checkpoint = await checkpointFor(fixture)
-  const attestation = await attestReviewedRuntimeCapacity(probe({
-    workerId: "chatgpt"
-  }), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("chatgpt", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe({ workerId: "chatgpt" })
   })
 
   await assert.rejects(
@@ -232,10 +237,9 @@ test("wrong worker attestation cannot authorize capability", async () => {
 test("non-ready verified worker state cannot authorize execution", async () => {
   const fixture = await makeImplementationRun()
   const checkpoint = await checkpointFor(fixture)
-  const attestation = await attestReviewedRuntimeCapacity(probe({
-    capacity: "exhausted"
-  }), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe({ capacity: "exhausted" })
   })
 
   await assert.rejects(
@@ -273,10 +277,9 @@ test("historical checkpoint alone cannot authorize execution", async () => {
 
 test("owner-gated production capability cannot be authorized by capacity attestation", async () => {
   const fixture = await makeImplementationRun()
-  const attestation = await attestReviewedRuntimeCapacity(probe({
-    workerId: "vercel"
-  }), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("vercel", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe({ workerId: "vercel" })
   })
 
   await assert.rejects(
@@ -297,8 +300,9 @@ test("owner-gated production capability cannot be authorized by capacity attesta
 test("attestation key is private and does not enter checkpoint JSON", async () => {
   const fixture = await makeImplementationRun()
   const checkpoint = await checkpointFor(fixture)
-  const attestation = await attestReviewedRuntimeCapacity(probe(), {
-    writeDataDir: fixture.writeDataDir
+  const attestation = await probeAndAttestSoftwareFactoryWorkerCapacity("antigravity", {
+    writeDataDir: fixture.writeDataDir,
+    trustedRuntimeProbeImpl: async () => probe()
   })
 
   const keyPath = join(
