@@ -16,6 +16,7 @@ import {
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
 import {
+  REVIEWED_CODEX_EXECUTION_ADAPTER_ID,
   classifyReviewedImplementationEvidence
 } from "./software-factory-implementation-evidence.mjs"
 
@@ -23,6 +24,7 @@ const execFileAsync = promisify(execFile)
 
 export const AUTOMATED_TEST_RUNNER_ID = "phase-6e-automated-test-runner"
 export const AUTOMATED_TEST_SANDBOX_ID = "phase-6e-no-outbound-network-test-sandbox"
+export const PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE = REVIEWED_CODEX_EXECUTION_ADAPTER_ID
 export const MAX_AUTOMATED_TEST_STEPS = 5
 export const MAX_AUTOMATED_TEST_ATTEMPTS = 5
 export const MAX_TEST_ARG_COUNT = 32
