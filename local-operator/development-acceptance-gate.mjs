@@ -9,13 +9,13 @@ import {
   resolveApprovedDevelopmentRunProject
 } from "./development-run-state.mjs"
 import {
-  CODEX_EXECUTION_ADAPTER_ID,
   PHASE_6F_HARDENING_ORCHESTRATOR_ID
 } from "./development-codex-execution-adapter.mjs"
 import {
-  ANTIGRAVITY_EXECUTION_ADAPTER_ID,
-  classifyAntigravityExecutionAttemptEvidence
-} from "./software-factory-antigravity-execution.mjs"
+  classifyReviewedImplementationEvidence,
+  latestReviewedImplementationEvidence,
+  reviewedImplementationAdapter
+} from "./software-factory-implementation-evidence.mjs"
 import {
   AUTOMATED_TEST_RUNNER_ID
 } from "./development-test-runner.mjs"
@@ -344,58 +344,12 @@ function latestEvidence(run, kind, predicate) {
   return null
 }
 
-const reviewedImplementationAdapters = new Set([
-  CODEX_EXECUTION_ADAPTER_ID,
-  ANTIGRAVITY_EXECUTION_ADAPTER_ID
-])
-
-function implementationAdapter(entry) {
-  const source = entry?.source
-  const adapter = entry?.metadata?.adapter
-
-  if (reviewedImplementationAdapters.has(source) && (adapter === undefined || adapter === source)) {
-    return source
-  }
-
-  if (reviewedImplementationAdapters.has(adapter) && (source === undefined || source === adapter)) {
-    return adapter
-  }
-
-  return null
-}
-
 export function latestPhase6DImplementationEvidence(run) {
-  return latestEvidence(run, "implementation", (entry) => implementationAdapter(entry) !== null)
+  return latestReviewedImplementationEvidence(run)
 }
 
 export function classifyPhase6DImplementationEvidenceForAcceptance(run) {
-  const entry = latestPhase6DImplementationEvidence(run)
-
-  if (!entry) {
-    return Object.freeze({ classification: "none", adapterId: null, entry: null })
-  }
-
-  const adapterId = implementationAdapter(entry)
-
-  if (adapterId === ANTIGRAVITY_EXECUTION_ADAPTER_ID) {
-    return Object.freeze({
-      classification: classifyAntigravityExecutionAttemptEvidence(run),
-      adapterId,
-      entry
-    })
-  }
-
-  return Object.freeze({
-    classification: entry?.metadata?.outcome === "implementation_ready"
-      ? "completed"
-      : entry?.metadata?.outcome === "execution_started"
-        ? "open"
-        : entry?.metadata?.ambiguous === true
-          ? "invalid"
-          : "other",
-    adapterId,
-    entry
-  })
+  return classifyReviewedImplementationEvidence(run)
 }
 
 function assertNoUnreviewedExecutionEvidence(run, approvedSha) {
@@ -406,7 +360,7 @@ function assertNoUnreviewedExecutionEvidence(run, approvedSha) {
     if (
       entry?.sha === approvedSha &&
       executionOutcomes.has(entry?.metadata?.outcome) &&
-      implementationAdapter(entry) === null
+      reviewedImplementationAdapter(entry) === null
     ) {
       throw acceptanceError(
         "ACCEPTANCE_IMPLEMENTATION_EVIDENCE_UNREVIEWED",
@@ -519,12 +473,14 @@ function assertNoOpenOrAmbiguousAttempts(run, approvedSha) {
 }
 
 function assertEvidenceChain(run, approvedSha) {
-  const implementation = latestPhase6DImplementationEvidence(run)
+  const implementationClassification = classifyReviewedImplementationEvidence(run)
+  const implementation = implementationClassification.entry
   const tests = latestPhase6EPassEvidence(run)
   const review = latestPhase6FApprovedReviewEvidence(run)
   const latestReview = latestPhase6FReviewEvidence(run)
 
   if (
+    implementationClassification.classification !== "completed" ||
     !implementation ||
     implementation.sha !== approvedSha ||
     implementation.metadata?.outcome !== "implementation_ready"
