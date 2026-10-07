@@ -4,6 +4,7 @@ import {
   ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS,
   buildAntigravityExecutionArgs,
   buildAntigravityImplementationPrompt,
+  classifyAntigravityExecutionAttemptEvidence,
   validateAntigravityAutomationSettings
 } from "./software-factory-antigravity-execution.mjs"
 
@@ -186,5 +187,61 @@ test("overly broad trusted home directory does not satisfy PPO workspace trust",
       "/Users/richie/.local/share/personal-project-operator/development-workspaces/project/run"
     ),
     (error) => error?.code === "ANTIGRAVITY_WORKSPACE_NOT_TRUSTED"
+  )
+})
+
+
+function antigravityEvidenceRun(outcome, options = {}) {
+  const attempt = options.attempt ?? 1
+  return {
+    status: options.status || "implementation_in_progress",
+    attempts: { implementation: options.runAttempt ?? attempt },
+    evidence: {
+      implementation: [{
+        kind: "implementation",
+        sha: "a".repeat(40),
+        source: "software-factory-v0-antigravity-execution",
+        metadata: {
+          attempt,
+          outcome,
+          promptHash: "b".repeat(64),
+          startedAt: "2026-10-07T12:00:00.000Z",
+          ...(outcome !== "execution_started" ? { endedAt: "2026-10-07T12:01:00.000Z" } : {})
+        }
+      }]
+    }
+  }
+}
+
+test("Antigravity attempt classifier distinguishes open and definitive failures", () => {
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(antigravityEvidenceRun("execution_started")),
+    "open"
+  )
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(antigravityEvidenceRun("execution_failed")),
+    "definitive_failed"
+  )
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(antigravityEvidenceRun("orphan_recovered")),
+    "definitive_failed"
+  )
+})
+
+test("Antigravity attempt classifier rejects stale attempt evidence", () => {
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(
+      antigravityEvidenceRun("execution_failed", { attempt: 1, runAttempt: 2 })
+    ),
+    "invalid"
+  )
+})
+
+test("Antigravity attempt classifier treats matching ready evidence as complete", () => {
+  assert.equal(
+    classifyAntigravityExecutionAttemptEvidence(
+      antigravityEvidenceRun("implementation_ready", { status: "implementation_ready" })
+    ),
+    "complete"
   )
 })
