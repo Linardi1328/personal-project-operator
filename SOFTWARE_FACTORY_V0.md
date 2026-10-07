@@ -335,3 +335,20 @@ When independent review returns validated `CHANGES_REQUESTED` evidence, PPO:
 If Antigravity is quota-blocked or externally unavailable, the hardening loop stops before tests and returns the capacity/external blocker without fabricating review progress.
 
 PPO self-development and legacy recovery retain the existing Codex-backed hardening default. Production deployment and final merge authority remain outside autonomous remediation.
+
+
+## V1.0 live model routing
+
+Antigravity execution now binds the abstract Software Factory model class to a concrete model from the live `agy models` catalog before an implementation attempt begins.
+
+The routing policy is intentionally version-tolerant:
+
+- `economy` prefers the newest reviewed Flash Medium tier, then other reviewed lightweight/Flash tiers;
+- `standard` prefers the newest reviewed Flash High tier, with reviewed medium/deeper fallbacks;
+- `deep` requires a reviewed Pro High or reasoning/deep tier and fails closed when only lightweight models are available.
+
+PPO pins the selected slug with `--model`. It never relies on Antigravity's interactive/default model choice for factory execution, and it does not silently downgrade a `deep` task to a lightweight model.
+
+Model discovery and routing happen before `attempts.implementation` is incremented. An unavailable, malformed, or insufficient catalog therefore blocks dispatch without consuming an implementation attempt or model-generation tokens.
+
+Only the selected bounded model slug is stored in implementation evidence. Raw `agy models` output is not persisted.
