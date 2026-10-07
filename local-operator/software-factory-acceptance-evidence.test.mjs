@@ -16,6 +16,7 @@ const SHA = "a".repeat(40)
 function runWith(entries, attempt = 1) {
   return {
     headSha: SHA,
+    project: { id: "khlim-digital-ecosystem" },
     attempts: { implementation: attempt },
     evidence: { implementation: entries }
   }
@@ -28,6 +29,7 @@ function entry(source, outcome, attempt = 1, overrides = {}) {
     source,
     metadata: {
       adapter: source,
+      project: "khlim-digital-ecosystem",
       attempt,
       outcome,
       ...overrides
@@ -81,7 +83,7 @@ test("unknown executor evidence is not recognized as Phase 6D implementation evi
 
   assert.equal(latestPhase6DImplementationEvidence(run), null)
   assert.deepEqual(classifyPhase6DImplementationEvidenceForAcceptance(run), {
-    classification: "none",
+    classification: "invalid",
     adapterId: null,
     entry: null
   })
@@ -94,6 +96,7 @@ test("contradictory source and adapter identity is not recognized", () => {
     source: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
     metadata: {
       adapter: CODEX_EXECUTION_ADAPTER_ID,
+      project: "khlim-digital-ecosystem",
       attempt: 1,
       outcome: "implementation_ready"
     }
