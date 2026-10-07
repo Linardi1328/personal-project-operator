@@ -358,7 +358,10 @@ export function createAntigravityReadinessAdapter(dependencies = {}) {
         sourceId: observation.sourceId,
         observedAt: observation.observedAt
       }
-    }, options)
+    }, {
+      ...options,
+      now: () => normalizedNow(nowImpl)
+    })
   }
 
   async function authorize(input, options = {}) {
