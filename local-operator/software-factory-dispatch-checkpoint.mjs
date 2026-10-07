@@ -1,4 +1,5 @@
-import { open, mkdir, readdir, readFile, chmod } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { open, mkdir, readdir, readFile, chmod, link, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
@@ -81,6 +82,16 @@ function checkpointFileName(version) {
 async function ensurePrivateDir(path) {
   await mkdir(path, { recursive: true, mode: 0o700 })
   await chmod(path, 0o700)
+}
+
+async function syncDirectory(path) {
+  const handle = await open(path, "r")
+
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 function normalizeExpectedCheckpointVersion(value) {
@@ -491,13 +502,18 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
   const root = checkpointRoot(run.runId, options)
   await ensurePrivateDir(root)
 
-  const path = join(root, checkpointFileName(nextVersion))
+  const finalPath = join(root, checkpointFileName(nextVersion))
+  const tempPath = join(root, `.pending-${randomUUID()}.json`)
   let handle
 
   try {
-    handle = await open(path, "wx", 0o600)
+    handle = await open(tempPath, "wx", 0o600)
     await handle.writeFile(`${JSON.stringify(checkpoint)}\n`, "utf8")
     await handle.sync()
+    await handle.close()
+    handle = null
+    await link(tempPath, finalPath)
+    await syncDirectory(root)
   } catch (error) {
     if (error?.code === "EEXIST") {
       throw checkpointError(
@@ -516,6 +532,7 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
     )
   } finally {
     await handle?.close().catch(() => {})
+    await unlink(tempPath).catch(() => {})
   }
 
   return checkpoint
