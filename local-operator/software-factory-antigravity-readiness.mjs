@@ -150,6 +150,27 @@ function classifyProbeText(text) {
     return { integration: "unconfigured", capacity: "unavailable" }
   }
 
+  const remaining = [...text.matchAll(/(\d{1,3})%\s+remaining/giu)]
+    .map((match) => Number.parseInt(match[1], 10))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 100)
+
+  if (remaining.length > 0) {
+    const maxRemaining = Math.max(...remaining)
+
+    if (maxRemaining === 0) {
+      return { integration: "configured", capacity: "exhausted" }
+    }
+
+    return {
+      integration: "configured",
+      capacity: maxRemaining <= 20 ? "degraded" : "available"
+    }
+  }
+
+  if (/\bquota available\b/iu.test(text)) {
+    return { integration: "configured", capacity: "available" }
+  }
+
   return null
 }
 
@@ -186,28 +207,30 @@ async function runReviewedProbe(options = {}) {
 
   const executablePath = await resolveReviewedExecutable(options)
   const execFileImpl = options.execFileImpl || execFileAsync
+  const common = {
+    cwd: "/",
+    encoding: "utf8",
+    timeout: ANTIGRAVITY_READINESS_TIMEOUT_MS,
+    maxBuffer: ANTIGRAVITY_READINESS_MAX_OUTPUT_BYTES,
+    shell: false,
+    env: {
+      PATH: "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+      HOME: process.env.HOME || "",
+      TERM: "dumb",
+      NO_COLOR: "1",
+      CI: "true",
+      GIT_TERMINAL_PROMPT: "0"
+    }
+  }
+
+  let models
 
   try {
-    const result = await execFileImpl(executablePath, ["models"], {
-      cwd: "/",
-      encoding: "utf8",
-      timeout: ANTIGRAVITY_READINESS_TIMEOUT_MS,
-      maxBuffer: ANTIGRAVITY_READINESS_MAX_OUTPUT_BYTES,
-      shell: false,
-      env: {
-        PATH: "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
-        HOME: process.env.HOME || "",
-        TERM: "dumb",
-        NO_COLOR: "1",
-        CI: "true",
-        GIT_TERMINAL_PROMPT: "0"
-      }
-    })
-
-    return {
+    const result = await execFileImpl(executablePath, ["models"], common)
+    models = {
       exitCode: 0,
-      stdout: result.stdout,
-      stderr: result.stderr
+      stdout: result.stdout || "",
+      stderr: result.stderr || ""
     }
   } catch (error) {
     if (error?.killed || error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT") {
@@ -217,18 +240,59 @@ async function runReviewedProbe(options = {}) {
       )
     }
 
-    return {
+    models = {
       exitCode: Number.isInteger(error?.code) ? error.code : 1,
       stdout: error?.stdout || "",
       stderr: error?.stderr || ""
     }
+  }
+
+  const modelText = boundedOutput(models.stdout, models.stderr)
+  const modelClassification = classifyProbeText(modelText)
+
+  if (models.exitCode !== 0 || modelClassification?.integration === "unconfigured") {
+    return {
+      ...models,
+      classification: modelClassification
+    }
+  }
+
+  let usage
+
+  try {
+    const result = await execFileImpl(
+      executablePath,
+      ["-p", "/usage", "--print-timeout", "10s"],
+      common
+    )
+    usage = {
+      exitCode: 0,
+      stdout: result.stdout || "",
+      stderr: result.stderr || ""
+    }
+  } catch (error) {
+    usage = {
+      exitCode: Number.isInteger(error?.code) ? error.code : 1,
+      stdout: error?.stdout || "",
+      stderr: error?.stderr || ""
+    }
+  }
+
+  const usageText = boundedOutput(usage.stdout, usage.stderr)
+  const usageClassification = classifyProbeText(usageText)
+
+  return {
+    exitCode: models.exitCode,
+    stdout: `${models.stdout || ""}\n${usage.stdout || ""}`,
+    stderr: `${models.stderr || ""}\n${usage.stderr || ""}`,
+    classification: usageClassification || modelClassification || null
   }
 }
 
 export async function probeAntigravityReadiness(options = {}) {
   const result = await runReviewedProbe(options)
   const text = boundedOutput(result.stdout, result.stderr)
-  const classified = classifyProbeText(text)
+  const classified = result.classification || classifyProbeText(text)
   const observedAt = nowDate(options).toISOString()
 
   if (classified) {
