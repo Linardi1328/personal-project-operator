@@ -383,7 +383,7 @@ test("checkpoint directory failures map to a safe store-unavailable error", asyn
     }, {
       writeDataDir: fixture.writeDataDir,
       now: () => new Date("2026-10-07T10:00:04.000Z"),
-      ensurePrivateDirImpl: async () => {
+      ensureCheckpointDirectoryImpl: async () => {
         const error = new Error("/private/secret/path")
         error.code = "EACCES"
         throw error
@@ -394,4 +394,31 @@ test("checkpoint directory failures map to a safe store-unavailable error", asyn
       error?.safeMessage === "Software factory dispatch checkpoint store is unavailable."
     )
   )
+})
+
+
+test("first checkpoint creation synchronizes new store and run directory entries", async () => {
+  const fixture = await makePlannedRun()
+  const synced = []
+
+  await recordSoftwareFactoryDispatchCheckpoint({
+    runId: fixture.run.runId,
+    runVersion: fixture.run.version,
+    capability: "implementation.backend",
+    expectedCheckpointVersion: 0,
+    observation: observation({ capacity: "exhausted" })
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: () => new Date("2026-10-07T10:00:04.000Z"),
+    syncParentDirectoryImpl: async (path) => {
+      synced.push(path)
+    },
+    syncDirectoryImpl: async (path) => {
+      synced.push(path)
+    }
+  })
+
+  assert.ok(synced.includes(fixture.writeDataDir))
+  assert.ok(synced.some((path) => path.endsWith("software-factory-dispatch-checkpoints")))
+  assert.ok(synced.some((path) => path.endsWith(fixture.run.runId)))
 })

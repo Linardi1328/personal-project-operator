@@ -138,3 +138,40 @@ implementation may begin
 ```
 
 V0.2 still does not invoke Antigravity or another worker. A reviewed provider/readiness adapter remains the next execution boundary.
+
+
+## V0.3 trusted Antigravity readiness
+
+V0.3 introduces the first trusted live-worker readiness boundary without granting worker execution authority.
+
+The reviewed Antigravity readiness adapter:
+
+- validates the Antigravity CLI executable against a fixed reviewed path set;
+- refuses symlinked or group/world-writable executables;
+- runs a cheap integration probe with `agy models`;
+- then attempts the official `/usage` quota command through non-interactive CLI mode;
+- classifies only reviewed states: available, degraded, exhausted, rate-limited, unavailable, or unknown;
+- never treats successful model listing alone as capacity evidence;
+- refuses oversized or sensitive probe output;
+- creates `reviewed-runtime-probe` provenance internally rather than accepting it from a caller; and
+- remains fail-closed when the quota surface cannot be consumed headlessly.
+
+Current Antigravity documentation exposes quota through `/usage`; there is no assumed undocumented quota API in PPO.
+
+### Dispatch authorization
+
+A historical checkpoint is not execution authority.
+
+PPO can issue a short-lived in-memory Antigravity dispatch authorization only when all of the following are true:
+
+1. the development run id and version are still current and non-terminal;
+2. the caller names the exact latest checkpoint version;
+3. the checkpoint capability and worker still match reviewed policy;
+4. the checkpoint outcome is `ready` with `consumeAttempt=true`;
+5. checkpoint provenance is `reviewed-runtime-probe`;
+6. the checkpoint observation is still within its freshness window; and
+7. a second fresh trusted Antigravity probe still reports available or degraded capacity.
+
+Authorization validity is tied to the adapter instance's private in-memory identity set. A serialized or reconstructed object cannot be replayed as valid authorization.
+
+V0.3 still does not invoke Antigravity for implementation work. The next execution slice must consume this authorization at the execution boundary and independently preserve PPO's exact-run, workspace, attempt, and evidence guarantees.

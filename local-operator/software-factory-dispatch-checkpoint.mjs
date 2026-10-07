@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { open, mkdir, readdir, readFile, chmod, link, unlink } from "node:fs/promises"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
   PPO_WRITE_DATA_DIR_ENV
@@ -85,6 +85,37 @@ function checkpointRoot(runId, options = {}) {
 
 function checkpointFileName(version) {
   return `${String(version).padStart(6, "0")}.json`
+}
+
+async function ensurePrivateChildDirectory(parentPath, childPath, options = {}) {
+  let created = false
+
+  try {
+    await mkdir(childPath, { mode: 0o700 })
+    created = true
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw error
+    }
+  }
+
+  await chmod(childPath, 0o700)
+
+  if (created) {
+    const syncParentDirectoryImpl = options.syncParentDirectoryImpl || syncDirectory
+    await syncParentDirectoryImpl(parentPath)
+  }
+}
+
+async function ensureCheckpointDirectory(runId, options = {}) {
+  const writeDataDir = resolveWriteDataDir(options)
+  const storeDir = join(writeDataDir, SOFTWARE_FACTORY_DISPATCH_CHECKPOINT_STORE_DIR)
+  const runDir = join(storeDir, normalizeDevelopmentRunId(runId))
+
+  await ensurePrivateDir(writeDataDir)
+  await ensurePrivateChildDirectory(writeDataDir, storeDir, options)
+  await ensurePrivateChildDirectory(storeDir, runDir, options)
+  return runDir
 }
 
 async function ensurePrivateDir(path) {
@@ -514,8 +545,16 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
   let published = false
 
   try {
-    const ensurePrivateDirImpl = options.ensurePrivateDirImpl || ensurePrivateDir
-    await ensurePrivateDirImpl(root)
+    const ensureCheckpointDirectoryImpl = options.ensureCheckpointDirectoryImpl || ensureCheckpointDirectory
+    const preparedRoot = await ensureCheckpointDirectoryImpl(run.runId, options)
+
+    if (preparedRoot !== root || dirname(finalPath) !== preparedRoot) {
+      throw checkpointError(
+        "FACTORY_CHECKPOINT_STORE_UNAVAILABLE",
+        "Software factory dispatch checkpoint store is unavailable."
+      )
+    }
+
     handle = await open(tempPath, "wx", 0o600)
     await handle.writeFile(`${JSON.stringify(checkpoint)}\n`, "utf8")
     await handle.sync()
