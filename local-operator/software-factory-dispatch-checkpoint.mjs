@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { open, mkdir, readdir, readFile, chmod, link, unlink } from "node:fs/promises"
-import { join } from "node:path"
+import { dirname, join, relative, sep } from "node:path"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
   PPO_WRITE_DATA_DIR_ENV
@@ -87,9 +87,29 @@ function checkpointFileName(version) {
   return `${String(version).padStart(6, "0")}.json`
 }
 
-async function ensurePrivateDir(path) {
-  await mkdir(path, { recursive: true, mode: 0o700 })
-  await chmod(path, 0o700)
+async function ensurePrivateDir(path, options = {}) {
+  const mkdirImpl = options.mkdirImpl || mkdir
+  const chmodImpl = options.chmodImpl || chmod
+  const syncDirectoryImpl = options.syncDirectoryImpl || syncDirectory
+  const firstCreated = await mkdirImpl(path, { recursive: true, mode: 0o700 })
+  await chmodImpl(path, 0o700)
+
+  if (firstCreated) {
+    const rel = relative(firstCreated, path)
+    const created = [firstCreated]
+    if (rel && rel !== ".") {
+      let current = firstCreated
+      for (const part of rel.split(sep).filter(Boolean)) {
+        current = join(current, part)
+        created.push(current)
+      }
+    }
+
+    await syncDirectoryImpl(dirname(firstCreated))
+    for (const directory of created) {
+      await syncDirectoryImpl(directory)
+    }
+  }
 }
 
 async function syncDirectory(path) {
@@ -514,7 +534,7 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
   let published = false
 
   try {
-    const ensurePrivateDirImpl = options.ensurePrivateDirImpl || ensurePrivateDir
+    const ensurePrivateDirImpl = options.ensurePrivateDirImpl || ((path) => ensurePrivateDir(path, options))
     await ensurePrivateDirImpl(root)
     handle = await open(tempPath, "wx", 0o600)
     await handle.writeFile(`${JSON.stringify(checkpoint)}\n`, "utf8")
