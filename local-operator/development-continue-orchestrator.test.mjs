@@ -737,8 +737,7 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
     [testingRun, "automated_test_reconciliation_required"],
     [makeRun("tests_in_progress", { evidence: { test: [] } }), "automated_test_reconciliation_required"],
     [makeRun("planning_in_progress"), "planning_reconciliation_required"],
-    [makeRun("review_in_progress"), "review_reconciliation_required"],
-    [makeRun("tests_failed"), "automated_test_failure_recovery_not_routed"]
+    [makeRun("review_in_progress"), "review_reconciliation_required"]
   ]
 
   for (const [run, reason] of cases) {
@@ -760,6 +759,31 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
     assert.equal(result.reason, reason, run.status)
     assert.equal(children.calls.length, 0, run.status)
   }
+})
+
+
+test("Phase 6K routes tests_failed into Software Factory test remediation", async () => {
+  const run = makeRun("tests_failed", {
+    attempts: { test: 1 }
+  })
+  run.evidence.test = [testFailureEvidence(run)]
+  const reader = makeReader(run)
+  const children = makeChildHandlers({
+    prepareSoftwareFactoryTestRemediation: "implementation_in_progress"
+  })
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: reader.readRun,
+    childHandlers: children.handlers,
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.action, "software-factory-test-remediation")
+  assert.equal(result.outcome, "implementation_in_progress")
+  assert.equal(result.after, "implementation_in_progress")
+  assert.equal(children.calls.length, 1)
+  assert.equal(children.calls[0].handler, "prepareSoftwareFactoryTestRemediation")
+  assert.equal(children.calls[0].expectedVersion, run.version)
 })
 
 test("Phase 6K reconciles dead exact-operation leases for Phase 6D, 6E, and 6F", async () => {
