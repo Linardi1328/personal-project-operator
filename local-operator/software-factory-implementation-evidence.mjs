@@ -168,8 +168,7 @@ export function classifyReviewedImplementationEvidence(run) {
   if (latestOutcome === "implementation_ready") {
     if (
       ready !== 1 ||
-      latestEntry.sha !== expectedSha ||
-      latestEntry.metadata?.endedAt === undefined
+      latestEntry.sha !== expectedSha
     ) {
       return invalidResult(latestEntry, adapterId)
     }
@@ -200,8 +199,7 @@ export function classifyReviewedImplementationEvidence(run) {
   if (latestOutcome === "execution_failed") {
     if (
       failed !== 1 ||
-      ready !== 0 ||
-      latestEntry.metadata?.endedAt === undefined
+      ready !== 0
     ) {
       return invalidResult(latestEntry, adapterId)
     }
