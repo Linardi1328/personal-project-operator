@@ -787,7 +787,7 @@ function boundaryForStatus(status, scope) {
     status === "implementation_in_progress"
   ) {
     return Object.freeze({
-      action: "software-factory-antigravity-implementation",
+      action: "phase-6d-codex-implementation",
       handler: "executeSoftwareFactoryImplementation"
     })
   }
@@ -815,12 +815,22 @@ function childOptions(options, expectedVersion, runtimeOptions = {}, scope = ord
 }
 
 function childHandlers(options = {}, scope = ordinaryScope) {
+  const overrides = options.childHandlers || {}
+  const compatibilityImplementationHandler = (
+    scope.id === "ordinary" &&
+    typeof overrides.executeSoftwareFactoryImplementation !== "function" &&
+    typeof overrides.executeCodexImplementation === "function"
+  )
+    ? { executeSoftwareFactoryImplementation: overrides.executeCodexImplementation }
+    : {}
+
   return {
     ...defaultChildHandlers,
     ...(scope.id === "self-development" ? {
       planExistingDevelopmentRun: planExistingPersonalProjectOperatorSelfDevelopmentRun
     } : {}),
-    ...(options.childHandlers || {})
+    ...overrides,
+    ...compatibilityImplementationHandler
   }
 }
 
