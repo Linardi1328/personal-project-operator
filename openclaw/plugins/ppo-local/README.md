@@ -31,6 +31,7 @@ The plugin:
 - routes `/ppo runs` and `/ppo run <run-id>` to the controlled Phase 6O read-only catalog routes for ordinary six-project runs only
 - routes `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` to the controlled Phase 6P quiescent cancellation approval path for ordinary six-project runs only
 - routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary six-project runs only
+- routes `/ppo factory-run <run-id>` to the bounded Software Factory V0.6 autonomous driver, which stops at `merge_ready` and never routes production actions
 - routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary six-project runs only
 - does not call Telegram APIs
 - does not use secrets
@@ -93,6 +94,7 @@ run <run-id>
 cancel <run-id>
 cancel-confirm <request-id>
 continue <run-id>
+factory-run <run-id>
 recover <run-id>
 ```
 
@@ -132,6 +134,10 @@ Phase 7A never calls `/ppo continue` automatically, creates workspaces, invokes 
 ## Phase 6K development continue
 
 Phase 6K adds `/ppo continue <run-id>` through this same plugin. The bridge accepts only the exact opaque run id and maps to wrapper argv `["continue", "<run-id>"]`. The wrapper reads the durable Phase 6A run and delegates to at most one existing Phase 6B-6G child operation. It does not accept project, status, SHA, action, workspace, service, deployment, rollback, or confirmation input from chat.
+
+## Software Factory V0.6 autonomous development run
+
+Software Factory V0.6 adds `/ppo factory-run <run-id>` through this same plugin. The bridge accepts only the exact opaque run id and maps to wrapper argv `["factory-run", "<run-id>"]`. The wrapper composes existing reviewed Continue boundaries with a fixed maximum of 16 steps, stops on blockers or no-progress conditions, and stops at `merge_ready` for explicit human release approval. It never automatically merges, deploys, verifies production, or rolls back.
 
 ## Phase 6M development recovery
 

@@ -16,6 +16,10 @@ import {
 import { handlePpoDevelopmentContinueCommand } from "./development-continue-orchestrator.mjs";
 import { loadDevelopmentContinueRuntimeProfile } from "./development-continue-runtime-profile.mjs";
 import {
+  executeSoftwareFactoryAutonomousRun,
+  formatSoftwareFactoryAutonomousRun
+} from "./software-factory-autonomous-run.mjs";
+import {
   handlePpoDevelopmentRunCommand,
   handlePpoDevelopmentRunsCommand
 } from "./development-run-catalog-route.mjs";
@@ -292,6 +296,12 @@ function parseStrictContinueArgs(rawArgs) {
   return parseStrictRunIdCommandArgs(rawArgs, "continue");
 }
 
+function parseStrictFactoryRunArgs(rawArgs) {
+  return parseStrictRunIdCommandArgs(rawArgs, "factory-run", {
+    allowExactCombined: true
+  });
+}
+
 function parseStrictRecoverArgs(rawArgs) {
   return parseStrictRunIdCommandArgs(rawArgs, "recover");
 }
@@ -507,6 +517,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs cancel <run-id>",
     "  node local-operator/ppo-command.mjs cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs continue <run-id>",
+    "  node local-operator/ppo-command.mjs factory-run <run-id>",
     "  node local-operator/ppo-command.mjs recover <run-id>",
     "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
     "  node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai \"add invoice import workflow\"",
@@ -529,6 +540,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs /ppo cancel <run-id>",
     "  node local-operator/ppo-command.mjs /ppo cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
+    "  node local-operator/ppo-command.mjs /ppo factory-run <run-id>",
     "  node local-operator/ppo-command.mjs /ppo recover <run-id>",
     "",
     "Supported Telegram messages:",
@@ -554,6 +566,7 @@ function usage() {
     "  /ppo cancel <run-id>",
     "  /ppo cancel-confirm <request-id>",
     "  /ppo continue <run-id>",
+    "  /ppo factory-run <run-id>",
     "  /ppo recover <run-id>",
     "",
     "Phase 5A boundary: terminal issue-create requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>.",
@@ -565,6 +578,7 @@ function usage() {
     "Phase 6O boundary: /ppo runs and /ppo run <run-id> expose the Phase 6N read-only ordinary-run catalog only; no filters, recovery, continue, cancellation, retry, repair, or production action.",
     "Phase 6P boundary: /ppo cancel stages a single-use quiescent cancellation request and /ppo cancel-confirm consumes it; no process interruption, cleanup, recovery, continue, retry, or production action.",
     "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only.",
+    "Software Factory V0.6 boundary: /ppo factory-run advances multiple reviewed development boundaries with a fixed step limit, stops before merge at merge_ready, and never routes production deployment, verification, or rollback.",
     "Phase 6M boundary: /ppo recover accepts only an existing ordinary development run id and exposes one Phase 6L read-only recovery observation; it performs no repair, retry, continue, deployment, verification, or rollback."
   ].join("\n");
 }
@@ -597,6 +611,7 @@ function unsupported(command) {
     "- /ppo cancel <run-id>",
     "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
+    "- /ppo factory-run <run-id>",
     "- /ppo recover <run-id>",
     "",
     "Terminal-only additions:",
@@ -873,6 +888,7 @@ async function main() {
   const strictCancelConfirm = parseStrictCancelConfirmArgs(rawProcessArgs);
   const strictCancel = parseStrictCancelArgs(rawProcessArgs);
   const strictContinue = parseStrictContinueArgs(rawProcessArgs);
+  const strictFactoryRun = parseStrictFactoryRunArgs(rawProcessArgs);
   const strictRecover = parseStrictRecoverArgs(rawProcessArgs);
 
   if (strictStart?.ok === true) {
@@ -919,6 +935,15 @@ async function main() {
     return;
   }
 
+  if (strictFactoryRun?.ok === true) {
+    const result = await executeSoftwareFactoryAutonomousRun(strictFactoryRun.runId, {
+      trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
+    });
+    console.log(formatSoftwareFactoryAutonomousRun(result));
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
   if (strictRecover?.ok === true) {
     const result = await handlePpoDevelopmentRecoverCommand(strictRecover.runId);
     console.log(result.output);
@@ -958,6 +983,12 @@ async function main() {
 
   if (strictContinue?.attempted === true) {
     console.log(unsupported(rawProcessArgs[0] || "continue"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictFactoryRun?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "factory-run"));
     process.exitCode = 1;
     return;
   }
