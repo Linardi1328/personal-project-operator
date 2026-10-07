@@ -41,11 +41,11 @@ test("debugging carries the approved debugging skill", () => {
   assert.deepEqual(policy.skills, ["debugging-and-error-recovery"])
 })
 
-test("frontend review carries the Vercel web-design-guidelines skill", () => {
+test("frontend review runs through Antigravity with the Vercel web-design-guidelines skill", () => {
   const policy = describeSoftwareFactoryCapability("review.frontend")
 
-  assert.equal(policy.workerId, "vercel-web-guidelines")
-  assert.equal(policy.modelClass, "none")
+  assert.equal(policy.workerId, "antigravity")
+  assert.equal(policy.modelClass, "standard")
   assert.deepEqual(policy.skills, ["web-design-guidelines"])
 })
 
@@ -134,6 +134,13 @@ test("economy work escalates to standard after one failed attempt", () => {
   assert.equal(
     resolveSoftwareFactoryModelClass("repository.inspect", { failedAttempts: 1 }),
     "standard"
+  )
+})
+
+test("economy work escalates to deep after two failed attempts", () => {
+  assert.equal(
+    resolveSoftwareFactoryModelClass("repository.inspect", { failedAttempts: 2 }),
+    "deep"
   )
 })
 
