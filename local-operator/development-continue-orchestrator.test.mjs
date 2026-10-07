@@ -664,7 +664,7 @@ test("Phase 6K dispatches each supported status to exactly one reviewed child bo
   const cases = [
     ["created", "planExistingDevelopmentRun", "phase-6b-plan", "planned"],
     ["planned", "prepareImplementationWorkspace", "phase-6c-prepare-workspace", "implementation_in_progress"],
-    ["implementation_in_progress", "executeCodexImplementation", "phase-6d-codex-implementation", "implementation_ready"],
+    ["implementation_in_progress", "executeCodexImplementation", "software-factory-antigravity-implementation", "implementation_ready"],
     ["implementation_ready", "executeAutomatedTests", "phase-6e-automated-tests", "tests_passed"],
     ["tests_passed", "executeIndependentReview", "phase-6f-independent-review", "review_passed"],
     ["review_changes_requested", "executeBoundedHardening", "phase-6f-bounded-hardening", "review_passed"],
@@ -1080,7 +1080,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
     })
 
     assert.equal(result.ok, true)
-    assert.equal(result.action, "phase-6d-codex-implementation")
+    assert.equal(result.action, "software-factory-antigravity-implementation")
     assert.equal(children.calls.length, 1)
     assert.equal(children.calls[0].expectedVersion, staleAttemptRun.version)
   }
@@ -1123,7 +1123,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
     })
 
     assert.equal(result.ok, true)
-    assert.equal(result.action, "phase-6d-codex-implementation")
+    assert.equal(result.action, "software-factory-antigravity-implementation")
     assert.equal(children.calls.length, 1)
     assert.equal(children.calls[0].expectedVersion, definitiveFailureRun.version)
   }
@@ -1371,7 +1371,7 @@ test("Phase 6K Phase 6E retry evidence is bound to the exact selected reviewed p
 
 test("Phase 6K default route passes trusted runtime profile into real child APIs", async () => {
   const cases = [
-    ["implementation_in_progress", "phase-6d-codex-implementation"],
+    ["implementation_in_progress", "software-factory-antigravity-implementation"],
     ["implementation_ready", "phase-6e-automated-tests"],
     ["tests_in_progress", "phase-6e-automated-test-retry"],
     ["tests_passed", "phase-6f-independent-review"],
@@ -1399,7 +1399,7 @@ test("Phase 6K default route passes trusted runtime profile into real child APIs
 test("Phase 6K default route loads the reviewed runtime profile before real child dispatch", async () => {
   const reviewedProfile = await loadFakeRuntimeProfileFor(PROJECT.id)
   const cases = [
-    ["implementation_in_progress", "phase-6d-codex-implementation"],
+    ["implementation_in_progress", "software-factory-antigravity-implementation"],
     ["implementation_ready", "phase-6e-automated-tests"],
     ["tests_in_progress", "phase-6e-automated-test-retry"],
     ["tests_passed", "phase-6f-independent-review"],
@@ -2212,7 +2212,7 @@ test("Phase 6K resumes interrupted hardening when no current Codex attempt is re
   })
 
   assert.equal(result.ok, true)
-  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(result.action, "software-factory-antigravity-implementation")
   assert.equal(children.calls.length, 1)
   assert.equal(children.calls[0].expectedVersion, run.version)
 })
@@ -2356,7 +2356,7 @@ test("Phase 6K surfaces bounded Codex failure classifications without raw output
   })
 
   assert.equal(result.ok, false)
-  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(result.action, "software-factory-antigravity-implementation")
   assert.equal(result.reason, "codex_authentication_failed")
   assert.doesNotMatch(JSON.stringify(result), /SENSITIVE_TEST_SENTINEL|token_invalidated/iu)
 })
@@ -2383,7 +2383,7 @@ test("Phase 6K surfaces Codex usage-limit windows without exposing raw provider 
     const output = formatDevelopmentContinueResult(result)
 
     assert.equal(result.ok, false)
-    assert.equal(result.action, "phase-6d-codex-implementation")
+    assert.equal(result.action, "software-factory-antigravity-implementation")
     assert.equal(result.reason, "codex_usage_limit_reached")
     assert.equal(result.retryAfter, retryAfter)
     assert.match(output, /Reason: codex_usage_limit_reached/u)
@@ -2624,7 +2624,7 @@ test("Phase 6K output is compact bounded metadata", async () => {
   })
 
   assert.equal(blocked.ok, false)
-  assert.match(blocked.output, /Action: phase-6d-codex-implementation/)
+  assert.match(blocked.output, /Action: software-factory-antigravity-implementation/)
   assert.match(blocked.output, /Outcome: owner_action_required/)
   assert.match(blocked.output, /Reason: codex_reconciliation_required/)
   assert.match(blocked.output, new RegExp(`Next command: /ppo run ${RUN_ID}`, "u"))
