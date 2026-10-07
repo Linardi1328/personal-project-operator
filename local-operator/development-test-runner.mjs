@@ -15,6 +15,9 @@ import {
 import {
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
+import {
+  classifyReviewedImplementationEvidence
+} from "./software-factory-implementation-evidence.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -1173,32 +1176,22 @@ function assertWorkspaceMatches(location, facts) {
   }
 }
 
-function latestPhase6DImplementationEvidence(run) {
-  const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
-
-  for (let index = evidence.length - 1; index >= 0; index -= 1) {
-    const entry = evidence[index]
-
-    if (
-      entry?.source === PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE ||
-      entry?.metadata?.adapter === PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE
-    ) {
-      return entry
-    }
-  }
-
-  return null
-}
-
 function assertImplementationEvidenceMatches(run, implementationSha) {
-  const evidence = latestPhase6DImplementationEvidence(run)
+  const state = classifyReviewedImplementationEvidence(run)
+  const evidence = state.entry
 
-  if (!evidence || evidence.sha !== implementationSha) {
+  if (
+    state.classification !== "completed" ||
+    !evidence ||
+    evidence.sha !== implementationSha
+  ) {
     throw testRunnerError(
       "TEST_IMPLEMENTATION_EVIDENCE_MISMATCH",
-      "Phase 6D implementation evidence SHA does not match the run head SHA."
+      "Reviewed implementation evidence does not match the run head SHA."
     )
   }
+
+  return evidence
 }
 
 function latestAutomatedTestEvidence(run) {
