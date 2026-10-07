@@ -330,7 +330,7 @@ function validateChangesRequestedReview(run) {
   }
 }
 
-function buildHardeningStartedEvidence(run, context, round, startedAt) {
+function buildHardeningStartedEvidence(run, context, round, startedAt, implementationAdapterId = CODEX_EXECUTION_ADAPTER_ID) {
   return {
     kind: "implementation",
     sha: context.reviewedSha,
@@ -348,14 +348,15 @@ function buildHardeningStartedEvidence(run, context, round, startedAt) {
       remediationHash: context.remediationHash,
       startedAt,
       outcome: "hardening_started",
-      codex: CODEX_EXECUTION_ADAPTER_ID,
+      implementationAdapter: implementationAdapterId,
+      ...(implementationAdapterId === CODEX_EXECUTION_ADAPTER_ID ? { codex: CODEX_EXECUTION_ADAPTER_ID } : {}),
       tests: AUTOMATED_TEST_RUNNER_ID,
       reviewer: context.reviewer
     }
   }
 }
 
-function buildHardeningOwnerActionEvidence(run, context, round, recordedAt) {
+function buildHardeningOwnerActionEvidence(run, context, round, recordedAt, implementationAdapterId = CODEX_EXECUTION_ADAPTER_ID) {
   return {
     kind: "review",
     sha: context.reviewedSha,
@@ -374,14 +375,15 @@ function buildHardeningOwnerActionEvidence(run, context, round, recordedAt) {
       outcome: "owner_action_required",
       reason: "max_hardening_rounds_exhausted",
       maxRounds: MAX_HARDENING_ROUNDS,
-      codex: CODEX_EXECUTION_ADAPTER_ID,
+      implementationAdapter: implementationAdapterId,
+      ...(implementationAdapterId === CODEX_EXECUTION_ADAPTER_ID ? { codex: CODEX_EXECUTION_ADAPTER_ID } : {}),
       tests: AUTOMATED_TEST_RUNNER_ID,
       reviewer: context.reviewer
     }
   }
 }
 
-async function transitionToHardeningImplementation(run, context, round, options) {
+async function transitionToHardeningImplementation(run, context, round, options, implementationAdapterId = CODEX_EXECUTION_ADAPTER_ID) {
   const startedAt = timestamp(nowDate(options))
 
   return await transitionDevelopmentRun(run.runId, {
@@ -392,12 +394,12 @@ async function transitionToHardeningImplementation(run, context, round, options)
     actor: HARDENING_ORCHESTRATOR_ID,
     reason: "phase-6f-hardening-remediation-start",
     evidence: [
-      buildHardeningStartedEvidence(run, context, round, startedAt)
+      buildHardeningStartedEvidence(run, context, round, startedAt, implementationAdapterId)
     ]
   }, options)
 }
 
-async function recordHardeningCap(run, context, options) {
+async function recordHardeningCap(run, context, options, implementationAdapterId = CODEX_EXECUTION_ADAPTER_ID) {
   const existing = latestHardeningEvidence(run, "owner_action_required")
 
   if (existing?.sha === context.reviewedSha && existing?.metadata?.reason === "max_hardening_rounds_exhausted") {
@@ -410,12 +412,14 @@ async function recordHardeningCap(run, context, options) {
     actor: HARDENING_ORCHESTRATOR_ID,
     reason: "phase-6f-hardening-round-limit",
     evidence: [
-      buildHardeningOwnerActionEvidence(run, context, hardeningRoundCount(run), timestamp(nowDate(options)))
+      buildHardeningOwnerActionEvidence(run, context, hardeningRoundCount(run), timestamp(nowDate(options)), implementationAdapterId)
     ]
   }, options)
 }
 
-async function executeBoundedHardeningInternal(runId, options = {}) {
+async function executeBoundedHardeningInternal(runId, options = {}, dependencies = {}) {
+  const executeImplementation = dependencies.executeImplementation || executeCodexImplementation
+  const implementationAdapterId = dependencies.implementationAdapterId || CODEX_EXECUTION_ADAPTER_ID
   let expectedVersion = normalizeExpectedVersion(options.expectedVersion)
   let run = await readDevelopmentRun(runId, options)
   const rounds = []
@@ -432,7 +436,7 @@ async function executeBoundedHardeningInternal(runId, options = {}) {
     const completedRounds = hardeningRoundCount(run)
 
     if (completedRounds >= MAX_HARDENING_ROUNDS) {
-      const capped = await recordHardeningCap(run, context, options)
+      const capped = await recordHardeningCap(run, context, options, implementationAdapterId)
 
       return {
         ok: false,
@@ -451,11 +455,35 @@ async function executeBoundedHardeningInternal(runId, options = {}) {
     }
 
     const round = completedRounds + 1
-    const implementationRun = await transitionToHardeningImplementation(run, context, round, options)
-    const implementation = await executeCodexImplementation(run.runId, {
+    const implementationRun = await transitionToHardeningImplementation(
+      run,
+      context,
+      round,
+      options,
+      implementationAdapterId
+    )
+    const implementation = await executeImplementation(run.runId, {
       ...options,
       expectedVersion: implementationRun.version
     })
+
+    if (implementation?.ok !== true) {
+      return {
+        ok: false,
+        outcome: implementation?.outcome || "owner_action_required",
+        reason: implementation?.reason || "hardening_implementation_blocked",
+        run: implementation?.run || implementationRun,
+        hardening: {
+          project: run.project.id,
+          repo: run.project.fullName,
+          currentSha: context.reviewedSha,
+          currentRound: round,
+          maxRounds: MAX_HARDENING_ROUNDS,
+          rounds
+        }
+      }
+    }
+
     const testing = await executeAutomatedTests(run.runId, {
       ...options,
       expectedVersion: implementation.run.version
@@ -595,8 +623,12 @@ async function reconcileBoundedHardeningInternal(runId, options = {}) {
 }
 
 export async function executeBoundedHardening(runId, options = {}) {
+  const dependencies = options.hardeningDependencies || {}
+  const executionOptions = { ...options }
+  delete executionOptions.hardeningDependencies
+
   try {
-    return await executeBoundedHardeningInternal(runId, options)
+    return await executeBoundedHardeningInternal(runId, executionOptions, dependencies)
   } catch (error) {
     throw safeHardeningFailure(error)
   }

@@ -315,3 +315,23 @@ The remediation marker binds the debugging attempt to the failed implementation 
 Antigravity receives only bounded failure metadata: the source test attempt, failed/total counts, and up to five reviewed test IDs. Raw test output, stack traces, credentials, and arbitrary failure text are never forwarded.
 
 Existing persistent implementation/test attempt caps and the V0.6 autonomous-run step limit remain authoritative. Production actions remain outside this loop.
+
+
+## V0.8 Antigravity review remediation
+
+Ordinary-project review remediation now uses the same trusted Software Factory implementation path as normal implementation and failed-test recovery.
+
+When independent review returns validated `CHANGES_REQUESTED` evidence, PPO:
+
+1. verifies the exact reviewed SHA and bounded review-finding contract;
+2. enforces the existing maximum of three hardening rounds;
+3. records a hardening marker and transitions to `implementation_in_progress`;
+4. routes the marker deterministically to the `debugging` capability;
+5. performs trusted Antigravity readiness, checkpointing, short-lived authorization, and sandboxed execution;
+6. passes only validated bounded blocker/security/test-requirement items into the Antigravity prompt;
+7. reruns deterministic tests and independent review; and
+8. repeats only while the reviewed round cap permits.
+
+If Antigravity is quota-blocked or externally unavailable, the hardening loop stops before tests and returns the capacity/external blocker without fabricating review progress.
+
+PPO self-development and legacy recovery retain the existing Codex-backed hardening default. Production deployment and final merge authority remain outside autonomous remediation.
