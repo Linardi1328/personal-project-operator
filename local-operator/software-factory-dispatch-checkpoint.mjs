@@ -508,14 +508,13 @@ export async function recordSoftwareFactoryDispatchCheckpoint(input, options = {
     now
   })
   const root = checkpointRoot(run.runId, options)
-  await ensurePrivateDir(root)
-
   const finalPath = join(root, checkpointFileName(nextVersion))
   const tempPath = join(root, `.pending-${randomUUID()}.json`)
   let handle
   let published = false
 
   try {
+    await ensurePrivateDir(root)
     handle = await open(tempPath, "wx", 0o600)
     await handle.writeFile(`${JSON.stringify(checkpoint)}\n`, "utf8")
     await handle.sync()
