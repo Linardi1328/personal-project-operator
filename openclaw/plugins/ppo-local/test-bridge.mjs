@@ -69,7 +69,7 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 {
   const observedWriteDataDirs = [];
 
-  for (const command of ["start khlim-assist", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`]) {
+  for (const command of ["start khlim-assist", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`, `factory-run ${validDevelopmentRunId}`]) {
     const result = await runPpoLocalTool(
       { command },
       {
@@ -89,8 +89,8 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 
   assert.deepEqual(
     observedWriteDataDirs,
-    Array(3).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
-    "start, run, and continue share exactly one state directory"
+    Array(4).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
+    "start, run, continue, and factory-run share exactly one state directory"
   );
 }
 
@@ -142,6 +142,7 @@ expectedMappings.set(`run ${validDevelopmentRunId}`, ["run", validDevelopmentRun
 expectedMappings.set(`cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]);
 expectedMappings.set(`cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]);
 expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
+expectedMappings.set(`factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]);
 expectedMappings.set(`recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]);
 
 for (const [input, expected] of expectedMappings) {
@@ -434,6 +435,7 @@ for (const [input, expected] of [
   [`/ppo cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]],
   [`/ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
+  [`/ppo factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]],
   [`/ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
   const result = await runPpoLocalTool(
@@ -462,6 +464,7 @@ for (const [input, expected] of [
   [`ppo cancel ${validDevelopmentRunId}`, ["cancel", validDevelopmentRunId]],
   [`ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
+  [`ppo factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]],
   [`ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} raw ppo envelope maps correctly`);
@@ -807,6 +810,11 @@ const rejectedInputs = [
   `/ppo continue ${validDevelopmentRunId}\nanything`,
   `/ppo continue ${validDevelopmentRunId} --action merge`,
   `/ppo continue ${validDevelopmentRunId} ${"d".repeat(40)}`,
+  "factory-run",
+  "/ppo factory-run",
+  `factory-run ${validDevelopmentRunId} extra`,
+  `/ppo factory-run ${validDevelopmentRunId} --merge`,
+  `/ppo factory-run ${validDevelopmentRunId}\nanything`,
   "recover",
   "/ppo recover",
   "recover malformed",
