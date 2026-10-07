@@ -55,6 +55,7 @@ function safeSettings(overrides = {}) {
 test("reviewed automation settings accept trusted PPO workspace with file operations", () => {
   const result = validateAntigravityAutomationSettings(
     safeSettings(),
+    "/Users/richie/.local/share/personal-project-operator/development-workspaces",
     "/Users/richie/.local/share/personal-project-operator/development-workspaces/khlim-digital-ecosystem/run"
   )
 
@@ -68,6 +69,7 @@ test("request-review mode is refused before unattended execution", () => {
   assert.throws(
     () => validateAntigravityAutomationSettings(
       safeSettings({ toolPermission: "request-review" }),
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces",
       "/Users/richie/.local/share/personal-project-operator/development-workspaces/project/run"
     ),
     (error) => error?.code === "ANTIGRAVITY_AUTOMATION_SETTINGS_REQUIRED"
@@ -78,6 +80,7 @@ test("non-workspace access must remain disabled", () => {
   assert.throws(
     () => validateAntigravityAutomationSettings(
       safeSettings({ nonWorkspaceAccess: true }),
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces",
       "/Users/richie/.local/share/personal-project-operator/development-workspaces/project/run"
     ),
     (error) => error?.code === "ANTIGRAVITY_NON_WORKSPACE_ACCESS_ENABLED"
@@ -89,7 +92,10 @@ test("file write permission must be explicitly allowlisted", () => {
     () => validateAntigravityAutomationSettings({
       ...safeSettings(),
       permissions: { allow: ["read_file(*)"] }
-    }, "/Users/richie/.local/share/personal-project-operator/development-workspaces/project/run"),
+    },
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces",
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces/project/run"
+    ),
     (error) => error?.code === "ANTIGRAVITY_FILE_POLICY_REQUIRED"
   )
 })
@@ -98,6 +104,7 @@ test("untrusted workspace is refused", () => {
   assert.throws(
     () => validateAntigravityAutomationSettings(
       safeSettings(),
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces",
       "/Users/richie/Downloads/untrusted-project"
     ),
     (error) => error?.code === "ANTIGRAVITY_WORKSPACE_NOT_TRUSTED"
@@ -167,5 +174,17 @@ test("prompt size remains bounded", () => {
       error?.code === "ANTIGRAVITY_EXECUTION_INPUT_INVALID" ||
       error?.code === "ANTIGRAVITY_PROMPT_UNSAFE"
     )
+  )
+})
+
+
+test("overly broad trusted home directory does not satisfy PPO workspace trust", () => {
+  assert.throws(
+    () => validateAntigravityAutomationSettings(
+      safeSettings({ trustedWorkspaces: ["/Users/richie"] }),
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces",
+      "/Users/richie/.local/share/personal-project-operator/development-workspaces/project/run"
+    ),
+    (error) => error?.code === "ANTIGRAVITY_WORKSPACE_NOT_TRUSTED"
   )
 })
