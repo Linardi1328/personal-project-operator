@@ -1971,7 +1971,7 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable Codex 
   await assert.rejects(
     () => loadFakeRuntimeProfileFor("khlim-assist", {
       platform: "linux",
-      statImpl: fakeRuntimeStatFor({ missing: new Set([gitPath]) }),
+      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
       linuxSandboxCapabilityProbe: async () => true
     }),
     (error) => error.code === "CONTINUE_RUNTIME_NOT_READY"
