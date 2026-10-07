@@ -278,7 +278,7 @@ function signPayload(payload, key) {
   return createHmac("sha256", key).update(stableStringify(payload)).digest("hex")
 }
 
-export async function attestReviewedRuntimeCapacity(probeResult, options = {}) {
+async function mintReviewedRuntimeAttestation(probeResult, options = {}) {
   const normalized = normalizeProbeResult(probeResult)
   const nonce = randomBytes(16).toString("base64url")
   const payload = unsignedPayload(normalized, nonce)
@@ -287,6 +287,44 @@ export async function attestReviewedRuntimeCapacity(probeResult, options = {}) {
     ...payload,
     signature: signPayload(payload, key)
   })
+}
+
+export async function probeAndAttestSoftwareFactoryWorkerCapacity(workerId, options = {}) {
+  const normalizedWorkerId = String(workerId ?? "").trim()
+  if (!workerIdPattern.test(normalizedWorkerId)) {
+    throw attestationError(
+      "FACTORY_RUNTIME_PROBE_WORKER_INVALID",
+      "Software factory runtime probe worker is invalid."
+    )
+  }
+
+  const probeImpl = options.trustedRuntimeProbeImpl
+  if (typeof probeImpl !== "function") {
+    throw attestationError(
+      "FACTORY_RUNTIME_PROBE_UNAVAILABLE",
+      "Reviewed software factory runtime probe is not configured."
+    )
+  }
+
+  let raw
+  try {
+    raw = await probeImpl(normalizedWorkerId)
+  } catch {
+    throw attestationError(
+      "FACTORY_RUNTIME_PROBE_FAILED",
+      "Reviewed software factory runtime probe failed safely."
+    )
+  }
+
+  const normalized = normalizeProbeResult(raw)
+  if (normalized.workerId !== normalizedWorkerId) {
+    throw attestationError(
+      "FACTORY_RUNTIME_PROBE_WORKER_MISMATCH",
+      "Reviewed runtime probe result does not match the requested worker."
+    )
+  }
+
+  return await mintReviewedRuntimeAttestation(normalized, options)
 }
 
 function normalizeAttestation(attestation) {
