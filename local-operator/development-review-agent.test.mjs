@@ -1117,7 +1117,7 @@ test("bounded durable review attempts are enforced across implementation cycles"
           metadata: {
             project: fixture.project.id,
             adapter: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-            attempt,
+            attempt: current.attempts.implementation,
             outcome: "implementation_ready"
           }
         }]
@@ -1185,7 +1185,7 @@ test("bounded durable review attempts are enforced across implementation cycles"
       metadata: {
         project: fixture.project.id,
         adapter: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-        attempt: 6,
+        attempt: current.attempts.implementation,
         outcome: "implementation_ready"
       }
     }]
