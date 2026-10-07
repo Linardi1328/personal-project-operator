@@ -368,3 +368,30 @@ test("post-publication durability failure is ambiguous and requires reconciliati
   assert.equal(reconciled.checkpointVersion, 1)
   assert.equal(reconciled.dispatch.outcome, "blocked_capacity")
 })
+
+
+test("checkpoint directory failures map to a safe store-unavailable error", async () => {
+  const fixture = await makePlannedRun()
+
+  await assert.rejects(
+    recordSoftwareFactoryDispatchCheckpoint({
+      runId: fixture.run.runId,
+      runVersion: fixture.run.version,
+      capability: "implementation.backend",
+      expectedCheckpointVersion: 0,
+      observation: observation({ capacity: "exhausted" })
+    }, {
+      writeDataDir: fixture.writeDataDir,
+      now: () => new Date("2026-10-07T10:00:04.000Z"),
+      ensurePrivateDirImpl: async () => {
+        const error = new Error("/private/secret/path")
+        error.code = "EACCES"
+        throw error
+      }
+    }),
+    (error) => (
+      error?.code === "FACTORY_CHECKPOINT_STORE_UNAVAILABLE" &&
+      error?.safeMessage === "Software factory dispatch checkpoint store is unavailable."
+    )
+  )
+})
