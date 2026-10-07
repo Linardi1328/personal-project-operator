@@ -102,8 +102,8 @@ async function ensurePrivateChildDirectory(parentPath, childPath, options = {}) 
   await chmod(childPath, 0o700)
 
   if (created) {
-    const syncDirectoryImpl = options.syncDirectoryImpl || syncDirectory
-    await syncDirectoryImpl(parentPath)
+    const syncParentDirectoryImpl = options.syncParentDirectoryImpl || syncDirectory
+    await syncParentDirectoryImpl(parentPath)
   }
 }
 
