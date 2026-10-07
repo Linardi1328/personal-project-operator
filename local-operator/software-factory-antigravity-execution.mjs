@@ -18,6 +18,11 @@ import {
   ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS
 } from "./software-factory-antigravity-readiness.mjs"
 import { latestSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
+import {
+  HARDENING_ORCHESTRATOR_ID,
+  latestHardeningEvidence,
+  validateChangesRequestedReview
+} from "./development-hardening-orchestrator.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -365,6 +370,50 @@ function boundedTestRemediationPromptLines(run, authorization) {
   ]
 }
 
+function boundedReviewRemediationPromptLines(run, authorization) {
+  if (authorization?.capability !== "debugging") {
+    return []
+  }
+
+  const evidence = latestHardeningEvidence(run, "hardening_started")
+
+  if (
+    !evidence ||
+    evidence.source !== HARDENING_ORCHESTRATOR_ID ||
+    evidence.sha !== run?.headSha
+  ) {
+    return []
+  }
+
+  const context = validateChangesRequestedReview(run)
+  const lines = [
+    "",
+    "Trusted independent-review remediation context:",
+    `- Review attempt: ${context.reviewAttempt}.`,
+    `- Blocking findings: ${context.blockers.length}.`,
+    `- Security findings: ${context.securityFindings.length}.`,
+    `- Required test additions/changes: ${context.testsRequired.length}.`
+  ]
+
+  for (const finding of context.blockers) {
+    lines.push(`- Blocker: ${normalizeSafeText(finding, { maxChars: 200 })}`)
+  }
+
+  for (const finding of context.securityFindings) {
+    lines.push(`- Security: ${normalizeSafeText(finding, { maxChars: 200 })}`)
+  }
+
+  for (const finding of context.testsRequired) {
+    lines.push(`- Test requirement: ${normalizeSafeText(finding, { maxChars: 200 })}`)
+  }
+
+  lines.push(
+    "- Address the validated findings with the smallest correct change set, preserve unrelated behavior, and leave final tests/review to PPO."
+  )
+
+  return lines
+}
+
 export function buildAntigravityImplementationPrompt(run, workspace, authorization) {
   const task = normalizeSafeText(run?.task, {
     maxChars: 1000,
@@ -392,6 +441,7 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
     task,
     ...(planning ? ["", "Planning context:", normalizeSafeText(planning, { maxChars: 500 })] : []),
     ...boundedTestRemediationPromptLines(run, authorization),
+    ...boundedReviewRemediationPromptLines(run, authorization),
     "",
     "Required skills:",
     ...skillLines,
