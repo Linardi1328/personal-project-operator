@@ -19,9 +19,7 @@ import {
 } from "./software-factory-antigravity-readiness.mjs"
 import { latestSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
 import {
-  HARDENING_ORCHESTRATOR_ID,
-  latestHardeningEvidence,
-  validateChangesRequestedReview
+  HARDENING_ORCHESTRATOR_ID
 } from "./development-hardening-orchestrator.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -370,41 +368,86 @@ function boundedTestRemediationPromptLines(run, authorization) {
   ]
 }
 
+function latestReviewRemediationMarker(run) {
+  const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
+
+  for (let index = evidence.length - 1; index >= 0; index -= 1) {
+    const entry = evidence[index]
+    if (
+      entry?.source === HARDENING_ORCHESTRATOR_ID &&
+      entry?.metadata?.orchestrator === HARDENING_ORCHESTRATOR_ID &&
+      entry?.metadata?.outcome === "hardening_started"
+    ) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function boundedMarkerItems(value) {
+  if (!Array.isArray(value) || value.length > 5) {
+    return null
+  }
+
+  try {
+    return value.map((entry) => normalizeSafeText(entry, { maxChars: 200 }))
+  } catch {
+    return null
+  }
+}
+
 function boundedReviewRemediationPromptLines(run, authorization) {
   if (authorization?.capability !== "debugging") {
     return []
   }
 
-  const evidence = latestHardeningEvidence(run, "hardening_started")
+  const evidence = latestReviewRemediationMarker(run)
 
   if (
     !evidence ||
-    evidence.source !== HARDENING_ORCHESTRATOR_ID ||
-    evidence.sha !== run?.headSha
+    evidence.sha !== run?.headSha ||
+    !Number.isInteger(evidence.metadata?.reviewAttempt) ||
+    evidence.metadata.reviewAttempt <= 0
   ) {
     return []
   }
 
-  const context = validateChangesRequestedReview(run)
+  const blockers = boundedMarkerItems(evidence.metadata?.blockerItems)
+  const securityFindings = boundedMarkerItems(evidence.metadata?.securityItems)
+  const testsRequired = boundedMarkerItems(evidence.metadata?.testItems)
+
+  if (
+    !blockers ||
+    !securityFindings ||
+    !testsRequired ||
+    blockers.length !== evidence.metadata?.blockerCount ||
+    securityFindings.length !== evidence.metadata?.securityFindingCount ||
+    testsRequired.length !== evidence.metadata?.testRequirementCount ||
+    blockers.length + securityFindings.length <= 0
+  ) {
+    return []
+  }
+
   const lines = [
     "",
     "Trusted independent-review remediation context:",
-    `- Review attempt: ${context.reviewAttempt}.`,
-    `- Blocking findings: ${context.blockers.length}.`,
-    `- Security findings: ${context.securityFindings.length}.`,
-    `- Required test additions/changes: ${context.testsRequired.length}.`
+    `- Review attempt: ${evidence.metadata.reviewAttempt}.`,
+    `- Blocking findings: ${blockers.length}.`,
+    `- Security findings: ${securityFindings.length}.`,
+    `- Required test additions/changes: ${testsRequired.length}.`
   ]
 
-  for (const finding of context.blockers) {
-    lines.push(`- Blocker: ${normalizeSafeText(finding, { maxChars: 200 })}`)
+  for (const finding of blockers) {
+    lines.push(`- Blocker: ${finding}`)
   }
 
-  for (const finding of context.securityFindings) {
-    lines.push(`- Security: ${normalizeSafeText(finding, { maxChars: 200 })}`)
+  for (const finding of securityFindings) {
+    lines.push(`- Security: ${finding}`)
   }
 
-  for (const finding of context.testsRequired) {
-    lines.push(`- Test requirement: ${normalizeSafeText(finding, { maxChars: 200 })}`)
+  for (const finding of testsRequired) {
+    lines.push(`- Test requirement: ${finding}`)
   }
 
   lines.push(
