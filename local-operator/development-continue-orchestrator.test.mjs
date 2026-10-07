@@ -2909,3 +2909,52 @@ test("ordinary Phase 6D routes to Software Factory handler while preserving acti
   assert.equal(children.calls.length, 1)
   assert.equal(children.calls[0].handler, "executeSoftwareFactoryImplementation")
 })
+
+
+test("stale Antigravity execution_started evidence does not trigger current-attempt orphan recovery", async () => {
+  const run = makeRun("implementation_in_progress", {
+    attempts: { implementation: 2 },
+    evidence: {
+      implementation: [{
+        kind: "implementation",
+        sha: HEAD_SHA,
+        source: "software-factory-v0-antigravity-execution",
+        metadata: {
+          adapter: "software-factory-v0-antigravity-execution",
+          attempt: 1,
+          outcome: "execution_started",
+          startedAt: STARTED_AT,
+          capability: "implementation.backend",
+          modelClass: "standard",
+          checkpointVersion: 1
+        }
+      }]
+    }
+  })
+  const calls = []
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: makeReader(run).readRun,
+    childHandlers: {
+      executeSoftwareFactoryImplementation: async (_runId, options) => {
+        calls.push(options.expectedVersion)
+        return {
+          ok: true,
+          outcome: "implementation_ready",
+          run: makeRun("implementation_ready", {
+            version: options.expectedVersion + 1,
+            attempts: { implementation: 3 },
+            headSha: NEXT_SHA
+          })
+        }
+      },
+      recoverOrphanedAntigravityExecution: async () => {
+        throw new Error("stale evidence must not enter orphan recovery")
+      }
+    },
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.after, "implementation_ready")
+  assert.deepEqual(calls, [run.version])
+})
