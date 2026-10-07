@@ -447,6 +447,29 @@ function boundedReviewRemediationPromptLines(run, authorization) {
   return lines
 }
 
+function packReviewRemediationLines(lines, availableChars) {
+  if (!Array.isArray(lines) || lines.length === 0 || !Number.isInteger(availableChars) || availableChars <= 0) {
+    return []
+  }
+
+  const packed = []
+  let used = 0
+
+  for (const line of lines) {
+    const value = String(line)
+    const cost = value.length + 1
+
+    if (used + cost > availableChars) {
+      break
+    }
+
+    packed.push(value)
+    used += cost
+  }
+
+  return packed
+}
+
 export function buildAntigravityImplementationPrompt(run, workspace, authorization) {
   const task = normalizeSafeText(run?.task, {
     maxChars: 1000,
@@ -461,7 +484,7 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
   const skillLines = Array.isArray(authorization?.skills) && authorization.skills.length
     ? authorization.skills.map((skill) => `- Use the installed Antigravity skill: ${normalizeSafeText(skill, { maxChars: 100 })}.`)
     : ["- No specialist skill is required beyond the approved task."]
-  const lines = [
+  const prefixLines = [
     "Execute exactly one bounded PPO implementation task in the current isolated workspace.",
     `Project: ${project}`,
     `Repository: ${repo}`,
@@ -473,8 +496,9 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
     "Task:",
     task,
     ...(planning ? ["", "Planning context:", normalizeSafeText(planning, { maxChars: 500 })] : []),
-    ...boundedTestRemediationPromptLines(run, authorization),
-    ...boundedReviewRemediationPromptLines(run, authorization),
+    ...boundedTestRemediationPromptLines(run, authorization)
+  ]
+  const suffixLines = [
     "",
     "Required skills:",
     ...skillLines,
@@ -495,6 +519,20 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
     "",
     "Implement the requested change and return concise completion notes. PPO independently verifies all file and Git state."
   ]
+  const baselinePrompt = `${[...prefixLines, ...suffixLines].join("\n")}\n`
+
+  if (baselinePrompt.length > ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS) {
+    throw executionError(
+      "ANTIGRAVITY_PROMPT_UNSAFE",
+      "Antigravity implementation prompt source is unsafe."
+    )
+  }
+
+  const reviewLines = packReviewRemediationLines(
+    boundedReviewRemediationPromptLines(run, authorization),
+    ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS - baselinePrompt.length
+  )
+  const lines = [...prefixLines, ...reviewLines, ...suffixLines]
   const prompt = `${lines.join("\n")}\n`
   if (prompt.length > ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS || sensitiveTextPattern.test(prompt)) {
     throw executionError(
