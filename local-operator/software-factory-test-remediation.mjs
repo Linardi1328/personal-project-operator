@@ -52,8 +52,8 @@ async function latestCheckpointVersion(runId, options = {}) {
   }
 }
 
-function matchingFailureEvidence(run, policyIdentity) {
-  if (classifyAutomatedTestAttemptEvidence(run, policyIdentity) !== "definitive_failed") {
+function matchingFailureEvidence(run, policyIdentity, classifyEvidence = classifyAutomatedTestAttemptEvidence) {
+  if (classifyEvidence(run, policyIdentity) !== "definitive_failed") {
     throw remediationError(
       "TEST_REMEDIATION_EVIDENCE_INVALID",
       "Trusted deterministic failed-test evidence is required before automated remediation."
@@ -169,6 +169,8 @@ export function createSoftwareFactoryTestRemediationPreparer(dependencies = {}) 
   const readRun = dependencies.readRun || readDevelopmentRun
   const recordReadiness = dependencies.recordReadiness || recordTrustedAntigravityReadiness
   const transitionRun = dependencies.transitionRun || transitionDevelopmentRun
+  const resolvePolicyIdentity = dependencies.resolvePolicyIdentity || resolveAutomatedTestPolicyIdentity
+  const classifyEvidence = dependencies.classifyEvidence || classifyAutomatedTestAttemptEvidence
 
   return async function prepareSoftwareFactoryTestRemediation(runId, options = {}) {
     const expectedVersion = normalizeExpectedVersion(options.expectedVersion)
@@ -181,8 +183,8 @@ export function createSoftwareFactoryTestRemediationPreparer(dependencies = {}) 
       )
     }
 
-    const policyIdentity = resolveAutomatedTestPolicyIdentity(run, options)
-    const context = matchingFailureEvidence(run, policyIdentity)
+    const policyIdentity = resolvePolicyIdentity(run, options)
+    const context = matchingFailureEvidence(run, policyIdentity, classifyEvidence)
     const expectedCheckpointVersion = await latestCheckpointVersion(run.runId, {
       ...options,
       readCheckpoint: dependencies.readCheckpoint
