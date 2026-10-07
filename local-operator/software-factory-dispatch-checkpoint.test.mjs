@@ -336,3 +336,35 @@ test("changing the capability for an existing checkpoint is refused", async () =
     (error) => error?.code === "FACTORY_CHECKPOINT_BINDING_MISMATCH"
   )
 })
+
+
+test("post-publication durability failure is ambiguous and requires reconciliation", async () => {
+  const fixture = await makePlannedRun()
+
+  await assert.rejects(
+    recordSoftwareFactoryDispatchCheckpoint({
+      runId: fixture.run.runId,
+      runVersion: fixture.run.version,
+      capability: "implementation.backend",
+      expectedCheckpointVersion: 0,
+      observation: observation({ capacity: "exhausted" })
+    }, {
+      writeDataDir: fixture.writeDataDir,
+      now: () => new Date("2026-10-07T10:00:04.000Z"),
+      syncDirectoryImpl: async () => {
+        throw new Error("simulated directory sync failure")
+      }
+    }),
+    (error) => (
+      error?.code === "FACTORY_CHECKPOINT_DURABILITY_AMBIGUOUS" &&
+      error?.stateCommitted === true
+    )
+  )
+
+  const reconciled = await readSoftwareFactoryDispatchCheckpoint(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir
+  })
+
+  assert.equal(reconciled.checkpointVersion, 1)
+  assert.equal(reconciled.dispatch.outcome, "blocked_capacity")
+})
