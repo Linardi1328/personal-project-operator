@@ -395,3 +395,31 @@ test("checkpoint directory failures map to a safe store-unavailable error", asyn
     )
   )
 })
+
+
+test("new checkpoint directory ancestry is synchronized before publication", async () => {
+  const fixture = await makePlannedRun()
+  const synchronized = []
+
+  await recordSoftwareFactoryDispatchCheckpoint({
+    runId: fixture.run.runId,
+    runVersion: fixture.run.version,
+    capability: "implementation.backend",
+    expectedCheckpointVersion: 0,
+    observation: observation({ capacity: "exhausted" })
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: () => new Date("2026-10-07T10:00:04.000Z"),
+    syncDirectoryImpl: async (path) => {
+      synchronized.push(path)
+    }
+  })
+
+  assert.ok(synchronized.length >= 2)
+  const checkpointRoot = join(
+    fixture.writeDataDir,
+    "software-factory-dispatch-checkpoints",
+    fixture.run.runId
+  )
+  assert.ok(synchronized.includes(checkpointRoot))
+})
