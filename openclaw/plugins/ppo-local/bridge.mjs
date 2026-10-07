@@ -111,6 +111,7 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo cancel <run-id>",
     "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
+    "- /ppo factory-run <run-id>",
     "- /ppo recover <run-id>"
   ].join("\n");
 }
@@ -273,6 +274,27 @@ function parseContinueCommand(commandText, rest, rawHasLineBreak) {
   return ["continue", normalized];
 }
 
+function parseFactoryRunCommand(commandText, rest, rawHasLineBreak, rawHasTab) {
+  if (rawHasLineBreak || rawHasTab || /[\r\n\t]/u.test(commandText)) {
+    return null;
+  }
+
+  const normalized = String(rest ?? "").trim();
+
+  if (!DEVELOPMENT_RUN_ID_PATTERN.test(normalized)) {
+    return null;
+  }
+
+  const canonical = `factory-run ${normalized}`;
+  const raw = commandText.startsWith("factory-run") ? commandText : canonical;
+
+  if (raw !== canonical) {
+    return null;
+  }
+
+  return ["factory-run", normalized];
+}
+
 function parseRecoverCommand(commandText, rest, rawHasLineBreak, rawHasTab) {
   if (rawHasLineBreak || rawHasTab || /[\r\n\t]/u.test(commandText)) {
     return null;
@@ -399,6 +421,10 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "codex" || commandName === "codex-budget") {
     return parseProjectTextCommand(commandName, commandEnvelope.rest);
+  }
+
+  if (commandName === "factory-run") {
+    return parseFactoryRunCommand(commandText, commandEnvelope.rest, rawHasLineBreak, rawHasTab);
   }
 
   if (commandName === "prompt-size") {
