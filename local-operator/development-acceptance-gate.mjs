@@ -13,6 +13,10 @@ import {
   PHASE_6F_HARDENING_ORCHESTRATOR_ID
 } from "./development-codex-execution-adapter.mjs"
 import {
+  ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+  classifyAntigravityExecutionAttemptEvidence
+} from "./software-factory-antigravity-execution.mjs"
+import {
   AUTOMATED_TEST_RUNNER_ID
 } from "./development-test-runner.mjs"
 import {
@@ -340,11 +344,76 @@ function latestEvidence(run, kind, predicate) {
   return null
 }
 
+const reviewedImplementationAdapters = new Set([
+  CODEX_EXECUTION_ADAPTER_ID,
+  ANTIGRAVITY_EXECUTION_ADAPTER_ID
+])
+
+function implementationAdapter(entry) {
+  const source = entry?.source
+  const adapter = entry?.metadata?.adapter
+
+  if (reviewedImplementationAdapters.has(source) && (adapter === undefined || adapter === source)) {
+    return source
+  }
+
+  if (reviewedImplementationAdapters.has(adapter) && (source === undefined || source === adapter)) {
+    return adapter
+  }
+
+  return null
+}
+
 export function latestPhase6DImplementationEvidence(run) {
-  return latestEvidence(run, "implementation", (entry) => (
-    entry?.source === CODEX_EXECUTION_ADAPTER_ID ||
-    entry?.metadata?.adapter === CODEX_EXECUTION_ADAPTER_ID
-  ))
+  return latestEvidence(run, "implementation", (entry) => implementationAdapter(entry) !== null)
+}
+
+export function classifyPhase6DImplementationEvidenceForAcceptance(run) {
+  const entry = latestPhase6DImplementationEvidence(run)
+
+  if (!entry) {
+    return Object.freeze({ classification: "none", adapterId: null, entry: null })
+  }
+
+  const adapterId = implementationAdapter(entry)
+
+  if (adapterId === ANTIGRAVITY_EXECUTION_ADAPTER_ID) {
+    return Object.freeze({
+      classification: classifyAntigravityExecutionAttemptEvidence(run),
+      adapterId,
+      entry
+    })
+  }
+
+  return Object.freeze({
+    classification: entry?.metadata?.outcome === "implementation_ready"
+      ? "completed"
+      : entry?.metadata?.outcome === "execution_started"
+        ? "open"
+        : entry?.metadata?.ambiguous === true
+          ? "invalid"
+          : "other",
+    adapterId,
+    entry
+  })
+}
+
+function assertNoUnreviewedExecutionEvidence(run, approvedSha) {
+  const entries = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
+  const executionOutcomes = new Set(["execution_started", "execution_failed", "implementation_ready"])
+
+  for (const entry of entries) {
+    if (
+      entry?.sha === approvedSha &&
+      executionOutcomes.has(entry?.metadata?.outcome) &&
+      implementationAdapter(entry) === null
+    ) {
+      throw acceptanceError(
+        "ACCEPTANCE_IMPLEMENTATION_EVIDENCE_UNREVIEWED",
+        "Implementation evidence for the approved SHA came from an unreviewed executor."
+      )
+    }
+  }
 }
 
 export function latestPhase6EPassEvidence(run) {
@@ -389,7 +458,20 @@ function latestHardeningEvidence(run) {
 }
 
 function assertNoOpenOrAmbiguousAttempts(run, approvedSha) {
-  const implementation = latestPhase6DImplementationEvidence(run)
+  assertNoUnreviewedExecutionEvidence(run, approvedSha)
+
+  const implementationState = classifyPhase6DImplementationEvidenceForAcceptance(run)
+  const implementation = implementationState.entry
+
+  if (
+    implementationState.adapterId === ANTIGRAVITY_EXECUTION_ADAPTER_ID &&
+    ["open", "invalid"].includes(implementationState.classification)
+  ) {
+    throw acceptanceError(
+      "ACCEPTANCE_RECONCILIATION_REQUIRED",
+      "An open or invalid Antigravity implementation attempt requires reconciliation before delivery."
+    )
+  }
   const test = latestEvidence(run, "test", (entry) => (
     entry?.source === AUTOMATED_TEST_RUNNER_ID ||
     entry?.metadata?.runner === AUTOMATED_TEST_RUNNER_ID
