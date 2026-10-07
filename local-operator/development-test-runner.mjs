@@ -1582,6 +1582,23 @@ async function recordDefinitiveTestOutcome(run, policy, execution, results, outc
   }, options)
 }
 
+async function transitionDefinitiveTestFailure(run, policy, execution, results, options) {
+  const endedAt = timestamp(nowDate(options))
+  const evidence = [
+    ...results.map((result) => buildStepEvidence(run, policy, execution, result)),
+    buildAggregateEvidence(run, policy, execution, "failed", results, endedAt)
+  ]
+
+  return await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version,
+    status: "tests_failed",
+    actor: AUTOMATED_TEST_RUNNER_ID,
+    reason: "phase-6e-automated-testing-definitive-failure",
+    headSha: execution.implementationSha,
+    evidence
+  }, options)
+}
+
 function assertBoundedStepOutput(result, maxOutputBytes) {
   const stdoutBytes = Buffer.byteLength(String(result?.stdout ?? ""), "utf8")
   const stderrBytes = Buffer.byteLength(String(result?.stderr ?? ""), "utf8")
@@ -1727,11 +1744,20 @@ async function executeAutomatedTestsInternal(runId, options = {}) {
   }
 
   if (policyResult.outcome !== "passed") {
-    await recordDefinitiveTestOutcome(attemptRun, policy, attemptExecution, policyResult.results, "failed", options)
-    throw testRunnerError(
+    const failedRun = await transitionDefinitiveTestFailure(
+      attemptRun,
+      policy,
+      attemptExecution,
+      policyResult.results,
+      options
+    )
+    const error = testRunnerError(
       "TEST_POLICY_FAILED",
       "One or more required automated tests failed; testing cannot pass for this implementation SHA."
     )
+    error.outcome = "tests_failed"
+    error.failedRunVersion = failedRun.version
+    throw error
   }
 
   let finalCheck
