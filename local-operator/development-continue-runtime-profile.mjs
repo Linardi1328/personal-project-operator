@@ -765,6 +765,22 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     throw runtimeError()
   }
 
+  if (options.runtimeHandler === "executeSoftwareFactoryImplementation") {
+    await assertExecutable(paths.gitExecutablePath, options)
+    await assertDirectory(sourceRepoPath, options)
+    await assertDirectory(paths.workspaceRoot, options)
+
+    return {
+      workspaceRegistry: {
+        [projectId]: {
+          sourceRepoPath,
+          workspaceRoot: paths.workspaceRoot
+        }
+      },
+      platform
+    }
+  }
+
   await assertExecutable(paths.codexExecutablePath, options)
   await assertExecutable(paths.gitExecutablePath, options)
   await assertExecutable(paths.reviewExecutablePath, options)
@@ -881,7 +897,8 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   const platform = options.platform || process.platform
   return await loadRuntimeProfileForProject(projectId, platform, {
     ...options,
-    runtimeAction: request.action
+    runtimeAction: request.action,
+    runtimeHandler: request.handler
   })
 }
 

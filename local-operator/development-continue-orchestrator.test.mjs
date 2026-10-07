@@ -21,9 +21,11 @@ import {
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
 import {
+  createSoftwareFactoryImplementationCoordinator,
   executeDevelopmentContinue,
   formatDevelopmentContinueResult,
-  handlePpoDevelopmentContinueCommand
+  handlePpoDevelopmentContinueCommand,
+  resolveSoftwareFactoryImplementationCapability
 } from "./development-continue-orchestrator.mjs"
 import {
   loadDevelopmentContinueRuntimeProfile
@@ -664,7 +666,7 @@ test("Phase 6K dispatches each supported status to exactly one reviewed child bo
   const cases = [
     ["created", "planExistingDevelopmentRun", "phase-6b-plan", "planned"],
     ["planned", "prepareImplementationWorkspace", "phase-6c-prepare-workspace", "implementation_in_progress"],
-    ["implementation_in_progress", "executeCodexImplementation", "phase-6d-codex-implementation", "implementation_ready"],
+    ["implementation_in_progress", "executeSoftwareFactoryImplementation", "phase-6d-codex-implementation", "implementation_ready"],
     ["implementation_ready", "executeAutomatedTests", "phase-6e-automated-tests", "tests_passed"],
     ["tests_passed", "executeIndependentReview", "phase-6f-independent-review", "review_passed"],
     ["review_changes_requested", "executeBoundedHardening", "phase-6f-bounded-hardening", "review_passed"],
@@ -742,7 +744,7 @@ test("Phase 6K refuses open or ambiguous attempts before dispatch", async () => 
   for (const [run, reason] of cases) {
     const reader = makeReader(run)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready",
+      executeSoftwareFactoryImplementation: "implementation_ready",
       executeAutomatedTests: "tests_passed",
       executeIndependentReview: "review_passed",
       planExistingDevelopmentRun: "planned"
@@ -997,7 +999,7 @@ test("Phase 6K refuses malformed durable evidence instead of dispatching", async
   })
   const reader = makeReader(run)
   const children = makeChildHandlers({
-    executeCodexImplementation: "implementation_ready"
+    executeSoftwareFactoryImplementation: "implementation_ready"
   })
   const result = await executeDevelopmentContinue(RUN_ID, {
     readRun: reader.readRun,
@@ -1054,7 +1056,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   for (const run of [wrongSourceRun, wrongShaRun, malformedRun]) {
     const reader = makeReader(run)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -1071,7 +1073,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   {
     const reader = makeReader(staleAttemptRun)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -1092,7 +1094,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   {
     const reader = makeReader(openRun)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -1114,7 +1116,7 @@ test("Phase 6K binds Phase 6D retry authorization to trusted current attempt evi
   {
     const reader = makeReader(definitiveFailureRun)
     const children = makeChildHandlers({
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -2017,8 +2019,8 @@ test("Phase 6K Linux runtime profile fails closed for missing or unusable Codex 
   )
 })
 
-test("Phase 6K refuses missing Linux runtime readiness before child or policy-store mutation", async () => {
-  const bubblewrapPath = "/usr/bin/bwrap"
+test("Phase 6K refuses missing Linux Git readiness before Antigravity child mutation", async () => {
+  const gitPath = "/usr/bin/git"
   const fixture = await createStoredRun("implementation_in_progress")
   const before = await readDevelopmentRun(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir
@@ -2027,14 +2029,14 @@ test("Phase 6K refuses missing Linux runtime readiness before child or policy-st
   const result = await executeDevelopmentContinue(fixture.run.runId, {
     writeDataDir: fixture.writeDataDir,
     childHandlers: {
-      executeCodexImplementation: async () => {
+      executeSoftwareFactoryImplementation: async () => {
         childCalls += 1
         return { ok: true, outcome: "implementation_ready", run: fixture.run }
       }
     },
     trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
       platform: "linux",
-      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
+      statImpl: fakeRuntimeStatFor({ missing: new Set([gitPath]) }),
       accessImpl: async () => {},
       execFileImpl: fakeRuntimeExecFile,
       linuxSandboxCapabilityProbe: async () => true
@@ -2050,6 +2052,44 @@ test("Phase 6K refuses missing Linux runtime readiness before child or policy-st
   assert.equal(after.version, before.version)
   assert.equal(after.status, before.status)
   assert.equal(await pathExists(join(fixture.writeDataDir, CODEX_EXECUTION_POLICY_STORE_DIR)), false)
+})
+
+
+
+test("Phase 6K ordinary Antigravity implementation no longer requires Linux Codex sandbox readiness", async () => {
+  const bubblewrapPath = "/usr/bin/bwrap"
+  const fixture = await createStoredRun("implementation_in_progress")
+  let childCalls = 0
+
+  const result = await executeDevelopmentContinue(fixture.run.runId, {
+    writeDataDir: fixture.writeDataDir,
+    childHandlers: {
+      executeSoftwareFactoryImplementation: async (_runId, options) => {
+        childCalls += 1
+        return {
+          ok: true,
+          outcome: "implementation_ready",
+          run: {
+            ...fixture.run,
+            version: options.expectedVersion + 1,
+            status: "implementation_ready"
+          }
+        }
+      }
+    },
+    trustedRuntimeProfileProvider: (request) => loadDevelopmentContinueRuntimeProfile(request, {
+      platform: "linux",
+      statImpl: fakeRuntimeStatFor({ missing: new Set([bubblewrapPath]) }),
+      accessImpl: async () => {},
+      execFileImpl: fakeRuntimeExecFile,
+      linuxSandboxCapabilityProbe: async () => false
+    })
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(result.after, "implementation_ready")
+  assert.equal(childCalls, 1)
 })
 
 test("Phase 6K refuses missing project test runtime before Phase 6E mutation", async () => {
@@ -2203,7 +2243,7 @@ test("Phase 6K resumes interrupted hardening when no current Codex attempt is re
   })
   const reader = makeReader(run)
   const children = makeChildHandlers({
-    executeCodexImplementation: "implementation_ready"
+    executeSoftwareFactoryImplementation: "implementation_ready"
   })
   const result = await executeDevelopmentContinue(RUN_ID, {
     readRun: reader.readRun,
@@ -2345,7 +2385,7 @@ test("Phase 6K surfaces bounded Codex failure classifications without raw output
   const result = await executeDevelopmentContinue(RUN_ID, {
     readRun: reader.readRun,
     childHandlers: {
-      executeCodexImplementation: async () => {
+      executeSoftwareFactoryImplementation: async () => {
         const error = new Error("SENSITIVE_TEST_SENTINEL 401 token_invalidated")
         error.code = "CODEX_EXECUTION_FAILED"
         error.failureClass = "authentication"
@@ -2370,7 +2410,7 @@ test("Phase 6K surfaces Codex usage-limit windows without exposing raw provider 
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
       childHandlers: {
-        executeCodexImplementation: async () => {
+        executeSoftwareFactoryImplementation: async () => {
           const error = new Error("SENSITIVE_TEST_SENTINEL You've hit your usage limit. purchase more credits")
           error.code = code
           error.failureClass = "usage_limit"
@@ -2453,7 +2493,7 @@ test("Phase 6K stops at merged and never dispatches production or terminal statu
     const children = makeChildHandlers({
       executePhase6GDelivery: "merged",
       executeShaPinnedMerge: "merged",
-      executeCodexImplementation: "implementation_ready"
+      executeSoftwareFactoryImplementation: "implementation_ready"
     })
     const result = await executeDevelopmentContinue(RUN_ID, {
       readRun: reader.readRun,
@@ -2718,4 +2758,217 @@ test("Phase 6K orchestrator is composition-only and imports no production agents
   assert.doesNotMatch(bridgeSource, /development-deployment-agent|development-production-verification-agent|development-rollback-agent/)
   assert.match(commandSource, /development-continue-runtime-profile\.mjs/)
   assert.match(commandSource, /trustedRuntimeProfileProvider:\s*loadDevelopmentContinueRuntimeProfile/)
+})
+
+
+test("Software Factory implementation capability selection is deterministic and frontend-biased", () => {
+  assert.equal(
+    resolveSoftwareFactoryImplementationCapability(
+      makeRun("implementation_in_progress", {
+        task: "Fix the hidden Register Interest CTA in the browser acceptance flow."
+      })
+    ),
+    "implementation.frontend"
+  )
+
+  assert.equal(
+    resolveSoftwareFactoryImplementationCapability(
+      makeRun("implementation_in_progress", {
+        task: "Debug the failing API integration timeout."
+      })
+    ),
+    "debugging"
+  )
+
+  assert.equal(
+    resolveSoftwareFactoryImplementationCapability(
+      makeRun("implementation_in_progress", {
+        task: "Implement the approved database repository change."
+      })
+    ),
+    "implementation.backend"
+  )
+
+  for (const task of [
+    "Return a page of results from the API.",
+    "Accept multipart form data in the backend endpoint.",
+    "Handle failure in the API retry policy."
+  ]) {
+    assert.equal(
+      resolveSoftwareFactoryImplementationCapability(
+        makeRun("implementation_in_progress", { task })
+      ),
+      "implementation.backend",
+      task
+    )
+  }
+})
+
+test("Software Factory coordinator records blocked capacity without authorizing or executing", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Fix the frontend browser CTA.",
+    attempts: { implementation: 3 }
+  })
+  const calls = []
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    readCheckpoint: async () => {
+      const error = new Error("missing")
+      error.code = "FACTORY_CHECKPOINT_NOT_FOUND"
+      throw error
+    },
+    recordReadiness: async (input) => {
+      calls.push(["record", input])
+      return {
+        checkpointVersion: 1,
+        dispatch: {
+          outcome: "blocked_capacity",
+          reasonCode: "WORKER_CAPACITY_EXHAUSTED",
+          consumeAttempt: false
+        }
+      }
+    },
+    authorize: async () => {
+      calls.push(["authorize"])
+      throw new Error("authorize must not run")
+    },
+    execute: async () => {
+      calls.push(["execute"])
+      throw new Error("execute must not run")
+    }
+  })
+
+  const result = await coordinator(run.runId, {
+    expectedVersion: run.version
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.outcome, "blocked_capacity")
+  assert.equal(result.reason, "worker_capacity_exhausted")
+  assert.equal(result.run.attempts.implementation, 3)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][0], "record")
+  assert.equal(calls[0][1].capability, "implementation.frontend")
+  assert.equal(calls[0][1].failedAttempts, 3)
+  assert.equal(calls[0][1].expectedCheckpointVersion, 0)
+})
+
+test("Software Factory coordinator authorizes immediately before Antigravity execution", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved backend repository change."
+  })
+  const calls = []
+  const authorization = Object.freeze({ kind: "test-authorization" })
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    readCheckpoint: async () => ({ checkpointVersion: 4 }),
+    recordReadiness: async (input) => {
+      calls.push(["record", input])
+      return {
+        checkpointVersion: 5,
+        dispatch: {
+          outcome: "ready",
+          reasonCode: "WORKER_READY",
+          consumeAttempt: true
+        }
+      }
+    },
+    authorize: async (input) => {
+      calls.push(["authorize", input])
+      return authorization
+    },
+    execute: async (runId, receivedAuthorization, options) => {
+      calls.push(["execute", { runId, receivedAuthorization, expectedVersion: options.expectedVersion }])
+      return {
+        ok: true,
+        outcome: "implementation_ready",
+        run: makeRun("implementation_ready", {
+          version: run.version + 2,
+          headSha: NEXT_SHA,
+          attempts: { implementation: 1 }
+        })
+      }
+    }
+  })
+
+  const result = await coordinator(run.runId, {
+    expectedVersion: run.version
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "implementation_ready")
+  assert.deepEqual(calls.map((entry) => entry[0]), ["record", "authorize", "execute"])
+  assert.equal(calls[0][1].expectedCheckpointVersion, 4)
+  assert.equal(calls[0][1].capability, "implementation.backend")
+  assert.equal(calls[1][1].checkpointVersion, 5)
+  assert.equal(calls[2][1].receivedAuthorization, authorization)
+  assert.equal(calls[2][1].expectedVersion, run.version)
+})
+
+test("ordinary Phase 6D routes to Software Factory handler while preserving action compatibility", async () => {
+  const run = makeRun("implementation_in_progress")
+  const reader = makeReader(run)
+  const children = makeChildHandlers({
+    executeSoftwareFactoryImplementation: "implementation_ready"
+  })
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: reader.readRun,
+    childHandlers: children.handlers,
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(result.after, "implementation_ready")
+  assert.equal(children.calls.length, 1)
+  assert.equal(children.calls[0].handler, "executeSoftwareFactoryImplementation")
+})
+
+
+test("stale Antigravity execution_started evidence does not trigger current-attempt orphan recovery", async () => {
+  const run = makeRun("implementation_in_progress", {
+    attempts: { implementation: 2 },
+    evidence: {
+      implementation: [{
+        kind: "implementation",
+        sha: HEAD_SHA,
+        source: "software-factory-v0-antigravity-execution",
+        metadata: {
+          adapter: "software-factory-v0-antigravity-execution",
+          attempt: 1,
+          outcome: "execution_started",
+          startedAt: STARTED_AT,
+          capability: "implementation.backend",
+          modelClass: "standard",
+          checkpointVersion: 1
+        }
+      }]
+    }
+  })
+  const calls = []
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: makeReader(run).readRun,
+    childHandlers: {
+      executeSoftwareFactoryImplementation: async (_runId, options) => {
+        calls.push(options.expectedVersion)
+        return {
+          ok: true,
+          outcome: "implementation_ready",
+          run: makeRun("implementation_ready", {
+            version: options.expectedVersion + 1,
+            attempts: { implementation: 3 },
+            headSha: NEXT_SHA
+          })
+        }
+      },
+      recoverOrphanedAntigravityExecution: async () => {
+        throw new Error("stale evidence must not enter orphan recovery")
+      }
+    },
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.after, "implementation_ready")
+  assert.deepEqual(calls, [run.version])
 })

@@ -19,6 +19,17 @@ import {
   recoverOrphanedCodexExecution
 } from "./development-codex-execution-adapter.mjs"
 import {
+  ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+  classifyAntigravityExecutionAttemptEvidence,
+  executeAntigravityImplementation,
+  recoverOrphanedAntigravityExecution
+} from "./software-factory-antigravity-execution.mjs"
+import {
+  authorizeAntigravityDispatch,
+  recordTrustedAntigravityReadiness
+} from "./software-factory-antigravity-readiness.mjs"
+import { readSoftwareFactoryDispatchCheckpoint } from "./software-factory-dispatch-checkpoint.mjs"
+import {
   classifyAutomatedTestAttemptEvidence,
   canRetryPreviousPpoTimeoutPolicy,
   executeAutomatedTests,
@@ -55,7 +66,7 @@ const policyBoundary = Object.freeze({
   maximumStatus: "merged",
   productionActions: false,
   backgroundExecution: false,
-  modelRouting: false
+  modelRouting: true
 })
 
 export const PHASE_6K_CONTINUE_POLICY_HASH = createHash("sha256")
@@ -233,6 +244,9 @@ const defaultChildHandlers = Object.freeze({
   planExistingDevelopmentRun,
   prepareImplementationWorkspace,
   executeCodexImplementation,
+  executeSoftwareFactoryImplementation,
+  executeAntigravityImplementation,
+  recoverOrphanedAntigravityExecution,
   executeAutomatedTests,
   executeIndependentReview,
   recoverOrphanedCodexExecution,
@@ -343,7 +357,7 @@ function hardeningLeaseMatchesRun(run, lease) {
 }
 
 function operationTarget(run, boundary) {
-  if (boundary.handler === "executeCodexImplementation") {
+  if (boundary.handler === "executeCodexImplementation" || boundary.handler === "executeSoftwareFactoryImplementation") {
     return {
       phase: "6D",
       attempt: run.attempts.implementation + 1,
@@ -380,14 +394,31 @@ function operationTarget(run, boundary) {
 
 function openOperationTarget(run) {
   if (run.status === "implementation_in_progress") {
-    const evidence = latestPhaseEvidence(run, "implementation", "phase-6d-codex-execution-adapter")
+    const antigravityEvidence = latestPhaseEvidence(run, "implementation", ANTIGRAVITY_EXECUTION_ADAPTER_ID)
 
-    return evidence?.metadata?.outcome === "execution_started"
+    if (
+      antigravityEvidence?.metadata?.outcome === "execution_started" &&
+      antigravityEvidence?.metadata?.attempt === run.attempts.implementation &&
+      antigravityEvidence?.sha === (run.headSha || run.baseSha)
+    ) {
+      return {
+        phase: "6D",
+        attempt: run.attempts.implementation,
+        headSha: run.headSha || run.baseSha,
+        startedAt: antigravityEvidence.metadata.startedAt,
+        handler: "recoverOrphanedAntigravityExecution",
+        reason: "antigravity_reconciliation_required"
+      }
+    }
+
+    const codexEvidence = latestPhaseEvidence(run, "implementation", "phase-6d-codex-execution-adapter")
+
+    return codexEvidence?.metadata?.outcome === "execution_started"
       ? {
           phase: "6D",
           attempt: run.attempts.implementation,
           headSha: run.headSha || run.baseSha,
-          startedAt: evidence.metadata.startedAt,
+          startedAt: codexEvidence.metadata.startedAt,
           handler: "recoverOrphanedCodexExecution",
           reason: "codex_reconciliation_required"
         }
@@ -470,17 +501,35 @@ function projectRefusedResult(run, scope) {
 }
 
 function validateImplementationAttemptBoundary(run, action, scope) {
-  const classification = classifyCodexExecutionAttemptEvidence(run)
+  const antigravityClassification = classifyAntigravityExecutionAttemptEvidence(run)
 
-  if (classification === "invalid") {
+  if (antigravityClassification !== "none") {
+    if (antigravityClassification === "invalid") {
+      return ownerActionResult(run, action, "antigravity_evidence_invalid", scope)
+    }
+
+    if (antigravityClassification === "open") {
+      return ownerActionResult(run, action, "antigravity_reconciliation_required", scope)
+    }
+
+    if (antigravityClassification === "definitive_failed") {
+      return null
+    }
+
+    return ownerActionResult(run, action, "antigravity_evidence_invalid", scope)
+  }
+
+  const codexClassification = classifyCodexExecutionAttemptEvidence(run)
+
+  if (codexClassification === "invalid") {
     return ownerActionResult(run, action, "codex_evidence_invalid", scope)
   }
 
-  if (classification === "open") {
+  if (codexClassification === "open") {
     return ownerActionResult(run, action, "codex_reconciliation_required", scope)
   }
 
-  if (classification === "none" || classification === "definitive_failed") {
+  if (codexClassification === "none" || codexClassification === "definitive_failed") {
     return null
   }
 
@@ -646,6 +695,126 @@ async function reconcileOrphanedAttempt(
   } catch (error) {
     return await childFailureResult(run, boundary.action, error, options, scope)
   }
+}
+
+
+export function resolveSoftwareFactoryImplementationCapability(run) {
+  const planning = Array.isArray(run?.evidence?.planning)
+    ? run.evidence.planning.map((entry) => entry?.summary || "").join("\n")
+    : ""
+  const text = `${run?.task || ""}\n${planning}`.toLowerCase()
+
+  const explicitFrontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side)\b/u
+  const contextualFrontend = /\b(?:page|form|component)\s+(?:ui|layout|rendering|styling|interaction|accessibility)\b|\b(?:rendered|visual)\s+(?:page|form|component)\b/u
+  const explicitDebugging = /\bdebug(?:ging)?\b|\bdiagnos(?:e|is|tic)\b|\binvestigat(?:e|ion)\b|\broot cause\b|\bfailing (?:test|build|ci)\b|\breproduce (?:bug|issue|failure)\b|\bfix (?:bug|error|crash)\b/u
+
+  if (explicitFrontend.test(text) || contextualFrontend.test(text)) {
+    return "implementation.frontend"
+  }
+
+  if (explicitDebugging.test(text)) {
+    return "debugging"
+  }
+
+  return "implementation.backend"
+}
+
+export function createSoftwareFactoryImplementationCoordinator(dependencies = {}) {
+  const readRunImpl = dependencies.readRun || readDevelopmentRun
+  const readCheckpointImpl = dependencies.readCheckpoint || readSoftwareFactoryDispatchCheckpoint
+  const recordReadinessImpl = dependencies.recordReadiness || recordTrustedAntigravityReadiness
+  const authorizeImpl = dependencies.authorize || authorizeAntigravityDispatch
+  const executeImpl = dependencies.execute || executeAntigravityImplementation
+
+  async function latestVersion(runId, options = {}) {
+    try {
+      const checkpoint = await readCheckpointImpl(runId, options)
+      return checkpoint.checkpointVersion
+    } catch (error) {
+      if (error?.code === "FACTORY_CHECKPOINT_NOT_FOUND") {
+        return 0
+      }
+      throw error
+    }
+  }
+
+  return async function executeSoftwareFactoryImplementation(runId, options = {}) {
+    const run = await readRunImpl(runId, options)
+
+    if (run.status !== "implementation_in_progress" || run.version !== options.expectedVersion) {
+      throw continueError(
+        "CONTINUE_ANTIGRAVITY_RUN_STALE",
+        "Software factory implementation run changed before Antigravity dispatch."
+      )
+    }
+
+    const capability = resolveSoftwareFactoryImplementationCapability(run)
+    const expectedCheckpointVersion = await latestVersion(run.runId, options)
+    const checkpoint = await recordReadinessImpl({
+      runId: run.runId,
+      runVersion: run.version,
+      capability,
+      expectedCheckpointVersion,
+      failedAttempts: run.attempts.implementation
+    }, options)
+
+    if (checkpoint.dispatch?.outcome !== "ready" || checkpoint.dispatch?.consumeAttempt !== true) {
+      return {
+        ok: false,
+        outcome: checkpoint.dispatch?.outcome || "blocked_external",
+        reason: String(checkpoint.dispatch?.reasonCode || "antigravity_not_ready").toLowerCase(),
+        run
+      }
+    }
+
+    let authorization
+
+    try {
+      authorization = await authorizeImpl({
+        runId: run.runId,
+        runVersion: run.version,
+        capability,
+        checkpointVersion: checkpoint.checkpointVersion
+      }, options)
+    } catch (error) {
+      if (error?.code === "ANTIGRAVITY_AUTHORIZATION_NOT_READY") {
+        return {
+          ok: false,
+          outcome: "blocked_capacity",
+          reason: "antigravity_authorization_not_ready",
+          run
+        }
+      }
+      throw error
+    }
+
+    return executeImpl(run.runId, authorization, {
+      ...options,
+      expectedVersion: run.version
+    })
+  }
+}
+
+const defaultSoftwareFactoryImplementationCoordinator = createSoftwareFactoryImplementationCoordinator()
+
+async function executeSoftwareFactoryImplementation(runId, options = {}) {
+  return defaultSoftwareFactoryImplementationCoordinator(runId, options)
+}
+
+function boundaryForStatus(status, scope) {
+  const boundary = statusActions[status]
+
+  if (
+    scope.id === "ordinary" &&
+    status === "implementation_in_progress"
+  ) {
+    return Object.freeze({
+      action: "phase-6d-codex-implementation",
+      handler: "executeSoftwareFactoryImplementation"
+    })
+  }
+
+  return boundary
 }
 
 function childOptions(options, expectedVersion, runtimeOptions = {}, scope = ordinaryScope) {
@@ -938,7 +1107,7 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
     return projectRefusedResult(initial, scope)
   }
 
-  const boundary = statusActions[initial.status]
+  const boundary = boundaryForStatus(initial.status, scope)
 
   if (!boundary) {
     return blockedStatusResult(initial, scope)
