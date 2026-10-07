@@ -396,7 +396,11 @@ function openOperationTarget(run) {
   if (run.status === "implementation_in_progress") {
     const antigravityEvidence = latestPhaseEvidence(run, "implementation", ANTIGRAVITY_EXECUTION_ADAPTER_ID)
 
-    if (antigravityEvidence?.metadata?.outcome === "execution_started") {
+    if (
+      antigravityEvidence?.metadata?.outcome === "execution_started" &&
+      antigravityEvidence?.metadata?.attempt === run.attempts.implementation &&
+      antigravityEvidence?.sha === (run.headSha || run.baseSha)
+    ) {
       return {
         phase: "6D",
         attempt: run.attempts.implementation,
