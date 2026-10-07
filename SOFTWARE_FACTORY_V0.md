@@ -251,3 +251,24 @@ Protected source-repository drift or unverifiable state remains fail-closed and 
 ### Runtime profile
 
 Ordinary Antigravity Phase 6D dispatch no longer requires Codex executable/authentication readiness. Its trusted runtime profile is reduced to the reviewed project source/workspace registry and Git boundary required by the Software Factory path. Later test/review/hardening phases retain their existing reviewed runtimes.
+
+
+## V0.6 bounded autonomous run driver
+
+The Software Factory can now drive an ordinary PPO development run through multiple already-reviewed Continue boundaries in one bounded invocation.
+
+`/ppo factory-run <run-id>`:
+
+- reuses the existing one-boundary Continue orchestrator for every state transition;
+- uses the same trusted runtime profile, readiness, workspace, test, review, and delivery policies;
+- stops immediately on capacity, external, stale-loop, or owner-action blockers;
+- enforces a fixed maximum number of automatic steps;
+- detects successful responses that make no durable run progress;
+- allows one stale-state refresh before failing closed on repeated staleness;
+- treats existing merged/verified runs as complete;
+- never routes deployment, verification, or rollback; and
+- stops at `merge_ready` with `release_ready` so the final merge remains a human release decision.
+
+The existing `/ppo continue <run-id>` route remains available for one-boundary manual control and diagnosis.
+
+The V0.6 driver does not add new implementation, testing, or review logic. It removes manual message-passing by composing the existing reviewed boundaries.
