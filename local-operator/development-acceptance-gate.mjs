@@ -417,13 +417,10 @@ function assertNoOpenOrAmbiguousAttempts(run, approvedSha) {
   const implementationState = classifyPhase6DImplementationEvidenceForAcceptance(run)
   const implementation = implementationState.entry
 
-  if (
-    implementationState.adapterId === ANTIGRAVITY_EXECUTION_ADAPTER_ID &&
-    ["open", "invalid"].includes(implementationState.classification)
-  ) {
+  if (["open", "invalid"].includes(implementationState.classification)) {
     throw acceptanceError(
       "ACCEPTANCE_RECONCILIATION_REQUIRED",
-      "An open or invalid Antigravity implementation attempt requires reconciliation before delivery."
+      "Open or invalid reviewed implementation evidence requires reconciliation before delivery."
     )
   }
   const test = latestEvidence(run, "test", (entry) => (
