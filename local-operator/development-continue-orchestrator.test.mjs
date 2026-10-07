@@ -21,9 +21,11 @@ import {
   resolveAutomatedTestPolicyIdentity
 } from "./development-test-runner.mjs"
 import {
+  createSoftwareFactoryImplementationCoordinator,
   executeDevelopmentContinue,
   formatDevelopmentContinueResult,
-  handlePpoDevelopmentContinueCommand
+  handlePpoDevelopmentContinueCommand,
+  resolveSoftwareFactoryImplementationCapability
 } from "./development-continue-orchestrator.mjs"
 import {
   loadDevelopmentContinueRuntimeProfile
@@ -2718,4 +2720,154 @@ test("Phase 6K orchestrator is composition-only and imports no production agents
   assert.doesNotMatch(bridgeSource, /development-deployment-agent|development-production-verification-agent|development-rollback-agent/)
   assert.match(commandSource, /development-continue-runtime-profile\.mjs/)
   assert.match(commandSource, /trustedRuntimeProfileProvider:\s*loadDevelopmentContinueRuntimeProfile/)
+})
+
+
+test("Software Factory implementation capability selection is deterministic and frontend-biased", () => {
+  assert.equal(
+    resolveSoftwareFactoryImplementationCapability(
+      makeRun("implementation_in_progress", {
+        task: "Fix the hidden Register Interest CTA in the browser acceptance flow."
+      })
+    ),
+    "implementation.frontend"
+  )
+
+  assert.equal(
+    resolveSoftwareFactoryImplementationCapability(
+      makeRun("implementation_in_progress", {
+        task: "Debug the failing API integration timeout."
+      })
+    ),
+    "debugging"
+  )
+
+  assert.equal(
+    resolveSoftwareFactoryImplementationCapability(
+      makeRun("implementation_in_progress", {
+        task: "Implement the approved database repository change."
+      })
+    ),
+    "implementation.backend"
+  )
+})
+
+test("Software Factory coordinator records blocked capacity without authorizing or executing", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Fix the frontend browser CTA.",
+    attempts: { implementation: 3 }
+  })
+  const calls = []
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    readCheckpoint: async () => {
+      const error = new Error("missing")
+      error.code = "FACTORY_CHECKPOINT_NOT_FOUND"
+      throw error
+    },
+    recordReadiness: async (input) => {
+      calls.push(["record", input])
+      return {
+        checkpointVersion: 1,
+        dispatch: {
+          outcome: "blocked_capacity",
+          reasonCode: "WORKER_CAPACITY_EXHAUSTED",
+          consumeAttempt: false
+        }
+      }
+    },
+    authorize: async () => {
+      calls.push(["authorize"])
+      throw new Error("authorize must not run")
+    },
+    execute: async () => {
+      calls.push(["execute"])
+      throw new Error("execute must not run")
+    }
+  })
+
+  const result = await coordinator(run.runId, {
+    expectedVersion: run.version
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.outcome, "blocked_capacity")
+  assert.equal(result.reason, "worker_capacity_exhausted")
+  assert.equal(result.run.attempts.implementation, 3)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][0], "record")
+  assert.equal(calls[0][1].capability, "implementation.frontend")
+  assert.equal(calls[0][1].failedAttempts, 3)
+  assert.equal(calls[0][1].expectedCheckpointVersion, 0)
+})
+
+test("Software Factory coordinator authorizes immediately before Antigravity execution", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved backend repository change."
+  })
+  const calls = []
+  const authorization = Object.freeze({ kind: "test-authorization" })
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    readCheckpoint: async () => ({ checkpointVersion: 4 }),
+    recordReadiness: async (input) => {
+      calls.push(["record", input])
+      return {
+        checkpointVersion: 5,
+        dispatch: {
+          outcome: "ready",
+          reasonCode: "WORKER_READY",
+          consumeAttempt: true
+        }
+      }
+    },
+    authorize: async (input) => {
+      calls.push(["authorize", input])
+      return authorization
+    },
+    execute: async (runId, receivedAuthorization, options) => {
+      calls.push(["execute", { runId, receivedAuthorization, expectedVersion: options.expectedVersion }])
+      return {
+        ok: true,
+        outcome: "implementation_ready",
+        run: makeRun("implementation_ready", {
+          version: run.version + 2,
+          headSha: NEXT_SHA,
+          attempts: { implementation: 1 }
+        })
+      }
+    }
+  })
+
+  const result = await coordinator(run.runId, {
+    expectedVersion: run.version
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "implementation_ready")
+  assert.deepEqual(calls.map((entry) => entry[0]), ["record", "authorize", "execute"])
+  assert.equal(calls[0][1].expectedCheckpointVersion, 4)
+  assert.equal(calls[0][1].capability, "implementation.backend")
+  assert.equal(calls[1][1].checkpointVersion, 5)
+  assert.equal(calls[2][1].receivedAuthorization, authorization)
+  assert.equal(calls[2][1].expectedVersion, run.version)
+})
+
+test("ordinary Phase 6D routes to Software Factory handler while preserving action compatibility", async () => {
+  const run = makeRun("implementation_in_progress")
+  const reader = makeReader(run)
+  const children = makeChildHandlers({
+    executeSoftwareFactoryImplementation: "implementation_ready"
+  })
+  const result = await executeDevelopmentContinue(RUN_ID, {
+    readRun: reader.readRun,
+    childHandlers: children.handlers,
+    trustedRuntimeProfileProvider: trustedRuntimeProviderFor(run)
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.action, "phase-6d-codex-implementation")
+  assert.equal(result.after, "implementation_ready")
+  assert.equal(children.calls.length, 1)
+  assert.equal(children.calls[0].handler, "executeSoftwareFactoryImplementation")
 })
