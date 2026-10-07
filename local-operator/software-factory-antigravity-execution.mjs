@@ -382,15 +382,24 @@ function failureClassFromOutput(stdout, stderr, error = null) {
   return "nonzero_exit"
 }
 
+export function buildAntigravityExecutionArgs(prompt) {
+  const normalizedPrompt = normalizeSafeText(prompt, {
+    maxChars: ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS,
+    code: "ANTIGRAVITY_PROMPT_UNSAFE",
+    safeMessage: "Antigravity implementation prompt source is unsafe."
+  })
+  return Object.freeze([
+    "-p",
+    normalizedPrompt,
+    "--sandbox",
+    "--print-timeout",
+    "10m"
+  ])
+}
+
 async function invokeAntigravity(agyPath, cwd, prompt, env) {
   try {
-    const result = await execFileAsync(agyPath, [
-      "-p",
-      prompt,
-      "--sandbox",
-      "--print-timeout",
-      "10m"
-    ], {
+    const result = await execFileAsync(agyPath, buildAntigravityExecutionArgs(prompt), {
       cwd,
       env,
       encoding: "utf8",
@@ -429,6 +438,42 @@ async function invokeAntigravity(agyPath, cwd, prompt, env) {
           ? "Antigravity capacity became unavailable during execution."
           : "Antigravity implementation execution did not complete successfully.",
       failureClass
+    )
+  }
+}
+
+async function restoreWorkspace(gitPath, workspacePath, expectedStartSha, env) {
+  try {
+    await execFileAsync(gitPath, ["reset", "--hard", expectedStartSha], {
+      cwd: workspacePath,
+      env,
+      encoding: "utf8",
+      maxBuffer: 128 * 1024,
+      timeout: 30_000,
+      shell: false
+    })
+    await execFileAsync(gitPath, ["clean", "-fd"], {
+      cwd: workspacePath,
+      env,
+      encoding: "utf8",
+      maxBuffer: 128 * 1024,
+      timeout: 30_000,
+      shell: false
+    })
+  } catch {
+    throw executionError(
+      "ANTIGRAVITY_RECONCILIATION_REQUIRED",
+      "Failed Antigravity execution requires workspace reconciliation before retrying.",
+      "workspace_invalid"
+    )
+  }
+
+  const facts = await gitFacts(gitPath, workspacePath, env)
+  if (facts.headSha !== expectedStartSha || facts.statusText) {
+    throw executionError(
+      "ANTIGRAVITY_RECONCILIATION_REQUIRED",
+      "Failed Antigravity execution requires workspace reconciliation before retrying.",
+      "workspace_invalid"
     )
   }
 }
@@ -645,6 +690,16 @@ async function executeInternal(runId, authorization, options = {}) {
   try {
     await invokeAntigravity(agyPath, location.workspacePath, prompt, env)
   } catch (error) {
+    const sourceAfterFailure = await gitFacts(gitPath, sourceReal, env)
+    if (!sameSourceFacts(sourceBefore, sourceAfterFailure)) {
+      throw executionError(
+        "ANTIGRAVITY_SOURCE_CHANGED",
+        "Antigravity execution modified the protected source repository.",
+        "source_changed"
+      )
+    }
+
+    await restoreWorkspace(gitPath, location.workspacePath, expectedStartSha, env)
     const endedAt = timestamp(options)
     await recordDevelopmentRunProgress(attemptRun.runId, {
       expectedVersion: attemptRun.version,
@@ -660,7 +715,7 @@ async function executeInternal(runId, authorization, options = {}) {
         outcome: "execution_failed",
         failureClass: error?.failureClass || "runtime"
       })]
-    }, options).catch(() => {})
+    }, options)
     throw error
   }
 
