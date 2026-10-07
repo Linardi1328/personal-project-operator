@@ -14,7 +14,7 @@ import {
   transitionDevelopmentRun
 } from "./development-run-state.mjs"
 import {
-  readSoftwareFactoryDispatchCheckpoint
+  recordSoftwareFactoryDispatchCheckpoint
 } from "./software-factory-dispatch-checkpoint.mjs"
 import {
   assertAntigravityDispatchAuthorization,
@@ -301,10 +301,10 @@ test("trusted available capacity can be supplied only by a reviewed probe classi
   assert.equal(checkpoint.observation.capacity, "unknown")
 })
 
-test("ready checkpoint plus fresh reviewed probe can issue ephemeral dispatch authorization", async () => {
+test("ready checkpoint plus fresh reviewed quota probe can issue ephemeral dispatch authorization", async () => {
   const fixture = await makePlannedRun()
 
-  const readyCheckpoint = await recordTrustedAntigravityReadiness({
+  const ready = await recordTrustedAntigravityReadiness({
     runId: fixture.run.runId,
     runVersion: fixture.run.version,
     capability: "implementation.frontend",
@@ -313,33 +313,14 @@ test("ready checkpoint plus fresh reviewed probe can issue ephemeral dispatch au
     writeDataDir: fixture.writeDataDir,
     allowTestOverrides: true,
     probeRunner: async () => probeResult({
-      exitCode: 1,
-      stderr: "rate limit"
+      exitCode: 0,
+      stdout: "Gemini 3.8 Flash (Low)\n40% remaining · Refreshes in 1h 26m"
     }),
-    now: () => new Date("2026-10-07T13:00:10.000Z")
+    now: () => new Date("2026-10-07T13:01:00.000Z")
   })
 
-  assert.equal(readyCheckpoint.dispatch.outcome, "blocked_capacity")
-
-  // Simulate the future trusted capacity source without allowing callers to forge
-  // reviewed-runtime-probe provenance at the authorization boundary.
-  const manuallyReady = await import("./software-factory-dispatch-checkpoint.mjs")
-  const ready = await manuallyReady.recordSoftwareFactoryDispatchCheckpoint({
-    runId: fixture.run.runId,
-    runVersion: fixture.run.version,
-    capability: "implementation.frontend",
-    expectedCheckpointVersion: 1,
-    observation: {
-      workerId: "antigravity",
-      integration: "configured",
-      capacity: "available",
-      sourceId: "reviewed-runtime-probe",
-      observedAt: "2026-10-07T13:01:00.000Z"
-    }
-  }, {
-    writeDataDir: fixture.writeDataDir,
-    now: () => new Date("2026-10-07T13:01:01.000Z")
-  })
+  assert.equal(ready.dispatch.outcome, "ready")
+  assert.equal(ready.observation.sourceId, "reviewed-runtime-probe")
 
   const authorization = await authorizeAntigravityDispatch({
     runId: fixture.run.runId,
@@ -351,12 +332,58 @@ test("ready checkpoint plus fresh reviewed probe can issue ephemeral dispatch au
     allowTestOverrides: true,
     probeRunner: async () => probeResult({
       exitCode: 0,
-      stdout: "models available"
+      stdout: "Quota available"
     }),
     now: () => new Date("2026-10-07T13:01:02.000Z")
-  }).catch((error) => error)
+  })
 
-  assert.equal(authorization?.code, "ANTIGRAVITY_AUTHORIZATION_NOT_READY")
+  assert.equal(authorization.workerId, "antigravity")
+  assert.equal(authorization.checkpointVersion, ready.checkpointVersion)
+  assert.deepEqual(authorization.skills, ["ui-ux-pro-max"])
+  assert.equal(assertAntigravityDispatchAuthorization(authorization, {
+    now: () => new Date("2026-10-07T13:01:30.000Z")
+  }), authorization)
+
+  const serializedCopy = JSON.parse(JSON.stringify(authorization))
+  assert.throws(
+    () => assertAntigravityDispatchAuthorization(serializedCopy),
+    (error) => error?.code === "ANTIGRAVITY_AUTHORIZATION_INVALID"
+  )
+})
+
+test("caller-authored historical checkpoint cannot authorize real dispatch", async () => {
+  const fixture = await makePlannedRun()
+  const checkpoint = await recordSoftwareFactoryDispatchCheckpoint({
+    runId: fixture.run.runId,
+    runVersion: fixture.run.version,
+    capability: "implementation.backend",
+    expectedCheckpointVersion: 0,
+    observation: {
+      workerId: "antigravity",
+      integration: "configured",
+      capacity: "available",
+      sourceId: "owner-observation",
+      observedAt: "2026-10-07T13:01:00.000Z"
+    }
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: () => new Date("2026-10-07T13:01:01.000Z")
+  })
+
+  await assert.rejects(
+    authorizeAntigravityDispatch({
+      runId: fixture.run.runId,
+      runVersion: fixture.run.version,
+      checkpointVersion: checkpoint.checkpointVersion,
+      capability: "implementation.backend"
+    }, {
+      writeDataDir: fixture.writeDataDir,
+      allowTestOverrides: true,
+      probeRunner: async () => probeResult({ stdout: "Quota available" }),
+      now: () => new Date("2026-10-07T13:01:02.000Z")
+    }),
+    (error) => error?.code === "ANTIGRAVITY_AUTHORIZATION_BINDING_MISMATCH"
+  )
 })
 
 test("serialized authorization copy is never accepted", async () => {
@@ -404,5 +431,52 @@ test("stale run cannot receive dispatch authorization", async () => {
       probeRunner: async () => probeResult()
     }),
     (error) => error?.code === "ANTIGRAVITY_AUTHORIZATION_RUN_STALE"
+  )
+})
+
+
+test("low remaining quota is classified as degraded but still dispatchable", async () => {
+  const observation = await probeAntigravityReadiness({
+    allowTestOverrides: true,
+    probeRunner: async () => probeResult({
+      stdout: "Gemini 3.8 Flash (Low)\n15% remaining · Refreshes in 15m"
+    }),
+    now: () => new Date("2026-10-07T13:00:00.000Z")
+  })
+
+  assert.equal(observation.integration, "configured")
+  assert.equal(observation.capacity, "degraded")
+})
+
+test("expired ephemeral authorization is refused", async () => {
+  const fixture = await makePlannedRun()
+  const ready = await recordTrustedAntigravityReadiness({
+    runId: fixture.run.runId,
+    runVersion: fixture.run.version,
+    capability: "implementation.backend",
+    expectedCheckpointVersion: 0
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    allowTestOverrides: true,
+    probeRunner: async () => probeResult({ stdout: "100% remaining" }),
+    now: () => new Date("2026-10-07T13:00:00.000Z")
+  })
+  const authorization = await authorizeAntigravityDispatch({
+    runId: fixture.run.runId,
+    runVersion: fixture.run.version,
+    checkpointVersion: ready.checkpointVersion,
+    capability: "implementation.backend"
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    allowTestOverrides: true,
+    probeRunner: async () => probeResult({ stdout: "100% remaining" }),
+    now: () => new Date("2026-10-07T13:00:30.000Z")
+  })
+
+  assert.throws(
+    () => assertAntigravityDispatchAuthorization(authorization, {
+      now: () => new Date("2026-10-07T13:03:00.000Z")
+    }),
+    (error) => error?.code === "ANTIGRAVITY_AUTHORIZATION_EXPIRED"
   )
 })
