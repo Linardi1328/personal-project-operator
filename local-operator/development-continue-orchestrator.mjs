@@ -787,7 +787,11 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
   }
 }
 
-const executeSoftwareFactoryImplementation = createSoftwareFactoryImplementationCoordinator()
+const defaultSoftwareFactoryImplementationCoordinator = createSoftwareFactoryImplementationCoordinator()
+
+async function executeSoftwareFactoryImplementation(runId, options = {}) {
+  return defaultSoftwareFactoryImplementationCoordinator(runId, options)
+}
 
 function boundaryForStatus(status, scope) {
   const boundary = statusActions[status]
