@@ -316,7 +316,12 @@ function normalizeAttestation(attestation) {
     )
   }
 
-  const normalizedProbe = normalizeProbeResult(attestation)
+  const normalizedProbe = normalizeProbeResult({
+    workerId: attestation.workerId,
+    integration: attestation.integration,
+    capacity: attestation.capacity,
+    observedAt: attestation.observedAt
+  })
   if (
     attestation.schemaVersion !== SOFTWARE_FACTORY_CAPACITY_ATTESTATION_SCHEMA_VERSION ||
     attestation.controlPlaneVersion !== SOFTWARE_FACTORY_CONTROL_PLANE_VERSION ||
