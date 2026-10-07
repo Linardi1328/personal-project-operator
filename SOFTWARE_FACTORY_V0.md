@@ -101,3 +101,40 @@ This first slice is intentionally side-effect free. It does not:
 The next increment should connect reviewed runtime observations to this control-plane policy, beginning with implementation-provider capacity. Once Antigravity has a reviewed adapter/readiness boundary, an ordinary PPO run should be able to remain queued as `blocked_capacity` when Antigravity is exhausted and resume without rebuilding task context or consuming a failed implementation attempt.
 
 The first Customer Zero target should be a real priority-project task, not a synthetic demonstration.
+
+
+## V0.2 durable dispatch checkpoints
+
+The capacity-checkpoint layer keeps quota and worker-readiness state outside the proven Phase 6 development-run lifecycle.
+
+A development run remains at its existing status while a separate private append-only checkpoint records:
+
+- the exact development run id and version;
+- the reviewed capability, selected worker, model class, and required skills;
+- a bounded capacity observation with a reviewed source id and timestamp;
+- the resulting dispatch outcome and whether a worker attempt may be consumed.
+
+Checkpoint publication is versioned and atomic. A complete private temporary file is fsynced before it is linked into the next numbered checkpoint slot. Stale or concurrent writers cannot overwrite an existing version.
+
+Capacity observations expire after a bounded interval. A stale observation is treated as unknown and cannot produce a ready dispatch decision. A fresh observation may be assessed read-only before a new checkpoint is recorded.
+
+This allows:
+
+```text
+planned development run
+        |
+Antigravity exhausted
+        v
+blocked_capacity checkpoint
+(run status and attempts unchanged)
+        |
+fresh capacity observation
+        v
+ready assessment
+        |
+new checkpoint
+        v
+implementation may begin
+```
+
+V0.2 still does not invoke Antigravity or another worker. A reviewed provider/readiness adapter remains the next execution boundary.
