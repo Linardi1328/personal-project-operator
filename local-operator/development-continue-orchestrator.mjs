@@ -722,12 +722,22 @@ function childOptions(options, expectedVersion, runtimeOptions = {}, scope = ord
 }
 
 function childHandlers(options = {}, scope = ordinaryScope) {
+  const overrides = { ...(options.childHandlers || {}) }
+
+  if (
+    scope.id === "ordinary" &&
+    typeof overrides.executeSoftwareFactoryImplementation !== "function" &&
+    typeof overrides.executeCodexImplementation === "function"
+  ) {
+    overrides.executeSoftwareFactoryImplementation = overrides.executeCodexImplementation
+  }
+
   return {
     ...defaultChildHandlers,
     ...(scope.id === "self-development" ? {
       planExistingDevelopmentRun: planExistingPersonalProjectOperatorSelfDevelopmentRun
     } : {}),
-    ...(options.childHandlers || {})
+    ...overrides
   }
 }
 
