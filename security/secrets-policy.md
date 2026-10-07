@@ -89,3 +89,6 @@ Not allowed:
 ```text
 Real token values pasted into Markdown, chat, commit history, or example files.
 ```
+
+
+Software Factory V0.3 capacity attestations use a PPO-local random signing key stored under the configured write-data directory, never in the repository. The key must remain mode 0600 and must not be printed, logged, copied into chat, stored in dispatch checkpoints, or included in development-run evidence. Signed readiness attestations are short-lived metadata and must not contain credentials, provider tokens, raw provider responses, prompts, stdout/stderr, environment dumps, or user secrets. Consumed attestation nonces are local replay-protection metadata only.
