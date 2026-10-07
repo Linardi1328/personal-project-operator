@@ -6,6 +6,7 @@ import {
   buildAntigravityExecutionArgs,
   buildAntigravityImplementationPrompt,
   classifyAntigravityExecutionAttemptEvidence,
+  resolveLiveAntigravityModel,
   validateAntigravityAutomationSettings
 } from "./software-factory-antigravity-execution.mjs"
 
