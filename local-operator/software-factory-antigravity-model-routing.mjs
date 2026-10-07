@@ -146,8 +146,8 @@ const preferences = Object.freeze({
   standard: Object.freeze([
     "flash-high",
     "pro-medium",
-    "reasoning",
-    "flash-medium"
+    "flash-medium",
+    "reasoning"
   ]),
   deep: Object.freeze([
     "pro-high",
