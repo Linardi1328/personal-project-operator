@@ -841,6 +841,193 @@ export async function executeAntigravityImplementation(runId, authorization, opt
   }
 }
 
+
+
+function antigravityAttemptEntries(run) {
+  return (Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : [])
+    .filter((entry) => entry?.source === ANTIGRAVITY_EXECUTION_ADAPTER_ID)
+}
+
+export function classifyAntigravityExecutionAttemptEvidence(run) {
+  const entries = antigravityAttemptEntries(run)
+  if (entries.length === 0) {
+    return "none"
+  }
+
+  const latest = entries.at(-1)
+  const metadata = latest?.metadata
+  if (
+    !metadata ||
+    !Number.isInteger(metadata.attempt) ||
+    metadata.attempt < 1 ||
+    metadata.attempt !== run?.attempts?.implementation
+  ) {
+    return "invalid"
+  }
+
+  if (metadata.outcome === "execution_started") {
+    return "open"
+  }
+
+  if (["execution_failed", "orphan_recovered"].includes(metadata.outcome)) {
+    return "definitive_failed"
+  }
+
+  if (metadata.outcome === "implementation_ready" && run?.status === "implementation_ready") {
+    return "complete"
+  }
+
+  return "invalid"
+}
+
+function latestOpenAntigravityAttempt(run) {
+  return classifyAntigravityExecutionAttemptEvidence(run) === "open"
+    ? antigravityAttemptEntries(run).at(-1)
+    : null
+}
+
+function recoveryEvidence(run, location, started, options = {}) {
+  const metadata = started.metadata
+  return {
+    kind: "implementation",
+    sha: run.headSha || run.baseSha,
+    source: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+    summary: "Orphaned Antigravity implementation attempt was discarded from the isolated workspace and marked failed.",
+    metadata: {
+      project: run.project.id,
+      branch: location.branch,
+      workspaceId: location.workspaceId,
+      workspaceRef: location.workspaceRef,
+      adapter: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+      attempt: metadata.attempt,
+      promptHash: metadata.promptHash,
+      startedAt: metadata.startedAt,
+      endedAt: timestamp(options),
+      outcome: "orphan_recovered",
+      failureClass: "runtime",
+      capability: metadata.capability,
+      modelClass: metadata.modelClass,
+      checkpointVersion: metadata.checkpointVersion,
+      remotePolicy: "deny",
+      networkPolicy: "antigravity-sandbox"
+    }
+  }
+}
+
+async function recoverOrphanedInternal(runId, options = {}) {
+  if (!Number.isInteger(options.expectedVersion)) {
+    throw executionError(
+      "ANTIGRAVITY_EXPECTED_VERSION_REQUIRED",
+      "Expected development run version is required for Antigravity recovery.",
+      "configuration"
+    )
+  }
+
+  const run = await readDevelopmentRun(runId, options)
+  if (
+    run.version !== options.expectedVersion ||
+    run.status !== "implementation_in_progress"
+  ) {
+    throw executionError(
+      "ANTIGRAVITY_RECOVERY_RUN_STALE",
+      "Antigravity recovery no longer matches the current development run.",
+      "workspace_invalid"
+    )
+  }
+
+  const started = latestOpenAntigravityAttempt(run)
+  if (!started) {
+    throw executionError(
+      "ANTIGRAVITY_RECOVERY_NOT_REQUIRED",
+      "Development run has no open Antigravity implementation attempt to recover.",
+      "configuration"
+    )
+  }
+
+  const location = await resolveImplementationWorkspaceLocation(run, options)
+  const workspaceReal = await realpath(location.workspacePath).catch(() => null)
+  if (workspaceReal !== location.workspacePath) {
+    throw executionError(
+      "ANTIGRAVITY_RECONCILIATION_REQUIRED",
+      "Orphaned Antigravity workspace is missing or non-canonical; owner reconciliation is required.",
+      "workspace_invalid"
+    )
+  }
+
+  const platform = process.platform
+  const gitPath = await validateGitExecutable(fixedGitPath(platform))
+  const env = {
+    PATH: [dirname(gitPath), "/usr/bin", "/bin"].join(":"),
+    TERM: "dumb",
+    NO_COLOR: "1",
+    CI: "true",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "false",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1"
+  }
+  const expectedStartSha = normalizeSha(run.headSha || run.baseSha, "Run implementation head SHA")
+  const sourcePath = options.workspaceRegistry?.[run.project.id]?.sourceRepoPath
+  if (!sourcePath) {
+    throw executionError(
+      "ANTIGRAVITY_SOURCE_REGISTRY_REQUIRED",
+      "Project source repository path is required for Antigravity recovery.",
+      "configuration"
+    )
+  }
+
+  const sourceReal = await realpath(sourcePath).catch(() => null)
+  if (!sourceReal || sourceReal !== sourcePath) {
+    throw executionError(
+      "ANTIGRAVITY_RECONCILIATION_REQUIRED",
+      "Protected source repository is unavailable for Antigravity recovery.",
+      "source_changed"
+    )
+  }
+
+  const sourceBefore = await gitFacts(gitPath, sourceReal, env)
+  if (sourceBefore.headSha !== run.baseSha || sourceBefore.statusText) {
+    throw executionError(
+      "ANTIGRAVITY_SOURCE_CHANGED",
+      "Protected source repository changed while an Antigravity attempt was open; owner reconciliation is required.",
+      "source_changed"
+    )
+  }
+
+  await restoreWorkspace(gitPath, location.workspacePath, expectedStartSha, env)
+
+  const sourceAfter = await gitFacts(gitPath, sourceReal, env)
+  if (!sameSourceFacts(sourceBefore, sourceAfter)) {
+    throw executionError(
+      "ANTIGRAVITY_SOURCE_CHANGED",
+      "Protected source repository changed during Antigravity recovery.",
+      "source_changed"
+    )
+  }
+
+  const recovered = await recordDevelopmentRunProgress(run.runId, {
+    expectedVersion: run.version,
+    status: "implementation_in_progress",
+    actor: ANTIGRAVITY_EXECUTION_ADAPTER_ID,
+    reason: "software-factory-antigravity-orphan-recovered",
+    evidence: [recoveryEvidence(run, location, started, options)]
+  }, options)
+
+  return {
+    ok: true,
+    outcome: "orphan_recovered",
+    run: recovered
+  }
+}
+
+export async function recoverOrphanedAntigravityExecution(runId, options = {}) {
+  try {
+    return await recoverOrphanedInternal(runId, options)
+  } catch (error) {
+    throw safeFailure(error)
+  }
+}
+
 export function formatSoftwareFactoryAntigravityExecutionError(error) {
   if (error instanceof DevelopmentRunStateError) {
     return `PPO Antigravity execution error [${error.code}]: ${error.safeMessage}`
