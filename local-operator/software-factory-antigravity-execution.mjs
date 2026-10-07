@@ -362,7 +362,7 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
     "- Execute the bounded implementation directly and finish in this non-interactive session.",
     "",
     "Hard boundaries:",
-    "- Edit only files inside the current workspace."
+    "- Edit only files inside the current workspace.",
     "- Do not access or modify files outside the workspace.",
     "- Do not push, fetch, pull, merge, rebase, reset, cherry-pick, tag, or modify any remote Git state.",
     "- Do not deploy, publish, restart services, modify infrastructure, or call production systems.",
