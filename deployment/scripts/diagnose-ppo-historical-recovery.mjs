@@ -20,5 +20,6 @@ if (!valid || !backupDir || !isAbsolute(backupDir) || !/^\d+(,\d+){0,9}$/u.test(
   })
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   // A completed assessment is not an authorization or a claim of valid history.
-  process.exitCode = result.code === "diagnostic_complete" ? 0 : 1
+  process.exitCode = result.code === "diagnostic_complete" ? 0
+    : result.code === "invalid_diagnostic_request" ? 2 : 1
 }

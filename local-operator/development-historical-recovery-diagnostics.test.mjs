@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
-import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -26,7 +26,7 @@ const common = { project: "khlim-assist", reviewedSha: HEAD, attempt: 1, decisio
   blockers: 0, securityFindings: 0, testsRequired: 0 }
 
 async function fixture(t, legacy = true) {
-  const backupDir = await mkdtemp(join(tmpdir(), "ppo-historical-diagnostic-"))
+  const backupDir = await mkdtemp(join(await realpath(tmpdir()), "ppo-historical-diagnostic-"))
   t.after(() => rm(backupDir, { recursive: true, force: true }))
   let tick = Date.parse("2026-08-26T00:00:00.000Z")
   const options = { writeDataDir: backupDir, now: () => new Date(tick += 120_000) }
@@ -299,4 +299,30 @@ test("recovery prerequisites use preceding implementation and test evidence", as
   const later = await f.diagnose()
   assert.equal(later.events[0].precedingTestPassEvidenceMatches, false)
   assert.equal(later.events[2].precedingTestPassEvidenceMatches, true)
+})
+
+test("CLI semantic argument errors exit 2, unavailable backups exit 1", async t => {
+  const f = await fixture(t)
+  for (const selection of ["0", "100", "14,14"]) {
+    const result = spawnSync(process.execPath, [CLI, "--backup-dir", f.backupDir, "--run-id", f.run.runId, "--events", selection], { encoding: "utf8" })
+    assert.equal(result.status, 2)
+    assert.deepEqual(JSON.parse(result.stdout), { code: "invalid_diagnostic_request" })
+  }
+  const invalidId = spawnSync(process.execPath, [CLI, "--backup-dir", f.backupDir, "--run-id", "../SENSITIVE_TEST_SENTINEL", "--events", "14"], { encoding: "utf8" })
+  assert.equal(invalidId.status, 2)
+  assert.deepEqual(JSON.parse(invalidId.stdout), { code: "invalid_diagnostic_request" })
+  const unavailable = spawnSync(process.execPath, [CLI, "--backup-dir", join(f.backupDir, "missing"), "--run-id", f.run.runId, "--events", "14"], { encoding: "utf8" })
+  assert.equal(unavailable.status, 1)
+  assert.deepEqual(JSON.parse(unavailable.stdout), { code: "backup_unavailable" })
+})
+
+test("fixtures work under a macOS-style symlinked temporary root", async t => {
+  const f = await fixture(t)
+  const alias = `${f.backupDir}-tmp-alias`
+  t.after(() => rm(alias, { force: true }))
+  await symlink(await realpath(tmpdir()), alias)
+  const child = spawnSync(process.execPath, ["--test", "--test-name-pattern=^current healthy recovery history", "local-operator/development-historical-recovery-diagnostics.test.mjs"], {
+    encoding: "utf8", env: { ...process.env, TMPDIR: alias, TMP: alias, TEMP: alias }
+  })
+  assert.equal(child.status, 0, child.stdout + child.stderr)
 })

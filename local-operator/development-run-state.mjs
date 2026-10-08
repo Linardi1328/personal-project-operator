@@ -3452,6 +3452,7 @@ export async function diagnoseHistoricalReviewRecovery(runId, options = {}) {
       })
     }
   } catch (error) {
-    return { code: error?.code === "RUN_STALE_OBSERVATION" ? "stale_observation" : "diagnostic_unavailable" }
+    return { code: error?.code === "INVALID_RUN_ID" ? "invalid_diagnostic_request"
+      : error?.code === "RUN_STALE_OBSERVATION" ? "stale_observation" : "diagnostic_unavailable" }
   }
 }
