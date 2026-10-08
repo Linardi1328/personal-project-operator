@@ -30,6 +30,7 @@ const allowedCommands = new Map([
   ["menu project", ["menu", "project"]],
   ["menu codex", ["menu", "codex"]],
   ["menu system", ["menu", "system"]],
+  ["factory-cycle", ["factory-cycle"]],
   ["factory-drain", ["factory-drain"]],
   ["factory-queue", ["factory-queue"]]
 ]);
@@ -116,6 +117,7 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo continue <run-id>",
     "- /ppo factory-start <project> <objective>",
     "- /ppo factory-run <run-id>",
+    "- /ppo factory-cycle",
     "- /ppo factory-drain",
     "- /ppo factory-queue",
     "- /ppo release <run-id>",
