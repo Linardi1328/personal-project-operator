@@ -351,6 +351,26 @@ test("refuses contradictory CI and merge-ready delivery bindings", () => {
     () => buildSoftwareFactoryReleasePackageFromRun(workflowMismatch),
     (error) => error?.code === "FACTORY_RELEASE_CI_EVIDENCE_INVALID"
   )
+
+  const newerFailedCi = releaseRun()
+  newerFailedCi.evidence.merge.splice(1, 0, ciEvidence({
+    outcome: "ci_failed",
+    workflowRunId: 9002,
+    workflowConclusion: "failure"
+  }))
+
+  assert.throws(
+    () => buildSoftwareFactoryReleasePackageFromRun(newerFailedCi),
+    (error) => error?.code === "FACTORY_RELEASE_CI_EVIDENCE_INVALID"
+  )
+
+  const deliveryProjectMismatch = releaseRun()
+  deliveryProjectMismatch.evidence.merge[1] = mergeReadyEvidence({ project: "rbl-content-engine" })
+
+  assert.throws(
+    () => buildSoftwareFactoryReleasePackageFromRun(deliveryProjectMismatch),
+    (error) => error?.code === "FACTORY_RELEASE_DELIVERY_EVIDENCE_INVALID"
+  )
 })
 
 test("formatter exposes manager-level evidence without task or raw review prose", () => {
