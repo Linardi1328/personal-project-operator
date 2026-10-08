@@ -79,3 +79,34 @@ test("fails closed when an active run requires recovery", () => {
     (error) => error?.code === "FACTORY_ADMISSION_CATALOG_UNTRUSTED"
   )
 })
+
+
+test("merged runs release Software Factory development WIP", () => {
+  const result = assessSoftwareFactoryAdmission("kynexa", catalog([
+    run("kynexa", "A".repeat(43), { status: "merged" })
+  ]))
+  assert.equal(result.ok, true)
+  assert.equal(result.activeProjectCount, 0)
+  assert.equal(result.projectActiveRunCount, 0)
+})
+
+test("post-merge production stages do not consume development WIP", () => {
+  const result = assessSoftwareFactoryAdmission("axiom-quantum", catalog([
+    run("kynexa", "A".repeat(43), { status: "deploy_in_progress" }),
+    run("rivora", "B".repeat(43), { status: "verification_failed" })
+  ]))
+  assert.equal(result.ok, true)
+  assert.equal(result.activeProjectCount, 0)
+})
+
+test("recovery-required post-merge state still fails closed", () => {
+  assert.throws(
+    () => assessSoftwareFactoryAdmission("kynexa", catalog([
+      run("rivora", "A".repeat(43), {
+        status: "merged",
+        recoveryRequired: true
+      })
+    ])),
+    (error) => error?.code === "FACTORY_ADMISSION_CATALOG_UNTRUSTED"
+  )
+})

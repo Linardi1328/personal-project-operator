@@ -529,3 +529,20 @@ Once a durable run id exists, PPO never releases the claim. Runner failure or po
 A claimed queue item with no result is intentionally treated as ambiguous and requires reconciliation. It is never auto-replayed.
 
 Queued work does not consume the two-project WIP limit until it is admitted.
+
+
+## V1.8 release-boundary WIP release and queue pump
+
+Software Factory development WIP now ends when the owner resolves the reviewed merge boundary.
+
+The admission policy continues to count all pre-merge development states, including `merge_ready`. Once a run is successfully `merged`, non-recovery merge/deployment/verification/rollback states no longer consume the two-project Software Factory development-WIP budget. Any active run marked recovery-required still fails admission closed regardless of lifecycle stage.
+
+After a package-bound `/ppo release-confirm` successfully completes the existing exact-SHA squash merge, PPO performs one bounded objective-queue drain attempt. This pump:
+
+- admits at most one queued objective;
+- uses the existing V1.6 admission policy and V1.7 claim/result durability;
+- does not auto-approve any resulting release;
+- does not authorize production deployment; and
+- cannot retroactively turn an already committed merge into a failed release result.
+
+Queue-pump failure is returned as separate bounded metadata on the successful release result. The owner therefore never has to manually invoke `factory-drain` merely because a merge freed a normal Software Factory development slot.
