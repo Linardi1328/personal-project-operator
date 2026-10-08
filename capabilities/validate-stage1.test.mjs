@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url"
 import { validateOrdinaryCatalog } from "./validate-stage1.mjs"
 
 const catalog = JSON.parse(await readFile(new URL("./ordinary-projects.json", import.meta.url)))
-test("fixed catalog covers six policies and cannot grant authority", () => {
-  assert.equal(catalog.projects.length, 6)
+test("fixed catalog covers every ordinary-project policy and cannot grant authority", () => {
+  assert.equal(catalog.projects.length, 9)
   assert.ok(validateOrdinaryCatalog(catalog))
   for (const mutate of [
     c => c.projects.pop(), c => c.projects.push(c.projects[0]),
@@ -34,9 +34,9 @@ test("combined CLI is read-only, bounded, and distinguishes unverified acceptanc
   const args = ["--permission", `--allow-fs-read=${root}`, "capabilities/validate-stage1.mjs"]
   const { stdout } = await exec(process.execPath, args, { cwd: root, timeout: 10000 })
   const checks = stdout.trim().split("\n").map(JSON.parse)
-  assert.equal(checks.length, 14)
+  assert.equal(checks.length, 17)
   assert.equal(checks.filter(c => c.outcome === "PASS").length, 8)
-  assert.equal(checks.filter(c => c.outcome === "SKIP").length, 6)
+  assert.equal(checks.filter(c => c.outcome === "SKIP").length, 9)
   await assert.rejects(exec(process.execPath, [...args, "../other"], { cwd: root }), e => {
     assert.equal(e.code, 1)
     assert.deepEqual(JSON.parse(e.stdout), { id: "arguments", outcome: "FAIL" })
