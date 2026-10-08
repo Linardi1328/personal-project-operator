@@ -13,7 +13,7 @@ import {
   sanitizeGitHubText
 } from "./github-readonly.mjs"
 
-const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine", "khlim-digital-ecosystem"]
+const allowedProjectIds = ["khlim-assist", "ledgerpilot-ai", "spy-market-agent", "portfolio", "rbl-content-engine", "khlim-digital-ecosystem", "kynexa", "rivora", "axiom-quantum"]
 const unsafeTerminalControlPattern = /[\u0000-\u001F\u007F-\u009F]/u
 
 const repoPayload = {

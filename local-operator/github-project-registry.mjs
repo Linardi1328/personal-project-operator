@@ -52,6 +52,33 @@ const connectedProjects = new Map([
       owner: "Linardi1328",
       repo: "khlim-digital-ecosystem"
     }
+  ],
+  [
+    "kynexa",
+    {
+      id: "kynexa",
+      displayName: "KYNEXA",
+      owner: "Linardi1328",
+      repo: "kynexa"
+    }
+  ],
+  [
+    "rivora",
+    {
+      id: "rivora",
+      displayName: "RIVORA",
+      owner: "Linardi1328",
+      repo: "rivora"
+    }
+  ],
+  [
+    "axiom-quantum",
+    {
+      id: "axiom-quantum",
+      displayName: "Axiom Quantum",
+      owner: "Linardi1328",
+      repo: "axiom-quantum"
+    }
   ]
 ])
 
@@ -61,7 +88,10 @@ const ordinaryDevelopmentProjectIds = new Set([
   "spy-market-agent",
   "portfolio",
   "rbl-content-engine",
-  "khlim-digital-ecosystem"
+  "khlim-digital-ecosystem",
+  "kynexa",
+  "rivora",
+  "axiom-quantum"
 ])
 
 export const PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT = Object.freeze({

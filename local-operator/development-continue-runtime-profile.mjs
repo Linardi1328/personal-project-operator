@@ -39,6 +39,8 @@ export function describePersonalProjectOperatorQualityPolicy() {
 export function describeOrdinaryProjectCapabilities() {
   const paths = {
     pythonExecutablePath: "python3.12", nodeExecutablePath: "node",
+    uvExecutablePath: "uv",
+    reviewedProjectQualityRunnerPath: "approved:reviewedProjectQualityRunner",
     executionPath: "", nodeToolPaths: {
       portfolioTypecheck: "approved:portfolioTypecheck",
       portfolioEslint: "approved:portfolioEslint"
@@ -63,6 +65,8 @@ const fixedDarwinPaths = Object.freeze({
   codexExecutablePath: "/Users/richie/.local/bin/codex",
   gitExecutablePath: "/opt/homebrew/bin/git",
   nodeExecutablePath: "/opt/homebrew/bin/node",
+  uvExecutablePath: "/Users/richie/.local/bin/uv",
+  reviewedProjectQualityRunnerPath: "/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs",
   pythonExecutablePath: "/opt/homebrew/bin/python3.12",
   projectPythonExecutablePaths: Object.freeze({
     "khlim-assist": "/Users/richie/.local/share/personal-project-operator/runtimes/khlim-assist-python3.12/bin/python3"
@@ -83,7 +87,10 @@ const fixedDarwinPaths = Object.freeze({
     "spy-market-agent": "/Users/richie/spy-market-agent",
     portfolio: "/Users/richie/richie-linardi-portfolio-website",
     "rbl-content-engine": "/Users/richie/rbl-content-engine",
-    "khlim-digital-ecosystem": "/Users/richie/khlim-digital-ecosystem"
+    "khlim-digital-ecosystem": "/Users/richie/khlim-digital-ecosystem",
+    kynexa: "/Users/richie/kynexa",
+    rivora: "/Users/richie/rivora",
+    "axiom-quantum": "/Users/richie/axiom-quantum"
   })
 })
 
@@ -91,6 +98,8 @@ const fixedLinuxPaths = Object.freeze({
   codexExecutablePath: "/home/ppo/.local/bin/codex",
   gitExecutablePath: "/usr/bin/git",
   nodeExecutablePath: "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
+  uvExecutablePath: "/home/ppo/.local/bin/uv",
+  reviewedProjectQualityRunnerPath: "/opt/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs",
   pythonExecutablePath: "/usr/bin/python3.12",
   projectPythonExecutablePaths: Object.freeze({}),
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
@@ -109,7 +118,10 @@ const fixedLinuxPaths = Object.freeze({
     "spy-market-agent": "/var/lib/personal-project-operator/source-repos/spy-market-agent",
     portfolio: "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
     "rbl-content-engine": "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
-    "khlim-digital-ecosystem": "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem"
+    "khlim-digital-ecosystem": "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem",
+    kynexa: "/var/lib/personal-project-operator/source-repos/kynexa",
+    rivora: "/var/lib/personal-project-operator/source-repos/rivora",
+    "axiom-quantum": "/var/lib/personal-project-operator/source-repos/axiom-quantum"
   })
 })
 
@@ -187,6 +199,38 @@ const reviewedProjectTestPolicies = Object.freeze({
     policyId: "phase-6e-khlim-digital-ecosystem-fixed-node-foundation-policy",
     kind: "node-foundation-test",
     nodeTestPath: "tests/foundation.test.mjs"
+  }),
+  kynexa: Object.freeze({
+    policyId: "software-factory-v1-4-kynexa-ci-parity-policy",
+    kind: "reviewed-node-project-suite",
+    projectId: "kynexa",
+    nodeSteps: Object.freeze([
+      Object.freeze({ id: "lint", args: Object.freeze(["run", "lint"]), timeoutMs: 180000 }),
+      Object.freeze({ id: "typecheck", args: Object.freeze(["run", "typecheck"]), timeoutMs: 180000 }),
+      Object.freeze({ id: "test", args: Object.freeze(["test"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "build", args: Object.freeze(["run", "build"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "e2e", args: Object.freeze(["run", "test:e2e"]), timeoutMs: 600000 })
+    ])
+  }),
+  rivora: Object.freeze({
+    policyId: "software-factory-v1-4-rivora-ci-parity-policy",
+    kind: "reviewed-node-project-suite",
+    projectId: "rivora",
+    nodeSteps: Object.freeze([
+      Object.freeze({ id: "build", args: Object.freeze(["run", "build"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "typecheck", args: Object.freeze(["run", "typecheck"]), timeoutMs: 180000 }),
+      Object.freeze({ id: "test", args: Object.freeze(["run", "test:run"]), timeoutMs: 300000 })
+    ])
+  }),
+  "axiom-quantum": Object.freeze({
+    policyId: "software-factory-v1-4-axiom-quantum-ci-parity-policy",
+    kind: "uv-command-suite",
+    uvSteps: Object.freeze([
+      Object.freeze({ id: "ruff-check", args: Object.freeze(["run", "--no-sync", "ruff", "check", "."]), timeoutMs: 180000 }),
+      Object.freeze({ id: "ruff-format", args: Object.freeze(["run", "--no-sync", "ruff", "format", "--check", "."]), timeoutMs: 180000 }),
+      Object.freeze({ id: "mypy", args: Object.freeze(["run", "--no-sync", "mypy", "src", "tests"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "pytest", args: Object.freeze(["run", "--no-sync", "pytest", "--cov-fail-under=85"]), timeoutMs: 600000 })
+    ])
   })
 })
 
@@ -505,11 +549,12 @@ function buildCodexSandbox(paths, platform, identity = null) {
 function buildTestSandbox(paths, platform, identity = null) {
   if (platform === "darwin") {
     return {
-      type: TEST_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC,
+      type: TEST_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN,
       platform: "darwin",
       network: "none",
-      enforcement: "os-process",
-      executablePath: paths.sandboxExecutablePath
+      enforcement: "codex-command-sandbox",
+      executablePath: paths.codexExecutablePath,
+      permissionProfile: ":workspace"
     }
   }
 
@@ -663,6 +708,58 @@ function nodeCommandSuitePolicy(definition, paths, sandbox) {
   }
 }
 
+function reviewedNodeProjectSuitePolicy(definition, paths, sandbox) {
+  return {
+    policyId: definition.policyId,
+    policyVersion: "1",
+    trustedExecutablePaths: [paths.nodeExecutablePath],
+    env: {
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath,
+      CI: "true",
+      NEXT_TELEMETRY_DISABLED: "1"
+    },
+    sandbox,
+    steps: definition.nodeSteps.map((step) => ({
+      id: step.id,
+      executablePath: paths.nodeExecutablePath,
+      args: [
+        paths.reviewedProjectQualityRunnerPath,
+        definition.projectId,
+        step.id
+      ],
+      timeoutMs: step.timeoutMs,
+      maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
+      required: true,
+      shell: false
+    }))
+  }
+}
+
+function uvCommandSuitePolicy(definition, paths, sandbox) {
+  return {
+    policyId: definition.policyId,
+    policyVersion: "1",
+    trustedExecutablePaths: [paths.uvExecutablePath],
+    env: {
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath,
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONNOUSERSITE: "1"
+    },
+    sandbox,
+    steps: definition.uvSteps.map((step) => ({
+      id: step.id,
+      executablePath: paths.uvExecutablePath,
+      args: [...step.args],
+      timeoutMs: step.timeoutMs,
+      maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
+      required: true,
+      shell: false
+    }))
+  }
+}
+
 function testPolicyForProject(projectId, paths, sandbox) {
   const definition = reviewedProjectTestPolicies[projectId]
 
@@ -688,6 +785,14 @@ function testPolicyForProject(projectId, paths, sandbox) {
 
   if (definition.kind === "node-command-suite") {
     return nodeCommandSuitePolicy(definition, paths, sandbox)
+  }
+
+  if (definition.kind === "reviewed-node-project-suite") {
+    return reviewedNodeProjectSuitePolicy(definition, paths, sandbox)
+  }
+
+  if (definition.kind === "uv-command-suite") {
+    return uvCommandSuitePolicy(definition, paths, sandbox)
   }
 
   throw runtimeError()
@@ -729,6 +834,24 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
 
   if (definition.kind === "node-command-suite") {
     await assertNodeRuntime(paths, options)
+    return
+  }
+
+  if (definition.kind === "reviewed-node-project-suite") {
+    await assertNodeRuntime(paths, options)
+    await assertRegularFile(paths.reviewedProjectQualityRunnerPath, options)
+    return
+  }
+
+  if (definition.kind === "uv-command-suite") {
+    await assertExecutable(paths.uvExecutablePath, options)
+    await runReadOnlyProbe(paths.uvExecutablePath, ["--version"], {
+      ...options,
+      probeEnv: {
+        ...sanitizedProbeEnv,
+        PATH: paths.executionPath
+      }
+    })
     return
   }
 
@@ -783,8 +906,10 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
 
   if (options.runtimeHandler === "prepareSoftwareFactoryTestRemediation") {
     await assertExecutable(paths.gitExecutablePath, options)
+    await assertExecutable(paths.codexExecutablePath, options)
     await assertDirectory(sourceRepoPath, options)
     await assertDirectory(paths.workspaceRoot, options)
+    await assertCodexNativeSandboxCapability(paths, platform, options)
 
     const testSandbox = buildTestSandbox(paths, platform)
 

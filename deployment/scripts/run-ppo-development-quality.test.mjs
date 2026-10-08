@@ -32,7 +32,7 @@ test("quality runner blocks every workload on capability drift and missing valid
     await assert.rejects(exec(process.execPath, [runner, gate], { cwd: fixture, timeout: 10000 }), error => {
       assert.equal(error.code, 1)
       const checks = error.stdout.trim().split("\n").map(JSON.parse)
-      assert.equal(checks.length, 14)
+      assert.equal(checks.length, 17)
       assert.deepEqual(checks.find(check => check.id === "quality-gates"), { projectId: "personal-project-operator", id: "quality-gates", outcome: "FAIL" })
       // Workload execution would encounter absent deployment/bin or test fixtures.
       assert.equal(error.stderr, "")

@@ -203,8 +203,8 @@ function selfRun(status, overrides = {}) {
   }
 }
 
-test("Stage 0 keeps six ordinary projects while approving only the fixed PPO self project internally", () => {
-  assert.equal(listOrdinaryDevelopmentProjects().length, 6)
+test("Stage 0 keeps the ordinary project registry separate from the fixed PPO self project", () => {
+  assert.equal(listOrdinaryDevelopmentProjects().length, 9)
   assert.equal(getOrdinaryDevelopmentProject(SELF.id), null)
   assert.deepEqual(getApprovedDevelopmentProject(SELF.id), SELF)
 })
