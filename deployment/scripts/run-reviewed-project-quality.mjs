@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { lstat, readFile, realpath, symlink, unlink } from "node:fs/promises"
+import { lstat, readFile, readdir, realpath, symlink, unlink } from "node:fs/promises"
 import { join, resolve as resolvePath } from "node:path"
 import { spawn } from "node:child_process"
 
@@ -45,6 +45,17 @@ const PROJECTS = Object.freeze({
       typecheck: Object.freeze(["run", "typecheck"]),
       test: Object.freeze(["run", "test:run"])
     }),
+    workspaces: Object.freeze([
+      "apps/live-site",
+      "apps/marketing-site",
+      "events/harbor-city-cup",
+      "events/rivora-demo",
+      "packages/competition-engine",
+      "packages/event-schema",
+      "packages/ui",
+      "services/organizer-sync"
+    ]),
+    workspaceDeclaration: Object.freeze(["packages/*", "services/*", "events/*", "apps/*"]),
     manifests: Object.freeze({
       "package.json": Object.freeze({
         build: "npm run build --workspaces --if-present",
@@ -127,12 +138,45 @@ async function readManifest(workspace, relativePath) {
     fail("reviewed package scripts are unavailable.")
   }
 
-  return parsed.scripts
+  return parsed
+}
+
+async function assertReviewedWorkspaceSet(workspace, config) {
+  if (!config.workspaces) return
+
+  const rootManifest = await readManifest(workspace, "package.json")
+  if (
+    !Array.isArray(rootManifest.workspaces) ||
+    JSON.stringify(rootManifest.workspaces) !== JSON.stringify(config.workspaceDeclaration)
+  ) {
+    fail("workspace declaration drift detected.")
+  }
+
+  const discovered = []
+  for (const parent of ["apps", "events", "packages", "services"]) {
+    const entries = await readdir(join(workspace, parent), { withFileTypes: true }).catch(() => fail("workspace catalog is unavailable."))
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      try {
+        const stat = await lstat(join(workspace, parent, entry.name, "package.json"))
+        if (stat.isFile() && !stat.isSymbolicLink()) discovered.push(`${parent}/${entry.name}`)
+      } catch (error) {
+        if (error?.code !== "ENOENT") fail("workspace catalog is unsafe.")
+      }
+    }
+  }
+
+  if (JSON.stringify(discovered.sort()) !== JSON.stringify([...config.workspaces].sort())) {
+    fail("workspace package set drift detected.")
+  }
 }
 
 async function assertReviewedScripts(workspace, config) {
+  await assertReviewedWorkspaceSet(workspace, config)
+
   for (const [relativePath, expectedScripts] of Object.entries(config.manifests)) {
-    const scripts = await readManifest(workspace, relativePath)
+    const manifest = await readManifest(workspace, relativePath)
+    const scripts = manifest.scripts
 
     for (const [name, expected] of Object.entries(expectedScripts)) {
       if (scripts[name] !== expected) {
