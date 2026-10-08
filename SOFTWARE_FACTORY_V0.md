@@ -432,3 +432,33 @@ The owner objective authorizes the named task only. It does not authorize archit
 If the autonomous run later blocks on worker capacity or an external dependency, the created run remains durable and the result includes its run id for later `/ppo factory-run <run-id>` resumption.
 
 The release boundary remains unchanged: a successful factory run stops at `release_ready` with the deterministic release package and still requires explicit package-bound owner merge approval.
+
+
+## V1.5 structured planning contract
+
+V1.5 makes planning a validated artifact rather than an unstructured sentence carried into implementation.
+
+Every manager-objective run now records a versioned plan bound to:
+
+- the durable development run id;
+- approved project id;
+- exact base SHA;
+- hash of the owner objective; and
+- hash of the complete bounded plan.
+
+The deterministic baseline plan contains:
+
+- a goal that preserves the owner objective as the source of truth;
+- explicit acceptance criteria;
+- implementation constraints;
+- explicit exclusions;
+- a capability hint; and
+- a conservative risk classification.
+
+The baseline plan does not invent product requirements. It adds only PPO's already-reviewed execution, quality, review, release, workspace, and authority boundaries.
+
+Before use, the plan contract validates exact fields, sizes, arrays, sensitive/control text, project/run/SHA bindings, objective binding, reviewed capability/risk vocabulary, and its content hash.
+
+The latest valid structured plan is consumed by the implementation coordinator for capability routing and by the Antigravity execution adapter as bounded prompt context. Invalid or stale plan metadata is never treated as authority; existing task-based routing remains the fail-closed compatibility fallback.
+
+This contract is provider-neutral. A future planning worker may enrich the plan only by producing the same validated schema while remaining bound to the original owner objective. Adding a live paid/model-backed planning provider remains a separate architecture and cost decision.
