@@ -34,6 +34,7 @@ import {
   latestSoftwareFactoryTestRemediation,
   prepareSoftwareFactoryTestRemediation
 } from "./software-factory-test-remediation.mjs"
+import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
 import {
   classifyAutomatedTestAttemptEvidence,
   canRetryPreviousPpoTimeoutPolicy,
@@ -747,6 +748,12 @@ export function resolveSoftwareFactoryImplementationCapability(run) {
     remediation?.metadata?.capability === "debugging"
   ) {
     return "debugging"
+  }
+
+  const structuredPlan = latestSoftwareFactoryPlan(run)
+
+  if (structuredPlan?.capabilityHint) {
+    return structuredPlan.capabilityHint
   }
 
   const planning = Array.isArray(run?.evidence?.planning)
