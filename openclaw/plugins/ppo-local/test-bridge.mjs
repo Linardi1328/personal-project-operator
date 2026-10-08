@@ -171,6 +171,12 @@ assert.equal(
   null,
   "factory-start refuses multiline command envelopes"
 );
+
+assert.equal(
+  toPpoWrapperArgs("/ppo\nfactory-start khlim-assist Implement the approved bounded objective."),
+  null,
+  "factory-start refuses control characters in the /ppo envelope"
+);
 expectedMappings.set(`release ${validDevelopmentRunId}`, ["release", validDevelopmentRunId]);
 expectedMappings.set(`release-confirm ${validReleaseRequestId}`, ["release-confirm", validReleaseRequestId]);
 expectedMappings.set(`recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]);
