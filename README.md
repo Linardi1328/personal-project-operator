@@ -728,3 +728,12 @@ The project still does not implement:
 - trading execution
 - credential storage
 - automatic OpenClaw config edits
+
+### RIC-59: catalog integrity and abandoned runs
+
+Factory admission, manager cycles, queue admission and direct factory continuation
+fail closed on invalid or incomplete catalog diagnostics. Read-only diagnostics
+and the exact-target, one-time approved retirement core are documented in the
+[RIC-59 owner runbook](local-operator/ric-59-owner-runbook.md). Operational retirement
+remains blocked until a reviewed host integration can prove and hold worker and
+remote-delivery quiescence; ordinary cancellation policy is unchanged.

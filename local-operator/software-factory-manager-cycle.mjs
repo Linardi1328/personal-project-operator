@@ -1,4 +1,5 @@
 import {
+  hasTrustedDevelopmentRunCatalogDiagnostics,
   listDevelopmentRunSummaries
 } from "./development-run-catalog.mjs"
 import {
@@ -42,7 +43,7 @@ function normalizeCatalog(catalog) {
     catalog.ok !== true ||
     !Array.isArray(catalog.active) ||
     catalog.code === "catalog_truncated" ||
-    catalog.diagnostics?.truncated === true
+    !hasTrustedDevelopmentRunCatalogDiagnostics(catalog.diagnostics)
   ) {
     throw cycleError(
       "FACTORY_CYCLE_CATALOG_UNAVAILABLE",

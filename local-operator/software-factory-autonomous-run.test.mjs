@@ -63,6 +63,8 @@ function sequenceRunner(sequence, results) {
   let continueIndex = 0
 
   return createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     buildReleasePackage: releasePackageFixture,
     async readRun() {
       return structuredClone(sequence[Math.min(index, sequence.length - 1)])
@@ -106,6 +108,8 @@ test("advances multiple reviewed boundaries and stops at merge_ready", async () 
 test("pre-existing merge_ready run never invokes Continue", async () => {
   let continueCalls = 0
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     buildReleasePackage: releasePackageFixture,
     async readRun() {
       return run("merge_ready", 12)
@@ -128,6 +132,8 @@ test("blocked worker capacity stops without additional continuation", async () =
   let state = run("implementation_in_progress", 4)
   let continueCalls = 0
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     async readRun() {
       return structuredClone(state)
     },
@@ -152,6 +158,8 @@ test("blocked worker capacity stops without additional continuation", async () =
 
 test("owner action stops the autonomous loop", async () => {
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     async readRun() {
       return run("tests_failed", 9)
     },
@@ -176,6 +184,8 @@ test("one stale-state result may refresh and continue", async () => {
   let state = run("planned", 3)
   let calls = 0
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     buildReleasePackage: releasePackageFixture,
     async readRun() {
       return structuredClone(state)
@@ -213,6 +223,8 @@ test("repeated stale-state results fail closed", async () => {
   let state = run("planned", 3)
   let calls = 0
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     async readRun() {
       return structuredClone(state)
     },
@@ -238,6 +250,8 @@ test("repeated stale-state results fail closed", async () => {
 test("successful result with no state progress fails closed", async () => {
   const state = run("planned", 3)
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     async readRun() {
       return structuredClone(state)
     },
@@ -258,6 +272,8 @@ test("successful result with no state progress fails closed", async () => {
 
 test("production workflow states remain outside the factory runner", async () => {
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     async readRun() {
       return run("deployed", 15)
     },
@@ -276,6 +292,8 @@ test("step limit prevents runaway continuation", async () => {
   let version = 1
   let status = "planned"
   const runner = createSoftwareFactoryAutonomousRunner({
+    listRuns: async () => ({ ok: true, code: "ok", active: [],
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false } }),
     async readRun() {
       return run(status, version)
     },

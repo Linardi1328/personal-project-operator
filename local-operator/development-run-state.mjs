@@ -923,6 +923,7 @@ async function writeExclusiveDurableVersionMarker(path, data) {
     `.ppo-development-run-version.${process.pid}.${randomBytes(12).toString("hex")}.tmp`
   )
   let file
+  let linked = false
 
   try {
     file = await open(tempPath, "wx", 0o600)
@@ -932,6 +933,7 @@ async function writeExclusiveDurableVersionMarker(path, data) {
     file = null
     await chmod(tempPath, 0o600)
     await link(tempPath, path)
+    linked = true
     await chmod(path, 0o600)
     await unlink(tempPath)
     await syncDirectory(directory)
@@ -946,6 +948,13 @@ async function writeExclusiveDurableVersionMarker(path, data) {
       await unlink(tempPath)
     } catch {
       // Best effort cleanup of a private temp file.
+    }
+
+    if (linked) {
+      throw new DevelopmentRunStateAmbiguousError(
+        "RUN_DURABILITY_AMBIGUOUS",
+        "Development run version marker was published but durability could not be confirmed. Inspect run state before any further action."
+      )
     }
 
     if (error?.code === "EEXIST") {
@@ -1314,10 +1323,6 @@ function normalizeAttemptShape(attempts) {
   return normalized
 }
 
-function validateAttemptShape(attempts) {
-  normalizeAttemptShape(attempts)
-}
-
 function validateEvidenceShape(evidence) {
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || !(
     hasOnlyKeys(evidence, DEVELOPMENT_RUN_EVIDENCE_KINDS) ||
@@ -1448,8 +1453,6 @@ function validateHistoryEventShape(event) {
   if (event.branch !== null) {
     normalizeBranch(event.branch)
   }
-
-  validateAttemptShape(event.attempts)
 
   for (const entry of event.evidence) {
     const normalized = normalizeDevelopmentRunEvidenceRecord(entry, {
@@ -1631,12 +1634,30 @@ function isReviewOrphanRecoveryHistoryEvent(event, priorEvidence, attempts, proj
   return true
 }
 
+const historyDiagnosticCodes = new Set([
+  "history_length_invalid", "history_event_shape_invalid", "history_version_mismatch",
+  "history_previous_hash_mismatch", "history_event_hash_mismatch", "history_initial_event_invalid",
+  "history_order_invalid", "history_transition_invalid", "history_same_status_invalid",
+  "history_attempts_invalid", "history_evidence_invalid", "history_stage_invalid",
+  "history_timestamp_invalid", "history_summary_mismatch"
+])
+
+function historyFailure(detail) {
+  const error = runStateError("RUN_HISTORY_INVALID", "Stored development run transition history is invalid.")
+  error.validationFailure = detail
+  return error
+}
+
+function historyCheck(detail, callback) {
+  try { return callback() } catch (error) {
+    if (error instanceof DevelopmentRunStateError) error.validationFailure = detail
+    throw error
+  }
+}
+
 function validateHistory(record) {
   if (!Array.isArray(record.history) || record.history.length === 0 || record.history.length > MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES) {
-    throw runStateError(
-      "RUN_HISTORY_INVALID",
-      "Stored development run transition history is invalid."
-    )
+    throw historyFailure("history_length_invalid")
   }
 
   let previousHash = null
@@ -1648,33 +1669,21 @@ function validateHistory(record) {
 
   for (let index = 0; index < record.history.length; index += 1) {
     const event = record.history[index]
-    validateHistoryEventShape(event)
-    const eventAttempts = normalizeAttemptShape(event.attempts)
+    historyCheck("history_event_shape_invalid", () => validateHistoryEventShape(event))
+    const eventAttempts = historyCheck("history_attempts_invalid", () => normalizeAttemptShape(event.attempts))
 
-    if (
-      event.version !== index ||
-      event.previousHistoryHash !== previousHash ||
-      event.eventHash !== eventHash(event) ||
-      (index === 0 && (
-        event.fromStatus !== null ||
-        event.fromStage !== null ||
-        event.toStatus !== "created" ||
-        event.toStage !== "intake" ||
-        event.task !== record.task ||
-        event.baseSha !== record.baseSha
-      )) ||
-      (index > 0 && (
-        event.fromStatus !== previousStatus ||
-        event.fromStage !== previousStage ||
-        event.task !== null ||
-        event.baseSha !== null
-      ))
-    ) {
-      throw runStateError(
-        "RUN_HISTORY_INVALID",
-        "Stored development run transition history is invalid."
-      )
-    }
+    if (event.version !== index) throw historyFailure("history_version_mismatch")
+    if (event.previousHistoryHash !== previousHash) throw historyFailure("history_previous_hash_mismatch")
+    if (event.eventHash !== eventHash(event)) throw historyFailure("history_event_hash_mismatch")
+    if (index === 0 && (
+      event.fromStatus !== null || event.fromStage !== null ||
+      event.toStatus !== "created" || event.toStage !== "intake" ||
+      event.task !== record.task || event.baseSha !== record.baseSha
+    )) throw historyFailure("history_initial_event_invalid")
+    if (index > 0 && (
+      event.fromStatus !== previousStatus || event.fromStage !== previousStage ||
+      event.task !== null || event.baseSha !== null
+    )) throw historyFailure("history_order_invalid")
 
     if (index > 0 && event.fromStatus !== event.toStatus) {
       const reviewRuntimeRecovery = isReviewRuntimeRecoveryHistoryEvent(
@@ -1692,16 +1701,13 @@ function validateHistory(record) {
       )
 
       if (!reviewRuntimeRecovery && !reviewOrphanRecovery) {
-        assertAllowedTransition(event.fromStatus, event.toStatus)
+        historyCheck("history_transition_invalid", () => assertAllowedTransition(event.fromStatus, event.toStatus))
       }
 
-      attempts = incrementAttempts(attempts, event.toStatus)
+      attempts = historyCheck("history_attempts_invalid", () => incrementAttempts(attempts, event.toStatus))
     } else if (index > 0) {
       if (!sameStatusAttemptStatuses.has(event.toStatus)) {
-        throw runStateError(
-          "RUN_HISTORY_INVALID",
-          "Stored development run transition history is invalid."
-        )
+        throw historyFailure("history_same_status_invalid")
       }
 
       const sameStatusAttempts = { ...attempts }
@@ -1718,36 +1724,24 @@ function validateHistory(record) {
       } else if (incrementedAttempts && stableStringify(eventAttempts) === stableStringify(incrementedAttempts)) {
         attempts = incrementedAttempts
       } else {
-        throw runStateError(
-          "RUN_HISTORY_INVALID",
-          "Stored development run transition history is invalid."
-        )
+        throw historyFailure("history_attempts_invalid")
       }
     }
 
     if (stableStringify(attempts) !== stableStringify(eventAttempts)) {
-      throw runStateError(
-        "RUN_HISTORY_INVALID",
-        "Stored development run transition history is invalid."
-      )
+      throw historyFailure("history_attempts_invalid")
     }
 
-    evidence = appendEvidence(evidence, event.evidence)
+    evidence = historyCheck("history_evidence_invalid", () => appendEvidence(evidence, event.evidence))
 
     if (event.toStage !== stageForStatus(event.toStatus)) {
-      throw runStateError(
-        "RUN_HISTORY_INVALID",
-        "Stored development run transition history is invalid."
-      )
+      throw historyFailure("history_stage_invalid")
     }
 
     const eventTimestampMs = Date.parse(event.timestamp)
 
     if (previousTimestampMs !== null && eventTimestampMs < previousTimestampMs) {
-      throw runStateError(
-        "RUN_HISTORY_INVALID",
-        "Stored development run transition history is invalid."
-      )
+      throw historyFailure("history_timestamp_invalid")
     }
 
     previousTimestampMs = eventTimestampMs
@@ -1770,10 +1764,7 @@ function validateHistory(record) {
     stableStringify(record.attempts) !== stableStringify(normalizeAttemptShape(lastEvent.attempts)) ||
     stableStringify(record.evidence) !== stableStringify(evidence)
   ) {
-    throw runStateError(
-      "RUN_HISTORY_INVALID",
-      "Stored development run transition history is invalid."
-    )
+    throw historyFailure("history_summary_mismatch")
   }
 }
 
@@ -2567,13 +2558,12 @@ async function commitRecord(paths, record) {
   try {
     await writeCanonicalRecord(paths, record)
   } catch (error) {
-    if (error instanceof DevelopmentRunStateError) {
-      throw error
-    }
-
-    throw runStateError(
-      "RUN_STORE_UNAVAILABLE",
-      "Development run state store is unavailable; reload before retrying."
+    // The immutable marker is already authoritative, even if canonical writing
+    // fails before rename. Preserve bounded state error details and ambiguity.
+    throw new DevelopmentRunStateAmbiguousError(
+      error instanceof DevelopmentRunStateError ? error.code : "RUN_STORE_UNAVAILABLE",
+      error instanceof DevelopmentRunStateError ? error.safeMessage :
+        "Development run version marker was committed but canonical writing failed. Inspect run state before any further action."
     )
   }
 }
@@ -3194,4 +3184,20 @@ export function formatDevelopmentRunStateError(error) {
   }
 
   return "PPO development run-state error: unexpected local failure."
+}
+
+// Uses exactly the read-only inspector's filesystem and parsing checks; never
+// repairs canonical state. Raw records, paths and exception messages stay local.
+export async function diagnoseDevelopmentRunHistory(runId, options = {}) {
+  let normalizedRunId = null
+  try {
+    normalizedRunId = normalizeDevelopmentRunId(runId)
+    const result = await inspectDevelopmentRunReadOnlyInternal(normalizedRunId, options)
+    return { ok: result.ok && result.canonicalState === "canonical_current",
+      runId: normalizedRunId, code: result.code }
+  } catch (error) {
+    const failure = readOnlyFailureFromError(error, normalizedRunId)
+    return { ok: false, runId: normalizedRunId,
+      code: historyDiagnosticCodes.has(error?.validationFailure) ? error.validationFailure : failure.code }
+  }
 }
