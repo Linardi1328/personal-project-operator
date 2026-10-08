@@ -40,7 +40,9 @@ zero unknown operations and both lifecycle methods, then checks all held
 fences. It rechecks each fence when the retirement session requests
 \`assertHeld()\`. Missing ports, unknown claims, rejected acquisitions and
 lost fences fail closed. Partial acquisitions release in reverse order.
-Failed cleanup poisons that coordinator instance and cannot auto-retry.
+Any failed or ambiguous acquisition also poisons the coordinator, even when
+known leases release; a remote acquire may have succeeded before throwing.
+Failed cleanup remains poisoned and cannot auto-retry.
 Guard release is single-use. This contract makes no files or external calls.
 
 The **integration seam already exists** in
