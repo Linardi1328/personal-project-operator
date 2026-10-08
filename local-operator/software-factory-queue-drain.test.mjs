@@ -110,3 +110,66 @@ test("runner crash after intake records run and does not release claim", async (
   assert.equal(released, 0)
   assert.equal(completed.runId, RUN_ID)
 })
+
+
+test("claimed objective reserves its project but does not block unrelated spare WIP", async () => {
+  const calls = []
+  const drain = createSoftwareFactoryQueueDrainer({
+    async listQueue() {
+      return [
+        item({ queueId: "A".repeat(32), projectId: "kynexa", claimed: true }),
+        item({
+          queueId: "B".repeat(32),
+          projectId: "rivora",
+          objective: "Fix the approved event defect.",
+          objectiveHash: "b".repeat(64),
+          queuedAt: "2026-10-08T06:01:00.000Z",
+          claimed: false
+        })
+      ]
+    },
+    async listRuns() { return catalog([]) },
+    async claim(queueId) { calls.push(["claim", queueId]) },
+    async complete(queueId, result) { calls.push(["complete", queueId, result]) },
+    async intake(projectId) {
+      calls.push(["intake", projectId])
+      return { runId: RUN_ID, projectId, status: "planned" }
+    },
+    async runFactory() {
+      return { ok: false, outcome: "blocked_capacity", reason: "worker_capacity_exhausted" }
+    }
+  })
+
+  const result = await drain()
+  assert.equal(result.queueId, "B".repeat(32))
+  assert.equal(result.outcome, "blocked_capacity")
+  assert.deepEqual(calls[0], ["claim", "B".repeat(32)])
+  assert.deepEqual(calls[1], ["intake", "rivora"])
+})
+
+test("claimed objective prevents a duplicate launch for the same project", async () => {
+  let claims = 0
+  const drain = createSoftwareFactoryQueueDrainer({
+    async listQueue() {
+      return [
+        item({ queueId: "A".repeat(32), projectId: "kynexa", claimed: true }),
+        item({
+          queueId: "B".repeat(32),
+          projectId: "kynexa",
+          objective: "Fix another approved registration defect.",
+          objectiveHash: "b".repeat(64),
+          queuedAt: "2026-10-08T06:01:00.000Z",
+          claimed: false
+        })
+      ]
+    },
+    async listRuns() { return catalog([]) },
+    async claim() { claims += 1 }
+  })
+
+  const result = await drain()
+  assert.equal(result.outcome, "owner_action_required")
+  assert.equal(result.reason, "queue_claim_reconciliation_required")
+  assert.equal(result.queueId, "A".repeat(32))
+  assert.equal(claims, 0)
+})
