@@ -118,6 +118,46 @@ test("a delayed held assertion cannot succeed after release and a new acquisitio
   await next.release()
 })
 
+for (const delayedOutcome of ["true", "false", "throws"]) {
+  test("stale writer assertion " + delayedOutcome + " after release cannot poison a new guard", async () => {
+    const f = fixture()
+    let notifyPaused, resumePaused
+    const paused = new Promise(resolve => { notifyPaused = resolve })
+    const resume = new Promise(resolve => { resumePaused = resolve })
+    const originalAcquire = f.ports.writer.acquire
+
+    f.ports.writer.acquire = async context => {
+      const lease = await originalAcquire(context)
+      // Only delay the original run; the newly acquired guard must remain
+      // independently usable while the old assertion is unresolved.
+      if (context.runId !== RUN_A) return lease
+      const originalAssert = lease.assertHeld
+      let calls = 0
+      lease.assertHeld = async probe => {
+        const wasHeld = await originalAssert(probe)
+        if (++calls !== 2) return wasHeld
+        notifyPaused()
+        await resume
+        if (delayedOutcome === "throws") throw Error("SENSITIVE_STALE_ASSERTION")
+        return delayedOutcome === "false" ? false : wasHeld
+      }
+      return lease
+    }
+
+    const coordinator = createTwoHostRetirementQuiescenceCoordinator(f.ports)
+    const oldGuard = await coordinator.acquireQuiescenceGuard(request)
+    const delayedAssertion = oldGuard.assertHeld()
+    await paused
+    await oldGuard.release()
+
+    const newGuard = await coordinator.acquireQuiescenceGuard({ ...request, runId: RUN_B })
+    resumePaused()
+    assert.equal(await delayedAssertion, false)
+    assert.equal(await newGuard.assertHeld(), true, "stale assertion must not poison replacement")
+    await newGuard.release()
+  })
+}
+
 for (const role of RETIREMENT_QUIESCENCE_PORT_ORDER) {
   for (const errorCase of ["unreachable", "forged-role", "wrong-epoch", "unknown-work", "not-exclusive", "unproven-quiescence", "missing-assertion"]) {
     test(role + " " + errorCase + " blocks and releases all acquired synthetic authorities", async () => {
