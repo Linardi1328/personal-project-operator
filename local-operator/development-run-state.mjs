@@ -1323,10 +1323,6 @@ function normalizeAttemptShape(attempts) {
   return normalized
 }
 
-function validateAttemptShape(attempts) {
-  normalizeAttemptShape(attempts)
-}
-
 function validateEvidenceShape(evidence) {
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || !(
     hasOnlyKeys(evidence, DEVELOPMENT_RUN_EVIDENCE_KINDS) ||
@@ -1457,8 +1453,6 @@ function validateHistoryEventShape(event) {
   if (event.branch !== null) {
     normalizeBranch(event.branch)
   }
-
-  validateAttemptShape(event.attempts)
 
   for (const entry of event.evidence) {
     const normalized = normalizeDevelopmentRunEvidenceRecord(entry, {

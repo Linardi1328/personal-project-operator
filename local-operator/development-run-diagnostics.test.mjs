@@ -102,3 +102,29 @@ test("diagnostics return no raw invalid ID or exception text", async t => {
   assert.deepEqual(await diagnoseDevelopmentRunHistory("../SENSITIVE_TEST_SENTINEL", f.options),
     { ok: false, runId: null, code: "invalid_run_id" })
 })
+
+
+for (const [label, malformedAttempts] of [
+  ["null", () => null],
+  ["array", () => []],
+  ["missing keys", () => ({})],
+  ["negative", attempts => ({ ...attempts, planning: -1 })],
+  ["fractional", attempts => ({ ...attempts, planning: 0.5 })],
+  ["sensitive string", () => "SENSITIVE_TEST_SENTINEL"]
+]) {
+  test(`malformed event attempts (${label}) use the dedicated redacted diagnostic`, async t => {
+    const f = await fixture(t)
+    f.record.history[1].attempts = malformedAttempts(f.record.history[1].attempts)
+    await writeFile(f.recordPath, JSON.stringify(f.record))
+    const before = await snapshot(f.options.writeDataDir)
+    assert.deepEqual(await diagnoseDevelopmentRunHistory(f.record.runId, f.options),
+      { ok: false, runId: f.record.runId, code: "history_attempts_invalid" })
+    assert.deepEqual((await diagnoseDevelopmentRunCatalog(f.options)).failures,
+      [{ runId: f.record.runId, code: "history_attempts_invalid" }])
+    // The ordinary inspector keeps its previous fail-closed public contract.
+    const ordinary = await inspectDevelopmentRunReadOnly(f.record.runId, f.options)
+    assert.equal(ordinary.ok, false)
+    assert.equal(ordinary.code, "record_invalid")
+    assert.deepEqual(await snapshot(f.options.writeDataDir), before)
+  })
+}
