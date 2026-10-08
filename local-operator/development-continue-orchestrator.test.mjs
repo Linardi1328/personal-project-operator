@@ -2870,12 +2870,12 @@ test("Phase 6K orchestrator is composition-only and imports no production agents
 
 
 test("validated structured plan capability takes precedence over task keyword fallback", () => {
-  const objective = "Implement the approved server-side change."
+  const objective = "Implement the approved signup form behavior."
   const plan = buildBaselineSoftwareFactoryPlan({
     runId: RUN_ID,
     projectId: PROJECT.id,
     baseSha: BASE_SHA,
-    objective: "Fix the responsive frontend layout."
+    objective
   })
   const run = makeRun("implementation_in_progress", {
     runId: RUN_ID,
