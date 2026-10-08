@@ -20,6 +20,9 @@ import {
   formatSoftwareFactoryAutonomousRun
 } from "./software-factory-autonomous-run.mjs";
 import {
+  handlePpoSoftwareFactoryManagerObjectiveCommand
+} from "./software-factory-manager-objective.mjs";
+import {
   SOFTWARE_FACTORY_RELEASE_REQUEST_ID_PATTERN,
   handlePpoReleaseCommand,
   handlePpoReleaseConfirmCommand
@@ -307,6 +310,38 @@ function parseStrictFactoryRunArgs(rawArgs) {
   return parseStrictRunIdCommandArgs(rawArgs, "factory-run", {
     allowExactCombined: true
   });
+}
+
+function parseStrictFactoryStartArgs(rawArgs) {
+  const args = rawArgs.map((arg) => String(arg));
+  const text = commandTextFromRawArgs(args).trim();
+  const unwrapped = unwrapPpoEnvelope(args);
+  const envelope = splitFirstToken(String(unwrapped || ""));
+  const attempted = envelope?.token?.toLowerCase() === "factory-start";
+
+  if (!attempted) {
+    return null;
+  }
+
+  if (
+    text !== commandTextFromRawArgs(args) ||
+    args.some((arg) => /[\u0000-\u001F\u007F-\u009F]/u.test(arg))
+  ) {
+    return { ok: false, attempted: true };
+  }
+
+  const parsed = projectPayloadArgs(args, "factory-start");
+
+  if (!parsed || !startProjectIds.has(parsed[0])) {
+    return { ok: false, attempted: true };
+  }
+
+  return {
+    ok: true,
+    attempted: true,
+    projectId: parsed[0],
+    objective: parsed[1]
+  };
 }
 
 function parseStrictReleaseArgs(rawArgs) {
@@ -892,6 +927,7 @@ function applyPpoNamespace(output) {
         "- /ppo runs and /ppo run expose only bounded Phase 6N ordinary-run catalog metadata",
         "- /ppo cancel stages only; /ppo cancel-confirm can cancel one eligible quiescent run after single-use confirmation",
         "- /ppo continue advances one existing ordinary development run through at most one reviewed Phase 6B-6G boundary",
+        "- /ppo factory-start <project> <objective> pins an owner objective to current GitHub state and drives the existing autonomous factory until a reviewed stop boundary",
         "- /ppo recover reports one read-only Phase 6L development recovery observation and never repairs, retries, or continues the run"
       ].join("\n")
     );
@@ -917,6 +953,7 @@ async function main() {
   const strictCancelConfirm = parseStrictCancelConfirmArgs(rawProcessArgs);
   const strictCancel = parseStrictCancelArgs(rawProcessArgs);
   const strictContinue = parseStrictContinueArgs(rawProcessArgs);
+  const strictFactoryStart = parseStrictFactoryStartArgs(rawProcessArgs);
   const strictFactoryRun = parseStrictFactoryRunArgs(rawProcessArgs);
   const strictReleaseConfirm = parseStrictReleaseConfirmArgs(rawProcessArgs);
   const strictRelease = parseStrictReleaseArgs(rawProcessArgs);
@@ -961,6 +998,19 @@ async function main() {
     const result = await handlePpoDevelopmentContinueCommand(strictContinue.runId, {
       trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
     });
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictFactoryStart?.ok === true) {
+    const result = await handlePpoSoftwareFactoryManagerObjectiveCommand(
+      strictFactoryStart.projectId,
+      strictFactoryStart.objective,
+      {
+        trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
+      }
+    );
     console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;
@@ -1028,6 +1078,12 @@ async function main() {
 
   if (strictContinue?.attempted === true) {
     console.log(unsupported(rawProcessArgs[0] || "continue"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictFactoryStart?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "factory-start"));
     process.exitCode = 1;
     return;
   }
