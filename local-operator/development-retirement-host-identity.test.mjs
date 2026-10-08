@@ -124,7 +124,8 @@ test("signature cannot be copied onto a changed payload or replaced with random 
 test("serialized duplicate keys, reordered keys and unknown keys fail closed", () => {
   const raw = JSON.stringify(claims())
   reject(witness(raw.replace('"hostId":"ppo-mac-1"', '"hostId":"ppo-mac-1","hostId":"ppo-mac-1"')))
-  reject(witness('{"role":"mac",' + raw.slice(1)))
+  const { protocol, role, ...remaining } = claims()
+  reject(witness(JSON.stringify({ role, protocol, ...remaining })))
   reject(witness(JSON.stringify({ ...claims(), extra: "ignored?" })))
 })
 
