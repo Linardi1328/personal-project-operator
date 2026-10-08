@@ -32,7 +32,7 @@ test("baseline plan is deterministic, bounded, and objective-bound", () => {
   assert.match(left.objectiveHash, /^[a-f0-9]{64}$/u)
   assert.match(left.planHash, /^[a-f0-9]{64}$/u)
   assert.equal(left.acceptanceCriteria.length, 4)
-  assert.ok(left.acceptanceCriteria.every((item) => item.length <= 180))
+  assert.ok(left.acceptanceCriteria.every((item) => item.length <= 140))
 })
 
 test("baseline plan classifies debugging and high-risk objectives conservatively", () => {
@@ -93,7 +93,7 @@ test("plan fields reject oversized and sensitive content", () => {
   assert.throws(
     () => validateSoftwareFactoryPlan({
       ...plan,
-      constraints: ["x".repeat(181)]
+      constraints: ["x".repeat(141)]
     }),
     (error) => error?.code === "FACTORY_PLAN_INVALID"
   )
