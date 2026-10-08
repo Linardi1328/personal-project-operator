@@ -8,7 +8,8 @@ import {
   completeSoftwareFactoryQueuedObjective,
   enqueueSoftwareFactoryObjective,
   listSoftwareFactoryQueuedObjectives,
-  releaseSoftwareFactoryQueueClaim
+  releaseSoftwareFactoryQueueClaim,
+  formatSoftwareFactoryObjectiveQueue
 } from "./software-factory-objective-queue.mjs"
 
 async function fixture() {
@@ -161,4 +162,20 @@ test("new queue directory ancestry is synchronized before request publication", 
   })
 
   assert.equal(parentSyncs, 4)
+})
+
+
+test("queue view exposes metadata without objective text", async () => {
+  const output = formatSoftwareFactoryObjectiveQueue([{
+    queueId: "Q".repeat(32),
+    projectId: "kynexa",
+    objective: "Sensitive business objective that should not be echoed.",
+    objectiveHash: "a".repeat(64),
+    queuedAt: "2026-10-08T06:00:00.000Z",
+    claimed: false
+  }])
+
+  assert.match(output, /Project: kynexa/u)
+  assert.match(output, /Objective hash: a{64}/u)
+  assert.doesNotMatch(output, /Sensitive business objective/u)
 })
