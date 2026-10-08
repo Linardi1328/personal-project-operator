@@ -546,3 +546,23 @@ After a package-bound `/ppo release-confirm` successfully completes the existing
 - cannot retroactively turn an already committed merge into a failed release result.
 
 Queue-pump failure is returned as separate bounded metadata on the successful release result. The owner therefore never has to manually invoke `factory-drain` merely because a merge freed a normal Software Factory development slot.
+
+
+## V1.9 bounded manager cycle
+
+The manager cycle removes another manual orchestration step without creating an unbounded agent swarm.
+
+`/ppo factory-cycle` performs one bounded scheduling pass:
+
+1. read the trusted development-run catalog;
+2. fail closed if the catalog is truncated, recovery-required, or violates the two-project / one-run-per-project WIP policy;
+3. resume only runs that still consume Software Factory development WIP;
+4. process those runs sequentially through the existing autonomous runner;
+5. stop each run at the existing release, capacity, external, terminal, or owner-action boundary; and
+6. attempt exactly one durable objective-queue drain after existing active work has been processed.
+
+The cycle never confirms a release, never merges a target-project PR, and never routes production deployment, verification, or rollback. Clean merged and production-stage runs are excluded by the V1.8 WIP boundary.
+
+The cycle returns bounded scheduling metadata only. Release packages, objectives, prompts, raw provider output, and logs are not copied into manager-cycle results.
+
+This command is intentionally safe to invoke repeatedly at the orchestration level, but V1.9 does not install a background scheduler. Durable suppression of unchanged owner-action states is a separate prerequisite before unattended recurring execution.
