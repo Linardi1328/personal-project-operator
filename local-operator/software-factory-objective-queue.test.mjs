@@ -161,7 +161,7 @@ test("new queue directory ancestry is synchronized before request publication", 
     }
   })
 
-  assert.equal(parentSyncs, 4)
+  assert.equal(parentSyncs, 5)
 })
 
 
@@ -189,5 +189,29 @@ test("empty queue listing is read-only and does not create queue storage", async
   await assert.rejects(
     lstat(queueRoot),
     (error) => error?.code === "ENOENT"
+  )
+})
+
+
+test("concurrent identical enqueue cannot create duplicate pending work", async () => {
+  const options = await fixture()
+  const input = {
+    projectId: "kynexa",
+    objective: "Fix the approved concurrency-safe registration defect."
+  }
+
+  const results = await Promise.allSettled([
+    enqueueSoftwareFactoryObjective(input, options),
+    enqueueSoftwareFactoryObjective(input, options)
+  ])
+  const pending = await listSoftwareFactoryQueuedObjectives(options)
+
+  assert.equal(pending.length, 1)
+  const successful = results.filter((result) => result.status === "fulfilled")
+  const rejected = results.filter((result) => result.status === "rejected")
+  assert.equal(successful.length >= 1, true)
+  assert.equal(
+    rejected.every((result) => result.reason?.code === "FACTORY_QUEUE_ENQUEUE_BUSY"),
+    true
   )
 })
