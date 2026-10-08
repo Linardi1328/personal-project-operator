@@ -39,6 +39,7 @@ export function describePersonalProjectOperatorQualityPolicy() {
 export function describeOrdinaryProjectCapabilities() {
   const paths = {
     pythonExecutablePath: "python3.12", nodeExecutablePath: "node",
+    npmExecutablePath: "npm", uvExecutablePath: "uv",
     executionPath: "", nodeToolPaths: {
       portfolioTypecheck: "approved:portfolioTypecheck",
       portfolioEslint: "approved:portfolioEslint"
@@ -63,6 +64,8 @@ const fixedDarwinPaths = Object.freeze({
   codexExecutablePath: "/Users/richie/.local/bin/codex",
   gitExecutablePath: "/opt/homebrew/bin/git",
   nodeExecutablePath: "/opt/homebrew/bin/node",
+  npmExecutablePath: "/opt/homebrew/bin/npm",
+  uvExecutablePath: "/Users/richie/.local/bin/uv",
   pythonExecutablePath: "/opt/homebrew/bin/python3.12",
   projectPythonExecutablePaths: Object.freeze({
     "khlim-assist": "/Users/richie/.local/share/personal-project-operator/runtimes/khlim-assist-python3.12/bin/python3"
@@ -83,7 +86,10 @@ const fixedDarwinPaths = Object.freeze({
     "spy-market-agent": "/Users/richie/spy-market-agent",
     portfolio: "/Users/richie/richie-linardi-portfolio-website",
     "rbl-content-engine": "/Users/richie/rbl-content-engine",
-    "khlim-digital-ecosystem": "/Users/richie/khlim-digital-ecosystem"
+    "khlim-digital-ecosystem": "/Users/richie/khlim-digital-ecosystem",
+    kynexa: "/Users/richie/kynexa",
+    rivora: "/Users/richie/rivora",
+    "axiom-quantum": "/Users/richie/axiom-quantum"
   })
 })
 
@@ -91,6 +97,8 @@ const fixedLinuxPaths = Object.freeze({
   codexExecutablePath: "/home/ppo/.local/bin/codex",
   gitExecutablePath: "/usr/bin/git",
   nodeExecutablePath: "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
+  npmExecutablePath: "/usr/bin/npm",
+  uvExecutablePath: "/home/ppo/.local/bin/uv",
   pythonExecutablePath: "/usr/bin/python3.12",
   projectPythonExecutablePaths: Object.freeze({}),
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
@@ -109,7 +117,10 @@ const fixedLinuxPaths = Object.freeze({
     "spy-market-agent": "/var/lib/personal-project-operator/source-repos/spy-market-agent",
     portfolio: "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
     "rbl-content-engine": "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
-    "khlim-digital-ecosystem": "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem"
+    "khlim-digital-ecosystem": "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem",
+    kynexa: "/var/lib/personal-project-operator/source-repos/kynexa",
+    rivora: "/var/lib/personal-project-operator/source-repos/rivora",
+    "axiom-quantum": "/var/lib/personal-project-operator/source-repos/axiom-quantum"
   })
 })
 
@@ -187,6 +198,36 @@ const reviewedProjectTestPolicies = Object.freeze({
     policyId: "phase-6e-khlim-digital-ecosystem-fixed-node-foundation-policy",
     kind: "node-foundation-test",
     nodeTestPath: "tests/foundation.test.mjs"
+  }),
+  kynexa: Object.freeze({
+    policyId: "software-factory-v1-4-kynexa-ci-parity-policy",
+    kind: "npm-script-suite",
+    npmSteps: Object.freeze([
+      Object.freeze({ id: "lint", args: Object.freeze(["run", "lint"]), timeoutMs: 180000 }),
+      Object.freeze({ id: "typecheck", args: Object.freeze(["run", "typecheck"]), timeoutMs: 180000 }),
+      Object.freeze({ id: "test", args: Object.freeze(["test"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "build", args: Object.freeze(["run", "build"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "e2e", args: Object.freeze(["run", "test:e2e"]), timeoutMs: 600000 })
+    ])
+  }),
+  rivora: Object.freeze({
+    policyId: "software-factory-v1-4-rivora-ci-parity-policy",
+    kind: "npm-script-suite",
+    npmSteps: Object.freeze([
+      Object.freeze({ id: "build", args: Object.freeze(["run", "build"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "typecheck", args: Object.freeze(["run", "typecheck"]), timeoutMs: 180000 }),
+      Object.freeze({ id: "test", args: Object.freeze(["run", "test:run"]), timeoutMs: 300000 })
+    ])
+  }),
+  "axiom-quantum": Object.freeze({
+    policyId: "software-factory-v1-4-axiom-quantum-ci-parity-policy",
+    kind: "uv-command-suite",
+    uvSteps: Object.freeze([
+      Object.freeze({ id: "ruff-check", args: Object.freeze(["run", "--no-sync", "ruff", "check", "."]), timeoutMs: 180000 }),
+      Object.freeze({ id: "ruff-format", args: Object.freeze(["run", "--no-sync", "ruff", "format", "--check", "."]), timeoutMs: 180000 }),
+      Object.freeze({ id: "mypy", args: Object.freeze(["run", "--no-sync", "mypy", "src", "tests"]), timeoutMs: 300000 }),
+      Object.freeze({ id: "pytest", args: Object.freeze(["run", "--no-sync", "pytest", "--cov-fail-under=85"]), timeoutMs: 600000 })
+    ])
   })
 })
 
@@ -663,6 +704,54 @@ function nodeCommandSuitePolicy(definition, paths, sandbox) {
   }
 }
 
+function npmScriptSuitePolicy(definition, paths, sandbox) {
+  return {
+    policyId: definition.policyId,
+    policyVersion: "1",
+    trustedExecutablePaths: [paths.npmExecutablePath],
+    env: {
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath,
+      CI: "true",
+      NEXT_TELEMETRY_DISABLED: "1"
+    },
+    sandbox,
+    steps: definition.npmSteps.map((step) => ({
+      id: step.id,
+      executablePath: paths.npmExecutablePath,
+      args: [...step.args],
+      timeoutMs: step.timeoutMs,
+      maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
+      required: true,
+      shell: false
+    }))
+  }
+}
+
+function uvCommandSuitePolicy(definition, paths, sandbox) {
+  return {
+    policyId: definition.policyId,
+    policyVersion: "1",
+    trustedExecutablePaths: [paths.uvExecutablePath],
+    env: {
+      PPO_PHASE6K_TEST_POLICY: "fixed",
+      PATH: paths.executionPath,
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONNOUSERSITE: "1"
+    },
+    sandbox,
+    steps: definition.uvSteps.map((step) => ({
+      id: step.id,
+      executablePath: paths.uvExecutablePath,
+      args: [...step.args],
+      timeoutMs: step.timeoutMs,
+      maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
+      required: true,
+      shell: false
+    }))
+  }
+}
+
 function testPolicyForProject(projectId, paths, sandbox) {
   const definition = reviewedProjectTestPolicies[projectId]
 
@@ -688,6 +777,14 @@ function testPolicyForProject(projectId, paths, sandbox) {
 
   if (definition.kind === "node-command-suite") {
     return nodeCommandSuitePolicy(definition, paths, sandbox)
+  }
+
+  if (definition.kind === "npm-script-suite") {
+    return npmScriptSuitePolicy(definition, paths, sandbox)
+  }
+
+  if (definition.kind === "uv-command-suite") {
+    return uvCommandSuitePolicy(definition, paths, sandbox)
   }
 
   throw runtimeError()
@@ -729,6 +826,18 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
 
   if (definition.kind === "node-command-suite") {
     await assertNodeRuntime(paths, options)
+    return
+  }
+
+  if (definition.kind === "npm-script-suite") {
+    await assertExecutable(paths.npmExecutablePath, options)
+    await runReadOnlyProbe(paths.npmExecutablePath, ["--version"], options)
+    return
+  }
+
+  if (definition.kind === "uv-command-suite") {
+    await assertExecutable(paths.uvExecutablePath, options)
+    await runReadOnlyProbe(paths.uvExecutablePath, ["--version"], options)
     return
   }
 
