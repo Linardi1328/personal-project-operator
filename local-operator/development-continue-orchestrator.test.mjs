@@ -255,6 +255,8 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/Users/richie/.local/bin/codex",
       "/opt/homebrew/bin/git",
       "/opt/homebrew/bin/node",
+      "/opt/homebrew/bin/npm",
+      "/Users/richie/.local/bin/uv",
       "/opt/homebrew/bin/python3.12",
       MACOS_KHLIM_ASSIST_PYTHON,
       "/usr/local/bin/ppo-independent-reviewer",
@@ -262,6 +264,8 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/home/ppo/.local/bin/codex",
       "/usr/bin/git",
       "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
+      "/usr/bin/npm",
+      "/home/ppo/.local/bin/uv",
       "/usr/bin/python3.12",
       "/usr/bin/bwrap",
       "/usr/bin/nsenter",
@@ -282,6 +286,9 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/Users/richie/richie-linardi-portfolio-website",
       "/Users/richie/rbl-content-engine",
       "/Users/richie/khlim-digital-ecosystem",
+      "/Users/richie/kynexa",
+      "/Users/richie/rivora",
+      "/Users/richie/axiom-quantum",
       "/Users/richie/.local/share/personal-project-operator/development-workspaces",
       "/var/lib/personal-project-operator/source-repos/khlim-assist",
       "/var/lib/personal-project-operator/source-repos/ledgerpilot-ai",
@@ -289,6 +296,9 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
       "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
       "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem",
+      "/var/lib/personal-project-operator/source-repos/kynexa",
+      "/var/lib/personal-project-operator/source-repos/rivora",
+      "/var/lib/personal-project-operator/source-repos/axiom-quantum",
       "/var/lib/personal-project-operator/development-workspaces",
       "/var/lib/personal-project-operator/phase6-sandbox"
     ])
@@ -1686,6 +1696,39 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
       executablePath: "/opt/homebrew/bin/node",
       args: ["--test", "tests/foundation.test.mjs"],
       stepCount: 1
+    }],
+    ["kynexa", {
+      policyId: "software-factory-v1-4-kynexa-ci-parity-policy",
+      executablePath: "/opt/homebrew/bin/npm",
+      args: [
+        ["run", "lint"],
+        ["run", "typecheck"],
+        ["test"],
+        ["run", "build"],
+        ["run", "test:e2e"]
+      ],
+      stepCount: 5
+    }],
+    ["rivora", {
+      policyId: "software-factory-v1-4-rivora-ci-parity-policy",
+      executablePath: "/opt/homebrew/bin/npm",
+      args: [
+        ["run", "build"],
+        ["run", "typecheck"],
+        ["run", "test:run"]
+      ],
+      stepCount: 3
+    }],
+    ["axiom-quantum", {
+      policyId: "software-factory-v1-4-axiom-quantum-ci-parity-policy",
+      executablePath: "/Users/richie/.local/bin/uv",
+      args: [
+        ["run", "--no-sync", "ruff", "check", "."],
+        ["run", "--no-sync", "ruff", "format", "--check", "."],
+        ["run", "--no-sync", "mypy", "src", "tests"],
+        ["run", "--no-sync", "pytest", "--cov-fail-under=85"]
+      ],
+      stepCount: 4
     }]
   ])
   const projectIds = listOrdinaryDevelopmentProjects().map((project) => project.id)
@@ -1716,12 +1759,13 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
       assert.equal(step.shell, false, projectId)
     }
 
-    if (projectId === "khlim-assist" || projectId === "portfolio" || projectId === "rbl-content-engine") {
-      assert.deepEqual(policy.steps.map((step) => step.args), expected.args, projectId)
-      assert.doesNotMatch(JSON.stringify(policy), /npm|npx|package\.json|node --test|Makefile/i, projectId)
+    const expectedArgs = Array.isArray(expected.args[0]) ? expected.args : [expected.args]
+    assert.deepEqual(policy.steps.map((step) => step.args), expectedArgs, projectId)
+
+    if (!["kynexa", "rivora"].includes(projectId)) {
+      assert.doesNotMatch(JSON.stringify(policy), /(?:^|[^a-z])npm|npx|package\.json|Makefile/i, projectId)
     } else {
-      assert.deepEqual(policy.steps[0].args, expected.args, projectId)
-      assert.doesNotMatch(JSON.stringify(policy), /node --test|npm|npx|package\.json|Makefile/i, projectId)
+      assert.doesNotMatch(JSON.stringify(policy), /npx|curl|\/bin\/sh|package\.json|Makefile/i, projectId)
     }
 
     if (projectId === "rbl-content-engine") {
