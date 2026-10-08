@@ -2982,8 +2982,19 @@ test("Software Factory coordinator records blocked capacity without authorizing 
 })
 
 test("Software Factory coordinator authorizes immediately before Antigravity execution", async () => {
+  const objective = "Implement the approved authentication API integration."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID,
+    projectId: PROJECT.id,
+    baseSha: BASE_SHA,
+    objective
+  })
   const run = makeRun("implementation_in_progress", {
-    task: "Implement the approved backend repository change."
+    task: objective,
+    headSha: BASE_SHA,
+    evidence: {
+      planning: [softwareFactoryPlanEvidence(plan)]
+    }
   })
   const calls = []
   const authorization = Object.freeze({ kind: "test-authorization" })
@@ -3028,6 +3039,7 @@ test("Software Factory coordinator authorizes immediately before Antigravity exe
   assert.deepEqual(calls.map((entry) => entry[0]), ["record", "authorize", "execute"])
   assert.equal(calls[0][1].expectedCheckpointVersion, 4)
   assert.equal(calls[0][1].capability, "implementation.backend")
+  assert.equal(calls[0][1].risk, "high")
   assert.equal(calls[1][1].checkpointVersion, 5)
   assert.equal(calls[2][1].receivedAuthorization, authorization)
   assert.equal(calls[2][1].expectedVersion, run.version)
