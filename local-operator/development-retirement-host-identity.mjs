@@ -33,7 +33,8 @@ function decodeCanonicalBase64url(encoded, maxBytes) {
 
 function expectedConfigValid(config) {
   return config && typeof config === "object" &&
-    roles.has(config.role) && identityPattern.test(config.hostId) &&
+    roles.has(config.role) && typeof config.hostId === "string" &&
+    identityPattern.test(config.hostId) &&
     typeof config.writeDataDir === "string" &&
     isAbsolute(config.writeDataDir) &&
     shaPattern.test(config.deploymentSha) &&
