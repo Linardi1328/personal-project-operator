@@ -71,13 +71,18 @@ test("manager objective intake pins one planned run to current GitHub head", asy
 
   const plannedTransition = calls[3][2]
   assert.equal(plannedTransition.status, "planned")
-  assert.equal(plannedTransition.evidence.length, 1)
+  assert.equal(plannedTransition.evidence.length, 2)
   assert.equal(plannedTransition.evidence[0].kind, "planning")
   assert.equal(plannedTransition.evidence[0].sha, SHA)
   assert.equal(plannedTransition.evidence[0].metadata.origin, "owner_manager_objective")
   assert.equal(plannedTransition.evidence[0].metadata.openPrCount, 0)
   assert.equal(plannedTransition.evidence[0].metadata.openIssueCount, 1)
   assert.match(plannedTransition.evidence[0].metadata.objectiveHash, /^[a-f0-9]{64}$/u)
+  assert.equal(plannedTransition.evidence[1].source, "software-factory-v1-5-plan-contract")
+  assert.equal(plannedTransition.evidence[1].metadata.capability, "implementation.frontend")
+  assert.equal(plannedTransition.evidence[1].metadata.risk, "high")
+  assert.match(plannedTransition.evidence[1].metadata.planHash, /^[a-f0-9]{64}$/u)
+  assert.equal(result.planHash, plannedTransition.evidence[1].metadata.planHash)
 })
 
 test("manager objective intake refuses repositories with open pull requests before creating a run", async () => {

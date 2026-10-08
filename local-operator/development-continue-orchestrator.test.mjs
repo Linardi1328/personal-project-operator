@@ -31,6 +31,10 @@ import {
   loadDevelopmentContinueRuntimeProfile
 } from "./development-continue-runtime-profile.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
+import {
+  buildBaselineSoftwareFactoryPlan,
+  softwareFactoryPlanEvidence
+} from "./software-factory-plan-contract.mjs"
 
 const RUN_ID = "A".repeat(43)
 const BAD_RUN_ID = "short"
@@ -2865,6 +2869,26 @@ test("Phase 6K orchestrator is composition-only and imports no production agents
 })
 
 
+test("validated structured plan capability takes precedence over task keyword fallback", () => {
+  const objective = "Implement the approved signup form behavior."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID,
+    projectId: PROJECT.id,
+    baseSha: BASE_SHA,
+    objective
+  })
+  const run = makeRun("implementation_in_progress", {
+    runId: RUN_ID,
+    task: objective,
+    headSha: BASE_SHA,
+    evidence: {
+      planning: [softwareFactoryPlanEvidence(plan)]
+    }
+  })
+
+  assert.equal(resolveSoftwareFactoryImplementationCapability(run), "implementation.frontend")
+})
+
 test("Software Factory implementation capability selection is deterministic and frontend-biased", () => {
   assert.equal(
     resolveSoftwareFactoryImplementationCapability(
@@ -2958,8 +2982,19 @@ test("Software Factory coordinator records blocked capacity without authorizing 
 })
 
 test("Software Factory coordinator authorizes immediately before Antigravity execution", async () => {
+  const objective = "Implement the approved authentication API integration."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID,
+    projectId: PROJECT.id,
+    baseSha: BASE_SHA,
+    objective
+  })
   const run = makeRun("implementation_in_progress", {
-    task: "Implement the approved backend repository change."
+    task: objective,
+    headSha: BASE_SHA,
+    evidence: {
+      planning: [softwareFactoryPlanEvidence(plan)]
+    }
   })
   const calls = []
   const authorization = Object.freeze({ kind: "test-authorization" })
@@ -3004,6 +3039,7 @@ test("Software Factory coordinator authorizes immediately before Antigravity exe
   assert.deepEqual(calls.map((entry) => entry[0]), ["record", "authorize", "execute"])
   assert.equal(calls[0][1].expectedCheckpointVersion, 4)
   assert.equal(calls[0][1].capability, "implementation.backend")
+  assert.equal(calls[0][1].risk, "high")
   assert.equal(calls[1][1].checkpointVersion, 5)
   assert.equal(calls[2][1].receivedAuthorization, authorization)
   assert.equal(calls[2][1].expectedVersion, run.version)

@@ -15,6 +15,10 @@ import {
 import {
   executeSoftwareFactoryAutonomousRun
 } from "./software-factory-autonomous-run.mjs"
+import {
+  buildBaselineSoftwareFactoryPlan,
+  softwareFactoryPlanEvidence
+} from "./software-factory-plan-contract.mjs"
 
 export const SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID = "software-factory-v1-4-manager-objective"
 export const SOFTWARE_FACTORY_MANAGER_OBJECTIVE_MAX_CHARS = MAX_DEVELOPMENT_RUN_TASK_CHARS
@@ -174,9 +178,16 @@ export function createSoftwareFactoryManagerObjectiveIntake(dependencies = {}) {
       actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID
     }, options)
 
+    let baselinePlan
     let planned
 
     try {
+      baselinePlan = buildBaselineSoftwareFactoryPlan({
+        runId: created.runId,
+        projectId,
+        baseSha: pinned.baseSha,
+        objective
+      })
       const planning = await transitionRun(created.runId, {
         expectedVersion: created.version,
         status: "planning_in_progress",
@@ -188,13 +199,16 @@ export function createSoftwareFactoryManagerObjectiveIntake(dependencies = {}) {
         status: "planned",
         actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID,
         reason: "manager-objective-planned",
-        evidence: [planningEvidence({
-          projectId,
-          objective,
-          baseSha: pinned.baseSha,
-          defaultBranch: pinned.defaultBranch,
-          openIssueCount: pinned.openIssueCount
-        })]
+        evidence: [
+          planningEvidence({
+            projectId,
+            objective,
+            baseSha: pinned.baseSha,
+            defaultBranch: pinned.defaultBranch,
+            openIssueCount: pinned.openIssueCount
+          }),
+          softwareFactoryPlanEvidence(baselinePlan)
+        ]
       }, options)
     } catch (error) {
       throw postCreationError(error, created.runId)
@@ -208,7 +222,10 @@ export function createSoftwareFactoryManagerObjectiveIntake(dependencies = {}) {
       runVersion: planned.version,
       status: planned.status,
       baseSha: pinned.baseSha,
-      defaultBranch: pinned.defaultBranch
+      defaultBranch: pinned.defaultBranch,
+      planHash: baselinePlan.planHash,
+      planCapability: baselinePlan.capabilityHint,
+      planRisk: baselinePlan.risk
     }
   }
 }

@@ -9,6 +9,10 @@ import {
   resolveLiveAntigravityModel,
   validateAntigravityAutomationSettings
 } from "./software-factory-antigravity-execution.mjs"
+import {
+  buildBaselineSoftwareFactoryPlan,
+  softwareFactoryPlanEvidence
+} from "./software-factory-plan-contract.mjs"
 
 function runFixture(overrides = {}) {
   return {
@@ -129,6 +133,37 @@ test("execution argv pins the routed model and stays sandboxed without dangerous
     "10m"
   ])
   assert.equal(args.includes("--dangerously-skip-permissions"), false)
+})
+
+test("implementation prompt carries validated structured plan criteria and boundaries", () => {
+  const objective = "Fix the responsive registration form accessibility failure."
+  const runId = "A".repeat(43)
+  const baseSha = "a".repeat(40)
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId,
+    projectId: "khlim-digital-ecosystem",
+    baseSha,
+    objective
+  })
+  const prompt = buildAntigravityImplementationPrompt(
+    runFixture({
+      runId,
+      baseSha,
+      task: objective,
+      evidence: {
+        planning: [softwareFactoryPlanEvidence(plan)]
+      }
+    }),
+    workspaceFixture(),
+    authorizationFixture()
+  )
+
+  assert.match(prompt, /Validated structured plan:/u)
+  assert.match(prompt, new RegExp(plan.planHash, "u"))
+  assert.match(prompt, /Acceptance criteria:/u)
+  assert.match(prompt, /All repository-required deterministic quality gates must pass/u)
+  assert.match(prompt, /Explicit exclusions:/u)
+  assert.match(prompt, /No credential or secret changes/u)
 })
 
 test("implementation prompt carries approved capability and skills", () => {

@@ -34,6 +34,7 @@ import {
   latestSoftwareFactoryTestRemediation,
   prepareSoftwareFactoryTestRemediation
 } from "./software-factory-test-remediation.mjs"
+import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
 import {
   classifyAutomatedTestAttemptEvidence,
   canRetryPreviousPpoTimeoutPolicy,
@@ -749,6 +750,12 @@ export function resolveSoftwareFactoryImplementationCapability(run) {
     return "debugging"
   }
 
+  const structuredPlan = latestSoftwareFactoryPlan(run)
+
+  if (structuredPlan?.capabilityHint) {
+    return structuredPlan.capabilityHint
+  }
+
   const planning = Array.isArray(run?.evidence?.planning)
     ? run.evidence.planning.map((entry) => entry?.summary || "").join("\n")
     : ""
@@ -798,6 +805,7 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
       )
     }
 
+    const structuredPlan = latestSoftwareFactoryPlan(run)
     const capability = resolveSoftwareFactoryImplementationCapability(run)
     const expectedCheckpointVersion = await latestVersion(run.runId, options)
     const checkpoint = await recordReadinessImpl({
@@ -805,7 +813,8 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
       runVersion: run.version,
       capability,
       expectedCheckpointVersion,
-      failedAttempts: run.attempts.implementation
+      failedAttempts: run.attempts.implementation,
+      risk: structuredPlan?.risk
     }, options)
 
     if (checkpoint.dispatch?.outcome !== "ready" || checkpoint.dispatch?.consumeAttempt !== true) {
