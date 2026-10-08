@@ -25,7 +25,7 @@ function catalog(active = []) {
     ok: true,
     code: "ok",
     active,
-    diagnostics: { truncated: false }
+    diagnostics: { scanned: active.length, returned: active.length, invalid: 0, outOfScope: 0, truncated: false }
   }
 }
 

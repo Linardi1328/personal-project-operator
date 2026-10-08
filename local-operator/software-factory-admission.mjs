@@ -1,3 +1,5 @@
+import { hasTrustedDevelopmentRunCatalogDiagnostics } from "./development-run-catalog.mjs"
+
 export const SOFTWARE_FACTORY_ADMISSION_POLICY_VERSION = 1
 export const SOFTWARE_FACTORY_MAX_ACTIVE_PROJECTS = 2
 export const SOFTWARE_FACTORY_MAX_ACTIVE_RUNS_PER_PROJECT = 1
@@ -48,7 +50,7 @@ function normalizeCatalog(catalog) {
     catalog.ok !== true ||
     !Array.isArray(catalog.active) ||
     catalog.code === "catalog_truncated" ||
-    catalog.diagnostics?.truncated === true
+    !hasTrustedDevelopmentRunCatalogDiagnostics(catalog.diagnostics)
   ) {
     throw admissionError(
       "FACTORY_ADMISSION_CATALOG_UNAVAILABLE",

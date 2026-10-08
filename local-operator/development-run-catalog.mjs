@@ -13,6 +13,7 @@ import {
   MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES,
   PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
   inspectDevelopmentRunReadOnly,
+  diagnoseDevelopmentRunHistory,
   isDevelopmentRunTerminalStatus,
   stageForDevelopmentRunStatus
 } from "./development-run-state.mjs"
@@ -699,4 +700,33 @@ export function formatDevelopmentRunCatalog(result) {
   } catch {
     return unavailableCatalogOutput()
   }
+}
+
+// A displayable subset is not sufficient evidence for admission. Keep this
+// predicate shared by intake, queue admission and manager cycles.
+export function hasTrustedDevelopmentRunCatalogDiagnostics(diagnostics) {
+  return validDiagnostics(diagnostics, diagnostics?.returned) &&
+    diagnostics.invalid === 0 &&
+    diagnostics.truncated === false &&
+    diagnostics.scanned === diagnostics.returned + diagnostics.outOfScope
+}
+
+// Only fixed codes and validated IDs cross the diagnostic boundary.
+export async function diagnoseDevelopmentRunCatalog(options = {}) {
+  let records
+  try {
+    records = await readCatalogRecordRunIds(options)
+  } catch {
+    return { ok: false, code: "store_unavailable", failures: [] }
+  }
+  if (!records.ok) return { ok: false, code: safeCode(records.code), failures: [] }
+  if (records.missing) return { ok: false, code: "store_missing", failures: [] }
+  const failures = []
+  for (const runId of records.runIds.slice(0, MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED)) {
+    const result = await diagnoseDevelopmentRunHistory(runId, catalogStateOptions(options))
+    if (!result.ok && result.code !== "project_out_of_scope") failures.push({ runId, code: result.code })
+  }
+  const truncated = records.runIds.length > MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED
+  return { ok: !truncated && failures.length === 0,
+    code: truncated ? "catalog_truncated" : failures.length ? "catalog_invalid" : "ok", failures }
 }

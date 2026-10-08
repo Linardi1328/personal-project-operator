@@ -1,3 +1,4 @@
+import { hasTrustedDevelopmentRunCatalogDiagnostics, listDevelopmentRunSummaries } from "./development-run-catalog.mjs"
 import {
   DEVELOPMENT_RUN_ID_PATTERN,
   readDevelopmentRun
@@ -173,6 +174,7 @@ function progressKey(entry) {
 }
 
 export function createSoftwareFactoryAutonomousRunner(dependencies = {}) {
+  const listRuns = dependencies.listRuns || listDevelopmentRunSummaries
   const readRunImpl = dependencies.readRun || readDevelopmentRun
   const continueImpl = dependencies.continueRun || executeDevelopmentContinue
   const releasePackageImpl = dependencies.buildReleasePackage || buildSoftwareFactoryReleasePackageFromRun
@@ -185,6 +187,13 @@ export function createSoftwareFactoryAutonomousRunner(dependencies = {}) {
     let staleRetryUsed = false
 
     for (let step = 0; step < maxSteps; step += 1) {
+      // Direct /ppo factory-run must not bypass the manager's catalog gate.
+      // Recheck before each continuation, not just the first stage.
+      const catalog = await listRuns(options)
+      if (catalog?.ok !== true || catalog.code !== "ok" ||
+          !hasTrustedDevelopmentRunCatalogDiagnostics(catalog.diagnostics)) {
+        throw runnerError("FACTORY_RUN_CATALOG_UNAVAILABLE", "Software factory continuation requires a complete trusted run catalog.")
+      }
       const before = await readRunImpl(normalizedRunId, options)
       const stop = preflightStop(before, history.length, history)
 

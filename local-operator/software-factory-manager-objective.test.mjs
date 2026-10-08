@@ -36,7 +36,7 @@ test("manager objective intake pins one planned run to current GitHub head", asy
       ok: true,
       code: "ok",
       active: [],
-      diagnostics: { truncated: false }
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false }
     }),
     githubClient: {
       async getProjectSnapshot(projectId) {
@@ -99,7 +99,7 @@ test("manager objective intake refuses repositories with open pull requests befo
       ok: true,
       code: "ok",
       active: [],
-      diagnostics: { truncated: false }
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false }
     }),
     githubClient: {
       async getProjectSnapshot() {
@@ -126,7 +126,7 @@ test("manager objective intake refuses contradictory GitHub identity before crea
       ok: true,
       code: "ok",
       active: [],
-      diagnostics: { truncated: false }
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false }
     }),
     githubClient: {
       async getProjectSnapshot() {
@@ -257,7 +257,7 @@ test("planning transition failure preserves the created durable run id", async (
       ok: true,
       code: "ok",
       active: [],
-      diagnostics: { truncated: false }
+      diagnostics: { scanned: 0, returned: 0, invalid: 0, outOfScope: 0, truncated: false }
     }),
     githubClient: {
       async getProjectSnapshot() {
@@ -324,7 +324,7 @@ test("manager objective intake checks WIP admission before GitHub or run creatio
         terminal: false,
         recoveryRequired: false
       }],
-      diagnostics: { truncated: false }
+      diagnostics: { scanned: 1, returned: 1, invalid: 0, outOfScope: 0, truncated: false }
     }),
     githubClient: {
       async getProjectSnapshot() {
