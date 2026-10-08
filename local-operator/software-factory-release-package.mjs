@@ -362,7 +362,6 @@ function remoteReviewFacts(run, headSha) {
     latest.sha !== headSha ||
     metadata.reviewer !== REMOTE_PR_REVIEW_AGENT_ID ||
     metadata.project !== run.project?.id ||
-    metadata.outcome !== "ci_passed" ||
     metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
     metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH ||
     metadata.reviewedSha !== headSha ||
@@ -413,6 +412,7 @@ function ciFacts(run, headSha) {
     !latest ||
     latest.sha !== headSha ||
     metadata.project !== run.project?.id ||
+    metadata.outcome !== "ci_passed" ||
     metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
     metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH ||
     metadata.implementationSha !== headSha ||
