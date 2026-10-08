@@ -34,6 +34,8 @@ test("idle cycle drains queue once without invoking factory runs", async () => {
   let runCalls = 0
   let drainCalls = 0
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() { return catalog([]) },
     async runFactory() { runCalls += 1 },
     async drainQueue() {
@@ -52,6 +54,8 @@ test("idle cycle drains queue once without invoking factory runs", async () => {
 test("resumes at most two allowed active projects sequentially then drains once", async () => {
   const calls = []
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([
         summary("kynexa", RUN_A),
@@ -89,6 +93,8 @@ test("resumes at most two allowed active projects sequentially then drains once"
 test("merge-ready run is resumed only to the existing release-ready boundary", async () => {
   let drainCalls = 0
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([
         summary("kynexa", RUN_A, { status: "merge_ready" })
@@ -121,6 +127,8 @@ test("merge-ready run is resumed only to the existing release-ready boundary", a
 test("merged and production-stage runs are skipped by manager cycle", async () => {
   const calls = []
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([
         summary("kynexa", RUN_A, { status: "merged" }),
@@ -143,6 +151,8 @@ test("recovery-required active state fails closed before any work", async () => 
   let runs = 0
   let drains = 0
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([
         summary("kynexa", RUN_A, {
@@ -167,6 +177,8 @@ test("truncated catalog fails closed before any work", async () => {
   let runs = 0
   let drains = 0
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([], {
         code: "catalog_truncated",
@@ -187,6 +199,8 @@ test("truncated catalog fails closed before any work", async () => {
 
 test("policy-violating active project count fails closed", async () => {
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([
         summary("kynexa", RUN_A),
@@ -205,6 +219,8 @@ test("policy-violating active project count fails closed", async () => {
 test("runner failure is bounded and queue still gets one admission attempt", async () => {
   let drains = 0
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([summary("kynexa", RUN_A)])
     },
@@ -226,6 +242,8 @@ test("runner failure is bounded and queue still gets one admission attempt", asy
 test("blocked capacity is surfaced without retrying inside manager cycle", async () => {
   let runs = 0
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() {
       return catalog([summary("kynexa", RUN_A)])
     },
@@ -251,6 +269,8 @@ test("blocked capacity is surfaced without retrying inside manager cycle", async
 
 test("queue result is bounded and cannot leak objective or raw worker data", async () => {
   const cycle = createSoftwareFactoryManagerCycle({
+    async readDisposition() { return null },
+    async recordDisposition() { return null },
     async listRuns() { return catalog([]) },
     async drainQueue() {
       return {
@@ -269,4 +289,132 @@ test("queue result is bounded and cannot leak objective or raw worker data", asy
   assert.deepEqual(Object.keys(result.queue).sort(), ["ok", "outcome", "queueId", "reason", "runId"].sort())
   const output = formatSoftwareFactoryManagerCycle(result)
   assert.doesNotMatch(output, /secret objective|SENSITIVE_TEST_SENTINEL/u)
+})
+
+
+test("unchanged owner-action disposition is parked without invoking runner", async () => {
+  let runCalls = 0
+  let recordCalls = 0
+  const cycle = createSoftwareFactoryManagerCycle({
+    async listRuns() {
+      return catalog([summary("kynexa", RUN_A, { version: 8 })])
+    },
+    async readDisposition(runId, version) {
+      assert.equal(runId, RUN_A)
+      assert.equal(version, 8)
+      return {
+        outcome: "owner_action_required",
+        reason: "human_decision_required",
+        retryAfter: null
+      }
+    },
+    shouldExecute() {
+      return { execute: false, reason: "parked_until_run_version_changes" }
+    },
+    async recordDisposition() { recordCalls += 1 },
+    async runFactory() { runCalls += 1 },
+    async drainQueue() { return { ok: true, outcome: "queue_empty" } }
+  })
+
+  const result = await cycle()
+  assert.equal(runCalls, 0)
+  assert.equal(recordCalls, 0)
+  assert.equal(result.processedRunCount, 1)
+  assert.equal(result.executedRunCount, 0)
+  assert.equal(result.parkedRunCount, 1)
+  assert.equal(result.runs[0].parked, true)
+  assert.equal(result.outcome, "owner_action_required")
+})
+
+test("transient disposition is retried when policy says retry is due", async () => {
+  let runCalls = 0
+  let recorded
+  const cycle = createSoftwareFactoryManagerCycle({
+    async listRuns() {
+      return catalog([summary("kynexa", RUN_A, { version: 9 })])
+    },
+    async readDisposition() {
+      return {
+        outcome: "blocked_capacity",
+        reason: "worker_capacity_exhausted",
+        retryAfter: "2026-10-08T09:00:00.000Z"
+      }
+    },
+    shouldExecute() {
+      return { execute: true, reason: "transient_retry_due" }
+    },
+    async runFactory() {
+      runCalls += 1
+      return {
+        ok: false,
+        outcome: "blocked_capacity",
+        reason: "worker_capacity_exhausted",
+        run: { version: 9, status: "implementation_in_progress" }
+      }
+    },
+    async recordDisposition(value) { recorded = value },
+    async drainQueue() {
+      return { ok: false, outcome: "blocked_work_in_progress", reason: "project_active_run_limit" }
+    }
+  })
+
+  const result = await cycle()
+  assert.equal(runCalls, 1)
+  assert.equal(result.executedRunCount, 1)
+  assert.equal(result.parkedRunCount, 0)
+  assert.equal(result.runs[0].parked, false)
+  assert.equal(recorded.runVersion, 9)
+  assert.equal(recorded.outcome, "blocked_capacity")
+})
+
+test("new run version naturally ignores an older disposition lookup", async () => {
+  const lookedUpVersions = []
+  let runCalls = 0
+  const cycle = createSoftwareFactoryManagerCycle({
+    async listRuns() {
+      return catalog([summary("kynexa", RUN_A, { version: 10 })])
+    },
+    async readDisposition(_runId, version) {
+      lookedUpVersions.push(version)
+      return null
+    },
+    shouldExecute(disposition) {
+      assert.equal(disposition, null)
+      return { execute: true, reason: "no_disposition" }
+    },
+    async recordDisposition() {},
+    async runFactory() {
+      runCalls += 1
+      return { ok: true, outcome: "complete", run: { version: 10, status: "merged" } }
+    },
+    async drainQueue() { return { ok: true, outcome: "queue_empty" } }
+  })
+
+  const result = await cycle()
+  assert.deepEqual(lookedUpVersions, [10])
+  assert.equal(runCalls, 1)
+  assert.equal(result.outcome, "cycle_complete")
+})
+
+test("disposition-store failure stops cycle before repeating managed work", async () => {
+  let runCalls = 0
+  let drainCalls = 0
+  const cycle = createSoftwareFactoryManagerCycle({
+    async listRuns() {
+      return catalog([summary("kynexa", RUN_A, { version: 11 })])
+    },
+    async readDisposition() {
+      throw new Error("unavailable")
+    },
+    async recordDisposition() {},
+    async runFactory() { runCalls += 1 },
+    async drainQueue() { drainCalls += 1 }
+  })
+
+  await assert.rejects(
+    cycle(),
+    (error) => error?.code === "FACTORY_CYCLE_DISPOSITION_UNAVAILABLE"
+  )
+  assert.equal(runCalls, 0)
+  assert.equal(drainCalls, 0)
 })
