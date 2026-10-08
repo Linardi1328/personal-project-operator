@@ -103,6 +103,11 @@ for (const role of RETIREMENT_QUIESCENCE_PORT_ORDER) {
       const attained = f.events.filter(e => e.startsWith("acquire:")).map(e => e.slice(8))
       const released = f.events.filter(e => e.startsWith("release:")).map(e => e.slice(8))
       assert.deepEqual(released, attained.filter(r => r !== role || errorCase !== "unreachable").reverse())
+      // A failed remote acquisition could have partially succeeded; the same
+      // coordinator must never silently start a fresh acquisition.
+      const before = f.events.length
+      await assert.rejects(coordinator.acquireQuiescenceGuard({ ...request, runId: RUN_B }), failure)
+      assert.equal(f.events.length, before)
     })
   }
 }
