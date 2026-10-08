@@ -39,6 +39,9 @@ import {
   reconcileIndependentReview,
   runSandboxedProcess
 } from "./development-review-agent.mjs"
+import {
+  REVIEWED_ANTIGRAVITY_EXECUTION_ADAPTER_ID
+} from "./software-factory-implementation-evidence.mjs"
 
 const execFileAsync = promisify(execFile)
 const TRUSTED_MACOS_SANDBOX_EXECUTABLE = process.env.PPO_REVIEW_TEST_SANDBOX_EXECUTABLE || "/usr/bin/sandbox-exec"
@@ -242,19 +245,20 @@ async function makeImplementationReadyFixture(options = {}) {
   await git(["commit", "-m", "phase 6d implementation"], location.workspacePath)
 
   const headSha = await git(["rev-parse", "HEAD"], location.workspacePath)
+  const implementationAdapterId = options.implementationAdapterId || PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE
   const implementationEvidence = options.implementationEvidence === false
     ? []
     : [{
       kind: "implementation",
       sha: options.implementationEvidenceSha || headSha,
-      source: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-      summary: "Codex implementation completed and verified locally.",
+      source: implementationAdapterId,
+      summary: "Reviewed implementation completed and verified locally.",
       metadata: {
         project: fixture.project.id,
         branch: location.branch,
         workspaceId: location.workspaceId,
         workspaceRef: location.workspaceRef,
-        adapter: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
+        adapter: implementationAdapterId,
         attempt: 1,
         promptHash: "a".repeat(64),
         outcome: "implementation_ready",
@@ -266,8 +270,8 @@ async function makeImplementationReadyFixture(options = {}) {
     status: "implementation_ready",
     branch: location.branch,
     headSha,
-    actor: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-    reason: "phase-6d-codex-implementation-ready",
+    actor: implementationAdapterId,
+    reason: "reviewed-implementation-ready",
     evidence: implementationEvidence
   }, {
     writeDataDir: fixture.writeDataDir,
@@ -683,6 +687,28 @@ test("workspace reconciliation requires exact branch, HEAD, and clean tree befor
   }), "REVIEW_WORKSPACE_DIRTY")
 })
 
+test("Antigravity implementation_ready evidence can enter independent review", async () => {
+  const fixture = await makeTestsPassedFixture({
+    implementationAdapterId: REVIEWED_ANTIGRAVITY_EXECUTION_ADAPTER_ID
+  })
+
+  const result = await executeIndependentReview(fixture.run.runId, {
+    expectedVersion: fixture.run.version,
+    writeDataDir: fixture.writeDataDir,
+    workspaceRegistry: fixture.registry,
+    reviewConfig: trustedReviewConfig(),
+    reviewRunner: makeReviewRunner(async () => ({
+      exitCode: 0,
+      stdout: `${JSON.stringify(decision(fixture.headSha))}\n`,
+      stderr: ""
+    })),
+    now: fixture.now
+  })
+
+  assert.equal(result.run.status, "review_passed")
+  assert.equal(result.run.headSha, fixture.headSha)
+})
+
 test("trusted reviewer config uses explicit argv, shell=false, sanitized env, sandbox, and deterministic bounded prompt", async () => {
   const fixture = await makeTestsPassedFixture()
   const calls = []
@@ -1091,7 +1117,7 @@ test("bounded durable review attempts are enforced across implementation cycles"
           metadata: {
             project: fixture.project.id,
             adapter: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-            attempt,
+            attempt: current.attempts.implementation,
             outcome: "implementation_ready"
           }
         }]
@@ -1159,7 +1185,7 @@ test("bounded durable review attempts are enforced across implementation cycles"
       metadata: {
         project: fixture.project.id,
         adapter: PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE,
-        attempt: 6,
+        attempt: current.attempts.implementation,
         outcome: "implementation_ready"
       }
     }]

@@ -16,6 +16,10 @@ import {
   resolveImplementationWorkspaceLocation
 } from "./development-workspace-manager.mjs"
 import {
+  REVIEWED_CODEX_EXECUTION_ADAPTER_ID,
+  classifyReviewedImplementationEvidence
+} from "./software-factory-implementation-evidence.mjs"
+import {
   MAX_REVIEW_FINDING_CHARS,
   MAX_REVIEW_FINDINGS
 } from "./development-review-findings-contract.mjs"
@@ -23,9 +27,9 @@ import {
 const execFileAsync = promisify(execFile)
 
 export const INDEPENDENT_REVIEW_AGENT_ID = "phase-6f-independent-review-agent"
+export const PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE = REVIEWED_CODEX_EXECUTION_ADAPTER_ID
 export const REMOTE_PR_REVIEW_AGENT_ID = "phase-6g-remote-pr-review-agent"
 export const INDEPENDENT_REVIEW_SANDBOX_ID = "phase-6f-no-outbound-network-review-sandbox"
-export const PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE = "phase-6d-codex-execution-adapter"
 export const PHASE_6E_TEST_EVIDENCE_SOURCE = "phase-6e-automated-test-runner"
 export const REVIEW_FINDINGS_EVIDENCE_OUTCOME = "review_findings"
 export const MAX_INDEPENDENT_REVIEW_ATTEMPTS = 5
@@ -1500,23 +1504,6 @@ async function reconcileWorkspaceForReview(run, options) {
   }
 }
 
-function latestPhase6DImplementationEvidence(run) {
-  const evidence = Array.isArray(run?.evidence?.implementation) ? run.evidence.implementation : []
-
-  for (let index = evidence.length - 1; index >= 0; index -= 1) {
-    const entry = evidence[index]
-
-    if (
-      entry?.source === PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE ||
-      entry?.metadata?.adapter === PHASE_6D_IMPLEMENTATION_EVIDENCE_SOURCE
-    ) {
-      return entry
-    }
-  }
-
-  return null
-}
-
 function latestPhase6EPassEvidence(run) {
   const evidence = Array.isArray(run?.evidence?.test) ? run.evidence.test : []
 
@@ -1535,12 +1522,18 @@ function latestPhase6EPassEvidence(run) {
 }
 
 function assertImplementationEvidenceMatches(run, reviewedSha) {
-  const evidence = latestPhase6DImplementationEvidence(run)
+  const reviewed = classifyReviewedImplementationEvidence(run)
+  const evidence = reviewed.entry
 
-  if (!evidence || evidence.sha !== reviewedSha) {
+  if (
+    reviewed.classification !== "completed" ||
+    !evidence ||
+    evidence.sha !== reviewedSha ||
+    evidence.metadata?.outcome !== "implementation_ready"
+  ) {
     throw reviewError(
       "REVIEW_IMPLEMENTATION_EVIDENCE_MISMATCH",
-      "Phase 6D implementation evidence SHA does not match the run head SHA."
+      "Reviewed implementation evidence does not prove the current run head is implementation-ready."
     )
   }
 
