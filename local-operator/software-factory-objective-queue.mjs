@@ -51,7 +51,8 @@ function paths(options = {}) {
     root,
     requests: join(root, "requests"),
     claims: join(root, "claims"),
-    results: join(root, "results")
+    results: join(root, "results"),
+    enqueueLocks: join(root, "enqueue-locks")
   }
 }
 
@@ -92,6 +93,7 @@ async function ensureStore(options = {}) {
   await ensurePrivateChildDirectory(p.root, p.requests, options)
   await ensurePrivateChildDirectory(p.root, p.claims, options)
   await ensurePrivateChildDirectory(p.root, p.results, options)
+  await ensurePrivateChildDirectory(p.root, p.enqueueLocks, options)
   return p
 }
 
@@ -267,7 +269,8 @@ async function requestFiles(options = {}) {
   const requests = await safeDirectoryIfPresent(p.requests)
   const claims = await safeDirectoryIfPresent(p.claims)
   const results = await safeDirectoryIfPresent(p.results)
-  if (requests === null || claims === null || results === null) {
+  const enqueueLocks = await safeDirectoryIfPresent(p.enqueueLocks)
+  if (requests === null || claims === null || results === null || enqueueLocks === null) {
     throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is incomplete.")
   }
 
@@ -306,6 +309,44 @@ export async function listSoftwareFactoryQueuedObjectives(options = {}) {
   return Object.freeze(pending.map((entry) => Object.freeze({ ...entry })))
 }
 
+function enqueueLockName(projectId, objectiveHashValue) {
+  return `${objectiveHash(`${projectId}\u0000${objectiveHashValue}`)}.lock`
+}
+
+async function acquireEnqueueLock(p, projectId, objectiveHashValue, options = {}) {
+  const lockPath = join(p.enqueueLocks, enqueueLockName(projectId, objectiveHashValue))
+  let handle
+  try {
+    handle = await open(lockPath, "wx", 0o600)
+    await handle.writeFile("software-factory-enqueue-lock\n", "utf8")
+    await handle.sync()
+    await handle.close()
+    handle = null
+    const syncDirectoryImpl = options.syncDirectoryImpl || syncDirectory
+    await syncDirectoryImpl(p.enqueueLocks)
+    return lockPath
+  } catch (error) {
+    await handle?.close().catch(() => {})
+    if (error?.code === "EEXIST") {
+      throw queueError(
+        "FACTORY_QUEUE_ENQUEUE_BUSY",
+        "An identical Software Factory objective is already being enqueued; inspect the queue before retrying."
+      )
+    }
+    throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is unavailable.")
+  }
+}
+
+async function releaseEnqueueLock(lockPath, directory) {
+  try {
+    await unlink(lockPath)
+    await syncDirectory(directory)
+  } catch (error) {
+    if (error?.code === "ENOENT") return
+    throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is unavailable.")
+  }
+}
+
 export async function enqueueSoftwareFactoryObjective(input, options = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw queueError("FACTORY_QUEUE_INPUT_INVALID", "Software factory queue input is invalid.")
@@ -335,26 +376,53 @@ export async function enqueueSoftwareFactoryObjective(input, options = {}) {
   }
 
   const p = await ensureStore(options)
-  const queueId = makeQueueId(options)
-  const queuedAt = nowIso(options)
-  const request = {
-    schemaVersion: 1,
-    queueId,
-    projectId,
-    objective,
-    objectiveHash: hash,
-    queuedAt
-  }
-  await immutableWrite(join(p.requests, `${queueId}.json`), request, p.requests, options)
+  const lockPath = await acquireEnqueueLock(p, projectId, hash, options)
 
-  return Object.freeze({
-    ok: true,
-    outcome: "queued",
-    queueId,
-    projectId,
-    objectiveHash: hash,
-    queuedAt
-  })
+  try {
+    const refreshed = await listSoftwareFactoryQueuedObjectives(options)
+    const refreshedDuplicate = refreshed.find((entry) => (
+      entry.projectId === projectId &&
+      entry.objectiveHash === hash
+    ))
+
+    if (refreshedDuplicate) {
+      return Object.freeze({
+        ok: true,
+        outcome: "already_queued",
+        queueId: refreshedDuplicate.queueId,
+        projectId,
+        objectiveHash: hash,
+        queuedAt: refreshedDuplicate.queuedAt
+      })
+    }
+
+    if (refreshed.length >= SOFTWARE_FACTORY_OBJECTIVE_QUEUE_MAX_PENDING) {
+      throw queueError("FACTORY_QUEUE_FULL", "Software factory objective queue is full.")
+    }
+
+    const queueId = makeQueueId(options)
+    const queuedAt = nowIso(options)
+    const request = {
+      schemaVersion: 1,
+      queueId,
+      projectId,
+      objective,
+      objectiveHash: hash,
+      queuedAt
+    }
+    await immutableWrite(join(p.requests, `${queueId}.json`), request, p.requests, options)
+
+    return Object.freeze({
+      ok: true,
+      outcome: "queued",
+      queueId,
+      projectId,
+      objectiveHash: hash,
+      queuedAt
+    })
+  } finally {
+    await releaseEnqueueLock(lockPath, p.enqueueLocks)
+  }
 }
 
 export async function claimSoftwareFactoryQueuedObjective(queueIdInput, options = {}) {
