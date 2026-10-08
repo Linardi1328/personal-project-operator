@@ -31,7 +31,9 @@ The plugin:
 - routes `/ppo runs` and `/ppo run <run-id>` to the controlled Phase 6O read-only catalog routes for ordinary six-project runs only
 - routes `/ppo cancel <run-id>` and `/ppo cancel-confirm <request-id>` to the controlled Phase 6P quiescent cancellation approval path for ordinary six-project runs only
 - routes `/ppo continue <run-id>` to the controlled Phase 6K one-boundary development continue orchestrator for ordinary six-project runs only
-- routes `/ppo factory-run <run-id>` to the bounded Software Factory V0.6 autonomous driver, which stops at `merge_ready` and never routes production actions
+- routes `/ppo factory-run <run-id>` to the bounded Software Factory autonomous driver, which stops at `merge_ready` and never routes production actions
+- routes `/ppo release <run-id>` to stage one 10-minute immutable release-package approval; staging never merges
+- routes `/ppo release-confirm <request-id>` to atomically consume one approval, rebuild the exact release package, and invoke only the existing SHA-pinned squash merge
 - routes `/ppo recover <run-id>` to the controlled Phase 6M read-only recovery route for ordinary six-project runs only
 - does not call Telegram APIs
 - does not use secrets
@@ -95,6 +97,8 @@ cancel <run-id>
 cancel-confirm <request-id>
 continue <run-id>
 factory-run <run-id>
+release <run-id>
+release-confirm <request-id>
 recover <run-id>
 ```
 
@@ -162,3 +166,14 @@ node local-operator/project-note-add.test.mjs
 node local-operator/project-note-approval.test.mjs
 node --test --test-concurrency=1 local-operator/development-start-route.test.mjs
 ```
+
+
+## Software Factory V1.3 release approval
+
+V1.3 adds an explicit two-step owner release boundary after a `release_ready` factory handoff.
+
+`/ppo release <run-id>` rebuilds the current deterministic release package and stages a private 10-minute single-use approval request bound to the exact run version, project, head SHA, pull request number, package hash, and approved squash merge method. Staging never merges.
+
+`/ppo release-confirm <request-id>` atomically claims the request before any GitHub write, rejects expired/replayed requests, rebuilds the release package, and requires every binding to remain identical. Only then may it invoke the existing Phase 6G SHA-pinned squash merge.
+
+The release commands never authorize production deployment, production verification, rollback, service control, or VPS mutation.

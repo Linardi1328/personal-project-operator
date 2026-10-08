@@ -377,3 +377,30 @@ V1.2 does not grant merge or production authority. The package explicitly record
 
 - merge: owner approval required;
 - production deployment: not authorized.
+
+
+## V1.3 package-bound owner release approval
+
+The final merge boundary is now an explicit two-step owner approval bound to the immutable V1.2 release package.
+
+```text
+factory-run
+  ↓
+release_ready + package hash
+  ↓
+/ppo release <run-id>
+  ↓
+10-minute single-use approval request
+  ↓
+owner explicitly confirms request id
+  ↓
+package is rebuilt and exact bindings revalidated
+  ↓
+existing Phase 6G SHA-pinned squash merge
+  ↓
+merged
+```
+
+The staged request binds the run id and version, project, exact head SHA, pull request number, package hash, and approved squash merge method. Confirmation atomically consumes the request before any merge action. Expired, replayed, stale, malformed, or changed release state fails closed.
+
+V1.3 grants no automatic approval and no production authority. Production deployment, verification, rollback, and service mutation remain outside the Software Factory release approval boundary.

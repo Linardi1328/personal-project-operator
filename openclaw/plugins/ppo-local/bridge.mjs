@@ -7,6 +7,7 @@ import { MAX_TASK_CHARS } from "../../../local-operator/codex-prompt-generator.m
 import { MAX_PROMPT_DRAFT_CHARS } from "../../../local-operator/codex-planning-tools.mjs";
 import { CANCELLATION_REQUEST_ID_PATTERN } from "../../../local-operator/development-run-cancellation-approval.mjs";
 import { DEVELOPMENT_RUN_ID_PATTERN } from "../../../local-operator/development-run-id.mjs";
+import { SOFTWARE_FACTORY_RELEASE_REQUEST_ID_PATTERN } from "../../../local-operator/software-factory-release-approval.mjs";
 import {
   parsePpoIssueConfirmRequest,
   parsePpoIssueCreateRequest
@@ -112,6 +113,8 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
     "- /ppo factory-run <run-id>",
+    "- /ppo release <run-id>",
+    "- /ppo release-confirm <request-id>",
     "- /ppo recover <run-id>"
   ].join("\n");
 }
@@ -295,6 +298,42 @@ function parseFactoryRunCommand(commandText, rest, rawHasLineBreak, rawHasTab) {
   return ["factory-run", normalized];
 }
 
+function parseReleaseCommand(commandText, rawCommand) {
+  if (rawCommand !== rawCommand.trim() || /[\u0000-\u001F\u007F-\u009F]/u.test(rawCommand)) {
+    return null;
+  }
+
+  const parts = commandText.split(" ");
+
+  if (
+    parts.length === 2 &&
+    parts[0] === "release" &&
+    DEVELOPMENT_RUN_ID_PATTERN.test(parts[1])
+  ) {
+    const canonical = `release ${parts[1]}`;
+    if (![canonical, `/ppo ${canonical}`, `ppo ${canonical}`].includes(rawCommand)) {
+      return null;
+    }
+
+    return ["release", parts[1]];
+  }
+
+  if (
+    parts.length === 2 &&
+    parts[0] === "release-confirm" &&
+    SOFTWARE_FACTORY_RELEASE_REQUEST_ID_PATTERN.test(parts[1])
+  ) {
+    const canonical = `release-confirm ${parts[1]}`;
+    if (![canonical, `/ppo ${canonical}`, `ppo ${canonical}`].includes(rawCommand)) {
+      return null;
+    }
+
+    return ["release-confirm", parts[1]];
+  }
+
+  return null;
+}
+
 function parseRecoverCommand(commandText, rest, rawHasLineBreak, rawHasTab) {
   if (rawHasLineBreak || rawHasTab || /[\r\n\t]/u.test(commandText)) {
     return null;
@@ -401,6 +440,10 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "cancel" || commandName === "cancel-confirm") {
     return parseCancellationCommand(commandText, rawCommand);
+  }
+
+  if (commandName === "release" || commandName === "release-confirm") {
+    return parseReleaseCommand(commandText, rawCommand);
   }
 
   const staticCommand = allowedCommands.get(normalizedCommand.toLowerCase());
