@@ -254,3 +254,23 @@ export function formatSoftwareFactoryManagerObjectiveError(error) {
 
   return "PPO software factory manager-objective error: unexpected local failure."
 }
+
+
+export async function handlePpoSoftwareFactoryManagerObjectiveCommand(projectId, objective, options = {}) {
+  try {
+    const result = await executeSoftwareFactoryManagerObjective(projectId, objective, options)
+    return {
+      ok: result.ok,
+      outcome: result.outcome,
+      runId: result.intake?.runId || null,
+      output: formatSoftwareFactoryManagerObjective(result)
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      outcome: "owner_action_required",
+      runId: null,
+      output: formatSoftwareFactoryManagerObjectiveError(error)
+    }
+  }
+}
