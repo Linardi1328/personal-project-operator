@@ -141,16 +141,21 @@ export function createTwoHostRetirementQuiescenceCoordinator(ports = {}) {
       exclusive: true,
       async assertHeld() {
         if (released || closing) return false
-        return await held()
+        const stillHeld = await held()
+        // A remote assertion may resolve after release (or a replacement
+        // acquisition). Never return an earlier, now-stale positive result.
+        return stillHeld && !released && !closing && !poisoned && inUse
       },
       async release() {
         if (released || closing) throw unavailable()
+        // Commit to a terminal single-use release attempt BEFORE awaiting
+        // any remote cleanup. Even a failed/partial cleanup cannot be retried
+        // through this guard; manual reconciliation is required.
+        released = true
         closing = true
         try {
           await releaseAll()
-          released = true
         } finally {
-          // Failed release poisons the coordinator and cannot be retried.
           closing = false
         }
       }
