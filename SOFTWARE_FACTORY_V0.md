@@ -462,3 +462,21 @@ Before use, the plan contract validates exact fields, sizes, arrays, sensitive/c
 The latest valid structured plan is consumed by the implementation coordinator for capability routing and risk-aware model policy, and by the Antigravity execution adapter as bounded prompt context. Invalid or stale plan metadata is never treated as authority; existing task-based routing remains the fail-closed compatibility fallback.
 
 This contract is provider-neutral. A future planning worker may enrich the plan only by producing the same validated schema while remaining bound to the original owner objective. Adding a live paid/model-backed planning provider remains a separate architecture and cost decision.
+
+
+## V1.6 WIP admission and backpressure
+
+Manager-objective intake now enforces the owner's Software Factory WIP policy before any GitHub snapshot, model discovery, readiness probe, or worker execution occurs.
+
+The admission policy is:
+
+- at most two active ordinary projects globally;
+- at most one active development run per project;
+- a `merge_ready` run still consumes WIP until the owner resolves the release boundary;
+- terminal runs do not consume WIP;
+- any recovery-required active run blocks new admission until reconciled; and
+- incomplete or truncated run-catalog state fails closed.
+
+This control exists to protect both management bandwidth and AI/model quota. A new manager objective cannot create another run merely because execution capacity exists.
+
+V1.6 intentionally does not yet persist waiting objectives. A later queue slice may retain blocked objectives safely and admit them only when a WIP slot becomes available.
