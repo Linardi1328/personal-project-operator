@@ -23,6 +23,9 @@ import {
   handlePpoSoftwareFactoryManagerObjectiveCommand
 } from "./software-factory-manager-objective.mjs";
 import {
+  handlePpoSoftwareFactoryManagerCycleCommand
+} from "./software-factory-manager-cycle.mjs";
+import {
   handlePpoSoftwareFactoryQueueDrainCommand
 } from "./software-factory-queue-drain.mjs";
 import {
@@ -318,6 +321,12 @@ function parseStrictFactoryRunArgs(rawArgs) {
   });
 }
 
+function parseStrictFactoryCycleArgs(rawArgs) {
+  return parseStrictZeroArgCommandArgs(rawArgs, "factory-cycle", {
+    allowExactCombined: true
+  });
+}
+
 function parseStrictFactoryDrainArgs(rawArgs) {
   return parseStrictZeroArgCommandArgs(rawArgs, "factory-drain", {
     allowExactCombined: true
@@ -591,6 +600,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs continue <run-id>",
     "  node local-operator/ppo-command.mjs factory-run <run-id>",
+    "  node local-operator/ppo-command.mjs factory-cycle",
     "  node local-operator/ppo-command.mjs factory-drain",
     "  node local-operator/ppo-command.mjs factory-queue",
     "  node local-operator/ppo-command.mjs release <run-id>",
@@ -618,6 +628,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs /ppo cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
     "  node local-operator/ppo-command.mjs /ppo factory-run <run-id>",
+    "  node local-operator/ppo-command.mjs /ppo factory-cycle",
     "  node local-operator/ppo-command.mjs /ppo factory-drain",
     "  node local-operator/ppo-command.mjs /ppo factory-queue",
     "  node local-operator/ppo-command.mjs /ppo release <run-id>",
@@ -648,6 +659,7 @@ function usage() {
     "  /ppo cancel-confirm <request-id>",
     "  /ppo continue <run-id>",
     "  /ppo factory-run <run-id>",
+    "  /ppo factory-cycle",
     "  /ppo factory-drain",
     "  /ppo factory-queue",
     "  /ppo release <run-id>",
@@ -698,6 +710,7 @@ function unsupported(command) {
     "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
     "- /ppo factory-run <run-id>",
+    "- /ppo factory-cycle",
     "- /ppo factory-drain",
     "- /ppo factory-queue",
     "- /ppo release <run-id>",
@@ -981,6 +994,7 @@ async function main() {
   const strictContinue = parseStrictContinueArgs(rawProcessArgs);
   const strictFactoryStart = parseStrictFactoryStartArgs(rawProcessArgs);
   const strictFactoryRun = parseStrictFactoryRunArgs(rawProcessArgs);
+  const strictFactoryCycle = parseStrictFactoryCycleArgs(rawProcessArgs);
   const strictFactoryDrain = parseStrictFactoryDrainArgs(rawProcessArgs);
   const strictFactoryQueue = parseStrictFactoryQueueArgs(rawProcessArgs);
   const strictReleaseConfirm = parseStrictReleaseConfirmArgs(rawProcessArgs);
@@ -1049,6 +1063,15 @@ async function main() {
       trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
     });
     console.log(formatSoftwareFactoryAutonomousRun(result));
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictFactoryCycle?.ok === true) {
+    const result = await handlePpoSoftwareFactoryManagerCycleCommand({
+      trustedRuntimeProfileProvider: loadDevelopmentContinueRuntimeProfile
+    });
+    console.log(result.output);
     process.exitCode = result.ok ? 0 : 1;
     return;
   }
@@ -1134,6 +1157,12 @@ async function main() {
 
   if (strictFactoryRun?.attempted === true) {
     console.log(unsupported(rawProcessArgs[0] || "factory-run"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictFactoryCycle?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "factory-cycle"));
     process.exitCode = 1;
     return;
   }
