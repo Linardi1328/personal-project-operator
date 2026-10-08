@@ -26,6 +26,14 @@ export class SoftwareFactoryObjectiveQueueError extends Error {
   }
 }
 
+export class SoftwareFactoryObjectiveQueueAmbiguousError extends SoftwareFactoryObjectiveQueueError {
+  constructor(code, safeMessage) {
+    super(code, safeMessage)
+    this.name = "SoftwareFactoryObjectiveQueueAmbiguousError"
+    this.stateCommitted = true
+  }
+}
+
 function queueError(code, safeMessage) {
   return new SoftwareFactoryObjectiveQueueError(code, safeMessage)
 }
@@ -52,6 +60,21 @@ async function ensurePrivateDir(path) {
   await chmod(path, 0o700)
 }
 
+async function ensurePrivateChildDirectory(parentPath, childPath, options = {}) {
+  let created = false
+  try {
+    await mkdir(childPath, { mode: 0o700 })
+    created = true
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error
+  }
+  await chmod(childPath, 0o700)
+  if (created) {
+    const syncParentDirectoryImpl = options.syncParentDirectoryImpl || syncDirectory
+    await syncParentDirectoryImpl(parentPath)
+  }
+}
+
 async function syncDirectory(path) {
   const handle = await open(path, "r")
   try {
@@ -63,10 +86,12 @@ async function syncDirectory(path) {
 
 async function ensureStore(options = {}) {
   const p = paths(options)
-  await ensurePrivateDir(p.root)
-  await ensurePrivateDir(p.requests)
-  await ensurePrivateDir(p.claims)
-  await ensurePrivateDir(p.results)
+  const base = writeDataDir(options)
+  await ensurePrivateDir(base)
+  await ensurePrivateChildDirectory(base, p.root, options)
+  await ensurePrivateChildDirectory(p.root, p.requests, options)
+  await ensurePrivateChildDirectory(p.root, p.claims, options)
+  await ensurePrivateChildDirectory(p.root, p.results, options)
   return p
 }
 
@@ -129,6 +154,7 @@ function makeQueueId(options = {}) {
 async function immutableWrite(path, payload, directory, options = {}) {
   const tempPath = join(directory, `.pending-${randomUUID()}.json`)
   let handle
+  let published = false
   try {
     handle = await open(tempPath, "wx", 0o600)
     await handle.writeFile(`${JSON.stringify(payload)}\n`, "utf8")
@@ -136,6 +162,7 @@ async function immutableWrite(path, payload, directory, options = {}) {
     await handle.close()
     handle = null
     await link(tempPath, path)
+    published = true
     const syncDirectoryImpl = options.syncDirectoryImpl || syncDirectory
     await syncDirectoryImpl(directory)
   } catch (error) {
@@ -143,6 +170,12 @@ async function immutableWrite(path, payload, directory, options = {}) {
       throw queueError("FACTORY_QUEUE_CONFLICT", "Software factory queue state changed; reload before retrying.")
     }
     if (error instanceof SoftwareFactoryObjectiveQueueError) throw error
+    if (published) {
+      throw new SoftwareFactoryObjectiveQueueAmbiguousError(
+        "FACTORY_QUEUE_DURABILITY_AMBIGUOUS",
+        "Software factory queue state may already be committed; inspect queue state before retrying."
+      )
+    }
     throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is unavailable.")
   } finally {
     await handle?.close().catch(() => {})
@@ -177,6 +210,41 @@ async function exists(path) {
   }
 }
 
+function validateStoredRequest(request, expectedQueueId = null) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    throw queueError("FACTORY_QUEUE_CORRUPT", "Software factory objective queue contains invalid state.")
+  }
+  const keys = Object.keys(request).sort()
+  const expectedKeys = ["schemaVersion", "queueId", "projectId", "objective", "objectiveHash", "queuedAt"].sort()
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
+    throw queueError("FACTORY_QUEUE_CORRUPT", "Software factory objective queue contains invalid state.")
+  }
+  const queueId = normalizeQueueId(request.queueId)
+  const projectId = normalizeProjectId(request.projectId)
+  const objective = normalizeObjective(request.objective)
+  const hash = String(request.objectiveHash ?? "").trim().toLowerCase()
+  const queuedAt = String(request.queuedAt ?? "")
+  const queuedMs = Date.parse(queuedAt)
+  if (
+    request.schemaVersion !== 1 ||
+    (expectedQueueId !== null && queueId !== expectedQueueId) ||
+    hash !== objectiveHash(objective) ||
+    !/^[a-f0-9]{64}$/u.test(hash) ||
+    !Number.isFinite(queuedMs) ||
+    new Date(queuedMs).toISOString() !== queuedAt
+  ) {
+    throw queueError("FACTORY_QUEUE_CORRUPT", "Software factory objective queue contains invalid state.")
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    queueId,
+    projectId,
+    objective,
+    objectiveHash: hash,
+    queuedAt
+  })
+}
+
 async function requestFiles(options = {}) {
   const p = await ensureStore(options)
   const names = await readdir(p.requests)
@@ -194,18 +262,7 @@ export async function listSoftwareFactoryQueuedObjectives(options = {}) {
     const queueId = name.slice(0, -5)
     const resultPath = join(p.results, name)
     if (await exists(resultPath)) continue
-    const request = await readJson(join(p.requests, name))
-    if (
-      request?.schemaVersion !== 1 ||
-      request?.queueId !== queueId ||
-      !queueIdPattern.test(queueId) ||
-      typeof request.projectId !== "string" ||
-      typeof request.objective !== "string" ||
-      objectiveHash(request.objective) !== request.objectiveHash ||
-      typeof request.queuedAt !== "string"
-    ) {
-      throw queueError("FACTORY_QUEUE_CORRUPT", "Software factory objective queue contains invalid state.")
-    }
+    const request = validateStoredRequest(await readJson(join(p.requests, name)), queueId)
     pending.push({
       ...request,
       claimed: await exists(join(p.claims, name))
@@ -275,7 +332,7 @@ export async function claimSoftwareFactoryQueuedObjective(queueIdInput, options 
   const queueId = normalizeQueueId(queueIdInput)
   const p = await ensureStore(options)
   const name = `${queueId}.json`
-  const request = await readJson(join(p.requests, name))
+  const request = validateStoredRequest(await readJson(join(p.requests, name)), queueId)
   if (await exists(join(p.results, name))) {
     throw queueError("FACTORY_QUEUE_ALREADY_COMPLETED", "Software factory queued objective is already completed.")
   }
@@ -328,7 +385,7 @@ export async function completeSoftwareFactoryQueuedObjective(queueIdInput, input
 
   const p = await ensureStore(options)
   const name = `${queueId}.json`
-  await readJson(join(p.requests, name))
+  validateStoredRequest(await readJson(join(p.requests, name)), queueId)
   if (!(await exists(join(p.claims, name)))) {
     throw queueError("FACTORY_QUEUE_CLAIM_REQUIRED", "Software factory queue result requires an active claim.")
   }
