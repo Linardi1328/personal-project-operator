@@ -362,6 +362,7 @@ function remoteReviewFacts(run, headSha) {
     latest.sha !== headSha ||
     metadata.reviewer !== REMOTE_PR_REVIEW_AGENT_ID ||
     metadata.project !== run.project?.id ||
+    metadata.outcome !== "ci_passed" ||
     metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
     metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH ||
     metadata.reviewedSha !== headSha ||
@@ -392,11 +393,20 @@ function remoteReviewFacts(run, headSha) {
 }
 
 function ciFacts(run, headSha) {
-  const latest = latestEvidence(run, "merge", (entry) => (
-    entry?.source === GITHUB_DELIVERY_AGENT_ID &&
-    entry?.metadata?.agent === GITHUB_DELIVERY_AGENT_ID &&
-    entry?.metadata?.outcome === "ci_passed"
-  ))
+  const latest = latestEvidence(run, "merge", (entry) => {
+    const metadata = entry?.metadata || {}
+    const outcome = typeof metadata.outcome === "string" ? metadata.outcome : ""
+
+    return (
+      entry?.source === GITHUB_DELIVERY_AGENT_ID &&
+      metadata.agent === GITHUB_DELIVERY_AGENT_ID &&
+      (
+        outcome.startsWith("ci_") ||
+        metadata.workflowConclusion !== undefined ||
+        metadata.requiredSteps !== undefined
+      )
+    )
+  })
   const metadata = latest?.metadata || {}
 
   if (
@@ -437,6 +447,7 @@ function deliveryFacts(run, headSha, remoteReview, ci) {
     !latest ||
     latest.sha !== headSha ||
     metadata.outcome !== "merge_ready" ||
+    metadata.project !== run.project?.id ||
     metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
     metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH ||
     metadata.implementationSha !== headSha ||
