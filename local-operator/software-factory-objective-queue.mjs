@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto"
-import { chmod, link, mkdir, open, readdir, readFile, unlink } from "node:fs/promises"
+import { chmod, link, lstat, mkdir, open, readdir, readFile, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
@@ -245,9 +245,38 @@ function validateStoredRequest(request, expectedQueueId = null) {
   })
 }
 
+async function safeDirectoryIfPresent(path) {
+  let info
+  try {
+    info = await lstat(path)
+  } catch (error) {
+    if (error?.code === "ENOENT") return null
+    throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is unavailable.")
+  }
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is unavailable.")
+  }
+  return info
+}
+
 async function requestFiles(options = {}) {
-  const p = await ensureStore(options)
-  const names = await readdir(p.requests)
+  const p = paths(options)
+  const root = await safeDirectoryIfPresent(p.root)
+  if (root === null) return { p, names: [] }
+
+  const requests = await safeDirectoryIfPresent(p.requests)
+  const claims = await safeDirectoryIfPresent(p.claims)
+  const results = await safeDirectoryIfPresent(p.results)
+  if (requests === null || claims === null || results === null) {
+    throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is incomplete.")
+  }
+
+  let names
+  try {
+    names = await readdir(p.requests)
+  } catch {
+    throw queueError("FACTORY_QUEUE_STORE_UNAVAILABLE", "Software factory objective queue is unavailable.")
+  }
   return {
     p,
     names: names.filter((name) => /^[A-Za-z0-9_-]{32}\.json$/u.test(name)).sort()
