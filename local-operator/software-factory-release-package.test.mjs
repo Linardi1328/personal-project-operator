@@ -46,7 +46,7 @@ function implementationEvidence(overrides = {}) {
       attempt: 2,
       outcome: "implementation_ready",
       changedFiles: 7,
-      model: "gemini-3-flash-high",
+      modelSlug: "gemini-3-flash-high",
       ...overrides
     }
   }
@@ -334,6 +334,22 @@ test("refuses contradictory CI and merge-ready delivery bindings", () => {
   assert.throws(
     () => buildSoftwareFactoryReleasePackageFromRun(deliveryMismatch),
     (error) => error?.code === "FACTORY_RELEASE_DELIVERY_EVIDENCE_INVALID"
+  )
+
+  const prMismatch = releaseRun()
+  prMismatch.evidence.merge[0] = ciEvidence({ prNumber: 43 })
+
+  assert.throws(
+    () => buildSoftwareFactoryReleasePackageFromRun(prMismatch),
+    (error) => error?.code === "FACTORY_RELEASE_DELIVERY_EVIDENCE_INVALID"
+  )
+
+  const workflowMismatch = releaseRun()
+  workflowMismatch.evidence.merge[0] = ciEvidence({ workflowName: "Other workflow" })
+
+  assert.throws(
+    () => buildSoftwareFactoryReleasePackageFromRun(workflowMismatch),
+    (error) => error?.code === "FACTORY_RELEASE_CI_EVIDENCE_INVALID"
   )
 })
 
