@@ -434,7 +434,8 @@ export async function stageSoftwareFactoryReleaseApproval(runId, options = {}) {
     const buildPackage = options.buildReleasePackage || buildSoftwareFactoryReleasePackage
     const packageValue = await buildPackage(runId, options)
     const paths = storePaths(options)
-    const record = requestRecord(packageValue, makeRequestId(options), nowDate(options))
+    const requested = requestRecord(packageValue, makeRequestId(options), nowDate(options))
+    const record = parseStoredRecord(JSON.stringify(requested), requested.requestId)
 
     await ensureStore(paths)
     const stored = await writePending(paths, record, options)
