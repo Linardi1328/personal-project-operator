@@ -13,6 +13,11 @@ import {
 import {
   drainSoftwareFactoryObjectiveQueue
 } from "./software-factory-queue-drain.mjs"
+import {
+  readSoftwareFactoryManagerDisposition,
+  recordSoftwareFactoryManagerDisposition,
+  shouldExecuteSoftwareFactoryManagedRun
+} from "./software-factory-manager-disposition.mjs"
 
 export const SOFTWARE_FACTORY_MANAGER_CYCLE_ID = "software-factory-v1-9-manager-cycle"
 
@@ -87,14 +92,15 @@ function normalizeCatalog(catalog) {
   return selected
 }
 
-function boundedRunResult(summary, result) {
+function boundedRunResult(summary, result, options = {}) {
   return Object.freeze({
     runId: summary.runId,
     projectId: summary.project,
     ok: result?.ok === true,
     outcome: typeof result?.outcome === "string" ? result.outcome : "owner_action_required",
     reason: typeof result?.reason === "string" ? result.reason : null,
-    status: typeof result?.run?.status === "string" ? result.run.status : summary.status
+    status: typeof result?.run?.status === "string" ? result.run.status : summary.status,
+    parked: options.parked === true
   })
 }
 
@@ -112,13 +118,43 @@ export function createSoftwareFactoryManagerCycle(dependencies = {}) {
   const listRuns = dependencies.listRuns || listDevelopmentRunSummaries
   const runFactory = dependencies.runFactory || executeSoftwareFactoryAutonomousRun
   const drainQueue = dependencies.drainQueue || drainSoftwareFactoryObjectiveQueue
+  const readDisposition = dependencies.readDisposition || readSoftwareFactoryManagerDisposition
+  const recordDisposition = dependencies.recordDisposition || recordSoftwareFactoryManagerDisposition
+  const shouldExecute = dependencies.shouldExecute || shouldExecuteSoftwareFactoryManagedRun
 
   return async function runManagerCycle(options = {}) {
     const catalog = await listRuns(options)
     const active = normalizeCatalog(catalog)
     const runs = []
 
+    let executedRunCount = 0
+    let parkedRunCount = 0
+
     for (const summary of active) {
+      let existingDisposition
+
+      try {
+        existingDisposition = await readDisposition(summary.runId, summary.version, options)
+      } catch {
+        throw cycleError(
+          "FACTORY_CYCLE_DISPOSITION_UNAVAILABLE",
+          "Software factory manager disposition state is unavailable; cycle stopped before repeating managed work."
+        )
+      }
+
+      const decision = shouldExecute(existingDisposition, options)
+
+      if (decision?.execute !== true) {
+        parkedRunCount += 1
+        runs.push(boundedRunResult(summary, {
+          ok: existingDisposition?.outcome !== "owner_action_required",
+          outcome: existingDisposition?.outcome || "owner_action_required",
+          reason: existingDisposition?.reason || decision?.reason || "manager_run_parked",
+          run: { status: summary.status }
+        }, { parked: true }))
+        continue
+      }
+
       let result
 
       try {
@@ -131,7 +167,40 @@ export function createSoftwareFactoryManagerCycle(dependencies = {}) {
         }
       }
 
-      runs.push(boundedRunResult(summary, result))
+      executedRunCount += 1
+      const bounded = boundedRunResult(summary, result)
+
+      if (
+        result?.outcome === "owner_action_required" ||
+        result?.outcome === "release_ready" ||
+        result?.outcome === "blocked_capacity" ||
+        result?.outcome === "blocked_external"
+      ) {
+        const runVersion = Number.isInteger(result?.run?.version)
+          ? result.run.version
+          : summary.version
+        const status = typeof result?.run?.status === "string"
+          ? result.run.status
+          : summary.status
+
+        try {
+          await recordDisposition({
+            runId: summary.runId,
+            runVersion,
+            projectId: summary.project,
+            status,
+            outcome: bounded.outcome,
+            reason: bounded.reason
+          }, options)
+        } catch {
+          throw cycleError(
+            "FACTORY_CYCLE_DISPOSITION_UNAVAILABLE",
+            "Software factory manager disposition could not be recorded; cycle stopped to prevent repeated managed work."
+          )
+        }
+      }
+
+      runs.push(bounded)
     }
 
     let queue
@@ -172,6 +241,8 @@ export function createSoftwareFactoryManagerCycle(dependencies = {}) {
       cycleId: SOFTWARE_FACTORY_MANAGER_CYCLE_ID,
       outcome,
       processedRunCount: runs.length,
+      executedRunCount,
+      parkedRunCount,
       runs: Object.freeze(runs),
       queue
     })
@@ -188,7 +259,9 @@ export function formatSoftwareFactoryManagerCycle(result) {
   const lines = [
     "PPO Software Factory Manager Cycle",
     `Outcome: ${result?.outcome || "owner_action_required"}`,
-    `Active runs processed: ${Number.isInteger(result?.processedRunCount) ? result.processedRunCount : 0}`
+    `Active runs processed: ${Number.isInteger(result?.processedRunCount) ? result.processedRunCount : 0}`,
+    `Active runs executed: ${Number.isInteger(result?.executedRunCount) ? result.executedRunCount : 0}`,
+    `Active runs parked: ${Number.isInteger(result?.parkedRunCount) ? result.parkedRunCount : 0}`
   ]
 
   for (const entry of Array.isArray(result?.runs) ? result.runs : []) {
@@ -197,7 +270,8 @@ export function formatSoftwareFactoryManagerCycle(result) {
       `Run: ${entry.runId}`,
       `Project: ${entry.projectId}`,
       `Run outcome: ${entry.outcome}`,
-      `Run status: ${entry.status}`
+      `Run status: ${entry.status}`,
+      `Run parked: ${entry.parked === true ? "yes" : "no"}`
     )
     if (entry.reason) lines.push(`Run reason: ${entry.reason}`)
   }

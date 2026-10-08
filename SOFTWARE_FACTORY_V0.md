@@ -566,3 +566,21 @@ The cycle never confirms a release, never merges a target-project PR, and never 
 The cycle returns bounded scheduling metadata only. Release packages, objectives, prompts, raw provider output, and logs are not copied into manager-cycle results.
 
 This command is intentionally safe to invoke repeatedly at the orchestration level, but V1.9 does not install a background scheduler. Durable suppression of unchanged owner-action states is a separate prerequisite before unattended recurring execution.
+
+
+## V1.10 durable manager parking and retry policy
+
+Repeated manager cycles now have durable run-version-bound dispositions so unchanged human boundaries do not create token or API churn.
+
+For each selected managed run, the cycle checks the latest disposition for that exact `runId + runVersion` before invoking the autonomous runner:
+
+- `owner_action_required` is parked until the development-run version changes;
+- `release_ready` is parked until the development-run version changes, so deterministic release evidence is not rebuilt every cycle;
+- `blocked_capacity` is retried no sooner than one hour after the recorded disposition;
+- `blocked_external` uses the same conservative one-hour retry floor.
+
+Dispositions are append-only, bounded metadata. They contain run identity/version, project, status, outcome, safe reason code, recorded time, and optional retry-after time. They do not store objectives, prompts, release packages, raw logs, provider output, or credentials.
+
+Because dispositions are keyed by the development-run version, any legitimate state transition naturally invalidates the previous park without a separate unpark mutation. If disposition state is unavailable or cannot be recorded, the manager cycle fails closed instead of repeatedly invoking managed work.
+
+V1.10 still installs no background scheduler. It makes `factory-cycle` safe and economical enough for the next supervisor slice.
