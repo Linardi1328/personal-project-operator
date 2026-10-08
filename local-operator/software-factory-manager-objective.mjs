@@ -178,15 +178,16 @@ export function createSoftwareFactoryManagerObjectiveIntake(dependencies = {}) {
       actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID
     }, options)
 
-    const baselinePlan = buildBaselineSoftwareFactoryPlan({
-      runId: created.runId,
-      projectId,
-      baseSha: pinned.baseSha,
-      objective
-    })
+    let baselinePlan
     let planned
 
     try {
+      baselinePlan = buildBaselineSoftwareFactoryPlan({
+        runId: created.runId,
+        projectId,
+        baseSha: pinned.baseSha,
+        objective
+      })
       const planning = await transitionRun(created.runId, {
         expectedVersion: created.version,
         status: "planning_in_progress",
