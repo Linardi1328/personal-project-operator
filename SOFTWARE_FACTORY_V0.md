@@ -404,3 +404,31 @@ merged
 The staged request binds the run id and version, project, exact head SHA, pull request number, package hash, and approved squash merge method. Confirmation atomically consumes the request before any merge action. Expired, replayed, stale, malformed, or changed release state fails closed.
 
 V1.3 grants no automatic approval and no production authority. Production deployment, verification, rollback, and service mutation remain outside the Software Factory release approval boundary.
+
+
+## V1.4 manager objective intake
+
+V1.4 removes the normal requirement for the owner to first edit project-state documents before starting factory work.
+
+The manager-facing entry point is:
+
+```text
+/ppo factory-start <project> <objective>
+```
+
+The objective is bounded to the existing development-task limit and treated as inert owner-supplied task text. PPO refuses control characters, sensitive-looking values, unknown projects, contradictory GitHub identity, malformed current-head data, and projects with any open pull request.
+
+A successful intake:
+
+1. reads the approved project's current GitHub default branch and latest commit through the reviewed read-only client;
+2. refuses ambiguous open-PR state before creating any run;
+3. creates exactly one durable development run pinned to that default-branch SHA;
+4. records owner-origin planning evidence containing only bounded metadata and an objective hash;
+5. transitions the run through `planning_in_progress` to `planned`; and
+6. hands the durable run id directly to the existing bounded autonomous runner.
+
+The owner objective authorizes the named task only. It does not authorize architecture replacement, new paid infrastructure, destructive migration, production deployment, secrets changes, or automatic merge approval.
+
+If the autonomous run later blocks on worker capacity or an external dependency, the created run remains durable and the result includes its run id for later `/ppo factory-run <run-id>` resumption.
+
+The release boundary remains unchanged: a successful factory run stops at `release_ready` with the deterministic release package and still requires explicit package-bound owner merge approval.
