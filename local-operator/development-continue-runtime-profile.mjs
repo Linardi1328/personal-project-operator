@@ -549,11 +549,12 @@ function buildCodexSandbox(paths, platform, identity = null) {
 function buildTestSandbox(paths, platform, identity = null) {
   if (platform === "darwin") {
     return {
-      type: TEST_SANDBOX_BACKENDS.MACOS_SANDBOX_EXEC,
+      type: TEST_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN,
       platform: "darwin",
       network: "none",
-      enforcement: "os-process",
-      executablePath: paths.sandboxExecutablePath
+      enforcement: "codex-command-sandbox",
+      executablePath: paths.codexExecutablePath,
+      permissionProfile: ":workspace"
     }
   }
 
@@ -905,8 +906,10 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
 
   if (options.runtimeHandler === "prepareSoftwareFactoryTestRemediation") {
     await assertExecutable(paths.gitExecutablePath, options)
+    await assertExecutable(paths.codexExecutablePath, options)
     await assertDirectory(sourceRepoPath, options)
     await assertDirectory(paths.workspaceRoot, options)
+    await assertCodexNativeSandboxCapability(paths, platform, options)
 
     const testSandbox = buildTestSandbox(paths, platform)
 
