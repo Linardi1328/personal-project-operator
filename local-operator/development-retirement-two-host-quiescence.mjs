@@ -93,15 +93,26 @@ export function createTwoHostRetirementQuiescenceCoordinator(ports = {}) {
 
     async function held() {
       if (poisoned || !inUse) return false
+      if (acquired.length !== RETIREMENT_QUIESCENCE_PORT_ORDER.length) {
+        poisoned = true
+        return false
+      }
       for (const { role, lease } of acquired) {
-        if (!validLease(lease, role, context)) return false
+        if (!validLease(lease, role, context)) {
+          poisoned = true
+          return false
+        }
         try {
-          if (await lease.assertHeld(context) !== true) return false
+          if (await lease.assertHeld(context) !== true) {
+            poisoned = true
+            return false
+          }
         } catch {
+          poisoned = true
           return false
         }
       }
-      return acquired.length === RETIREMENT_QUIESCENCE_PORT_ORDER.length
+      return true
     }
 
     try {
