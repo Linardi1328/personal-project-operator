@@ -37,7 +37,9 @@ function expectedConfigValid(config) {
     identityPattern.test(config.hostId) &&
     typeof config.writeDataDir === "string" &&
     isAbsolute(config.writeDataDir) &&
+    typeof config.deploymentSha === "string" &&
     shaPattern.test(config.deploymentSha) &&
+    typeof config.epoch === "string" &&
     epochPattern.test(config.epoch) &&
     Number.isSafeInteger(config.nowMs) && config.nowMs >= 0 &&
     config.publicKey instanceof KeyObject &&
