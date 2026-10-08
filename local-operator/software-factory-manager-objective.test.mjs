@@ -31,6 +31,12 @@ function snapshot(overrides = {}) {
 test("manager objective intake pins one planned run to current GitHub head", async () => {
   const calls = []
   const intake = createSoftwareFactoryManagerObjectiveIntake({
+    listRuns: async () => ({
+      ok: true,
+      code: "ok",
+      active: [],
+      diagnostics: { truncated: false }
+    }),
     githubClient: {
       async getProjectSnapshot(projectId) {
         calls.push(["snapshot", projectId])
@@ -88,6 +94,12 @@ test("manager objective intake pins one planned run to current GitHub head", asy
 test("manager objective intake refuses repositories with open pull requests before creating a run", async () => {
   let createCalls = 0
   const intake = createSoftwareFactoryManagerObjectiveIntake({
+    listRuns: async () => ({
+      ok: true,
+      code: "ok",
+      active: [],
+      diagnostics: { truncated: false }
+    }),
     githubClient: {
       async getProjectSnapshot() {
         return snapshot({ openPullRequests: [{ number: 85 }] })
@@ -109,6 +121,12 @@ test("manager objective intake refuses repositories with open pull requests befo
 test("manager objective intake refuses contradictory GitHub identity before creating a run", async () => {
   let createCalls = 0
   const intake = createSoftwareFactoryManagerObjectiveIntake({
+    listRuns: async () => ({
+      ok: true,
+      code: "ok",
+      active: [],
+      diagnostics: { truncated: false }
+    }),
     githubClient: {
       async getProjectSnapshot() {
         const value = snapshot()
@@ -234,6 +252,12 @@ test("blocked launch preserves run id for later factory-run resumption", async (
 
 test("planning transition failure preserves the created durable run id", async () => {
   const intake = createSoftwareFactoryManagerObjectiveIntake({
+    listRuns: async () => ({
+      ok: true,
+      code: "ok",
+      active: [],
+      diagnostics: { truncated: false }
+    }),
     githubClient: {
       async getProjectSnapshot() {
         return snapshot()
@@ -282,4 +306,41 @@ test("runner failure after intake keeps the durable run resumable", async () => 
   assert.equal(result.intake.runId, RUN_ID)
   assert.equal(result.factory.reason, "factory_runner_failed_after_intake")
   assert.equal(result.factory.run.runId, RUN_ID)
+})
+
+
+test("manager objective intake checks WIP admission before GitHub or run creation", async () => {
+  let githubCalls = 0
+  let createCalls = 0
+  const intake = createSoftwareFactoryManagerObjectiveIntake({
+    listRuns: async () => ({
+      ok: true,
+      code: "ok",
+      active: [{
+        project: "khlim-digital-ecosystem",
+        runId: "B".repeat(43),
+        status: "merge_ready",
+        terminal: false,
+        recoveryRequired: false
+      }],
+      diagnostics: { truncated: false }
+    }),
+    githubClient: {
+      async getProjectSnapshot() {
+        githubCalls += 1
+        return snapshot()
+      }
+    },
+    async createRun() {
+      createCalls += 1
+      throw new Error("must not create")
+    }
+  })
+
+  await assert.rejects(
+    intake("khlim-digital-ecosystem", "Implement the approved bounded fix."),
+    (error) => error?.code === "FACTORY_OBJECTIVE_WIP_BLOCKED"
+  )
+  assert.equal(githubCalls, 0)
+  assert.equal(createCalls, 0)
 })
