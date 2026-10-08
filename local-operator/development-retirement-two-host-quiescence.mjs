@@ -55,7 +55,7 @@ export function createTwoHostRetirementQuiescenceCoordinator(ports = {}) {
   let poisoned = false
 
   async function acquireQuiescenceGuard(input) {
-    if (poisoned || inUse ||
+    if (poisoned || inUse || !ports || typeof ports !== "object" || Array.isArray(ports) ||
         !TARGET_RUN_IDS.has(input?.runId) ||
         typeof input.writeDataDir !== "string" ||
         !isAbsolute(input.writeDataDir) ||
@@ -113,8 +113,10 @@ export function createTwoHostRetirementQuiescenceCoordinator(ports = {}) {
       }
       if (!(await held())) throw unavailable()
     } catch {
-      // On incomplete cleanup poison the coordinator; never treat cleanup
-      // uncertainty as free capacity. No data or sensitive exception is logged.
+      // A rejected acquire might have reached a remote host before throwing.
+      // Even if known leases release cleanly, its unknown state is not a
+      // retryable failure. A new coordinator cannot fix a remote orphan either.
+      poisoned = true
       try { await releaseAll() } catch { /* still blocked */ }
       throw unavailable()
     }
