@@ -90,6 +90,24 @@ function safeIdentifier(value, label) {
   return normalized
 }
 
+function safeText(value, label, maxChars = 160) {
+  const normalized = String(value ?? "").trim()
+
+  if (
+    !normalized ||
+    normalized.length > maxChars ||
+    unsafeControlPattern.test(normalized) ||
+    sensitiveTextPattern.test(normalized)
+  ) {
+    throw releaseError(
+      "FACTORY_RELEASE_METADATA_INVALID",
+      `${label} is invalid for the release package.`
+    )
+  }
+
+  return normalized
+}
+
 function safeRepository(value) {
   const normalized = String(value ?? "").trim()
 
@@ -243,8 +261,8 @@ function implementationFacts(run, headSha) {
     changedFiles: Number.isInteger(metadata.changedFiles) && metadata.changedFiles >= 0
       ? metadata.changedFiles
       : null,
-    model: typeof metadata.model === "string" && safeIdentifierPattern.test(metadata.model)
-      ? metadata.model
+    model: typeof metadata.model === "string" && metadata.model.trim()
+      ? safeText(metadata.model, "Implementation model", 160)
       : null
   }
 }
@@ -391,7 +409,7 @@ function ciFacts(run, headSha) {
   }
 
   return {
-    workflowName: safeIdentifier(metadata.workflowName, "Workflow name"),
+    workflowName: safeText(metadata.workflowName, "Workflow name", 120),
     workflowRunId: positiveInteger(metadata.workflowRunId, "Workflow run id"),
     conclusion: "success",
     requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length
