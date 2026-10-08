@@ -24,6 +24,9 @@ import {
   SOFTWARE_FACTORY_RELEASE_PACKAGE_KIND,
   buildSoftwareFactoryReleasePackage
 } from "./software-factory-release-package.mjs"
+import {
+  drainSoftwareFactoryObjectiveQueue
+} from "./software-factory-queue-drain.mjs"
 
 export const SOFTWARE_FACTORY_RELEASE_APPROVAL_ID = "software-factory-v1-3-release-approval"
 export const SOFTWARE_FACTORY_RELEASE_APPROVAL_POLICY_ID = "software-factory-v1-3-release-approval-policy"
@@ -489,6 +492,28 @@ export async function confirmSoftwareFactoryReleaseApproval(requestId, options =
       }
     }
 
+    let queuePump
+
+    try {
+      const drainQueue = options.drainQueue || drainSoftwareFactoryObjectiveQueue
+      const drained = await drainQueue(options)
+      queuePump = {
+        ok: drained?.ok === true,
+        outcome: typeof drained?.outcome === "string" ? drained.outcome : "queue_pump_unavailable",
+        queueId: typeof drained?.queueId === "string" ? drained.queueId : null,
+        runId: typeof drained?.runId === "string" ? drained.runId : null,
+        reason: typeof drained?.reason === "string" ? drained.reason : null
+      }
+    } catch {
+      queuePump = {
+        ok: false,
+        outcome: "queue_pump_unavailable",
+        queueId: null,
+        runId: null,
+        reason: "post_merge_queue_pump_failed"
+      }
+    }
+
     return {
       ok: true,
       outcome: "release_merged",
@@ -500,7 +525,8 @@ export async function confirmSoftwareFactoryReleaseApproval(requestId, options =
       packageHash: record.packageHash,
       mergeMethod: record.mergeMethod,
       mergeCommitSha: merged.merge?.mergeCommitSha || null,
-      mainSha: merged.merge?.mainSha || null
+      mainSha: merged.merge?.mainSha || null,
+      queuePump
     }
   } catch (error) {
     return mapFailure(error)
@@ -527,6 +553,12 @@ export function formatSoftwareFactoryReleaseApproval(result) {
       lines.push(`Confirm: /ppo release-confirm ${result.requestId}`)
     } else if (result.outcome === "release_merged") {
       lines.push(`Merge commit: ${result.mergeCommitSha || "verified remotely"}`)
+      if (result.queuePump) {
+        lines.push(`Queue pump: ${result.queuePump.outcome}`)
+        if (result.queuePump.runId) {
+          lines.push(`Queued run: ${result.queuePump.runId}`)
+        }
+      }
       lines.push("Production deployment: not authorized.")
     }
   }
