@@ -25,16 +25,30 @@ const unsafeControlPattern = /[\u0000-\u001F\u007F-\u009F]/u
 const sensitiveTextPattern = /(?:github_pat_|gh[opusr]_|sk-|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:]|PPO_[A-Z0-9_]*(?:CONFIRM|TOKEN|SECRET|PASSWORD))/iu
 
 export class SoftwareFactoryManagerObjectiveError extends Error {
-  constructor(code, safeMessage) {
+  constructor(code, safeMessage, options = {}) {
     super(safeMessage)
     this.name = "SoftwareFactoryManagerObjectiveError"
     this.code = code
     this.safeMessage = safeMessage
+    this.runId = typeof options.runId === "string" ? options.runId : null
   }
 }
 
-function objectiveError(code, safeMessage) {
-  return new SoftwareFactoryManagerObjectiveError(code, safeMessage)
+function objectiveError(code, safeMessage, options = {}) {
+  return new SoftwareFactoryManagerObjectiveError(code, safeMessage, options)
+}
+
+function postCreationError(error, runId) {
+  if (error instanceof SoftwareFactoryManagerObjectiveError) {
+    error.runId = runId
+    return error
+  }
+
+  return objectiveError(
+    "FACTORY_OBJECTIVE_POST_CREATE_FAILED",
+    "Manager objective run was created but could not advance safely; inspect the durable run before retrying.",
+    { runId }
+  )
 }
 
 function normalizeProjectId(value) {
@@ -159,25 +173,32 @@ export function createSoftwareFactoryManagerObjectiveIntake(dependencies = {}) {
       headSha: pinned.baseSha,
       actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID
     }, options)
-    const planning = await transitionRun(created.runId, {
-      expectedVersion: created.version,
-      status: "planning_in_progress",
-      actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID,
-      reason: "manager-objective-planning-started"
-    }, options)
-    const planned = await transitionRun(created.runId, {
-      expectedVersion: planning.version,
-      status: "planned",
-      actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID,
-      reason: "manager-objective-planned",
-      evidence: [planningEvidence({
-        projectId,
-        objective,
-        baseSha: pinned.baseSha,
-        defaultBranch: pinned.defaultBranch,
-        openIssueCount: pinned.openIssueCount
-      })]
-    }, options)
+
+    let planned
+
+    try {
+      const planning = await transitionRun(created.runId, {
+        expectedVersion: created.version,
+        status: "planning_in_progress",
+        actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID,
+        reason: "manager-objective-planning-started"
+      }, options)
+      planned = await transitionRun(created.runId, {
+        expectedVersion: planning.version,
+        status: "planned",
+        actor: SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID,
+        reason: "manager-objective-planned",
+        evidence: [planningEvidence({
+          projectId,
+          objective,
+          baseSha: pinned.baseSha,
+          defaultBranch: pinned.defaultBranch,
+          openIssueCount: pinned.openIssueCount
+        })]
+      }, options)
+    } catch (error) {
+      throw postCreationError(error, created.runId)
+    }
 
     return {
       ok: true,
@@ -204,13 +225,32 @@ export function createSoftwareFactoryManagerLaunch(dependencies = {}) {
 
   return async function launch(projectId, objective, options = {}) {
     const intakeResult = await intake(projectId, objective, options)
-    const factoryResult = await runFactory(intakeResult.runId, options)
 
-    return {
-      ok: factoryResult.ok,
-      outcome: factoryResult.outcome,
-      intake: intakeResult,
-      factory: factoryResult
+    try {
+      const factoryResult = await runFactory(intakeResult.runId, options)
+
+      return {
+        ok: factoryResult.ok,
+        outcome: factoryResult.outcome,
+        intake: intakeResult,
+        factory: factoryResult
+      }
+    } catch {
+      return {
+        ok: false,
+        outcome: "owner_action_required",
+        intake: intakeResult,
+        factory: {
+          ok: false,
+          outcome: "owner_action_required",
+          reason: "factory_runner_failed_after_intake",
+          run: {
+            runId: intakeResult.runId,
+            projectId: intakeResult.projectId,
+            status: intakeResult.status
+          }
+        }
+      }
     }
   }
 }
@@ -269,8 +309,14 @@ export async function handlePpoSoftwareFactoryManagerObjectiveCommand(projectId,
     return {
       ok: false,
       outcome: "owner_action_required",
-      runId: null,
-      output: formatSoftwareFactoryManagerObjectiveError(error)
+      runId: error?.runId || null,
+      output: error?.runId
+        ? [
+            formatSoftwareFactoryManagerObjectiveError(error),
+            `Run: ${error.runId}`,
+            `Next: inspect the durable run with /ppo run ${error.runId} before retrying.`
+          ].join("\n")
+        : formatSoftwareFactoryManagerObjectiveError(error)
     }
   }
 }
