@@ -70,7 +70,7 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 {
   const observedWriteDataDirs = [];
 
-  for (const command of ["start khlim-assist", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`, `factory-run ${validDevelopmentRunId}`, `release ${validDevelopmentRunId}`]) {
+  for (const command of ["start khlim-assist", "factory-start khlim-assist Implement the approved bounded objective.", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`, `factory-run ${validDevelopmentRunId}`, `release ${validDevelopmentRunId}`]) {
     const result = await runPpoLocalTool(
       { command },
       {
@@ -90,8 +90,8 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 
   assert.deepEqual(
     observedWriteDataDirs,
-    Array(5).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
-    "start, run, continue, factory-run, and release share exactly one state directory"
+    Array(6).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
+    "start, factory-start, run, continue, factory-run, and release share exactly one state directory"
   );
 }
 
@@ -131,6 +131,10 @@ for (const projectId of currentProjectIds) {
 
 for (const projectId of ordinaryDevelopmentProjectIds) {
   expectedMappings.set(`start ${projectId}`, ["start", projectId]);
+  expectedMappings.set(
+    `factory-start ${projectId} Implement the approved bounded objective.`,
+    ["factory-start", projectId, "Implement the approved bounded objective."]
+  );
 }
 
 expectedMappings.set(`prompt-size ${multilineDraft}`, ["prompt-size", multilineDraft]);
@@ -146,6 +150,27 @@ expectedMappings.set(`cancel ${validDevelopmentRunId}`, ["cancel", validDevelopm
 expectedMappings.set(`cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]);
 expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
 expectedMappings.set(`factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]);
+
+assert.equal(
+  toPpoWrapperArgs("factory-start khlim-assist"),
+  null,
+  "factory-start requires an objective"
+);
+assert.equal(
+  toPpoWrapperArgs("factory-start unknown-project Implement the approved bounded objective."),
+  null,
+  "factory-start refuses unknown projects"
+);
+assert.equal(
+  toPpoWrapperArgs(`factory-start khlim-assist ${"x".repeat(MAX_TASK_CHARS + 1)}`),
+  null,
+  "factory-start enforces the bounded objective size"
+);
+assert.equal(
+  toPpoWrapperArgs("factory-start khlim-assist Unsafe\nobjective"),
+  null,
+  "factory-start refuses multiline command envelopes"
+);
 expectedMappings.set(`release ${validDevelopmentRunId}`, ["release", validDevelopmentRunId]);
 expectedMappings.set(`release-confirm ${validReleaseRequestId}`, ["release-confirm", validReleaseRequestId]);
 expectedMappings.set(`recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]);
