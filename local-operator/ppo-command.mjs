@@ -20,6 +20,11 @@ import {
   formatSoftwareFactoryAutonomousRun
 } from "./software-factory-autonomous-run.mjs";
 import {
+  SOFTWARE_FACTORY_RELEASE_REQUEST_ID_PATTERN,
+  handlePpoReleaseCommand,
+  handlePpoReleaseConfirmCommand
+} from "./software-factory-release-approval.mjs";
+import {
   handlePpoDevelopmentRunCommand,
   handlePpoDevelopmentRunsCommand
 } from "./development-run-catalog-route.mjs";
@@ -166,7 +171,9 @@ function parseStrictRequestIdCommandArgs(rawArgs, command, options = {}) {
     return { ok: false, attempted: true };
   }
 
-  if (args.length === 2 && args[0] === command && CANCELLATION_REQUEST_ID_PATTERN.test(args[1])) {
+  const requestIdPattern = options.requestIdPattern || CANCELLATION_REQUEST_ID_PATTERN;
+
+  if (args.length === 2 && args[0] === command && requestIdPattern.test(args[1])) {
     return { ok: true, attempted: true, requestId: args[1] };
   }
 
@@ -174,7 +181,7 @@ function parseStrictRequestIdCommandArgs(rawArgs, command, options = {}) {
     args.length === 3 &&
     (args[0] === "/ppo" || args[0] === "ppo") &&
     args[1] === command &&
-    CANCELLATION_REQUEST_ID_PATTERN.test(args[2])
+    requestIdPattern.test(args[2])
   ) {
     return { ok: true, attempted: true, requestId: args[2] };
   }
@@ -183,7 +190,7 @@ function parseStrictRequestIdCommandArgs(rawArgs, command, options = {}) {
     if (
       exactCombinedParts.length === 2 &&
       exactCombinedParts[0] === command &&
-      CANCELLATION_REQUEST_ID_PATTERN.test(exactCombinedParts[1])
+      requestIdPattern.test(exactCombinedParts[1])
     ) {
       return { ok: true, attempted: true, requestId: exactCombinedParts[1] };
     }
@@ -192,7 +199,7 @@ function parseStrictRequestIdCommandArgs(rawArgs, command, options = {}) {
       exactCombinedParts.length === 3 &&
       (exactCombinedParts[0] === "/ppo" || exactCombinedParts[0] === "ppo") &&
       exactCombinedParts[1] === command &&
-      CANCELLATION_REQUEST_ID_PATTERN.test(exactCombinedParts[2])
+      requestIdPattern.test(exactCombinedParts[2])
     ) {
       return { ok: true, attempted: true, requestId: exactCombinedParts[2] };
     }
@@ -299,6 +306,19 @@ function parseStrictContinueArgs(rawArgs) {
 function parseStrictFactoryRunArgs(rawArgs) {
   return parseStrictRunIdCommandArgs(rawArgs, "factory-run", {
     allowExactCombined: true
+  });
+}
+
+function parseStrictReleaseArgs(rawArgs) {
+  return parseStrictRunIdCommandArgs(rawArgs, "release", {
+    allowExactCombined: true
+  });
+}
+
+function parseStrictReleaseConfirmArgs(rawArgs) {
+  return parseStrictRequestIdCommandArgs(rawArgs, "release-confirm", {
+    allowExactCombined: true,
+    requestIdPattern: SOFTWARE_FACTORY_RELEASE_REQUEST_ID_PATTERN
   });
 }
 
@@ -518,6 +538,8 @@ function usage() {
     "  node local-operator/ppo-command.mjs cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs continue <run-id>",
     "  node local-operator/ppo-command.mjs factory-run <run-id>",
+    "  node local-operator/ppo-command.mjs release <run-id>",
+    "  node local-operator/ppo-command.mjs release-confirm <request-id>",
     "  node local-operator/ppo-command.mjs recover <run-id>",
     "  node local-operator/ppo-command.mjs codex khlim-assist \"add provider validation tests\"",
     "  node local-operator/ppo-command.mjs codex-budget ledgerpilot-ai \"add invoice import workflow\"",
@@ -541,6 +563,8 @@ function usage() {
     "  node local-operator/ppo-command.mjs /ppo cancel-confirm <request-id>",
     "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
     "  node local-operator/ppo-command.mjs /ppo factory-run <run-id>",
+    "  node local-operator/ppo-command.mjs /ppo release <run-id>",
+    "  node local-operator/ppo-command.mjs /ppo release-confirm <request-id>",
     "  node local-operator/ppo-command.mjs /ppo recover <run-id>",
     "",
     "Supported Telegram messages:",
@@ -567,6 +591,8 @@ function usage() {
     "  /ppo cancel-confirm <request-id>",
     "  /ppo continue <run-id>",
     "  /ppo factory-run <run-id>",
+    "  /ppo release <run-id>",
+    "  /ppo release-confirm <request-id>",
     "  /ppo recover <run-id>",
     "",
     "Phase 5A boundary: terminal issue-create requires PPO_GITHUB_WRITE_CONFIRM=create-issue:<project>.",
@@ -889,6 +915,8 @@ async function main() {
   const strictCancel = parseStrictCancelArgs(rawProcessArgs);
   const strictContinue = parseStrictContinueArgs(rawProcessArgs);
   const strictFactoryRun = parseStrictFactoryRunArgs(rawProcessArgs);
+  const strictReleaseConfirm = parseStrictReleaseConfirmArgs(rawProcessArgs);
+  const strictRelease = parseStrictReleaseArgs(rawProcessArgs);
   const strictRecover = parseStrictRecoverArgs(rawProcessArgs);
 
   if (strictStart?.ok === true) {
@@ -944,6 +972,20 @@ async function main() {
     return;
   }
 
+  if (strictReleaseConfirm?.ok === true) {
+    const result = await handlePpoReleaseConfirmCommand(strictReleaseConfirm.requestId);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (strictRelease?.ok === true) {
+    const result = await handlePpoReleaseCommand(strictRelease.runId);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
   if (strictRecover?.ok === true) {
     const result = await handlePpoDevelopmentRecoverCommand(strictRecover.runId);
     console.log(result.output);
@@ -989,6 +1031,18 @@ async function main() {
 
   if (strictFactoryRun?.attempted === true) {
     console.log(unsupported(rawProcessArgs[0] || "factory-run"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictReleaseConfirm?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "release-confirm"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictRelease?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "release"));
     process.exitCode = 1;
     return;
   }
