@@ -426,6 +426,13 @@ export function toPpoWrapperArgs(rawCommand) {
     return null;
   }
 
+  if (
+    /[\u0000-\u001F\u007F-\u009F]/u.test(rawCommand) &&
+    /(?:^|[\s\r\n\t])factory-start(?:$|[\s\r\n\t])/iu.test(rawCommand)
+  ) {
+    return null;
+  }
+
   const startCommand = parseStartCommand(rawCommand);
 
   if (startCommand) {
