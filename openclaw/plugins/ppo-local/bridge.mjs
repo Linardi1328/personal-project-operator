@@ -29,7 +29,8 @@ const allowedCommands = new Map([
   ["help", ["help"]],
   ["menu project", ["menu", "project"]],
   ["menu codex", ["menu", "codex"]],
-  ["menu system", ["menu", "system"]]
+  ["menu system", ["menu", "system"]],
+  ["factory-drain", ["factory-drain"]]
 ]);
 
 const allowedGitHubProjectIds = new Set(listPhase2GitHubProjects().map((project) => project.id));
@@ -114,6 +115,7 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo continue <run-id>",
     "- /ppo factory-start <project> <objective>",
     "- /ppo factory-run <run-id>",
+    "- /ppo factory-drain",
     "- /ppo release <run-id>",
     "- /ppo release-confirm <request-id>",
     "- /ppo recover <run-id>"
