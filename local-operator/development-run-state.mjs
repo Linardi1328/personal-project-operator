@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
+import { classifyReviewedImplementationEvidence } from "./software-factory-implementation-evidence.mjs"
 import { constants as fsConstants } from "node:fs"
 import {
   chmod,
@@ -6,12 +7,13 @@ import {
   lstat,
   mkdir,
   open,
+  opendir,
   readdir,
   readFile,
   rename,
   unlink
 } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
   PPO_WRITE_DATA_DIR_ENV
@@ -1768,7 +1770,7 @@ function validateHistory(record) {
   }
 }
 
-function parseRunRecord(payload, expectedRunId = null, options = {}) {
+function parseRunRecordEnvelope(payload, expectedRunId = null, options = {}) {
   if (Buffer.byteLength(String(payload ?? ""), "utf8") > MAX_DEVELOPMENT_RUN_RECORD_BYTES) {
     throw runStateError(
       "RUN_RECORD_TOO_LARGE",
@@ -1854,8 +1856,12 @@ function parseRunRecord(payload, expectedRunId = null, options = {}) {
   parsed.attempts = normalizeAttemptShape(parsed.attempts)
   validateTimestamps(parsed.timestamps)
   validateEvidenceShape(parsed.evidence)
-  validateHistory(parsed)
+  return parsed
+}
 
+function parseRunRecord(payload, expectedRunId = null, options = {}) {
+  const parsed = parseRunRecordEnvelope(payload, expectedRunId, options)
+  validateHistory(parsed)
   return cloneJson(parsed)
 }
 
@@ -3199,5 +3205,253 @@ export async function diagnoseDevelopmentRunHistory(runId, options = {}) {
     const failure = readOnlyFailureFromError(error, normalizedRunId)
     return { ok: false, runId: normalizedRunId,
       code: historyDiagnosticCodes.has(error?.validationFailure) ? error.validationFailure : failure.code }
+  }
+}
+
+// Diagnostic-only reconstruction. No result from these helpers participates in
+// parsing, admission, recovery, cancellation or any write path.
+function diagnosticReviewContract(event, evidence, attempts, projectId, previous) {
+  const runtime = event.fromStatus === "review_changes_requested"
+  const orphan = event.fromStatus === "review_in_progress"
+  const binding = event.headSha !== null && event.headSha === previous?.headSha &&
+    event.branch === previous?.branch && attempts.review > 0
+  const record = { evidence, attempts, headSha: event.headSha, project: { id: projectId } }
+  const implementation = classifyReviewedImplementationEvidence(record)
+  const testPass = [...evidence.test].reverse().find(entry =>
+    (entry.source === "phase-6e-automated-test-runner" || entry.metadata?.runner === "phase-6e-automated-test-runner") && entry.metadata?.outcome === "passed")
+  const decision = latestIndependentReviewDecisionForRuntimeRecovery(record)
+  const findings = matchingReviewFindingsForRuntimeRecovery(record, decision)
+  const latest = latestReviewAttemptForOrphanRecovery(record)
+  const actor = runtime ? REVIEW_RUNTIME_FAILURE_RECOVERY_ACTOR : REVIEW_ORPHAN_RECOVERY_ACTOR
+  const expectedMetadata = {
+    project: projectId, recovery: actor, reviewedSha: event.headSha,
+    reviewAttempt: attempts.review,
+    ...(runtime ? { previousDecision: "OWNER_ACTION_REQUIRED", outcome: "review_runtime_failure_recovered" }
+      : { previousOutcome: latest?.metadata?.outcome, outcome: "review_orphan_recovered" })
+  }
+  const entry = event.evidence[0]
+  const envelope = (runtime || orphan) && event.toStatus === "tests_passed" &&
+    event.actor === actor && event.reason === (runtime ? "phase-6f-review-runtime-failure-retry" : "phase-6f-review-orphan-retry") &&
+    event.evidence.length === 1 && entry?.kind === "review" && entry.sha === event.headSha && entry.source === actor &&
+    entry.summary === (runtime ? "Confirmed Phase 6F reviewer runtime failure recovered for one retry."
+      : "Confirmed orphaned Phase 6F review attempt recovered for one retry.") &&
+    stableStringify(entry.metadata) === stableStringify(expectedMetadata)
+  const ownerDecision = decision?.sha === event.headSha && decision?.metadata?.reviewedSha === event.headSha &&
+    decision?.metadata?.attempt === attempts.review && decision?.metadata?.decision === "OWNER_ACTION_REQUIRED" &&
+    decision?.metadata?.outcome === "owner_action_required" && decision?.metadata?.mergeAllowed === false &&
+    ["blockers", "securityFindings", "testsRequired"].every(key => decision?.metadata?.[key] === 0)
+  const olderFindings = Boolean(findings && findings.metadata?.decision === "OWNER_ACTION_REQUIRED" &&
+    findings.metadata?.mergeAllowed === false &&
+    ["blockers", "securityFindings", "testsRequired"].every(key => findings.metadata?.[key] === 0) &&
+    ["blockerItems", "securityItems", "testItems"].every(key => Array.isArray(findings.metadata?.[key]) && findings.metadata[key].length === 0))
+  const findingHash = olderFindings && findings.metadata.findingHash === sha256Text(stableStringify({
+    reviewedSha: event.headSha, decision: "OWNER_ACTION_REQUIRED", blockers: [], securityFindings: [], testsRequired: []
+  }))
+  const summaryHash = decision?.metadata?.summaryHash === sha256Text("Independent review could not produce a valid approval decision.")
+  const classified = ["runtime", "authentication"].includes(decision?.metadata?.runtimeFailureClass)
+  const missingClass = Boolean(decision && !Object.hasOwn(decision.metadata, "runtimeFailureClass"))
+  const orphanCandidate = orphan && latest?.sha === event.headSha && latest?.metadata?.reviewedSha === event.headSha &&
+    latest?.metadata?.attempt === attempts.review && ["review_started", "review_execution_ambiguous"].includes(latest?.metadata?.outcome)
+  const startedAt = Date.parse(latest?.metadata?.startedAt || "")
+  const age = orphan && Number.isFinite(startedAt) ? Date.parse(event.timestamp) - startedAt >= 60_000 : "unknown"
+  const current = binding && (isReviewRuntimeRecoveryHistoryEvent(event, evidence, attempts, projectId) ||
+    isReviewOrphanRecoveryHistoryEvent(event, evidence, attempts, projectId))
+  const legacy = runtime && binding && envelope && ownerDecision && missingClass && olderFindings && findingHash && summaryHash
+  return {
+    recoveryEnvelopeMatches: envelope,
+    precedingStateBindingMatches: binding,
+    precedingDecisionMatches: runtime ? ownerDecision : "not_assessed",
+    runtimeFailureClassPresent: runtime ? !missingClass && Boolean(decision) : "not_assessed",
+    runtimeFailureClassRecognized: runtime ? classified : "not_assessed",
+    legacyFailureSummaryMatches: runtime ? summaryHash : "not_assessed",
+    legacyFindingsContractMatches: runtime ? olderFindings : "not_assessed",
+    legacyFindingsHashMatches: runtime ? findingHash : "not_assessed",
+    orphanAttemptMatches: orphan ? Boolean(orphanCandidate) : "not_assessed",
+    orphanMinimumAgeMatches: orphan ? age : "not_assessed",
+    currentRecoveryContractMatches: current,
+    legacyRuntimeShapeMatches: runtime ? legacy : "not_assessed",
+    localRecoveryContractMatches: runtime ? current || legacy : current && age === true,
+    precedingImplementationEvidenceMatches: implementation.classification === "completed",
+    precedingTestPassEvidenceMatches: Boolean(testPass && testPass.sha === event.headSha && testPass.metadata?.implSha === event.headSha),
+    historicalWorkspaceReconciliation: "unknown",
+    historicalWorkerQuiescence: "unknown",
+    historicalOwnerConfirmation: "unknown",
+    independentProvenance: "unverified"
+  }
+}
+
+// Structural validation may continue across an unaccepted transition solely to
+// assess later candidates. Such a prefix is explicitly NOT replay-valid.
+function reconstructDiagnosticHistory(record, selected) {
+  const results = new Map()
+  let evidence = emptyEvidence()
+  let attempts = emptyAttempts()
+  let previous = null
+  let replayValid = true
+  let structureValid = true
+  if (!Array.isArray(record.history) || record.history.length === 0 || record.history.length > MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES) {
+    return { results, structureValid: false, replayValid: false }
+  }
+  for (let index = 0; index < record.history.length; index += 1) {
+    const event = record.history[index]
+    try {
+      validateHistoryEventShape(event)
+      const nextAttempts = normalizeAttemptShape(event.attempts)
+      if (event.version !== index || event.previousHistoryHash !== (previous?.eventHash ?? null) ||
+        event.eventHash !== eventHash(event) || event.project !== record.project.id || event.repo !== record.project.fullName ||
+        event.toStage !== stageForStatus(event.toStatus) ||
+        (index === 0 ? event.fromStatus !== null || event.fromStage !== null || event.toStatus !== "created" ||
+          event.task !== record.task || event.baseSha !== record.baseSha
+          : event.fromStatus !== previous.toStatus || event.fromStage !== previous.toStage || event.task !== null ||
+            event.baseSha !== null || Date.parse(event.timestamp) < Date.parse(previous.timestamp))) throw historyFailure("history_order_invalid")
+      let calculated = attempts
+      if (index > 0 && event.fromStatus !== event.toStatus) calculated = incrementAttempts(attempts, event.toStatus)
+      else if (index > 0) {
+        if (!sameStatusAttemptStatuses.has(event.toStatus)) throw historyFailure("history_same_status_invalid")
+        if (stableStringify(nextAttempts) !== stableStringify(attempts)) calculated = incrementSameStatusAttempt(attempts, event.toStatus)
+      }
+      if (stableStringify(nextAttempts) !== stableStringify(calculated)) throw historyFailure("history_attempts_invalid")
+      // Validate evidence accumulation before producing any positive assessment.
+      const nextEvidence = appendEvidence(evidence, event.evidence)
+      const prefixValid = replayValid
+      let transitionValid = true
+      if (index > 0 && event.fromStatus !== event.toStatus) {
+        try { assertAllowedTransition(event.fromStatus, event.toStatus) } catch {
+          transitionValid = isReviewRuntimeRecoveryHistoryEvent(event, evidence, attempts, record.project.id) ||
+            isReviewOrphanRecoveryHistoryEvent(event, evidence, attempts, record.project.id)
+        }
+      }
+      replayValid = replayValid && transitionValid
+      if (selected.includes(index)) results.set(index, {
+        eventIndex: index, code: "candidate_assessed", hashChainConsistent: true,
+        precedingPrefixReplayValid: prefixValid, priorHistoryUnresolved: !prefixValid,
+        historicalReplayValid: replayValid,
+        ...diagnosticReviewContract(event, evidence, attempts, record.project.id, previous)
+      })
+      evidence = nextEvidence
+      attempts = calculated
+      previous = event
+    } catch {
+      structureValid = false
+      replayValid = false
+      break
+    }
+  }
+  if (structureValid) {
+    const last = record.history.at(-1)
+    structureValid = record.version === last.version && record.status === last.toStatus && record.stage === last.toStage &&
+      record.historyHash === last.eventHash && record.headSha === last.headSha && record.branch === last.branch &&
+      record.timestamps.createdAt === record.history[0].timestamp && record.timestamps.updatedAt === last.timestamp &&
+      record.timestamps.statusChangedAt === last.timestamp &&
+      record.timestamps.terminalAt === (isDevelopmentRunTerminalStatus(record.status) ? last.timestamp : null) &&
+      stableStringify(record.attempts) === stableStringify(attempts) && stableStringify(record.evidence) === stableStringify(evidence)
+  }
+  return { results, structureValid, replayValid: replayValid && structureValid }
+}
+
+async function boundedDiagnosticMarkerNames(path) {
+  const info = await assertReadOnlyDirectoryIfPresent(path, "Backup version directory")
+  if (!info) return { names: [], identity: null }
+  const names = []
+  const directory = await opendir(path)
+  for await (const entry of directory) {
+    if (names.length >= MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES || !versionFilePattern.test(entry.name)) {
+      throw runStateError("RUN_RECORD_INVALID", "Backup version directory is incomplete or unsupported.")
+    }
+    names.push(entry.name)
+  }
+  await assertReadOnlyDirectoryObservationStable(path, "Backup version directory", readOnlyDirectoryIdentity(info))
+  return { names: names.sort(), identity: readOnlyDirectoryIdentity(info) }
+}
+
+/** Read-only, redacted historical assessment; never grants recovery eligibility.
+ * Requires an explicit private backup. No external provenance verifier exists,
+ * so provenance and historical operational checks are always unverified/unknown.
+ */
+export async function diagnoseHistoricalReviewRecovery(runId, options = {}) {
+  try {
+    const { backupDir, eventIndices } = options
+    if (typeof backupDir !== "string" || !isAbsolute(backupDir) || !Array.isArray(eventIndices) ||
+      eventIndices.length === 0 || eventIndices.length > 10 || new Set(eventIndices).size !== eventIndices.length ||
+      eventIndices.some(index => !Number.isInteger(index) || index < 1 || index >= MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES)) {
+      return { code: "invalid_diagnostic_request" }
+    }
+    const id = normalizeDevelopmentRunId(runId)
+    const root = resolve(backupDir)
+    // Reject symlinks in every ancestor, including the private wrapper used by
+    // the RIC-59 backup procedure. Never create directories or fix permissions.
+    const directories = new Map()
+    const ancestors = new Map()
+    for (let path = root; ; path = dirname(path)) {
+      const info = await assertReadOnlyDirectoryIfPresent(path, "Backup directory")
+      if (!info) return { code: "backup_unavailable" }
+      ancestors.set(path, { dev: info.dev, ino: info.ino, mode: info.mode, uid: info.uid })
+      if (path === dirname(path)) break
+    }
+    const rootInfo = await lstat(root)
+    const parentInfo = await lstat(dirname(root))
+    const privateOwned = info => typeof process.getuid === "function" && info.uid === process.getuid() && (info.mode & 0o077) === 0
+    if (!privateOwned(rootInfo) && !privateOwned(parentInfo)) return { code: "private_backup_required" }
+    directories.set(root, readOnlyDirectoryIdentity(rootInfo))
+    const paths = storePaths(id, { writeDataDir: root })
+    for (const path of [paths.runRoot, paths.recordsDir, paths.versionsRoot]) {
+      const info = await assertReadOnlyDirectoryIfPresent(path, "Backup store directory")
+      if (!info) return { code: "backup_unavailable" }
+      directories.set(path, readOnlyDirectoryIdentity(info))
+    }
+    const canonical = await readRegularFileReadOnlySnapshotIfPresent(paths.recordPath, "Backup record")
+    if (!canonical) return { code: "canonical_missing" }
+    const record = parseRunRecordEnvelope(canonical.payload, id)
+    const assessment = reconstructDiagnosticHistory(record, eventIndices)
+    // The ordinary validator remains the authority for whole-record replay.
+    try { validateHistory(record) } catch { assessment.replayValid = false }
+    const markers = await boundedDiagnosticMarkerNames(paths.versionDir)
+    const observed = []
+    const agreements = []
+    for (const name of markers.names) {
+      const path = join(paths.versionDir, name)
+      const snapshot = await readRegularFileReadOnlySnapshotIfPresent(path, "Backup marker")
+      if (!snapshot) throw staleReadOnlyObservation()
+      observed.push({ path, snapshot })
+      const version = Number.parseInt(name.slice(0, 6), 10)
+      let agrees = false
+      try {
+        const marker = parseRunRecordEnvelope(snapshot.payload, id)
+        const checked = reconstructDiagnosticHistory(marker, [])
+        agrees = version === marker.version && checked.structureValid && version <= record.version &&
+          stableStringify(marker.project) === stableStringify(record.project) && marker.task === record.task && marker.baseSha === record.baseSha &&
+          stableStringify(marker.history) === stableStringify(record.history.slice(0, version + 1)) &&
+          (version !== record.version || stableStringify(marker) === stableStringify(record))
+      } catch { /* Untrusted marker content is reported only as disagreement. */ }
+      agreements[version] = agrees
+    }
+    const markersThrough = index => Array.from({ length: index + 1 }, (_, version) => agreements[version] === true).every(Boolean)
+    const allMarkers = assessment.structureValid && markers.names.length === record.version + 1 && markersThrough(record.version)
+    await maybeAwaitReadOnlyFinalCheckSeam(options)
+    await assertReadOnlyFileObservationStable(paths.recordPath, "Backup record", canonical)
+    for (const { path, snapshot } of observed) await assertReadOnlyFileObservationStable(path, "Backup marker", snapshot)
+    const finalMarkers = await boundedDiagnosticMarkerNames(paths.versionDir)
+    staleIfChanged(stableStringify(markers) === stableStringify(finalMarkers))
+    for (const [path, identity] of directories) await assertReadOnlyDirectoryObservationStable(path, "Backup directory", identity)
+    for (const [path, identity] of ancestors) {
+      const info = await assertReadOnlyDirectoryIfPresent(path, "Backup ancestor")
+      staleIfChanged(info !== null && sameReadOnlyIdentity(identity, { dev: info.dev, ino: info.ino, mode: info.mode, uid: info.uid }))
+    }
+    return {
+      code: "diagnostic_complete", recordStructureValid: assessment.structureValid,
+      immutableVersionMarkersAgree: allMarkers,
+      historicalReplayValid: assessment.replayValid && allMarkers,
+      independentProvenance: "unverified",
+      events: eventIndices.map(index => {
+        const result = assessment.results.get(index)
+        if (!result) return { eventIndex: index, code: "prefix_unassessable_or_event_missing",
+          localRecoveryContractMatches: "not_assessed", historicalReplayValid: false,
+          independentProvenance: "unverified" }
+        return { ...result, immutableVersionMarkersAgree: markersThrough(index),
+          historicalReplayValid: result.historicalReplayValid && markersThrough(index) }
+      })
+    }
+  } catch (error) {
+    return { code: error?.code === "RUN_STALE_OBSERVATION" ? "stale_observation" : "diagnostic_unavailable" }
   }
 }
