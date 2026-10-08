@@ -18,6 +18,7 @@ import {
   ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS
 } from "./software-factory-antigravity-readiness.mjs"
 import { latestSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
+import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
 import {
   HARDENING_ORCHESTRATOR_ID
 } from "./development-hardening-orchestrator.mjs"
@@ -339,6 +340,28 @@ function latestPlanningSummary(run) {
   return evidence.at(-1)?.summary || null
 }
 
+function boundedStructuredPlanPromptLines(run) {
+  const plan = latestSoftwareFactoryPlan(run)
+
+  if (!plan) {
+    return []
+  }
+
+  return [
+    "",
+    "Validated structured plan:",
+    `- Plan hash: ${plan.planHash}.`,
+    `- Risk: ${plan.risk}.`,
+    `- Goal: ${normalizeSafeText(plan.goal, { maxChars: 180 })}`,
+    "- Acceptance criteria:",
+    ...plan.acceptanceCriteria.map((item) => `  - ${normalizeSafeText(item, { maxChars: 180 })}`),
+    "- Constraints:",
+    ...plan.constraints.map((item) => `  - ${normalizeSafeText(item, { maxChars: 180 })}`),
+    "- Explicit exclusions:",
+    ...plan.exclusions.map((item) => `  - ${normalizeSafeText(item, { maxChars: 180 })}`)
+  ]
+}
+
 function boundedTestRemediationPromptLines(run, authorization) {
   if (authorization?.capability !== "debugging") {
     return []
@@ -501,6 +524,7 @@ export function buildAntigravityImplementationPrompt(run, workspace, authorizati
     "Task:",
     task,
     ...(planning ? ["", "Planning context:", normalizeSafeText(planning, { maxChars: 500 })] : []),
+    ...boundedStructuredPlanPromptLines(run),
     ...boundedTestRemediationPromptLines(run, authorization)
   ]
   const suffixLines = [
