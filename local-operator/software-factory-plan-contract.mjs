@@ -2,8 +2,8 @@ import { createHash } from "node:crypto"
 
 export const SOFTWARE_FACTORY_PLAN_CONTRACT_ID = "software-factory-v1-5-plan-contract"
 export const SOFTWARE_FACTORY_PLAN_SCHEMA_VERSION = 1
-export const SOFTWARE_FACTORY_PLAN_MAX_LIST_ITEMS = 8
-export const SOFTWARE_FACTORY_PLAN_MAX_ITEM_CHARS = 180
+export const SOFTWARE_FACTORY_PLAN_MAX_LIST_ITEMS = 5
+export const SOFTWARE_FACTORY_PLAN_MAX_ITEM_CHARS = 140
 
 const shaPattern = /^[a-f0-9]{40}$/u
 const hashPattern = /^[a-f0-9]{64}$/u
