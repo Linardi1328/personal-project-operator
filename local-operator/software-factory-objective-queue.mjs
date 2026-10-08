@@ -322,8 +322,8 @@ async function acquireEnqueueLock(p, projectId, objectiveHashValue, options = {}
     await handle.sync()
     await handle.close()
     handle = null
-    const syncDirectoryImpl = options.syncDirectoryImpl || syncDirectory
-    await syncDirectoryImpl(p.enqueueLocks)
+    const syncLockDirectoryImpl = options.syncLockDirectoryImpl || syncDirectory
+    await syncLockDirectoryImpl(p.enqueueLocks)
     return lockPath
   } catch (error) {
     await handle?.close().catch(() => {})
