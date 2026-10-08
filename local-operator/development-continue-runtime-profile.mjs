@@ -39,7 +39,8 @@ export function describePersonalProjectOperatorQualityPolicy() {
 export function describeOrdinaryProjectCapabilities() {
   const paths = {
     pythonExecutablePath: "python3.12", nodeExecutablePath: "node",
-    npmExecutablePath: "npm", uvExecutablePath: "uv",
+    uvExecutablePath: "uv",
+    reviewedProjectQualityRunnerPath: "approved:reviewedProjectQualityRunner",
     executionPath: "", nodeToolPaths: {
       portfolioTypecheck: "approved:portfolioTypecheck",
       portfolioEslint: "approved:portfolioEslint"
@@ -64,8 +65,8 @@ const fixedDarwinPaths = Object.freeze({
   codexExecutablePath: "/Users/richie/.local/bin/codex",
   gitExecutablePath: "/opt/homebrew/bin/git",
   nodeExecutablePath: "/opt/homebrew/bin/node",
-  npmExecutablePath: "/opt/homebrew/bin/npm",
   uvExecutablePath: "/Users/richie/.local/bin/uv",
+  reviewedProjectQualityRunnerPath: "/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs",
   pythonExecutablePath: "/opt/homebrew/bin/python3.12",
   projectPythonExecutablePaths: Object.freeze({
     "khlim-assist": "/Users/richie/.local/share/personal-project-operator/runtimes/khlim-assist-python3.12/bin/python3"
@@ -97,8 +98,8 @@ const fixedLinuxPaths = Object.freeze({
   codexExecutablePath: "/home/ppo/.local/bin/codex",
   gitExecutablePath: "/usr/bin/git",
   nodeExecutablePath: "/usr/local/lib/personal-project-operator/phase6k-tools/node-v24/bin/node",
-  npmExecutablePath: "/usr/bin/npm",
   uvExecutablePath: "/home/ppo/.local/bin/uv",
+  reviewedProjectQualityRunnerPath: "/opt/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs",
   pythonExecutablePath: "/usr/bin/python3.12",
   projectPythonExecutablePaths: Object.freeze({}),
   reviewExecutablePath: "/usr/local/bin/ppo-independent-reviewer",
@@ -201,8 +202,9 @@ const reviewedProjectTestPolicies = Object.freeze({
   }),
   kynexa: Object.freeze({
     policyId: "software-factory-v1-4-kynexa-ci-parity-policy",
-    kind: "npm-script-suite",
-    npmSteps: Object.freeze([
+    kind: "reviewed-node-project-suite",
+    projectId: "kynexa",
+    nodeSteps: Object.freeze([
       Object.freeze({ id: "lint", args: Object.freeze(["run", "lint"]), timeoutMs: 180000 }),
       Object.freeze({ id: "typecheck", args: Object.freeze(["run", "typecheck"]), timeoutMs: 180000 }),
       Object.freeze({ id: "test", args: Object.freeze(["test"]), timeoutMs: 300000 }),
@@ -212,8 +214,9 @@ const reviewedProjectTestPolicies = Object.freeze({
   }),
   rivora: Object.freeze({
     policyId: "software-factory-v1-4-rivora-ci-parity-policy",
-    kind: "npm-script-suite",
-    npmSteps: Object.freeze([
+    kind: "reviewed-node-project-suite",
+    projectId: "rivora",
+    nodeSteps: Object.freeze([
       Object.freeze({ id: "build", args: Object.freeze(["run", "build"]), timeoutMs: 300000 }),
       Object.freeze({ id: "typecheck", args: Object.freeze(["run", "typecheck"]), timeoutMs: 180000 }),
       Object.freeze({ id: "test", args: Object.freeze(["run", "test:run"]), timeoutMs: 300000 })
@@ -704,11 +707,11 @@ function nodeCommandSuitePolicy(definition, paths, sandbox) {
   }
 }
 
-function npmScriptSuitePolicy(definition, paths, sandbox) {
+function reviewedNodeProjectSuitePolicy(definition, paths, sandbox) {
   return {
     policyId: definition.policyId,
     policyVersion: "1",
-    trustedExecutablePaths: [paths.npmExecutablePath],
+    trustedExecutablePaths: [paths.nodeExecutablePath],
     env: {
       PPO_PHASE6K_TEST_POLICY: "fixed",
       PATH: paths.executionPath,
@@ -716,10 +719,14 @@ function npmScriptSuitePolicy(definition, paths, sandbox) {
       NEXT_TELEMETRY_DISABLED: "1"
     },
     sandbox,
-    steps: definition.npmSteps.map((step) => ({
+    steps: definition.nodeSteps.map((step) => ({
       id: step.id,
-      executablePath: paths.npmExecutablePath,
-      args: [...step.args],
+      executablePath: paths.nodeExecutablePath,
+      args: [
+        paths.reviewedProjectQualityRunnerPath,
+        definition.projectId,
+        step.id
+      ],
       timeoutMs: step.timeoutMs,
       maxOutputBytes: MAX_TEST_OUTPUT_BYTES,
       required: true,
@@ -779,8 +786,8 @@ function testPolicyForProject(projectId, paths, sandbox) {
     return nodeCommandSuitePolicy(definition, paths, sandbox)
   }
 
-  if (definition.kind === "npm-script-suite") {
-    return npmScriptSuitePolicy(definition, paths, sandbox)
+  if (definition.kind === "reviewed-node-project-suite") {
+    return reviewedNodeProjectSuitePolicy(definition, paths, sandbox)
   }
 
   if (definition.kind === "uv-command-suite") {
@@ -829,15 +836,9 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
     return
   }
 
-  if (definition.kind === "npm-script-suite") {
-    await assertExecutable(paths.npmExecutablePath, options)
-    await runReadOnlyProbe(paths.npmExecutablePath, ["--version"], {
-      ...options,
-      probeEnv: {
-        ...sanitizedProbeEnv,
-        PATH: paths.executionPath
-      }
-    })
+  if (definition.kind === "reviewed-node-project-suite") {
+    await assertNodeRuntime(paths, options)
+    await assertRegularFile(paths.reviewedProjectQualityRunnerPath, options)
     return
   }
 
