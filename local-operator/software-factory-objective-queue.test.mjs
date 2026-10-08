@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp } from "node:fs/promises"
+import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -92,4 +92,73 @@ test("completed claims cannot be released", async () => {
     releaseSoftwareFactoryQueueClaim(queued.queueId, options),
     (error) => error?.code === "FACTORY_QUEUE_ALREADY_COMPLETED"
   )
+})
+
+
+test("post-publication queue durability failure is ambiguous and request remains visible", async () => {
+  const options = await fixture()
+
+  await assert.rejects(
+    enqueueSoftwareFactoryObjective({
+      projectId: "kynexa",
+      objective: "Fix the approved capacity-safe defect."
+    }, {
+      ...options,
+      syncDirectoryImpl: async () => {
+        throw new Error("simulated directory fsync failure")
+      }
+    }),
+    (error) => (
+      error?.code === "FACTORY_QUEUE_DURABILITY_AMBIGUOUS" &&
+      error?.stateCommitted === true
+    )
+  )
+
+  const pending = await listSoftwareFactoryQueuedObjectives(options)
+  assert.equal(pending.length, 1)
+  assert.equal(pending[0].projectId, "kynexa")
+})
+
+test("claim revalidates stored request instead of trusting tampered queue content", async () => {
+  const options = await fixture()
+  const queued = await enqueueSoftwareFactoryObjective({
+    projectId: "kynexa",
+    objective: "Fix the approved registration defect."
+  }, options)
+  const requestPath = join(
+    options.writeDataDir,
+    "software-factory-objective-queue",
+    "requests",
+    `${queued.queueId}.json`
+  )
+  await writeFile(requestPath, JSON.stringify({
+    schemaVersion: 1,
+    queueId: queued.queueId,
+    projectId: "kynexa",
+    objective: "tampered objective",
+    objectiveHash: queued.objectiveHash,
+    queuedAt: queued.queuedAt
+  }), "utf8")
+
+  await assert.rejects(
+    claimSoftwareFactoryQueuedObjective(queued.queueId, options),
+    (error) => error?.code === "FACTORY_QUEUE_CORRUPT"
+  )
+})
+
+test("new queue directory ancestry is synchronized before request publication", async () => {
+  const options = await fixture()
+  let parentSyncs = 0
+
+  await enqueueSoftwareFactoryObjective({
+    projectId: "rivora",
+    objective: "Fix the approved event page defect."
+  }, {
+    ...options,
+    syncParentDirectoryImpl: async () => {
+      parentSyncs += 1
+    }
+  })
+
+  assert.equal(parentSyncs, 4)
 })
