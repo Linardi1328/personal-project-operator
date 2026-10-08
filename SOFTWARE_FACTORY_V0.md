@@ -459,6 +459,6 @@ The baseline plan does not invent product requirements. It adds only PPO's alrea
 
 Before use, the plan contract validates exact fields, sizes, arrays, sensitive/control text, project/run/SHA bindings, objective binding, reviewed capability/risk vocabulary, and its content hash.
 
-The latest valid structured plan is consumed by the implementation coordinator for capability routing and by the Antigravity execution adapter as bounded prompt context. Invalid or stale plan metadata is never treated as authority; existing task-based routing remains the fail-closed compatibility fallback.
+The latest valid structured plan is consumed by the implementation coordinator for capability routing and risk-aware model policy, and by the Antigravity execution adapter as bounded prompt context. Invalid or stale plan metadata is never treated as authority; existing task-based routing remains the fail-closed compatibility fallback.
 
 This contract is provider-neutral. A future planning worker may enrich the plan only by producing the same validated schema while remaining bound to the original owner objective. Adding a live paid/model-backed planning provider remains a separate architecture and cost decision.
