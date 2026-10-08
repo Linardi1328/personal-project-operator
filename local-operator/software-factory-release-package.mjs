@@ -16,6 +16,7 @@ import {
 import {
   GITHUB_DELIVERY_AGENT_ID,
   PHASE_6G_APPROVED_MERGE_METHOD,
+  PPO_PR_VALIDATION_WORKFLOW_NAME,
   REQUIRED_PPO_PR_VALIDATION_STEPS
 } from "./github-delivery-agent.mjs"
 import {
@@ -261,8 +262,8 @@ function implementationFacts(run, headSha) {
     changedFiles: Number.isInteger(metadata.changedFiles) && metadata.changedFiles >= 0
       ? metadata.changedFiles
       : null,
-    model: typeof metadata.model === "string" && metadata.model.trim()
-      ? safeText(metadata.model, "Implementation model", 160)
+    model: typeof (metadata.modelSlug ?? metadata.model) === "string" && String(metadata.modelSlug ?? metadata.model).trim()
+      ? safeText(metadata.modelSlug ?? metadata.model, "Implementation model", 160)
       : null
   }
 }
@@ -360,6 +361,9 @@ function remoteReviewFacts(run, headSha) {
     !latest ||
     latest.sha !== headSha ||
     metadata.reviewer !== REMOTE_PR_REVIEW_AGENT_ID ||
+    metadata.project !== run.project?.id ||
+    metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
+    metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH ||
     metadata.reviewedSha !== headSha ||
     metadata.decision !== REVIEW_DECISIONS.APPROVED ||
     metadata.mergeAllowed !== true ||
@@ -398,7 +402,11 @@ function ciFacts(run, headSha) {
   if (
     !latest ||
     latest.sha !== headSha ||
+    metadata.project !== run.project?.id ||
+    metadata.policyId !== PHASE_6G_DELIVERY_POLICY_ID ||
+    metadata.policyHash !== PHASE_6G_DELIVERY_POLICY_HASH ||
     metadata.implementationSha !== headSha ||
+    metadata.workflowName !== PPO_PR_VALIDATION_WORKFLOW_NAME ||
     metadata.workflowConclusion !== "success" ||
     metadata.requiredSteps !== REQUIRED_PPO_PR_VALIDATION_STEPS.length
   ) {
@@ -409,7 +417,8 @@ function ciFacts(run, headSha) {
   }
 
   return {
-    workflowName: safeText(metadata.workflowName, "Workflow name", 120),
+    prNumber: positiveInteger(metadata.prNumber, "CI PR number"),
+    workflowName: PPO_PR_VALIDATION_WORKFLOW_NAME,
     workflowRunId: positiveInteger(metadata.workflowRunId, "Workflow run id"),
     conclusion: "success",
     requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length
@@ -435,6 +444,7 @@ function deliveryFacts(run, headSha, remoteReview, ci) {
     metadata.remoteReviewedSha !== headSha ||
     metadata.remoteDecision !== REVIEW_DECISIONS.APPROVED ||
     metadata.prNumber !== remoteReview.prNumber ||
+    metadata.prNumber !== ci.prNumber ||
     metadata.workflowRunId !== ci.workflowRunId ||
     metadata.branch !== branch ||
     metadata.base !== PHASE_6G_DEFAULT_BASE_BRANCH
