@@ -279,6 +279,10 @@ function parseContinueCommand(commandText, rest, rawHasLineBreak) {
 }
 
 function parseFactoryStartCommand(rest) {
+  if (/[\u0000-\u001F\u007F-\u009F]/u.test(String(rest ?? ""))) {
+    return null
+  }
+
   const parsed = parseProjectTextCommand("factory-start", rest)
 
   if (!parsed || !allowedDevelopmentProjectIds.has(parsed[1])) {
