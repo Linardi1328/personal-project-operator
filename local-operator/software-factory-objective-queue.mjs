@@ -408,3 +408,51 @@ export function formatSoftwareFactoryObjectiveQueueError(error) {
   }
   return "PPO software factory queue error: unexpected local failure."
 }
+
+
+export function formatSoftwareFactoryObjectiveQueue(entries) {
+  const items = Array.isArray(entries) ? entries : []
+  const lines = [
+    "PPO Software Factory Objective Queue",
+    `Pending: ${items.length}`
+  ]
+
+  if (items.length === 0) {
+    lines.push("Next: no queued objective is waiting.")
+    return lines.join("\n")
+  }
+
+  for (let index = 0; index < items.length; index += 1) {
+    const entry = items[index]
+    lines.push(
+      "",
+      `${index + 1}. ${entry.queueId}`,
+      `   Project: ${entry.projectId}`,
+      `   Queued: ${entry.queuedAt}`,
+      `   Claimed: ${entry.claimed === true ? "yes - reconciliation required" : "no"}`,
+      `   Objective hash: ${entry.objectiveHash}`
+    )
+  }
+
+  lines.push("", "Next: /ppo factory-drain admits at most one eligible queued objective.")
+  return lines.join("\n")
+}
+
+export async function handlePpoSoftwareFactoryQueueCommand(options = {}) {
+  try {
+    const entries = await listSoftwareFactoryQueuedObjectives(options)
+    return {
+      ok: true,
+      outcome: "queue_listed",
+      count: entries.length,
+      output: formatSoftwareFactoryObjectiveQueue(entries)
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      outcome: "owner_action_required",
+      count: 0,
+      output: formatSoftwareFactoryObjectiveQueueError(error)
+    }
+  }
+}
