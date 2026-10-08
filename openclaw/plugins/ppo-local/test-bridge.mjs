@@ -47,6 +47,7 @@ const validIssueRequestId = "A".repeat(43);
 const validNoteRequestId = "B".repeat(43);
 const validDevelopmentRunId = "C".repeat(43);
 const validCancellationRequestId = "D".repeat(43);
+const validReleaseRequestId = "E".repeat(43);
 
 assert.equal(
   resolvePpoLocalWriteDataDir({}),
@@ -69,7 +70,7 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 {
   const observedWriteDataDirs = [];
 
-  for (const command of ["start khlim-assist", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`, `factory-run ${validDevelopmentRunId}`]) {
+  for (const command of ["start khlim-assist", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`, `factory-run ${validDevelopmentRunId}`, `release ${validDevelopmentRunId}`]) {
     const result = await runPpoLocalTool(
       { command },
       {
@@ -89,8 +90,8 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 
   assert.deepEqual(
     observedWriteDataDirs,
-    Array(4).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
-    "start, run, continue, and factory-run share exactly one state directory"
+    Array(5).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
+    "start, run, continue, factory-run, and release share exactly one state directory"
   );
 }
 
@@ -143,6 +144,8 @@ expectedMappings.set(`cancel ${validDevelopmentRunId}`, ["cancel", validDevelopm
 expectedMappings.set(`cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]);
 expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
 expectedMappings.set(`factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]);
+expectedMappings.set(`release ${validDevelopmentRunId}`, ["release", validDevelopmentRunId]);
+expectedMappings.set(`release-confirm ${validReleaseRequestId}`, ["release-confirm", validReleaseRequestId]);
 expectedMappings.set(`recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]);
 
 for (const [input, expected] of expectedMappings) {
@@ -436,6 +439,8 @@ for (const [input, expected] of [
   [`/ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`/ppo factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]],
+  [`/ppo release ${validDevelopmentRunId}`, ["release", validDevelopmentRunId]],
+  [`/ppo release-confirm ${validReleaseRequestId}`, ["release-confirm", validReleaseRequestId]],
   [`/ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
   const result = await runPpoLocalTool(
@@ -465,6 +470,8 @@ for (const [input, expected] of [
   [`ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`ppo factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]],
+  [`ppo release ${validDevelopmentRunId}`, ["release", validDevelopmentRunId]],
+  [`ppo release-confirm ${validReleaseRequestId}`, ["release-confirm", validReleaseRequestId]],
   [`ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
 ]) {
   assert.deepEqual(toPpoWrapperArgs(input), expected, `${input} raw ppo envelope maps correctly`);
@@ -875,3 +882,84 @@ const bridgeSource = await readFile(new URL("bridge.mjs", import.meta.url), "utf
 assert.equal(bridgeSource.includes("shell: false"), true, "bridge wrapper execution keeps shell disabled");
 
 console.log("ppo_local bridge tests passed: existing commands, status/repo/pr routing, full payloads, and rejection safety.");
+
+
+{
+  const stagedReleaseOutput = [
+    "PPO Software Factory Release",
+    "Status: release_approval_staged",
+    "Outcome: release_approval_staged",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Head: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "Pull request: #42",
+    `Package: ${"f".repeat(64)}`,
+    "Merge method: squash",
+    "Expires: 2026-10-08T05:10:00.000Z",
+    `Confirm: /ppo release-confirm ${validReleaseRequestId}`,
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo release ${validDevelopmentRunId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["release", validDevelopmentRunId]);
+        return {
+          stdout: stagedReleaseOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw release stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "release stage output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["release", validDevelopmentRunId]);
+  assert.match(result.stdout, /release_approval_staged/u);
+  assert.match(result.stdout, /\/ppo release-confirm/u);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw release stderr|token|secret|stack/i);
+}
+
+{
+  const mergedReleaseOutput = [
+    "PPO Software Factory Release",
+    "Status: release_merged",
+    "Outcome: release_merged",
+    `Run: ${validDevelopmentRunId}`,
+    "Project: khlim-assist",
+    "Head: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "Pull request: #42",
+    `Package: ${"f".repeat(64)}`,
+    "Merge method: squash",
+    "Merge commit: cccccccccccccccccccccccccccccccccccccccc",
+    "Production deployment: not authorized.",
+    ""
+  ].join("\n");
+  const result = await runPpoLocalTool(
+    { command: `/ppo release-confirm ${validReleaseRequestId}` },
+    {
+      runWrapper: async (wrapperArgs) => {
+        assert.deepEqual(wrapperArgs, ["release-confirm", validReleaseRequestId]);
+        return {
+          stdout: mergedReleaseOutput,
+          stderr: "SENSITIVE_TEST_SENTINEL raw release-confirm stderr"
+        };
+      }
+    }
+  );
+
+  assert.equal(result.ok, true, "release confirmation output succeeds through bridge");
+  assert.deepEqual(result.wrapperArgs, ["release-confirm", validReleaseRequestId]);
+  assert.match(result.stdout, /release_merged/u);
+  assert.match(result.stdout, /Production deployment: not authorized/u);
+  assert.doesNotMatch(result.stdout, /SENSITIVE_TEST_SENTINEL|raw release-confirm stderr|token|secret|stack/i);
+}
+
+for (const invalidRelease of [
+  `release ${validDevelopmentRunId} extra`,
+  `release-confirm ${validReleaseRequestId} extra`,
+  `release-confirm ${"X".repeat(42)}`,
+  `release\t${validDevelopmentRunId}`,
+  `release-confirm\n${validReleaseRequestId}`
+]) {
+  assert.equal(toPpoWrapperArgs(invalidRelease), null, `${invalidRelease} release input fails closed`);
+}
