@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  SoftwareFactoryManagerObjectiveError,
   createSoftwareFactoryManagerLaunch,
   createSoftwareFactoryManagerObjectiveIntake,
   formatSoftwareFactoryManagerObjective,
@@ -343,4 +344,41 @@ test("manager objective intake checks WIP admission before GitHub or run creatio
   )
   assert.equal(githubCalls, 0)
   assert.equal(createCalls, 0)
+})
+
+
+test("WIP-blocked manager launch queues objective instead of discarding it", async () => {
+  const observed = []
+  const launch = createSoftwareFactoryManagerLaunch({
+    async intake() {
+      throw new SoftwareFactoryManagerObjectiveError(
+        "FACTORY_OBJECTIVE_WIP_BLOCKED",
+        "blocked"
+      )
+    },
+    async enqueue(input) {
+      observed.push(input)
+      return {
+        ok: true,
+        outcome: "queued",
+        queueId: "Q".repeat(32),
+        projectId: input.projectId,
+        objectiveHash: "a".repeat(64),
+        queuedAt: "2026-10-08T06:00:00.000Z"
+      }
+    },
+    async runFactory() {
+      throw new Error("must not run")
+    }
+  })
+
+  const result = await launch("kynexa", "Fix the approved registration defect.")
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "queued")
+  assert.equal(result.queue.queueId, "Q".repeat(32))
+  assert.deepEqual(observed, [{
+    projectId: "kynexa",
+    objective: "Fix the approved registration defect."
+  }])
+  assert.match(formatSoftwareFactoryManagerObjective(result), /Queue: Q+/u)
 })

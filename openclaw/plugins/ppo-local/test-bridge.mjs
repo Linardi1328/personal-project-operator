@@ -70,7 +70,7 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 {
   const observedWriteDataDirs = [];
 
-  for (const command of ["start khlim-assist", "factory-start khlim-assist Implement the approved bounded objective.", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`, `factory-run ${validDevelopmentRunId}`, `release ${validDevelopmentRunId}`]) {
+  for (const command of ["start khlim-assist", "factory-start khlim-assist Implement the approved bounded objective.", "factory-drain", "factory-queue", `run ${validDevelopmentRunId}`, `continue ${validDevelopmentRunId}`, `factory-run ${validDevelopmentRunId}`, `release ${validDevelopmentRunId}`]) {
     const result = await runPpoLocalTool(
       { command },
       {
@@ -90,8 +90,8 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 
   assert.deepEqual(
     observedWriteDataDirs,
-    Array(6).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
-    "start, factory-start, run, continue, factory-run, and release share exactly one state directory"
+    Array(8).fill(DEFAULT_PPO_LOCAL_WRITE_DATA_DIR),
+    "start, factory-start, factory-drain, factory-queue, run, continue, factory-run, and release share exactly one state directory"
   );
 }
 
@@ -150,6 +150,8 @@ expectedMappings.set(`cancel ${validDevelopmentRunId}`, ["cancel", validDevelopm
 expectedMappings.set(`cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]);
 expectedMappings.set(`continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]);
 expectedMappings.set(`factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]);
+expectedMappings.set("factory-drain", ["factory-drain"]);
+expectedMappings.set("factory-queue", ["factory-queue"]);
 
 assert.equal(
   toPpoWrapperArgs("factory-start khlim-assist"),
@@ -472,6 +474,8 @@ for (const [input, expected] of [
   [`/ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`/ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`/ppo factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]],
+  ["/ppo factory-drain", ["factory-drain"]],
+  ["/ppo factory-queue", ["factory-queue"]],
   [`/ppo release ${validDevelopmentRunId}`, ["release", validDevelopmentRunId]],
   [`/ppo release-confirm ${validReleaseRequestId}`, ["release-confirm", validReleaseRequestId]],
   [`/ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]
@@ -503,6 +507,8 @@ for (const [input, expected] of [
   [`ppo cancel-confirm ${validCancellationRequestId}`, ["cancel-confirm", validCancellationRequestId]],
   [`ppo continue ${validDevelopmentRunId}`, ["continue", validDevelopmentRunId]],
   [`ppo factory-run ${validDevelopmentRunId}`, ["factory-run", validDevelopmentRunId]],
+  ["ppo factory-drain", ["factory-drain"]],
+  ["ppo factory-queue", ["factory-queue"]],
   [`ppo release ${validDevelopmentRunId}`, ["release", validDevelopmentRunId]],
   [`ppo release-confirm ${validReleaseRequestId}`, ["release-confirm", validReleaseRequestId]],
   [`ppo recover ${validDevelopmentRunId}`, ["recover", validDevelopmentRunId]]

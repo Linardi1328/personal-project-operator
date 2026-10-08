@@ -480,3 +480,52 @@ The admission policy is:
 This control exists to protect both management bandwidth and AI/model quota. A new manager objective cannot create another run merely because execution capacity exists.
 
 V1.6 intentionally does not yet persist waiting objectives. A later queue slice may retain blocked objectives safely and admit them only when a WIP slot becomes available.
+
+
+## V1.7 durable objective queue
+
+Manager objectives that cannot pass V1.6 WIP admission are no longer discarded or forced into a stale development run.
+
+A WIP-blocked `/ppo factory-start <project> <objective>` now stores one immutable private queue request containing only:
+
+- opaque queue id;
+- approved project id;
+- bounded owner objective;
+- objective hash; and
+- queued timestamp.
+
+No repository SHA is pinned while queued, and no model/provider/readiness work runs merely because an objective is waiting.
+
+Identical pending project/objective pairs are deduplicated.
+
+`/ppo factory-queue` provides a metadata-only read view of pending work. It does not echo objective text.
+
+`/ppo factory-drain` processes at most one objective per invocation:
+
+```text
+pending FIFO queue
+      |
+read trusted run catalog
+      |
+V1.6 admission
+   no | yes
+      |  |
+   parked
+         |
+     exclusive claim
+         |
+ fresh manager intake
+ (current GitHub SHA)
+         |
+ autonomous factory run
+         |
+ durable queue result
+```
+
+The exclusive claim is created before any development run. If admission races and no run is created, PPO may release the claim and leave the item pending.
+
+Once a durable run id exists, PPO never releases the claim. Runner failure or post-creation intake failure records the run id in the queue result so later handling resumes or inspects that run instead of launching the objective again.
+
+A claimed queue item with no result is intentionally treated as ambiguous and requires reconciliation. It is never auto-replayed.
+
+Queued work does not consume the two-project WIP limit until it is admitted.

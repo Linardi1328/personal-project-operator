@@ -26,6 +26,9 @@ import {
   buildBaselineSoftwareFactoryPlan,
   softwareFactoryPlanEvidence
 } from "./software-factory-plan-contract.mjs"
+import {
+  enqueueSoftwareFactoryObjective
+} from "./software-factory-objective-queue.mjs"
 
 export const SOFTWARE_FACTORY_MANAGER_OBJECTIVE_ID = "software-factory-v1-4-manager-objective"
 export const SOFTWARE_FACTORY_MANAGER_OBJECTIVE_MAX_CHARS = MAX_DEVELOPMENT_RUN_TASK_CHARS
@@ -270,9 +273,26 @@ export async function startSoftwareFactoryManagerObjective(projectId, objective,
 export function createSoftwareFactoryManagerLaunch(dependencies = {}) {
   const intake = dependencies.intake || defaultIntake
   const runFactory = dependencies.runFactory || executeSoftwareFactoryAutonomousRun
+  const enqueue = dependencies.enqueue || enqueueSoftwareFactoryObjective
 
   return async function launch(projectId, objective, options = {}) {
-    const intakeResult = await intake(projectId, objective, options)
+    let intakeResult
+
+    try {
+      intakeResult = await intake(projectId, objective, options)
+    } catch (error) {
+      if (error instanceof SoftwareFactoryManagerObjectiveError && error.code === "FACTORY_OBJECTIVE_WIP_BLOCKED") {
+        const queued = await enqueue({ projectId, objective }, options)
+        return {
+          ok: true,
+          outcome: "queued",
+          intake: null,
+          queue: queued,
+          factory: null
+        }
+      }
+      throw error
+    }
 
     try {
       const factoryResult = await runFactory(intakeResult.runId, options)
@@ -312,9 +332,9 @@ export function executeSoftwareFactoryManagerObjective(projectId, objective, opt
 export function formatSoftwareFactoryManagerObjective(result) {
   const lines = [
     "PPO Software Factory Manager Objective",
-    `Project: ${result.intake?.projectId || "unknown"}`,
-    `Run: ${result.intake?.runId || "unknown"}`,
-    `Base SHA: ${result.intake?.baseSha || "unknown"}`,
+    `Project: ${result.intake?.projectId || result.queue?.projectId || "unknown"}`,
+    `Run: ${result.intake?.runId || "none"}`,
+    `Base SHA: ${result.intake?.baseSha || "not pinned while queued"}`,
     `Outcome: ${result.outcome || "unknown"}`
   ]
 
@@ -322,7 +342,10 @@ export function formatSoftwareFactoryManagerObjective(result) {
     lines.push(`Reason: ${result.factory.reason}`)
   }
 
-  if (result.outcome === "release_ready") {
+  if (result.outcome === "queued") {
+    lines.push(`Queue: ${result.queue?.queueId || "unknown"}`)
+    lines.push("Next: no action required; drain the queue when a WIP slot becomes available.")
+  } else if (result.outcome === "release_ready") {
     lines.push("Next: review the release package and explicitly approve merge.")
   } else if (result.outcome === "blocked_capacity") {
     lines.push(`Next: resume with /ppo factory-run ${result.intake.runId} after worker capacity returns.`)
@@ -351,6 +374,7 @@ export async function handlePpoSoftwareFactoryManagerObjectiveCommand(projectId,
       ok: result.ok,
       outcome: result.outcome,
       runId: result.intake?.runId || null,
+      queueId: result.queue?.queueId || null,
       output: formatSoftwareFactoryManagerObjective(result)
     }
   } catch (error) {
@@ -358,6 +382,7 @@ export async function handlePpoSoftwareFactoryManagerObjectiveCommand(projectId,
       ok: false,
       outcome: "owner_action_required",
       runId: error?.runId || null,
+      queueId: null,
       output: error?.runId
         ? [
             formatSoftwareFactoryManagerObjectiveError(error),
