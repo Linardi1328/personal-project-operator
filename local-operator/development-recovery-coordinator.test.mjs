@@ -1180,7 +1180,10 @@ test("Phase 6L recovery-only profile matches Phase 6K policy identity without mu
     "/Users/richie/spy-market-agent",
     "/Users/richie/richie-linardi-portfolio-website",
     "/Users/richie/rbl-content-engine",
-    "/Users/richie/khlim-digital-ecosystem"
+    "/Users/richie/khlim-digital-ecosystem",
+    "/Users/richie/kynexa",
+    "/Users/richie/rivora",
+    "/Users/richie/axiom-quantum"
   ])
   const fakeStat = async (path) => ({
     isFile: () => !directoryPaths.has(path),
@@ -1223,6 +1226,9 @@ test("Phase 6L Linux recovery-only profile matches Phase 6K policy identity with
     "/var/lib/personal-project-operator/source-repos/richie-linardi-portfolio-website",
     "/var/lib/personal-project-operator/source-repos/rbl-content-engine",
     "/var/lib/personal-project-operator/source-repos/khlim-digital-ecosystem",
+    "/var/lib/personal-project-operator/source-repos/kynexa",
+    "/var/lib/personal-project-operator/source-repos/rivora",
+    "/var/lib/personal-project-operator/source-repos/axiom-quantum",
     "/var/lib/personal-project-operator/phase6-sandbox"
   ])
   const fakeInfo = (path) => ({
