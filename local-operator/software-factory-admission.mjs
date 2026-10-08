@@ -1,7 +1,19 @@
 export const SOFTWARE_FACTORY_ADMISSION_POLICY_VERSION = 1
 export const SOFTWARE_FACTORY_MAX_ACTIVE_PROJECTS = 2
 export const SOFTWARE_FACTORY_MAX_ACTIVE_RUNS_PER_PROJECT = 1
+export const SOFTWARE_FACTORY_WIP_RELEASED_STATUSES = Object.freeze([
+  "merged",
+  "deploy_in_progress",
+  "deploy_failed",
+  "deployed",
+  "verification_in_progress",
+  "verification_failed",
+  "rollback_in_progress",
+  "rollback_failed",
+  "rolled_back"
+])
 
+const wipReleasedStatusSet = new Set(SOFTWARE_FACTORY_WIP_RELEASED_STATUSES)
 const projectIdPattern = /^[a-z0-9][a-z0-9-]{0,95}$/u
 
 export class SoftwareFactoryAdmissionError extends Error {
@@ -60,7 +72,22 @@ function normalizeCatalog(catalog) {
     }
   }
 
-  return catalog.active
+  return catalog.active.filter((summary) => !wipReleasedStatusSet.has(summary.status))
+}
+
+export function softwareFactoryRunConsumesWip(summary) {
+  if (!summary || typeof summary !== "object" || summary.terminal === true) {
+    return false
+  }
+
+  if (summary.recoveryRequired === true) {
+    throw admissionError(
+      "FACTORY_ADMISSION_CATALOG_UNTRUSTED",
+      "Software factory run state requires recovery or owner inspection."
+    )
+  }
+
+  return !wipReleasedStatusSet.has(summary.status)
 }
 
 export function assessSoftwareFactoryAdmission(projectIdInput, catalog) {
