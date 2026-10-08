@@ -117,6 +117,8 @@ for (const invalidWriteDataDir of ["relative/write-data", " /private/tmp/ppo-sta
 }
 
 for (const projectId of currentProjectIds) {
+  expectedMappings.set(`repo ${projectId}`, ["repo", projectId]);
+  expectedMappings.set(`pr ${projectId}`, ["pr", projectId]);
   expectedMappings.set(
     `codex ${projectId} ${phase3cTask}`,
     ["codex", projectId, phase3cTask]
