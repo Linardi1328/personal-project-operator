@@ -8,6 +8,43 @@ import {
 const RUN_ID = "A".repeat(43)
 const SHA = "a".repeat(40)
 
+function releasePackageFixture() {
+  return {
+    kind: "software_factory_release_candidate",
+    packageHash: "f".repeat(64),
+    run: {
+      projectId: "khlim-digital-ecosystem",
+      repository: "Linardi1328/khlim-digital-ecosystem",
+      headSha: SHA
+    },
+    implementation: {
+      adapterId: "software-factory-v0-antigravity-execution",
+      attempt: 1
+    },
+    tests: {
+      passed: 1,
+      total: 1
+    },
+    localReview: {
+      decision: "APPROVED"
+    },
+    remoteReview: {
+      decision: "APPROVED"
+    },
+    ci: {
+      conclusion: "success",
+      workflowRunId: 1
+    },
+    delivery: {
+      prNumber: 42
+    },
+    authority: {
+      merge: "owner_approval_required",
+      productionDeployment: "not_authorized"
+    }
+  }
+}
+
 function run(status, version, overrides = {}) {
   return {
     runId: RUN_ID,
@@ -26,6 +63,7 @@ function sequenceRunner(sequence, results) {
   let continueIndex = 0
 
   return createSoftwareFactoryAutonomousRunner({
+    buildReleasePackage: releasePackageFixture,
     async readRun() {
       return structuredClone(sequence[Math.min(index, sequence.length - 1)])
     },
@@ -62,11 +100,13 @@ test("advances multiple reviewed boundaries and stops at merge_ready", async () 
   assert.equal(result.run.status, "merge_ready")
   assert.equal(result.stepCount, 5)
   assert.equal(result.reason, "human_release_approval_required")
+  assert.equal(result.releasePackage.delivery.prNumber, 42)
 })
 
 test("pre-existing merge_ready run never invokes Continue", async () => {
   let continueCalls = 0
   const runner = createSoftwareFactoryAutonomousRunner({
+    buildReleasePackage: releasePackageFixture,
     async readRun() {
       return run("merge_ready", 12)
     },
@@ -81,6 +121,7 @@ test("pre-existing merge_ready run never invokes Continue", async () => {
   assert.equal(result.outcome, "release_ready")
   assert.equal(result.stepCount, 0)
   assert.equal(continueCalls, 0)
+  assert.equal(result.releasePackage.packageHash, "f".repeat(64))
 })
 
 test("blocked worker capacity stops without additional continuation", async () => {
@@ -135,6 +176,7 @@ test("one stale-state result may refresh and continue", async () => {
   let state = run("planned", 3)
   let calls = 0
   const runner = createSoftwareFactoryAutonomousRunner({
+    buildReleasePackage: releasePackageFixture,
     async readRun() {
       return structuredClone(state)
     },
@@ -164,6 +206,7 @@ test("one stale-state result may refresh and continue", async () => {
 
   assert.equal(result.outcome, "release_ready")
   assert.equal(result.stepCount, 2)
+  assert.equal(result.releasePackage.delivery.prNumber, 42)
 })
 
 test("repeated stale-state results fail closed", async () => {

@@ -352,3 +352,28 @@ PPO pins the selected slug with `--model`. It never relies on Antigravity's inte
 Model discovery and routing happen before `attempts.implementation` is incremented. An unavailable, malformed, or insufficient catalog therefore blocks dispatch without consuming an implementation attempt or model-generation tokens.
 
 Only the selected bounded model slug is stored in implementation evidence. Raw `agy models` output is not persisted.
+
+
+## V1.2 deterministic release candidate evidence package
+
+The Software Factory release gate now produces one bounded manager-facing evidence package when an ordinary run reaches `merge_ready`.
+
+The package is constructed only from persisted reviewed evidence. It fails closed unless the current exact head SHA has:
+
+- completed reviewed implementation evidence from an approved executor;
+- deterministic Phase 6E tests with zero failed or ambiguous results;
+- local independent Phase 6F approval with zero blockers, security findings, or additional test requirements;
+- remote exact-head PR review approval with the same zero-finding requirements;
+- exact-head PPO PR validation evidence for the reviewed workflow contract; and
+- Phase 6G merge-ready evidence binding the pull request, branch, base, CI run, remote-reviewed SHA, and approved squash merge method.
+
+The package contains bounded metadata only. It excludes raw prompts, model output, test logs, review prose, credentials, and secrets.
+
+A deterministic SHA-256 package hash binds the complete manager handoff. Rebuilding the package from unchanged run evidence yields the same hash.
+
+`/ppo factory-run <run-id>` now attaches this package automatically to a `release_ready` outcome. If a merge-ready run cannot produce a valid package, the factory fails closed instead of presenting the release as ready.
+
+V1.2 does not grant merge or production authority. The package explicitly records:
+
+- merge: owner approval required;
+- production deployment: not authorized.

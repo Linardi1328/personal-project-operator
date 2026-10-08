@@ -5,6 +5,10 @@ import {
 import {
   executeDevelopmentContinue
 } from "./development-continue-orchestrator.mjs"
+import {
+  buildSoftwareFactoryReleasePackageFromRun,
+  formatSoftwareFactoryReleasePackage
+} from "./software-factory-release-package.mjs"
 
 export const SOFTWARE_FACTORY_AUTONOMOUS_RUNNER_ID = "software-factory-v0-6-autonomous-runner"
 export const SOFTWARE_FACTORY_AUTONOMOUS_MAX_STEPS = 16
@@ -171,6 +175,7 @@ function progressKey(entry) {
 export function createSoftwareFactoryAutonomousRunner(dependencies = {}) {
   const readRunImpl = dependencies.readRun || readDevelopmentRun
   const continueImpl = dependencies.continueRun || executeDevelopmentContinue
+  const releasePackageImpl = dependencies.buildReleasePackage || buildSoftwareFactoryReleasePackageFromRun
 
   return async function runSoftwareFactoryAutonomously(runId, options = {}) {
     const normalizedRunId = normalizeRunId(runId)
@@ -184,7 +189,12 @@ export function createSoftwareFactoryAutonomousRunner(dependencies = {}) {
       const stop = preflightStop(before, history.length, history)
 
       if (stop) {
-        return stop
+        return stop.outcome === "release_ready"
+          ? {
+              ...stop,
+              releasePackage: await releasePackageImpl(before)
+            }
+          : stop
       }
 
       const result = await continueImpl(normalizedRunId, options)
@@ -194,7 +204,12 @@ export function createSoftwareFactoryAutonomousRunner(dependencies = {}) {
 
       const postStop = preflightStop(after, history.length, history)
       if (postStop) {
-        return postStop
+        return postStop.outcome === "release_ready"
+          ? {
+              ...postStop,
+              releasePackage: await releasePackageImpl(after)
+            }
+          : postStop
       }
 
       if (result.outcome === "stale_state") {
@@ -302,6 +317,9 @@ export function formatSoftwareFactoryAutonomousRun(result) {
   }
 
   if (result.outcome === "release_ready") {
+    if (result.releasePackage) {
+      lines.push("", formatSoftwareFactoryReleasePackage(result.releasePackage))
+    }
     lines.push("Next: review the release candidate and explicitly approve merge.")
   } else if (result.outcome === "blocked_capacity") {
     lines.push("Next: resume the same factory run after worker capacity is available.")
