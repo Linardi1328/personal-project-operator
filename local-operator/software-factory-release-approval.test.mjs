@@ -282,3 +282,20 @@ test("formatter exposes only bounded approval metadata and explicit no-productio
 test("release approval policy hash is deterministic SHA-256", () => {
   assert.match(SOFTWARE_FACTORY_RELEASE_APPROVAL_POLICY_HASH, /^[a-f0-9]{64}$/u)
 })
+
+
+test("staging refuses malformed trusted-builder output before persistence", async () => {
+  const f = await fixture()
+  const malformed = structuredClone(f.packageValue)
+  malformed.run.version = 0
+
+  const result = await stageSoftwareFactoryReleaseApproval(RUN_ID, {
+    writeDataDir: f.writeDataDir,
+    randomBytesImpl: deterministicRandom,
+    now: () => new Date("2026-10-08T04:00:00.000Z"),
+    buildReleasePackage: async () => malformed
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.code, "RELEASE_REQUEST_INVALID")
+})
