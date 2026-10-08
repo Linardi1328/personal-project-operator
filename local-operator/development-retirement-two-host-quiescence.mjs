@@ -91,28 +91,37 @@ export function createTwoHostRetirementQuiescenceCoordinator(ports = {}) {
       if (failed) throw unavailable()
     }
 
+    let released = false
+
     async function held() {
-      if (poisoned || !inUse) return false
+      if (poisoned || !inUse || released) return false
       if (acquired.length !== RETIREMENT_QUIESCENCE_PORT_ORDER.length) {
         poisoned = true
         return false
       }
       for (const { role, lease } of acquired) {
+        // A prior assertion may have paused while release completed. Its
+        // stale result is not evidence of a lost lease, and must never poison
+        // a newer acquisition of this coordinator.
+        if (released) return false
         if (!validLease(lease, role, context)) {
           poisoned = true
           return false
         }
         try {
-          if (await lease.assertHeld(context) !== true) {
+          const stillHeld = await lease.assertHeld(context)
+          if (released) return false
+          if (stillHeld !== true) {
             poisoned = true
             return false
           }
         } catch {
+          if (released) return false
           poisoned = true
           return false
         }
       }
-      return true
+      return !released
     }
 
     try {
@@ -132,7 +141,6 @@ export function createTwoHostRetirementQuiescenceCoordinator(ports = {}) {
       throw unavailable()
     }
 
-    let released = false
     let closing = false
 
     return Object.freeze({
