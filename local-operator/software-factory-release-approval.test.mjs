@@ -299,3 +299,118 @@ test("staging refuses malformed trusted-builder output before persistence", asyn
   assert.equal(result.ok, false)
   assert.equal(result.code, "RELEASE_REQUEST_INVALID")
 })
+
+
+test("successful release pumps at most one queued objective and returns bounded pump metadata", async () => {
+  const f = await fixture()
+  const staged = await stageSoftwareFactoryReleaseApproval(RUN_ID, {
+    writeDataDir: f.writeDataDir,
+    randomBytesImpl: deterministicRandom,
+    now: () => new Date("2026-10-08T04:00:00.000Z"),
+    buildReleasePackage: async () => f.packageValue
+  })
+  let drains = 0
+
+  const result = await confirmSoftwareFactoryReleaseApproval(staged.requestId, {
+    writeDataDir: f.writeDataDir,
+    now: () => new Date("2026-10-08T04:01:00.000Z"),
+    buildReleasePackage: async () => structuredClone(f.packageValue),
+    executeMerge: async () => ({
+      ok: true,
+      outcome: "merged",
+      merge: {
+        mergeCommitSha: "7".repeat(40),
+        mainSha: "7".repeat(40)
+      }
+    }),
+    async drainQueue() {
+      drains += 1
+      return {
+        ok: false,
+        outcome: "blocked_capacity",
+        queueId: "Q".repeat(32),
+        runId: "R".repeat(43),
+        reason: "worker_capacity_exhausted",
+        ignored: "must not leak"
+      }
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "release_merged")
+  assert.equal(drains, 1)
+  assert.deepEqual(result.queuePump, {
+    ok: false,
+    outcome: "blocked_capacity",
+    queueId: "Q".repeat(32),
+    runId: "R".repeat(43),
+    reason: "worker_capacity_exhausted"
+  })
+})
+
+test("queue pump failure never retroactively changes a committed release merge", async () => {
+  const f = await fixture()
+  const staged = await stageSoftwareFactoryReleaseApproval(RUN_ID, {
+    writeDataDir: f.writeDataDir,
+    randomBytesImpl: deterministicRandom,
+    now: () => new Date("2026-10-08T04:00:00.000Z"),
+    buildReleasePackage: async () => f.packageValue
+  })
+
+  const result = await confirmSoftwareFactoryReleaseApproval(staged.requestId, {
+    writeDataDir: f.writeDataDir,
+    now: () => new Date("2026-10-08T04:01:00.000Z"),
+    buildReleasePackage: async () => structuredClone(f.packageValue),
+    executeMerge: async () => ({
+      ok: true,
+      outcome: "merged",
+      merge: {
+        mergeCommitSha: "8".repeat(40),
+        mainSha: "8".repeat(40)
+      }
+    }),
+    async drainQueue() {
+      throw new Error("simulated queue failure")
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.outcome, "release_merged")
+  assert.equal(result.mergeCommitSha, "8".repeat(40))
+  assert.deepEqual(result.queuePump, {
+    ok: false,
+    outcome: "queue_pump_unavailable",
+    queueId: null,
+    runId: null,
+    reason: "post_merge_queue_pump_failed"
+  })
+})
+
+test("stale release approval does not pump the objective queue", async () => {
+  const f = await fixture()
+  const staged = await stageSoftwareFactoryReleaseApproval(RUN_ID, {
+    writeDataDir: f.writeDataDir,
+    randomBytesImpl: deterministicRandom,
+    now: () => new Date("2026-10-08T04:00:00.000Z"),
+    buildReleasePackage: async () => f.packageValue
+  })
+  let drains = 0
+  const changed = packageFixture({ packageHash: "9".repeat(64) })
+
+  const result = await confirmSoftwareFactoryReleaseApproval(staged.requestId, {
+    writeDataDir: f.writeDataDir,
+    now: () => new Date("2026-10-08T04:01:00.000Z"),
+    buildReleasePackage: async () => changed,
+    executeMerge: async () => {
+      throw new Error("stale release must not merge")
+    },
+    async drainQueue() {
+      drains += 1
+      return { ok: true, outcome: "queue_empty" }
+    }
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.code, "RELEASE_APPROVAL_STALE")
+  assert.equal(drains, 0)
+})
