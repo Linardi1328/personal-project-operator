@@ -109,3 +109,46 @@ test("cleanup escalates and observes a real child ignoring SIGTERM", { timeout: 
     if (child && (child.exitCode !== null || child.signalCode !== null)) await rm(f.temp, { recursive: true })
   }
 })
+
+
+test("acceptance run IDs are deterministic within independent private stores", async () => {
+  const first = await fixture(ROOT, revision, "6D")
+  let second
+  try {
+    second = await fixture(ROOT, revision, "6D")
+    assert.notEqual(first.writeDataDir, second.writeDataDir)
+    assert.equal(first.runId, Buffer.alloc(32, 1).toString("base64url"))
+    assert.equal(second.runId, first.runId)
+    for (const [f, mode] of [[first, "edit"], [second, "nochange"]]) {
+      await withOwnedChild(f, mode, async ({ stop }) => {
+        assert.equal((await stop()).signal, "SIGTERM")
+      })
+    }
+  } finally {
+    await rm(first.temp, { recursive: true })
+    if (second) await rm(second.temp, { recursive: true })
+  }
+})
+
+// Synthetic ID bytes only: no credentials, production records or policy overrides.
+for (const shape of ["github", "api"]) for (const mode of ["edit", "nochange"]) {
+  test(`credential-shaped fixture ID fails closed before readiness: ${shape}/${mode}`, async () => {
+    const prefix = shape === "github" ? "AAAAAAAAghp_" : "AAAAAAAAsk-"
+    const bytes = Buffer.from(prefix.padEnd(43, "A"), "base64url")
+    const f = await fixture(ROOT, revision, "6D", { randomBytesImpl: () => bytes })
+    let child
+    let ready = false
+    try {
+      await assert.rejects(() => withOwnedChild(f, mode, () => {
+        ready = true
+      }, { spawned(c) { child = c } }), {
+        message: "readiness-failed: codex_sandbox_required"
+      })
+      assert.equal(ready, false)
+      assert.ok(child.exitCode !== null || child.signalCode !== null)
+      assert.throws(() => process.kill(child.pid, 0), e => e.code === "ESRCH")
+    } finally {
+      await rm(f.temp, { recursive: true })
+    }
+  })
+}

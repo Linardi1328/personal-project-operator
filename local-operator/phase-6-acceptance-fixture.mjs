@@ -71,7 +71,9 @@ export async function advance(f, work, offset = 0) {
   })
 }
 
-export async function fixture(root, revision, phase, { missingTestEvidence = false } = {}) {
+export async function fixture(root, revision, phase, {
+  missingTestEvidence = false, randomBytesImpl = size => Buffer.alloc(size, 1)
+} = {}) {
   const temp = await realpath(await mkdtemp(join(tmpdir(), "ppo-acceptance-fixture-")))
   const f = { temp, revision, phase, source: join(temp, "source"), workspaces: join(temp, "workspaces"), writeDataDir: join(temp, "state") }
   await mkdir(f.source, { mode: 0o700 })
@@ -84,8 +86,11 @@ export async function fixture(root, revision, phase, { missingTestEvidence = fal
   await git(["remote", "add", "origin", "git@github.com:Linardi1328/personal-project-operator.git"], f.source)
   f.gitPath = (await exec("/bin/sh", ["-c", "command -v git"], { encoding: "utf8", timeout: 5000 })).stdout.trim()
   const o = options(f)
+  // Each fixture owns a separate store with one run. Fixed fixture-only ID bytes
+  // prevent random IDs from resembling credentials in sandbox probe paths.
+  // Production ID generation and credential/path rejection stay unchanged.
   let run = await createPersonalProjectOperatorSelfDevelopmentRun({ projectId: PROJECT, task: "Validate disposable recovery fixture.",
-    baseSha: revision, headSha: revision, branch: "main", actor: "acceptance-fixture" }, o)
+    baseSha: revision, headSha: revision, branch: "main", actor: "acceptance-fixture" }, { ...o, randomBytesImpl })
   f.runId = run.runId
   for (const status of ["planning_in_progress", "planned"]) {
     run = await transitionDevelopmentRun(run.runId, { expectedVersion: run.version, status, actor: "acceptance-fixture" }, o)
