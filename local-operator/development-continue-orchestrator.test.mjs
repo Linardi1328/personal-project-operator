@@ -31,6 +31,10 @@ import {
   loadDevelopmentContinueRuntimeProfile
 } from "./development-continue-runtime-profile.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
+import {
+  buildBaselineSoftwareFactoryPlan,
+  softwareFactoryPlanEvidence
+} from "./software-factory-plan-contract.mjs"
 
 const RUN_ID = "A".repeat(43)
 const BAD_RUN_ID = "short"
