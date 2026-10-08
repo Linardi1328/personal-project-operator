@@ -277,6 +277,8 @@ function fakeRuntimeStatFor({ missing = new Set(), symlinks = new Set(), modeByP
       ...executablePaths,
       "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/typescript/bin/tsc",
       "/usr/local/lib/personal-project-operator/phase6k-tools/portfolio/eslint/bin/eslint.js",
+      "/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs",
+      "/opt/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs",
       "/var/lib/personal-project-operator/phase6-sandbox/no-outbound.netns"
     ])
     const directoryPaths = new Set([
@@ -1699,23 +1701,23 @@ test("Phase 6K runtime profile defines one reviewed fixed test policy for each o
     }],
     ["kynexa", {
       policyId: "software-factory-v1-4-kynexa-ci-parity-policy",
-      executablePath: "/opt/homebrew/bin/npm",
+      executablePath: "/opt/homebrew/bin/node",
       args: [
-        ["run", "lint"],
-        ["run", "typecheck"],
-        ["test"],
-        ["run", "build"],
-        ["run", "test:e2e"]
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "kynexa", "lint"],
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "kynexa", "typecheck"],
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "kynexa", "test"],
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "kynexa", "build"],
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "kynexa", "e2e"]
       ],
       stepCount: 5
     }],
     ["rivora", {
       policyId: "software-factory-v1-4-rivora-ci-parity-policy",
-      executablePath: "/opt/homebrew/bin/npm",
+      executablePath: "/opt/homebrew/bin/node",
       args: [
-        ["run", "build"],
-        ["run", "typecheck"],
-        ["run", "test:run"]
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "rivora", "build"],
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "rivora", "typecheck"],
+        ["/Users/richie/personal-project-operator/deployment/scripts/run-reviewed-project-quality.mjs", "rivora", "test"]
       ],
       stepCount: 3
     }],
