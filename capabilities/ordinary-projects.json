@@ -218,8 +218,9 @@
         {
           "id": "lint",
           "command": [
-            "npm",
-            "run",
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "kynexa",
             "lint"
           ],
           "timeoutMs": 180000,
@@ -229,8 +230,9 @@
         {
           "id": "typecheck",
           "command": [
-            "npm",
-            "run",
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "kynexa",
             "typecheck"
           ],
           "timeoutMs": 180000,
@@ -240,7 +242,9 @@
         {
           "id": "test",
           "command": [
-            "npm",
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "kynexa",
             "test"
           ],
           "timeoutMs": 300000,
@@ -250,8 +254,9 @@
         {
           "id": "build",
           "command": [
-            "npm",
-            "run",
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "kynexa",
             "build"
           ],
           "timeoutMs": 300000,
@@ -261,9 +266,10 @@
         {
           "id": "e2e",
           "command": [
-            "npm",
-            "run",
-            "test:e2e"
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "kynexa",
+            "e2e"
           ],
           "timeoutMs": 600000,
           "required": true,
@@ -285,8 +291,9 @@
         {
           "id": "build",
           "command": [
-            "npm",
-            "run",
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "rivora",
             "build"
           ],
           "timeoutMs": 300000,
@@ -296,8 +303,9 @@
         {
           "id": "typecheck",
           "command": [
-            "npm",
-            "run",
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "rivora",
             "typecheck"
           ],
           "timeoutMs": 180000,
@@ -307,9 +315,10 @@
         {
           "id": "test",
           "command": [
-            "npm",
-            "run",
-            "test:run"
+            "node",
+            "approved:reviewedProjectQualityRunner",
+            "rivora",
+            "test"
           ],
           "timeoutMs": 300000,
           "required": true,
