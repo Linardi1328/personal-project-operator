@@ -831,13 +831,25 @@ async function assertProjectTestRuntime(projectId, paths, options = {}) {
 
   if (definition.kind === "npm-script-suite") {
     await assertExecutable(paths.npmExecutablePath, options)
-    await runReadOnlyProbe(paths.npmExecutablePath, ["--version"], options)
+    await runReadOnlyProbe(paths.npmExecutablePath, ["--version"], {
+      ...options,
+      probeEnv: {
+        ...sanitizedProbeEnv,
+        PATH: paths.executionPath
+      }
+    })
     return
   }
 
   if (definition.kind === "uv-command-suite") {
     await assertExecutable(paths.uvExecutablePath, options)
-    await runReadOnlyProbe(paths.uvExecutablePath, ["--version"], options)
+    await runReadOnlyProbe(paths.uvExecutablePath, ["--version"], {
+      ...options,
+      probeEnv: {
+        ...sanitizedProbeEnv,
+        PATH: paths.executionPath
+      }
+    })
     return
   }
 
