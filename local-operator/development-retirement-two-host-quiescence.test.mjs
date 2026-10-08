@@ -149,10 +149,15 @@ test("partial acquisition cleanup failure poisons coordinator and leaves live da
 
 test("unknown/uncooperative asynchronous second host never produces a guard", async () => {
   const f = fixture()
-  let unblock
-  f.ports.vps.acquire = async () => await new Promise(resolve => { unblock = resolve })
+  let unblock, signalReached
+  const reached = new Promise(resolve => { signalReached = resolve })
+  f.ports.vps.acquire = async () => await new Promise(resolve => {
+    unblock = resolve
+    signalReached()
+  })
   const coordinator = createTwoHostRetirementQuiescenceCoordinator(f.ports)
   const pending = coordinator.acquireQuiescenceGuard(request)
+  await reached
   await assert.rejects(coordinator.acquireQuiescenceGuard(request), failure)
   unblock(null)
   await assert.rejects(pending, failure)
