@@ -66,6 +66,7 @@ test("complete synthetic guard checks both hosts, writer and delivery through re
   const f = fixture()
   const coordinator = createTwoHostRetirementQuiescenceCoordinator(f.ports)
   const guard = await coordinator.acquireQuiescenceGuard(request)
+  const firstEpoch = f.states.writer.context.epoch
   assert.deepEqual(f.events.slice(0, 4), RETIREMENT_QUIESCENCE_PORT_ORDER.map(r => "acquire:" + r))
   assert.equal(guard.exclusive, true)
   assert.equal(guard.workersQuiescent, true)
@@ -78,7 +79,42 @@ test("complete synthetic guard checks both hosts, writer and delivery through re
   await assert.rejects(guard.release(), failure)
   // New requests use a new epoch, never accept a stale assertion.
   const next = await coordinator.acquireQuiescenceGuard({ ...request, runId: RUN_B })
-  assert.notEqual(f.states.writer.context.epoch, null)
+  assert.notEqual(f.states.writer.context.epoch, firstEpoch, "new acquisition must use a fresh epoch")
+  await next.release()
+})
+
+test("a delayed held assertion cannot succeed after release and a new acquisition", async () => {
+  const f = fixture()
+  let signalObserved, resumeAssertion
+  const observed = new Promise(resolve => { signalObserved = resolve })
+  const paused = new Promise(resolve => { resumeAssertion = resolve })
+  const originalAcquire = f.ports.delivery.acquire
+  f.ports.delivery.acquire = async context => {
+    const lease = await originalAcquire(context)
+    const originalAssert = lease.assertHeld
+    let checks = 0
+    lease.assertHeld = async probe => {
+      // Capture the TRUE response before release; delay returning it so
+      // rechecking the lease inside the assertion is not sufficient.
+      const result = await originalAssert(probe)
+      if (++checks === 2) {
+        signalObserved()
+        await paused
+      }
+      return result
+    }
+    return lease
+  }
+
+  const coordinator = createTwoHostRetirementQuiescenceCoordinator(f.ports)
+  const guard = await coordinator.acquireQuiescenceGuard(request)
+  const pendingAssertion = guard.assertHeld()
+  await observed
+  await guard.release()
+  const next = await coordinator.acquireQuiescenceGuard({ ...request, runId: RUN_B })
+  resumeAssertion()
+  assert.equal(await pendingAssertion, false, "old guard cannot become valid after release")
+  assert.equal(await next.assertHeld(), true)
   await next.release()
 })
 
@@ -126,17 +162,27 @@ for (const role of RETIREMENT_QUIESCENCE_PORT_ORDER) {
   })
 }
 
-test("partial release failure poisons coordinator against subsequent acquisitions", async () => {
+test("failed release is terminal: no cleanup retry and no re-acquisition", async () => {
   const f = fixture()
   const original = f.ports.mac.acquire
+  let attempts = 0
   f.ports.mac.acquire = async context => {
     const lease = await original(context)
-    lease.release = async () => { throw Error("SENSITIVE_RELEASE_FAILURE") }
+    lease.release = async () => {
+      attempts += 1
+      throw Error("SENSITIVE_RELEASE_FAILURE")
+    }
     return lease
   }
   const coordinator = createTwoHostRetirementQuiescenceCoordinator(f.ports)
   const guard = await coordinator.acquireQuiescenceGuard(request)
   await assert.rejects(guard.release(), failure)
+  assert.equal(attempts, 1)
+  const before = [...f.events]
+  assert.equal(await guard.assertHeld(), false)
+  await assert.rejects(guard.release(), failure)
+  assert.equal(attempts, 1, "failed cleanup is never retried")
+  assert.deepEqual(f.events, before, "no other port should be rereleased")
   await assert.rejects(coordinator.acquireQuiescenceGuard(request), failure)
 })
 
