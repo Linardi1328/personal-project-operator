@@ -498,6 +498,8 @@ No repository SHA is pinned while queued, and no model/provider/readiness work r
 
 Identical pending project/objective pairs are deduplicated.
 
+`/ppo factory-queue` provides a metadata-only read view of pending work. It does not echo objective text.
+
 `/ppo factory-drain` processes at most one objective per invocation:
 
 ```text
