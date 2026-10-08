@@ -140,8 +140,8 @@ async function assertReviewedScripts(workspace, config) {
       }
     }
 
-    for (const target of Object.keys(config.gates)) {
-      const lifecycle = target === "test" ? "test" : target
+    for (const args of Object.values(config.gates)) {
+      const lifecycle = args[0] === "test" ? "test" : args[1]
       for (const prefix of ["pre", "post"]) {
         const name = `${prefix}${lifecycle}`
         if (Object.hasOwn(scripts, name) && !Object.hasOwn(expectedScripts, name)) {
