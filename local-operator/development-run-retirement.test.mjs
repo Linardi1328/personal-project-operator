@@ -1,9 +1,11 @@
+import fs from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { createDevelopmentRun, transitionDevelopmentRun, recordDevelopmentRunProgress,
+import { DevelopmentRunStateError, createDevelopmentRun, transitionDevelopmentRun, recordDevelopmentRunProgress,
   inspectDevelopmentRunReadOnly } from "./development-run-state.mjs"
 import { acquireDevelopmentOperationLease, relinquishDevelopmentOperationLease } from "./development-operation-lease.mjs"
 import { createDevelopmentRunRetirementSession, inspectDevelopmentRunRetirement, RETIREMENT_TTL_MS,
@@ -276,3 +278,48 @@ test("retirement does not hide or repair an unrelated invalid catalog record", a
   await assert.rejects(cycle(f.options), { code: "FACTORY_CYCLE_CATALOG_UNAVAILABLE" })
   assert.equal(work, 0)
 })
+
+
+for (const kind of ["generic-canonical", "state-canonical", "after-marker-link", "before-marker-link"]) {
+  test(`retirement durable-write fault: ${kind}`, async t => {
+    const f = await fixture(t)
+    const before = await bytesUnder(f.writeDataDir)
+    const api = session()
+    const staged = await api.stage(RUN_A, f.options)
+    const method = kind.endsWith("canonical") ? "rename" : kind === "after-marker-link" ? "chmod" : "link"
+    const original = fs[method]
+    t.mock.method(fs, method, async (...args) => {
+      const fault = kind.endsWith("canonical") ? args[1] === f.recordPath :
+        kind === "after-marker-link" ? args[0] === join(f.writeDataDir, "development-runs", "versions", RUN_A, "000008.json") :
+          args[1] === join(f.writeDataDir, "development-runs", "versions", RUN_A, "000008.json")
+      if (fault) {
+        if (kind === "state-canonical") throw new DevelopmentRunStateError("RUN_STORE_UNAVAILABLE", "Synthetic canonical write failure.")
+        throw new Error("SENSITIVE_TEST_SENTINEL")
+      }
+      return original(...args)
+    })
+    syncBuiltinESMExports()
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
+    const result = await api.confirm(staged.requestId)
+    assert.deepEqual(result, { ok: false, code: kind === "before-marker-link" ? "retirement_unavailable" : "retirement_commit_ambiguous" })
+    assert.equal((await api.confirm(staged.requestId)).code, "retirement_request_unavailable")
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+    const after = await bytesUnder(f.writeDataDir)
+    for (const [name, content] of Object.entries(before)) assert.equal(after[name], content, name)
+    const snapshot = await inspectDevelopmentRunReadOnly(RUN_A, f.options)
+    if (kind === "before-marker-link") {
+      assert.equal(snapshot.canonicalState, "canonical_current")
+      assert.equal(snapshot.record.version, 7)
+      assert.deepEqual(after, before)
+    } else {
+      assert.equal(snapshot.canonicalState, "canonical_behind")
+      assert.equal(snapshot.recoveryRequired, true)
+      assert.equal(snapshot.record.status, "cancelled")
+      assert.equal(snapshot.record.version, 8)
+      assert.deepEqual(snapshot.record.history.slice(0, -1), f.record.history)
+      assert.equal(Object.keys(after).length, Object.keys(before).length + 1)
+    }
+    assert.deepEqual(await bytesUnder(f.writeDataDir), after, "read-only inspection must not repair canonical state")
+  })
+}

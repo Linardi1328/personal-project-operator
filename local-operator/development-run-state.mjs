@@ -923,6 +923,7 @@ async function writeExclusiveDurableVersionMarker(path, data) {
     `.ppo-development-run-version.${process.pid}.${randomBytes(12).toString("hex")}.tmp`
   )
   let file
+  let linked = false
 
   try {
     file = await open(tempPath, "wx", 0o600)
@@ -932,6 +933,7 @@ async function writeExclusiveDurableVersionMarker(path, data) {
     file = null
     await chmod(tempPath, 0o600)
     await link(tempPath, path)
+    linked = true
     await chmod(path, 0o600)
     await unlink(tempPath)
     await syncDirectory(directory)
@@ -946,6 +948,13 @@ async function writeExclusiveDurableVersionMarker(path, data) {
       await unlink(tempPath)
     } catch {
       // Best effort cleanup of a private temp file.
+    }
+
+    if (linked) {
+      throw new DevelopmentRunStateAmbiguousError(
+        "RUN_DURABILITY_AMBIGUOUS",
+        "Development run version marker was published but durability could not be confirmed. Inspect run state before any further action."
+      )
     }
 
     if (error?.code === "EEXIST") {
@@ -2555,13 +2564,12 @@ async function commitRecord(paths, record) {
   try {
     await writeCanonicalRecord(paths, record)
   } catch (error) {
-    if (error instanceof DevelopmentRunStateError) {
-      throw error
-    }
-
-    throw runStateError(
-      "RUN_STORE_UNAVAILABLE",
-      "Development run state store is unavailable; reload before retrying."
+    // The immutable marker is already authoritative, even if canonical writing
+    // fails before rename. Preserve bounded state error details and ambiguity.
+    throw new DevelopmentRunStateAmbiguousError(
+      error instanceof DevelopmentRunStateError ? error.code : "RUN_STORE_UNAVAILABLE",
+      error instanceof DevelopmentRunStateError ? error.safeMessage :
+        "Development run version marker was committed but canonical writing failed. Inspect run state before any further action."
     )
   }
 }

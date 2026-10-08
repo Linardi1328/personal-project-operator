@@ -255,6 +255,18 @@ async function safeDirectoryIfPresent(path) {
   return info
 }
 
+function directoryIdentity(info) {
+  return info === null ? null : [info.dev, info.ino, info.mode, info.size, info.mtimeMs, info.ctimeMs]
+}
+
+async function catalogDiscoveryStable(paths, observation) {
+  for (const [key, before] of Object.entries(observation)) {
+    const after = await safeDirectoryIfPresent(paths[key])
+    if (JSON.stringify(directoryIdentity(after)) !== JSON.stringify(before)) return false
+  }
+  return true
+}
+
 async function readCatalogRecordRunIds(options = {}) {
   const paths = catalogStorePaths(options)
   const runRoot = await safeDirectoryIfPresent(paths.runRoot)
@@ -278,10 +290,17 @@ async function readCatalogRecordRunIds(options = {}) {
     }
   }
 
+  const observation = {
+    runRoot: directoryIdentity(runRoot),
+    recordsDir: directoryIdentity(recordsDir),
+    versionsRoot: directoryIdentity(versionsRoot)
+  }
   let entries
+  let versionEntries
 
   try {
     entries = await readdir(paths.recordsDir)
+    versionEntries = await readdir(paths.versionsRoot)
   } catch (error) {
     if (error?.code === "ENOENT") {
       return {
@@ -294,25 +313,20 @@ async function readCatalogRecordRunIds(options = {}) {
     throw error
   }
 
-  const runIds = []
-
+  // A committed version marker can outlive (or precede) its canonical record.
+  // Include names regardless of entry type: the existing inspector must reject
+  // symlinks/non-directories rather than silently omitting a suspect run.
+  const runIds = new Set()
   for (const entry of entries) {
     const match = entry.match(canonicalRunRecordFilePattern)
-
-    if (!match || !DEVELOPMENT_RUN_ID_PATTERN.test(match[1])) {
-      continue
-    }
-
-    runIds.push(match[1])
+    if (match && DEVELOPMENT_RUN_ID_PATTERN.test(match[1])) runIds.add(match[1])
   }
-
-  runIds.sort()
-
-  return {
-    ok: true,
-    missing: false,
-    runIds
+  for (const entry of versionEntries) {
+    if (DEVELOPMENT_RUN_ID_PATTERN.test(entry)) runIds.add(entry)
   }
+  const isCurrent = () => catalogDiscoveryStable(paths, observation)
+  if (!await isCurrent()) return { ok: false, code: "stale_observation", runIds: [] }
+  return { ok: true, missing: false, runIds: [...runIds].sort(), isCurrent }
 }
 
 function catalogStateOptions(options = {}) {
@@ -448,6 +462,11 @@ export async function listDevelopmentRunSummaries(options = {}) {
     const inspected = await inspectDevelopmentRunSummary(inspectedRunId, options)
 
     if (inspected.ok) {
+      // Preserve the per-run recovery semantics, but never certify a catalog
+      // requiring recovery (including terminal marker-only runs) for admission.
+      if (inspected.summary.recoveryRequired) {
+        return catalogFailure(inspected.summary.canonicalState, { diagnostics })
+      }
       summaries.push(inspected.summary)
       continue
     }
@@ -467,6 +486,11 @@ export async function listDevelopmentRunSummaries(options = {}) {
     })
   }
 
+  try {
+    if (!await recordRunIds.isCurrent()) return catalogFailure("stale_observation", { diagnostics })
+  } catch {
+    return catalogFailure("store_unavailable", { diagnostics })
+  }
   return catalogSuccess(summaries, diagnostics)
 }
 
@@ -725,6 +749,11 @@ export async function diagnoseDevelopmentRunCatalog(options = {}) {
   for (const runId of records.runIds.slice(0, MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED)) {
     const result = await diagnoseDevelopmentRunHistory(runId, catalogStateOptions(options))
     if (!result.ok && result.code !== "project_out_of_scope") failures.push({ runId, code: result.code })
+  }
+  try {
+    if (!await records.isCurrent()) return { ok: false, code: "stale_observation", failures: [] }
+  } catch {
+    return { ok: false, code: "store_unavailable", failures: [] }
   }
   const truncated = records.runIds.length > MAX_DEVELOPMENT_RUN_CATALOG_RECORDS_INSPECTED
   return { ok: !truncated && failures.length === 0,

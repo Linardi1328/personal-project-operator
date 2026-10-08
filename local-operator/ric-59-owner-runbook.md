@@ -91,11 +91,21 @@ The following creates a new private backup; do not upload it or print its files:
 
 ```bash
 : "${PPO_WRITE_DATA_DIR:?Set PPO_WRITE_DATA_DIR to the existing absolute durable write-data path}"
+case "$PPO_WRITE_DATA_DIR" in
+  /*) ;;
+  *) echo "PPO_WRITE_DATA_DIR must be absolute" >&2; exit 1 ;;
+esac
 test -d "$PPO_WRITE_DATA_DIR/development-runs/records" || exit 1
 umask 077
-PPO_RIC59_BACKUP="$(mktemp -d "$HOME/ppo-ric59-backup.XXXXXX")"
-cp -pR "$PPO_WRITE_DATA_DIR/." "$PPO_RIC59_BACKUP/" || exit 1
+PPO_RIC59_BACKUP="$(mktemp -d "$HOME/ppo-ric59-backup.XXXXXX")" || exit 1
+mkdir -m 700 "$PPO_RIC59_BACKUP/write-data" || exit 1
+cp -pR "$PPO_WRITE_DATA_DIR/." "$PPO_RIC59_BACKUP/write-data/" || exit 1
+PPO_RIC59_BACKUP="$PPO_RIC59_BACKUP/write-data"
 ```
+
+The private outer directory remains mode 700 even if `cp -pR` preserves a less
+restrictive source-directory mode inside it. `PPO_RIC59_BACKUP` points to the
+copied write-data directory inside that private wrapper.
 
 The diagnostic requires an explicit absolute backup path. Exit 1 means blocked or
 invalid, not a request to retry or repair. Exit 2 means incorrect arguments.
