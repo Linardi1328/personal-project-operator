@@ -119,7 +119,10 @@ for (const role of RETIREMENT_QUIESCENCE_PORT_ORDER) {
     const guard = await coordinator.acquireQuiescenceGuard(request)
     f.states[role].held = false
     assert.equal(await guard.assertHeld(), false)
+    f.states[role].held = true
+    assert.equal(await guard.assertHeld(), false, "a lost fence cannot become trusted again")
     await guard.release()
+    await assert.rejects(coordinator.acquireQuiescenceGuard(request), failure)
   })
 }
 
