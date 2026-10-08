@@ -207,6 +207,188 @@
       "deploymentProvider": "unverified",
       "manifestCanExecute": false,
       "manifestCanDeploy": false
+    },
+    {
+      "projectId": "kynexa",
+      "repository": "Linardi1328/kynexa",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "software-factory-v1-4-kynexa-ci-parity-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "lint",
+          "command": [
+            "npm",
+            "run",
+            "lint"
+          ],
+          "timeoutMs": 180000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "typecheck",
+          "command": [
+            "npm",
+            "run",
+            "typecheck"
+          ],
+          "timeoutMs": 180000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "test",
+          "command": [
+            "npm",
+            "test"
+          ],
+          "timeoutMs": 300000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "build",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "timeoutMs": 300000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "e2e",
+          "command": [
+            "npm",
+            "run",
+            "test:e2e"
+          ],
+          "timeoutMs": 600000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    },
+    {
+      "projectId": "rivora",
+      "repository": "Linardi1328/rivora",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "software-factory-v1-4-rivora-ci-parity-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "build",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "timeoutMs": 300000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "typecheck",
+          "command": [
+            "npm",
+            "run",
+            "typecheck"
+          ],
+          "timeoutMs": 180000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "test",
+          "command": [
+            "npm",
+            "run",
+            "test:run"
+          ],
+          "timeoutMs": 300000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
+    },
+    {
+      "projectId": "axiom-quantum",
+      "repository": "Linardi1328/axiom-quantum",
+      "runtimeProfileId": "phase-6k-fixed-local-runtime-profile",
+      "policyId": "software-factory-v1-4-axiom-quantum-ci-parity-policy",
+      "policyVersion": "1",
+      "gates": [
+        {
+          "id": "ruff-check",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "ruff",
+            "check",
+            "."
+          ],
+          "timeoutMs": 180000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "ruff-format",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "ruff",
+            "format",
+            "--check",
+            "."
+          ],
+          "timeoutMs": 180000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "mypy",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "mypy",
+            "src",
+            "tests"
+          ],
+          "timeoutMs": 300000,
+          "required": true,
+          "shell": false
+        },
+        {
+          "id": "pytest",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "--cov-fail-under=85"
+          ],
+          "timeoutMs": 600000,
+          "required": true,
+          "shell": false
+        }
+      ],
+      "githubWorkflow": "unverified",
+      "deploymentProvider": "unverified",
+      "manifestCanExecute": false,
+      "manifestCanDeploy": false
     }
   ]
 }
