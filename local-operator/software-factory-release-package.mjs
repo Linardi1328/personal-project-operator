@@ -28,6 +28,8 @@ export const SOFTWARE_FACTORY_RELEASE_PACKAGE_SCHEMA_VERSION = 1
 export const SOFTWARE_FACTORY_RELEASE_PACKAGE_KIND = "software_factory_release_candidate"
 
 const shaPattern = /^[a-f0-9]{40}$/u
+const sha256Pattern = /^[a-f0-9]{64}$/u
+const repositoryPattern = /^[A-Za-z0-9_.-]{1,80}\/[A-Za-z0-9_.-]{1,100}$/u
 const branchPattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/u
 const safeIdentifierPattern = /^[A-Za-z0-9_.:-]{1,160}$/u
 const unsafeControlPattern = /[\u0000-\u001F\u007F-\u009F]/u
@@ -79,6 +81,32 @@ function safeIdentifier(value, label) {
   const normalized = String(value ?? "").trim()
 
   if (!safeIdentifierPattern.test(normalized) || unsafeControlPattern.test(normalized)) {
+    throw releaseError(
+      "FACTORY_RELEASE_METADATA_INVALID",
+      `${label} is invalid for the release package.`
+    )
+  }
+
+  return normalized
+}
+
+function safeRepository(value) {
+  const normalized = String(value ?? "").trim()
+
+  if (!repositoryPattern.test(normalized) || unsafeControlPattern.test(normalized)) {
+    throw releaseError(
+      "FACTORY_RELEASE_METADATA_INVALID",
+      "Repository metadata is invalid for the release package."
+    )
+  }
+
+  return normalized
+}
+
+function normalizeSha256(value, label) {
+  const normalized = String(value ?? "").trim().toLowerCase()
+
+  if (!sha256Pattern.test(normalized)) {
     throw releaseError(
       "FACTORY_RELEASE_METADATA_INVALID",
       `${label} is invalid for the release package.`
@@ -257,7 +285,7 @@ function testFacts(run, headSha) {
     runner: AUTOMATED_TEST_RUNNER_ID,
     attempt: positiveInteger(metadata.attempt, "Test attempt"),
     policyId: safeIdentifier(metadata.policyId, "Test policy id"),
-    policyHash: normalizeSha(metadata.policyHash, "Test policy hash"),
+    policyHash: normalizeSha256(metadata.policyHash, "Test policy hash"),
     outcome: "passed",
     total,
     passed,
@@ -441,7 +469,7 @@ export function buildSoftwareFactoryReleasePackageFromRun(run) {
       version: run.version,
       status: "merge_ready",
       projectId: safeIdentifier(run.project?.id, "Project id"),
-      repository: safeIdentifier(run.project?.fullName, "Repository"),
+      repository: safeRepository(run.project?.fullName),
       task: safeTask(run.task),
       branch: delivery.branch,
       headSha
@@ -474,7 +502,7 @@ export function formatSoftwareFactoryReleasePackage(packageValue) {
   if (
     !packageValue ||
     packageValue.kind !== SOFTWARE_FACTORY_RELEASE_PACKAGE_KIND ||
-    !shaPattern.test(String(packageValue.packageHash || ""))
+    !sha256Pattern.test(String(packageValue.packageHash || ""))
   ) {
     throw releaseError(
       "FACTORY_RELEASE_PACKAGE_INVALID",
