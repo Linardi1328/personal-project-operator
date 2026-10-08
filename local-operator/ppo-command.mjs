@@ -26,6 +26,9 @@ import {
   handlePpoSoftwareFactoryQueueDrainCommand
 } from "./software-factory-queue-drain.mjs";
 import {
+  handlePpoSoftwareFactoryQueueCommand
+} from "./software-factory-objective-queue.mjs";
+import {
   SOFTWARE_FACTORY_RELEASE_REQUEST_ID_PATTERN,
   handlePpoReleaseCommand,
   handlePpoReleaseConfirmCommand
@@ -321,6 +324,12 @@ function parseStrictFactoryDrainArgs(rawArgs) {
   });
 }
 
+function parseStrictFactoryQueueArgs(rawArgs) {
+  return parseStrictZeroArgCommandArgs(rawArgs, "factory-queue", {
+    allowExactCombined: true
+  });
+}
+
 function parseStrictFactoryStartArgs(rawArgs) {
   const args = rawArgs.map((arg) => String(arg));
   const text = commandTextFromRawArgs(args).trim();
@@ -583,6 +592,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs continue <run-id>",
     "  node local-operator/ppo-command.mjs factory-run <run-id>",
     "  node local-operator/ppo-command.mjs factory-drain",
+    "  node local-operator/ppo-command.mjs factory-queue",
     "  node local-operator/ppo-command.mjs release <run-id>",
     "  node local-operator/ppo-command.mjs release-confirm <request-id>",
     "  node local-operator/ppo-command.mjs recover <run-id>",
@@ -609,6 +619,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs /ppo continue <run-id>",
     "  node local-operator/ppo-command.mjs /ppo factory-run <run-id>",
     "  node local-operator/ppo-command.mjs /ppo factory-drain",
+    "  node local-operator/ppo-command.mjs /ppo factory-queue",
     "  node local-operator/ppo-command.mjs /ppo release <run-id>",
     "  node local-operator/ppo-command.mjs /ppo release-confirm <request-id>",
     "  node local-operator/ppo-command.mjs /ppo recover <run-id>",
@@ -638,6 +649,7 @@ function usage() {
     "  /ppo continue <run-id>",
     "  /ppo factory-run <run-id>",
     "  /ppo factory-drain",
+    "  /ppo factory-queue",
     "  /ppo release <run-id>",
     "  /ppo release-confirm <request-id>",
     "  /ppo recover <run-id>",
@@ -687,6 +699,7 @@ function unsupported(command) {
     "- /ppo continue <run-id>",
     "- /ppo factory-run <run-id>",
     "- /ppo factory-drain",
+    "- /ppo factory-queue",
     "- /ppo release <run-id>",
     "- /ppo release-confirm <request-id>",
     "- /ppo recover <run-id>",
@@ -969,6 +982,7 @@ async function main() {
   const strictFactoryStart = parseStrictFactoryStartArgs(rawProcessArgs);
   const strictFactoryRun = parseStrictFactoryRunArgs(rawProcessArgs);
   const strictFactoryDrain = parseStrictFactoryDrainArgs(rawProcessArgs);
+  const strictFactoryQueue = parseStrictFactoryQueueArgs(rawProcessArgs);
   const strictReleaseConfirm = parseStrictReleaseConfirmArgs(rawProcessArgs);
   const strictRelease = parseStrictReleaseArgs(rawProcessArgs);
   const strictRecover = parseStrictRecoverArgs(rawProcessArgs);
@@ -1048,6 +1062,13 @@ async function main() {
     return;
   }
 
+  if (strictFactoryQueue?.ok === true) {
+    const result = await handlePpoSoftwareFactoryQueueCommand();
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
   if (strictReleaseConfirm?.ok === true) {
     const result = await handlePpoReleaseConfirmCommand(strictReleaseConfirm.requestId);
     console.log(result.output);
@@ -1119,6 +1140,12 @@ async function main() {
 
   if (strictFactoryDrain?.attempted === true) {
     console.log(unsupported(rawProcessArgs[0] || "factory-drain"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (strictFactoryQueue?.attempted === true) {
+    console.log(unsupported(rawProcessArgs[0] || "factory-queue"));
     process.exitCode = 1;
     return;
   }
