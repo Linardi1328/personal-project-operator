@@ -2028,6 +2028,10 @@ async function readRegularFileReadOnlySnapshotIfPresent(path, description) {
 
   try {
     file = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0))
+    const opened = await file.stat()
+    if (!sameReadOnlyObservation(before, opened)) {
+      throw staleReadOnlyObservation()
+    }
     payload = await file.readFile("utf8")
   } catch (error) {
     if (error?.code === "ENOENT") {

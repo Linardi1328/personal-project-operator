@@ -1,9 +1,12 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
+import { constants as fsConstants } from "node:fs"
+import fs from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { spawnSync } from "node:child_process"
 import { chmod, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import test from "node:test"
 import {
   createDevelopmentRun, transitionDevelopmentRun, recordDevelopmentRunProgress,
@@ -326,3 +329,85 @@ test("fixtures work under a macOS-style symlinked temporary root", async t => {
   })
   assert.equal(child.status, 0, child.stdout + child.stderr)
 })
+
+
+for (const surface of ["historical", "ordinary"]) {
+  for (const target of ["canonical", "marker"]) {
+    test(`opened descriptor rejects restored ancestor substitution: ${surface}/${target}`, async t => {
+      const f = await fixture(t, false)
+      const targetPath = target === "canonical" ? f.recordPath : join(f.versionDir, "000000.json")
+      const targetDirectory = dirname(targetPath)
+      const heldDirectory = `${targetDirectory}-held`
+      const replacementDirectory = join(f.backupDir, "adversarial-replacement")
+      await fs.mkdir(replacementDirectory, { mode: 0o700 })
+      const replacementPath = join(replacementDirectory, basename(targetPath))
+      // Identical valid bytes, different inode: content validation cannot detect
+      // the substitution. Only the test performs these synthetic rename writes.
+      await writeFile(replacementPath, await readFile(targetPath), { mode: 0o600 })
+      const before = await snapshot(f)
+      const beforeStat = await fs.lstat(targetPath)
+      const replacementBefore = await readFile(replacementPath)
+      const originalOpen = fs.open
+      const originalRename = fs.rename
+      let injected = false
+      let foreignReads = 0
+      let foreignCloses = 0
+      let unexpectedWrites = 0
+      for (const method of ["writeFile", "appendFile", "truncate", "mkdir", "chmod", "unlink", "link", "rename", "rm"]) {
+        t.mock.method(fs, method, async () => {
+          unexpectedWrites += 1
+          throw new Error("SENSITIVE_TEST_SENTINEL unexpected diagnostic write")
+        })
+      }
+      t.mock.method(fs, "open", async (path, flags, ...rest) => {
+        assert.equal(flags, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0))
+        if (path !== targetPath || injected) return originalOpen(path, flags, ...rest)
+        injected = true
+        await originalRename(targetDirectory, heldDirectory)
+        await originalRename(replacementDirectory, targetDirectory)
+        let foreign
+        try {
+          foreign = await originalOpen(path, flags, ...rest)
+        } finally {
+          // Restore the original path before production receives the handle.
+          await originalRename(targetDirectory, replacementDirectory)
+          await originalRename(heldDirectory, targetDirectory)
+        }
+        const foreignRead = foreign.readFile.bind(foreign)
+        const foreignClose = foreign.close.bind(foreign)
+        t.mock.method(foreign, "readFile", async (...args) => {
+          foreignReads += 1
+          return foreignRead(...args)
+        })
+        t.mock.method(foreign, "close", async () => {
+          foreignCloses += 1
+          return foreignClose()
+        })
+        return foreign
+      })
+      syncBuiltinESMExports()
+      let result
+      try {
+        result = surface === "historical" ? await f.diagnose()
+          : await inspectDevelopmentRunReadOnly(f.run.runId, f.options)
+      } finally {
+        t.mock.restoreAll()
+        syncBuiltinESMExports()
+      }
+      assert.equal(injected, true)
+      assert.equal(foreignReads, 0, "replacement contents must not be read")
+      assert.equal(foreignCloses, 1, "rejected descriptor must be closed")
+      assert.equal(unexpectedWrites, 0)
+      assert.equal(result.code, "stale_observation")
+      if (surface === "historical") assert.deepEqual(result, { code: "stale_observation" })
+      else assert.equal(result.ok, false)
+      // Ancestor renames leave the original file's path identity unchanged.
+      // Without fstat, pre/post file observations can both see this same inode.
+      const afterStat = await fs.lstat(targetPath)
+      for (const key of ["dev", "ino", "mode", "size", "mtimeMs", "ctimeMs"]) assert.equal(afterStat[key], beforeStat[key])
+      assert.deepEqual(await snapshot(f), before)
+      assert.deepEqual(await readFile(replacementPath), replacementBefore)
+      assert.deepEqual((await fs.readdir(f.backupDir)).sort(), ["adversarial-replacement", "development-runs"])
+    })
+  }
+}
