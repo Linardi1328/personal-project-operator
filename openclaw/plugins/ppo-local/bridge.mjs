@@ -112,6 +112,7 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo cancel <run-id>",
     "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
+    "- /ppo factory-start <project> <objective>",
     "- /ppo factory-run <run-id>",
     "- /ppo release <run-id>",
     "- /ppo release-confirm <request-id>",
@@ -275,6 +276,16 @@ function parseContinueCommand(commandText, rest, rawHasLineBreak) {
   }
 
   return ["continue", normalized];
+}
+
+function parseFactoryStartCommand(rest) {
+  const parsed = parseProjectTextCommand("factory-start", rest)
+
+  if (!parsed || !allowedDevelopmentProjectIds.has(parsed[1])) {
+    return null
+  }
+
+  return parsed
 }
 
 function parseFactoryRunCommand(commandText, rest, rawHasLineBreak, rawHasTab) {
@@ -464,6 +475,10 @@ export function toPpoWrapperArgs(rawCommand) {
 
   if (commandName === "codex" || commandName === "codex-budget") {
     return parseProjectTextCommand(commandName, commandEnvelope.rest);
+  }
+
+  if (commandName === "factory-start") {
+    return parseFactoryStartCommand(commandEnvelope.rest);
   }
 
   if (commandName === "factory-run") {
