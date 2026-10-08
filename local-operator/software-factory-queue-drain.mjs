@@ -54,21 +54,27 @@ export function createSoftwareFactoryQueueDrainer(dependencies = {}) {
       }
     }
 
-    if (queued.some((item) => item.claimed === true)) {
-      return {
-        ok: false,
-        outcome: "owner_action_required",
-        reason: "queue_claim_reconciliation_required",
-        queueId: queued.find((item) => item.claimed === true)?.queueId || null,
-        runId: null
-      }
-    }
-
     const catalog = await listRuns(options)
+    const claimed = queued.filter((item) => item.claimed === true)
+    const reservedActive = [
+      ...(Array.isArray(catalog?.active) ? catalog.active : []),
+      ...claimed.map((item) => ({
+        project: item.projectId,
+        runId: `queue-claim:${item.queueId}`,
+        status: "queue_claimed",
+        terminal: false,
+        recoveryRequired: false
+      }))
+    ]
+    const admissionCatalog = {
+      ...catalog,
+      active: reservedActive
+    }
     let selected = null
 
     for (const item of queued) {
-      const admission = assessSoftwareFactoryAdmission(item.projectId, catalog)
+      if (item.claimed === true) continue
+      const admission = assessSoftwareFactoryAdmission(item.projectId, admissionCatalog)
       if (admission.ok) {
         selected = item
         break
@@ -76,6 +82,15 @@ export function createSoftwareFactoryQueueDrainer(dependencies = {}) {
     }
 
     if (!selected) {
+      if (claimed.length > 0) {
+        return {
+          ok: false,
+          outcome: "owner_action_required",
+          reason: "queue_claim_reconciliation_required",
+          queueId: claimed[0].queueId,
+          runId: null
+        }
+      }
       return {
         ok: true,
         outcome: "blocked_work_in_progress",
