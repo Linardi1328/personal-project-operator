@@ -805,6 +805,7 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
       )
     }
 
+    const structuredPlan = latestSoftwareFactoryPlan(run)
     const capability = resolveSoftwareFactoryImplementationCapability(run)
     const expectedCheckpointVersion = await latestVersion(run.runId, options)
     const checkpoint = await recordReadinessImpl({
@@ -812,7 +813,8 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
       runVersion: run.version,
       capability,
       expectedCheckpointVersion,
-      failedAttempts: run.attempts.implementation
+      failedAttempts: run.attempts.implementation,
+      risk: structuredPlan?.risk
     }, options)
 
     if (checkpoint.dispatch?.outcome !== "ready" || checkpoint.dispatch?.consumeAttempt !== true) {
