@@ -605,6 +605,7 @@ function usage() {
     "Phase 6P boundary: /ppo cancel stages a single-use quiescent cancellation request and /ppo cancel-confirm consumes it; no process interruption, cleanup, recovery, continue, retry, or production action.",
     "Phase 6K boundary: /ppo continue accepts only an existing ordinary development run id and advances at most one reviewed Phase 6B-6G boundary; production deployment, verification, and rollback remain local-only.",
     "Software Factory V0.6 boundary: /ppo factory-run advances multiple reviewed development boundaries with a fixed step limit, stops before merge at merge_ready, and never routes production deployment, verification, or rollback.",
+    "Software Factory V1.3 boundary: /ppo release stages a 10-minute single-use approval for one immutable release package; /ppo release-confirm consumes it, rebuilds the exact package, and may invoke only the existing SHA-pinned squash merge. Production deployment, verification, and rollback remain unauthorized.",
     "Phase 6M boundary: /ppo recover accepts only an existing ordinary development run id and exposes one Phase 6L read-only recovery observation; it performs no repair, retry, continue, deployment, verification, or rollback."
   ].join("\n");
 }
@@ -638,6 +639,8 @@ function unsupported(command) {
     "- /ppo cancel-confirm <request-id>",
     "- /ppo continue <run-id>",
     "- /ppo factory-run <run-id>",
+    "- /ppo release <run-id>",
+    "- /ppo release-confirm <request-id>",
     "- /ppo recover <run-id>",
     "",
     "Terminal-only additions:",
