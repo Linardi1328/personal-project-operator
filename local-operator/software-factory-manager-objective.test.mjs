@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  SoftwareFactoryManagerObjectiveError,
   createSoftwareFactoryManagerLaunch,
   createSoftwareFactoryManagerObjectiveIntake,
   formatSoftwareFactoryManagerObjective,
@@ -350,12 +351,10 @@ test("WIP-blocked manager launch queues objective instead of discarding it", asy
   const observed = []
   const launch = createSoftwareFactoryManagerLaunch({
     async intake() {
-      const error = new Error("blocked")
-      error.name = "SoftwareFactoryManagerObjectiveError"
-      error.code = "FACTORY_OBJECTIVE_WIP_BLOCKED"
-      error.safeMessage = "blocked"
-      Object.setPrototypeOf(error, (await import("./software-factory-manager-objective.mjs")).SoftwareFactoryManagerObjectiveError.prototype)
-      throw error
+      throw new SoftwareFactoryManagerObjectiveError(
+        "FACTORY_OBJECTIVE_WIP_BLOCKED",
+        "blocked"
+      )
     },
     async enqueue(input) {
       observed.push(input)
