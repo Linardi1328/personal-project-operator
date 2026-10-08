@@ -38,6 +38,7 @@ export const MIN_TEST_TIMEOUT_MS = 1000
 export const MAX_TEST_GIT_OUTPUT_BYTES = 24 * 1024
 export const TEST_SANDBOX_BACKENDS = Object.freeze({
   MACOS_SANDBOX_EXEC: "macos-sandbox-exec",
+  CODEX_NATIVE_DARWIN: "codex-native-darwin",
   LINUX_NETWORK_NAMESPACE: "linux-network-namespace",
   CODEX_NATIVE_LINUX: "codex-native-linux"
 })
@@ -356,8 +357,12 @@ function normalizeExecutionSandbox(sandbox) {
     }
   }
 
-  if (type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
-    if (platform !== "linux" || enforcement !== "codex-command-sandbox") {
+  if (
+    type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN ||
+    type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
+  ) {
+    const expectedPlatform = type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN ? "darwin" : "linux"
+    if (platform !== expectedPlatform || enforcement !== "codex-command-sandbox") {
       throw testRunnerError(
         "TEST_SANDBOX_REQUIRED",
         "Automated testing requires a trusted no-outbound-network process sandbox."
@@ -379,7 +384,7 @@ function normalizeExecutionSandbox(sandbox) {
 
     return {
       type,
-      backend: TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX,
+      backend: type,
       platform,
       network,
       enforcement,
@@ -671,7 +676,10 @@ function assertSandboxRuntimePlatform(sandbox, options = {}) {
 function sandboxedCommand(sandbox, executablePath, args, options = {}) {
   assertSandboxRuntimePlatform(sandbox, options)
 
-  if (sandbox.type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX) {
+  if (
+    sandbox.type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_DARWIN ||
+    sandbox.type === TEST_SANDBOX_BACKENDS.CODEX_NATIVE_LINUX
+  ) {
     const cwd = normalizeSandboxPath(options.cwd)
     const projectOverride = `projects."${cwd.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}".trust_level="untrusted"`
 
