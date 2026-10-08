@@ -52,9 +52,12 @@ const allowedProjects = listPhase2GitHubProjects()
 const allowedProjectIds = allowedProjects.map((project) => project.id)
 
 assert.deepEqual(listPlanningProjectIds(), allowedProjectIds, "planning project ids reuse the connected registry")
-assert.equal(allowedProjectIds.length, 6, "planning tools use the six connected projects")
+assert.equal(allowedProjectIds.length, 9, "planning tools reuse the expanded connected-project registry")
 assert.equal(allowedProjectIds.includes("rbl-content-engine"), true, "RBL Content Engine is connected for planning tools")
 assert.equal(allowedProjectIds.includes("khlim-digital-ecosystem"), true, "KHLIM Super App is connected for planning tools")
+assert.equal(allowedProjectIds.includes("kynexa"), true, "KYNEXA is connected for planning tools")
+assert.equal(allowedProjectIds.includes("rivora"), true, "RIVORA is connected for planning tools")
+assert.equal(allowedProjectIds.includes("axiom-quantum"), true, "Axiom Quantum is connected for planning tools")
 
 for (const project of allowedProjects) {
   const output = createCodexBudget(project.id, "add provider validation tests")
