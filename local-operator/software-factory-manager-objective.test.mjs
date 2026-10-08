@@ -225,3 +225,56 @@ test("blocked launch preserves run id for later factory-run resumption", async (
   assert.equal(result.outcome, "blocked_capacity")
   assert.match(output, new RegExp(`/ppo factory-run ${RUN_ID}`, "u"))
 })
+
+
+test("planning transition failure preserves the created durable run id", async () => {
+  const intake = createSoftwareFactoryManagerObjectiveIntake({
+    githubClient: {
+      async getProjectSnapshot() {
+        return snapshot()
+      }
+    },
+    async createRun() {
+      return { runId: RUN_ID, version: 0, status: "created" }
+    },
+    async transitionRun() {
+      throw new Error("simulated transition failure")
+    }
+  })
+
+  await assert.rejects(
+    intake("khlim-digital-ecosystem", "Implement the approved bounded fix."),
+    (error) => (
+      error?.code === "FACTORY_OBJECTIVE_POST_CREATE_FAILED" &&
+      error?.runId === RUN_ID
+    )
+  )
+})
+
+test("runner failure after intake keeps the durable run resumable", async () => {
+  const launch = createSoftwareFactoryManagerLaunch({
+    async intake(projectId) {
+      return {
+        ok: true,
+        outcome: "planned",
+        projectId,
+        runId: RUN_ID,
+        runVersion: 2,
+        status: "planned",
+        baseSha: SHA,
+        defaultBranch: "main"
+      }
+    },
+    async runFactory() {
+      throw new Error("simulated runner crash")
+    }
+  })
+
+  const result = await launch("khlim-digital-ecosystem", "Implement the approved bounded fix.")
+
+  assert.equal(result.ok, false)
+  assert.equal(result.outcome, "owner_action_required")
+  assert.equal(result.intake.runId, RUN_ID)
+  assert.equal(result.factory.reason, "factory_runner_failed_after_intake")
+  assert.equal(result.factory.run.runId, RUN_ID)
+})
