@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { lstat, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -178,4 +178,16 @@ test("queue view exposes metadata without objective text", async () => {
   assert.match(output, /Project: kynexa/u)
   assert.match(output, /Objective hash: a{64}/u)
   assert.doesNotMatch(output, /Sensitive business objective/u)
+})
+
+
+test("empty queue listing is read-only and does not create queue storage", async () => {
+  const options = await fixture()
+  const queueRoot = join(options.writeDataDir, "software-factory-objective-queue")
+
+  assert.equal((await listSoftwareFactoryQueuedObjectives(options)).length, 0)
+  await assert.rejects(
+    lstat(queueRoot),
+    (error) => error?.code === "ENOENT"
+  )
 })
