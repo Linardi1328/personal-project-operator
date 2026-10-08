@@ -406,7 +406,7 @@ export async function completeSoftwareFactoryQueuedObjective(queueIdInput, input
 
   if (
     !/^[a-z][a-z0-9_]{1,79}$/u.test(outcome) ||
-    (reason !== null && (!reason || reason.length > 120 || unsafeControlPattern.test(reason))) ||
+    (reason !== null && !/^[a-z][a-z0-9_]{1,119}$/u.test(reason)) ||
     (runId !== null && !runIdPattern.test(runId))
   ) {
     throw queueError("FACTORY_QUEUE_RESULT_INVALID", "Software factory queue result is invalid.")
