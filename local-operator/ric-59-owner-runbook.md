@@ -163,3 +163,8 @@ The repository has no separate ESLint gate. Its syntax gate checks JavaScript,
 shell syntax and policy parity. Remote/host acceptance intentionally reports
 SKIP during local policy parity. Linux fixture success does not validate the
 owner's Mac processes, private record, backup consistency or remote delivery.
+
+For bounded per-event inspection of legacy runtime and orphan review recoveries
+against the existing backup, see
+[historical recovery diagnostics](ric-59-historical-recovery-diagnostics.md).
+That assessment cannot authorize recovery or establish independent provenance.
