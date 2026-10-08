@@ -13,6 +13,13 @@ import {
   listOrdinaryDevelopmentProjects
 } from "./github-project-registry.mjs"
 import {
+  listDevelopmentRunSummaries
+} from "./development-run-catalog.mjs"
+import {
+  SoftwareFactoryAdmissionError,
+  assessSoftwareFactoryAdmission
+} from "./software-factory-admission.mjs"
+import {
   executeSoftwareFactoryAutonomousRun
 } from "./software-factory-autonomous-run.mjs"
 import {
@@ -150,10 +157,34 @@ export function createSoftwareFactoryManagerObjectiveIntake(dependencies = {}) {
   const githubClient = dependencies.githubClient || createGitHubReadOnlyClient()
   const createRun = dependencies.createRun || createDevelopmentRun
   const transitionRun = dependencies.transitionRun || transitionDevelopmentRun
+  const listRuns = dependencies.listRuns || listDevelopmentRunSummaries
 
   return async function intake(projectIdInput, objectiveInput, options = {}) {
     const projectId = normalizeProjectId(projectIdInput)
     const objective = normalizeSoftwareFactoryManagerObjective(objectiveInput)
+    let admission
+
+    try {
+      admission = assessSoftwareFactoryAdmission(projectId, await listRuns(options))
+    } catch (error) {
+      if (error instanceof SoftwareFactoryAdmissionError) {
+        throw objectiveError(
+          error.code,
+          error.safeMessage
+        )
+      }
+      throw error
+    }
+
+    if (!admission.ok) {
+      throw objectiveError(
+        "FACTORY_OBJECTIVE_WIP_BLOCKED",
+        admission.reasonCode === "PROJECT_ACTIVE_RUN_LIMIT"
+          ? "Manager objective intake is blocked because this project already has an active development run."
+          : "Manager objective intake is blocked because the two-project Software Factory WIP limit is full."
+      )
+    }
+
     let snapshot
 
     try {
