@@ -64,7 +64,7 @@ OpenClaw must dispatch `/ppo` directly to the registered `ppo_local` tool:
 /ppo ... -> command-dispatch: tool -> ppo_local -> local PPO wrapper
 ```
 
-This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 7A, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; routes `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation; routes `/ppo note-add` plus `/ppo note-confirm` for approval-gated local project note creation; routes `/ppo start <project>` to the controlled Phase 7A planned-run creation adapter; routes `/ppo runs` and `/ppo run <run-id>` to the reviewed Phase 6N read-only ordinary-run catalog; routes `/ppo cancel <run-id>` plus `/ppo cancel-confirm <request-id>` to the Phase 6P confirmation-gated quiescent cancellation path; routes `/ppo continue <run-id>` to the controlled one-boundary development continue orchestrator; and routes `/ppo recover <run-id>` to the reviewed Phase 6L read-only recovery coordinator. The bridge parses only the command envelope; task, draft, title, body, note text, project id, run id, and request id are inert argv data.
+This bypasses model interpretation. The `ppo_local` tool accepts the raw `/ppo` argument string, validates it against the approved command surface, and invokes the existing wrapper with a fixed argv array. In Phase 7A, `ppo_local` routes `/ppo status`, `/ppo repo <project>`, and `/ppo pr <project>` to GitHub read-only behavior for the approved project ids; routes `/ppo codex`, `/ppo codex-budget`, `/ppo prompt-size`, and `/ppo split-task` to deterministic text-only local handlers; routes `/ppo issue-create` plus `/ppo issue-confirm` for approval-gated GitHub issue creation; routes `/ppo note-add` plus `/ppo note-confirm` for approval-gated local project note creation; routes `/ppo start <project>` to the controlled Phase 7A planned-run creation adapter; routes `/ppo runs` and `/ppo run <run-id>` to the reviewed Phase 6N read-only ordinary-run catalog; routes `/ppo cancel <run-id>` plus `/ppo cancel-confirm <request-id>` to the Phase 6P confirmation-gated quiescent cancellation path; routes `/ppo continue <run-id>` to the controlled one-boundary development continue orchestrator; routes `/ppo factory-run <run-id>` to bounded autonomous development; routes `/ppo release <run-id>` plus `/ppo release-confirm <request-id>` to package-bound owner squash-merge approval; and routes `/ppo recover <run-id>` to the reviewed Phase 6L read-only recovery coordinator. The bridge parses only the command envelope; task, draft, title, body, note text, project id, run id, and request id are inert argv data.
 
 The plugin tool resolves the wrapper from the linked local plugin path:
 
@@ -99,6 +99,9 @@ node local-operator/ppo-command.mjs /ppo run <run-id>
 node local-operator/ppo-command.mjs /ppo cancel <run-id>
 node local-operator/ppo-command.mjs /ppo cancel-confirm <request-id>
 node local-operator/ppo-command.mjs /ppo continue <run-id>
+node local-operator/ppo-command.mjs /ppo factory-run <run-id>
+node local-operator/ppo-command.mjs /ppo release <run-id>
+node local-operator/ppo-command.mjs /ppo release-confirm <request-id>
 node local-operator/ppo-command.mjs /ppo recover <run-id>
 ```
 
@@ -132,7 +135,7 @@ node local-operator/ppo-command.mjs /ppo recover <run-id>
 
 ## Safety boundaries
 
-The `/ppo` plugin path is read-only except for the Phase 5B issue pending store, the single approved GitHub issue creation write after `/ppo issue-confirm`, the Phase 5D note pending store, the single approved local note append after `/ppo note-confirm`, Phase 6P's cancellation approval store plus one confirmed quiescent `cancelled` transition, Phase 7A's single planned-run creation through Phase 6B, and Phase 6K's explicit delegation to one existing reviewed Phase 6B-6G development boundary. Phase 6M recovery and Phase 6O catalog routes remain read-only.
+The `/ppo` plugin path is read-only except for the Phase 5B issue pending store, the single approved GitHub issue creation write after `/ppo issue-confirm`, the Phase 5D note pending store, the single approved local note append after `/ppo note-confirm`, Phase 6P's cancellation approval store plus one confirmed quiescent `cancelled` transition, Phase 7A's single planned-run creation through Phase 6B, and Phase 6K's explicit delegation to one existing reviewed Phase 6B-6G development boundary. Phase 6M recovery and Phase 6O catalog routes remain read-only. Software Factory V1.3 adds only a confirmation-gated exact-head squash merge after a deterministic release package; production deployment remains unauthorized.
 
 They must not:
 
