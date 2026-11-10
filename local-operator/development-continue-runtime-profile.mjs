@@ -956,7 +956,10 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     const role = resolveSoftwareFactoryTaskRole(options.runtimeRun)
     // Frontend and untyped debugging never need Codex access merely to
     // resolve their existing Antigravity path.
-    if (role !== "implementation.backend") {
+    if (
+      role !== "implementation.backend" ||
+      /-orphan-recovery$/u.test(options.runtimeAction || "")
+    ) {
       return { workspaceRegistry, platform }
     }
 
