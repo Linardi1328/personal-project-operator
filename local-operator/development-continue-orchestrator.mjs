@@ -33,6 +33,7 @@ import {
   readSoftwareFactoryDispatchCheckpoint,
   recordSoftwareFactoryDispatchCheckpoint
 } from "./software-factory-dispatch-checkpoint.mjs"
+import { isTrustedLocalCodexReadiness } from "./development-continue-runtime-profile.mjs"
 import {
   SOFTWARE_FACTORY_TEST_REMEDIATION_ID,
   latestSoftwareFactoryTestRemediation,
@@ -791,6 +792,7 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
   const executeImpl = dependencies.execute || executeAntigravityImplementation
   const executeCodexImpl = dependencies.executeCodex || executeCodexImplementation
   const recordCodexReadinessImpl = dependencies.recordCodexReadiness || recordSoftwareFactoryDispatchCheckpoint
+  const validateCodexReadinessImpl = dependencies.validateCodexReadiness || isTrustedLocalCodexReadiness
 
   async function latestVersion(runId, options = {}) {
     try {
@@ -832,7 +834,7 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
     if (capability === "implementation.backend") {
       const observation = options.codexReadiness
       if (
-        !observation ||
+        !validateCodexReadinessImpl(observation) ||
         observation.workerId !== "codex" ||
         observation.sourceId !== "reviewed-runtime-probe" ||
         observation.integration !== "configured"
