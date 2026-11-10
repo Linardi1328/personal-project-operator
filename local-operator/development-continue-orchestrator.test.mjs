@@ -11,6 +11,7 @@ import {
 } from "./development-run-state.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
+  CODEX_PRODUCTION_MODEL,
   CODEX_EXECUTION_POLICY_STORE_DIR,
   CODEX_EXECUTION_SANDBOX_ID,
   PHASE_6F_HARDENING_ORCHESTRATOR_ID
@@ -29,6 +30,7 @@ import {
   resolveSoftwareFactoryHardeningAdapterId
 } from "./development-continue-orchestrator.mjs"
 import {
+  isTrustedLocalCodexReadiness,
   loadDevelopmentContinueRuntimeProfile
 } from "./development-continue-runtime-profile.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
@@ -3044,6 +3046,121 @@ test("Software Factory frontend coordinator authorizes immediately before Antigr
   assert.equal(calls[1][1].checkpointVersion, 5)
   assert.equal(calls[2][1].receivedAuthorization, authorization)
   assert.equal(calls[2][1].expectedVersion, run.version)
+})
+
+test("real backend runtime profile supplies trusted Codex readiness and config to the coordinator", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved backend database repository change."
+  })
+  const probes = []
+  const profile = await loadDevelopmentContinueRuntimeProfile({
+    run,
+    action: "phase-6d-codex-implementation",
+    handler: "executeSoftwareFactoryImplementation"
+  }, {
+    platform: "darwin",
+    statImpl: fakeRuntimeStatFor(),
+    accessImpl: async () => {},
+    execFileImpl: async (_file, args) => {
+      probes.push(args.join(" "))
+      return { stdout: "ok", stderr: "" }
+    },
+    codexSandboxCapabilityProbe: async () => {
+      probes.push("trusted sandbox capability probe")
+      return true
+    }
+  })
+
+  assert.ok(profile.codexConfig)
+  assert.equal(profile.codexConfig.args.at(-2), CODEX_PRODUCTION_MODEL)
+  assert.equal(profile.codexConfig.remoteGitWritePolicy.mode, "deny")
+  assert.equal(profile.codexConfig.executionSandbox.network, "none")
+  assert.equal(profile.codexReadiness.workerId, "codex")
+  assert.equal(profile.codexReadiness.sourceId, "reviewed-runtime-probe")
+  assert.equal(isTrustedLocalCodexReadiness(profile.codexReadiness), true)
+  assert.equal(isTrustedLocalCodexReadiness({ ...profile.codexReadiness }), false)
+  assert.deepEqual(probes, ["--version", "login status", "trusted sandbox capability probe"])
+
+  const calls = []
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => run,
+    readCheckpoint: async () => {
+      const e = new Error("not found")
+      e.code = "FACTORY_CHECKPOINT_NOT_FOUND"
+      throw e
+    },
+    recordCodexReadiness: async (input) => {
+      calls.push("checkpoint")
+      assert.strictEqual(input.observation, profile.codexReadiness)
+      assert.equal(input.capability, "implementation.backend")
+      assert.equal(input.runVersion, run.version)
+      assert.equal(input.expectedCheckpointVersion, 0)
+      return {
+        workerId: "codex",
+        runId: run.runId,
+        runVersion: run.version,
+        capability: "implementation.backend",
+        observation: {
+          sourceId: "reviewed-runtime-probe",
+          fresh: true,
+          expiresAt: new Date(Date.now() + 60_000).toISOString()
+        },
+        dispatch: { outcome: "ready", consumeAttempt: true }
+      }
+    },
+    executeCodex: async (runId, options) => {
+      calls.push("codex")
+      assert.equal(runId, run.runId)
+      assert.equal(options.expectedVersion, run.version)
+      assert.strictEqual(options.codexReadiness, profile.codexReadiness)
+      assert.strictEqual(options.codexConfig, profile.codexConfig)
+      return { ok: true, outcome: "implementation_ready", run: makeRun("implementation_ready") }
+    },
+    execute: async () => { throw new Error("Antigravity execution not permitted") }
+  })
+
+  const result = await coordinator(run.runId, { ...profile, expectedVersion: run.version })
+  assert.equal(result.ok, true)
+  assert.deepEqual(calls, ["checkpoint", "codex"])
+})
+
+test("frontend runtime stays lightweight and Codex probe failures block backend readiness", async () => {
+  const frontend = makeRun("implementation_in_progress", {
+    task: "Fix the hidden CTA on the server-rendered form."
+  })
+  let probes = 0
+  const baseOptions = {
+    platform: "darwin",
+    statImpl: fakeRuntimeStatFor(),
+    accessImpl: async () => {},
+    execFileImpl: async () => { probes += 1; throw Error("no Codex authorization") }
+  }
+  const frontendProfile = await loadDevelopmentContinueRuntimeProfile({
+    run: frontend, handler: "executeSoftwareFactoryImplementation"
+  }, baseOptions)
+  assert.equal(frontendProfile.codexReadiness, undefined)
+  assert.equal(frontendProfile.codexConfig, undefined)
+  assert.equal(probes, 0)
+
+  const backend = makeRun("implementation_in_progress", {
+    task: "Implement the approved backend API."
+  })
+  await assert.rejects(
+    loadDevelopmentContinueRuntimeProfile({
+      run: backend, handler: "executeSoftwareFactoryImplementation"
+    }, baseOptions),
+    (error) => error?.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+  assert.equal(probes, 1)
+
+  const orphanProfile = await loadDevelopmentContinueRuntimeProfile({
+    run: backend,
+    handler: "executeSoftwareFactoryImplementation",
+    action: "phase-6d-orphan-recovery"
+  }, baseOptions)
+  assert.equal(orphanProfile.codexReadiness, undefined)
+  assert.equal(orphanProfile.codexConfig, undefined)
+  assert.equal(probes, 1)
 })
 
 test("Software Factory backend dispatch requires a fresh Codex checkpoint before executing once", async () => {
