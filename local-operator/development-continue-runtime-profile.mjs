@@ -981,6 +981,17 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
         workspaceRoot: paths.workspaceRoot
       }
     },
+    // This is an in-process observation produced only after the reviewed
+    // executable, login-status and sandbox checks above. "degraded" deliberately
+    // does not claim a verified quota; Codex usage limits still fail closed in
+    // the execution adapter. Orphan recovery cannot manufacture readiness.
+    codexReadiness: orphanRecovery ? null : {
+      workerId: "codex",
+      integration: "configured",
+      capacity: "degraded",
+      sourceId: "reviewed-runtime-probe",
+      observedAt: new Date().toISOString()
+    },
     codexConfig: {
       executablePath: paths.codexExecutablePath,
       gitExecutablePath: paths.gitExecutablePath,
