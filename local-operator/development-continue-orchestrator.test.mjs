@@ -2981,8 +2981,8 @@ test("Software Factory coordinator records blocked capacity without authorizing 
   assert.equal(calls[0][1].expectedCheckpointVersion, 0)
 })
 
-test("Software Factory coordinator authorizes immediately before Antigravity execution", async () => {
-  const objective = "Implement the approved authentication API integration."
+test("Software Factory frontend coordinator authorizes immediately before Antigravity execution", async () => {
+  const objective = "Implement the approved authentication UI component."
   const plan = buildBaselineSoftwareFactoryPlan({
     runId: RUN_ID,
     projectId: PROJECT.id,
@@ -3038,11 +3038,59 @@ test("Software Factory coordinator authorizes immediately before Antigravity exe
   assert.equal(result.outcome, "implementation_ready")
   assert.deepEqual(calls.map((entry) => entry[0]), ["record", "authorize", "execute"])
   assert.equal(calls[0][1].expectedCheckpointVersion, 4)
-  assert.equal(calls[0][1].capability, "implementation.backend")
+  assert.equal(calls[0][1].capability, "implementation.frontend")
   assert.equal(calls[0][1].risk, "high")
   assert.equal(calls[1][1].checkpointVersion, 5)
   assert.equal(calls[2][1].receivedAuthorization, authorization)
   assert.equal(calls[2][1].expectedVersion, run.version)
+})
+
+test("Software Factory backend dispatch calls Codex once without Antigravity readiness or authorization", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved database repository change."
+  })
+  const calls = []
+  const mustNotRunAntigravity = async () => {
+    throw new Error("Antigravity must never be called for backend implementation")
+  }
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    readCheckpoint: mustNotRunAntigravity,
+    recordReadiness: mustNotRunAntigravity,
+    authorize: mustNotRunAntigravity,
+    execute: mustNotRunAntigravity,
+    executeCodex: async (runId, options) => {
+      calls.push({ runId, expectedVersion: options.expectedVersion })
+      return {
+        ok: true,
+        outcome: "implementation_ready",
+        run: makeRun("implementation_ready", { version: run.version + 1 })
+      }
+    }
+  })
+
+  const result = await coordinator(run.runId, { expectedVersion: run.version })
+  assert.equal(result.ok, true)
+  assert.deepEqual(calls, [{ runId: run.runId, expectedVersion: run.version }])
+})
+
+test("Software Factory backend refuses stale versions before calling either agent", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved database repository change."
+  })
+  let calls = 0
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    executeCodex: async () => { calls += 1 },
+    execute: async () => { calls += 1 },
+    recordReadiness: async () => { calls += 1 }
+  })
+
+  await assert.rejects(
+    coordinator(run.runId, { expectedVersion: run.version - 1 }),
+    (error) => error?.code === "CONTINUE_IMPLEMENTATION_RUN_STALE"
+  )
+  assert.equal(calls, 0)
 })
 
 test("ordinary Phase 6D routes to Software Factory handler while preserving action compatibility", async () => {
