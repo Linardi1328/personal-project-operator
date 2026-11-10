@@ -34,11 +34,7 @@ import {
   recordSoftwareFactoryDispatchCheckpoint
 } from "./software-factory-dispatch-checkpoint.mjs"
 import { isTrustedLocalCodexReadiness } from "./development-continue-runtime-profile.mjs"
-import {
-  SOFTWARE_FACTORY_TEST_REMEDIATION_ID,
-  latestSoftwareFactoryTestRemediation,
-  prepareSoftwareFactoryTestRemediation
-} from "./software-factory-test-remediation.mjs"
+import { prepareSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
 import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
 import {
   classifyAutomatedTestAttemptEvidence,
