@@ -25,7 +25,7 @@ function failedRun(overrides = {}) {
     runId: RUN_ID,
     version: 9,
     status: "tests_failed",
-    task: "Implement the approved feature.",
+    task: "Implement the approved frontend UI feature.",
     project: {
       id: "khlim-digital-ecosystem",
       fullName: "Linardi1328/khlim-digital-ecosystem"
@@ -158,7 +158,7 @@ test("blocked Antigravity capacity leaves the run parked at tests_failed", async
   assert.equal(result.run.status, "tests_failed")
   assert.equal(fixture.getTransitionCalls(), 0)
   assert.equal(fixture.readinessCalls.length, 1)
-  assert.equal(fixture.readinessCalls[0].capability, "debugging")
+  assert.equal(fixture.readinessCalls[0].capability, "implementation.frontend")
   assert.equal(fixture.readinessCalls[0].failedAttempts, 1)
 })
 
@@ -174,7 +174,7 @@ test("fresh debugging capacity opens a remediation implementation stage", async 
   const marker = latestSoftwareFactoryTestRemediation(result.run)
   assert.equal(marker.source, SOFTWARE_FACTORY_TEST_REMEDIATION_ID)
   assert.equal(marker.sha, SHA)
-  assert.equal(marker.metadata.capability, "debugging")
+  assert.equal(marker.metadata.capability, "implementation.frontend")
   assert.equal(marker.metadata.sourceTestAttempt, 2)
   assert.equal(marker.metadata.failedTests, 1)
   assert.deepEqual(marker.metadata.failedTestIds, ["foundation-test"])
@@ -192,14 +192,34 @@ test("untrusted failure evidence is refused before readiness probing", async () 
   assert.equal(fixture.getTransitionCalls(), 0)
 })
 
-test("test-remediation marker forces debugging capability", async () => {
+test("test-remediation marker preserves original frontend implementation capability", async () => {
   const fixture = preparerFixture()
   const result = await fixture.prepare(RUN_ID, { expectedVersion: 9 })
 
   assert.equal(
     resolveSoftwareFactoryImplementationCapability(result.run),
-    "debugging"
+    "implementation.frontend"
   )
+})
+
+test("backend failed tests cannot be reassigned to Antigravity during remediation", async () => {
+  const run = failedRun({ task: "Repair approved backend database schema." })
+  let readinessCount = 0
+  let transitionCount = 0
+  const prepare = createSoftwareFactoryTestRemediationPreparer({
+    readRun: async () => structuredClone(run),
+    resolvePolicyIdentity: () => POLICY,
+    classifyEvidence: () => "definitive_failed",
+    recordReadiness: async () => { readinessCount += 1; throw new Error("Antigravity must not be probed") },
+    transitionRun: async () => { transitionCount += 1; throw new Error("Backend must remain parked") }
+  })
+  const result = await prepare(RUN_ID, { expectedVersion: 9 })
+  assert.equal(result.ok, false)
+  assert.equal(result.outcome, "owner_action_required")
+  assert.equal(result.reason, "codex_test_remediation_not_authorized")
+  assert.equal(result.run.status, "tests_failed")
+  assert.equal(readinessCount, 0)
+  assert.equal(transitionCount, 0)
 })
 
 test("Antigravity debugging prompt contains bounded failed-test metadata only", async () => {
