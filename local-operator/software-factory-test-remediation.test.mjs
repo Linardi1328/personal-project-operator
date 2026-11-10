@@ -222,26 +222,38 @@ test("backend failed tests cannot be reassigned to Antigravity during remediatio
   assert.equal(transitionCount, 0)
 })
 
-test("Antigravity debugging prompt contains bounded failed-test metadata only", async () => {
+test("Antigravity frontend remediation prompt includes bounded failed-test metadata only for matching authorization", async () => {
   const fixture = preparerFixture()
   const result = await fixture.prepare(RUN_ID, { expectedVersion: 9 })
+  const workspace = {
+    branch: result.run.branch,
+    workspaceRef: "workspace-ref"
+  }
+  const authorization = {
+    capability: "implementation.frontend",
+    modelClass: "standard",
+    skills: ["ui-ux-pro-max"]
+  }
   const prompt = buildAntigravityImplementationPrompt(
     result.run,
-    {
-      branch: result.run.branch,
-      workspaceRef: "workspace-ref"
-    },
-    {
-      capability: "debugging",
-      modelClass: "standard",
-      skills: ["debugging-and-error-recovery"]
-    }
+    workspace,
+    authorization
   )
 
   assert.match(prompt, /Trusted failed-test context:/u)
   assert.match(prompt, /Source test attempt: 2/u)
   assert.match(prompt, /Failed required test steps: 1 of 2/u)
   assert.match(prompt, /foundation-test/u)
-  assert.match(prompt, /debugging-and-error-recovery/u)
+  assert.match(prompt, /ui-ux-pro-max/u)
   assert.doesNotMatch(prompt, /stdout|stderr|stack trace|SENSITIVE_TEST_SENTINEL/iu)
+
+  const wrongCapability = buildAntigravityImplementationPrompt(
+    result.run, workspace, { ...authorization, capability: "debugging" }
+  )
+  assert.doesNotMatch(wrongCapability, /Trusted failed-test context:|foundation-test/u)
+
+  const staleSha = buildAntigravityImplementationPrompt(
+    { ...result.run, headSha: "c".repeat(40) }, workspace, authorization
+  )
+  assert.doesNotMatch(staleSha, /Trusted failed-test context:|foundation-test/u)
 })
