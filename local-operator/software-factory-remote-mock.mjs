@@ -25,7 +25,7 @@ export function createOfflineRemoteDispatchMock(config) {
       !Array.isArray(config.approvedProjects) || !config.workerRegistry ||
       typeof config.workerRegistry!=="object") reject("REMOTE_MOCK_CONFIGURATION_INVALID")
   const approvedProjects=new Set(config.approvedProjects)
-  const requests=new Map(), seenRequests=new Set(), seenNonces=new Set(), seenApprovals=new Set(), locked=new Set()
+  const requests=new Map(), seenRequests=new Set(), seenNonces=new Set(), seenApprovals=new Set(), seenRunVersions=new Set(), locked=new Set()
   const nowMs=()=>{const value=config.now();const n=value instanceof Date?value.getTime():Date.parse(value);if(!Number.isFinite(n))reject("REMOTE_CLOCK_INVALID");return n}
   const fresh=(from,to)=>{const n=nowMs();if(n<time(from)-60000 || n>=time(to))reject("REMOTE_EXPIRED")}
   const current=async p=>{
@@ -50,8 +50,10 @@ export function createOfflineRemoteDispatchMock(config) {
         fresh(p.issuedAt,p.expiresAt)
         if(!approvedProjects.has(p.projectId))reject("REMOTE_PROJECT_DENIED")
         if(seenRequests.has(p.idempotencyKey)||seenNonces.has(p.nonce)||seenApprovals.has(p.approval.approvalId)||requests.has(p.requestId))reject("REMOTE_REPLAY")
+        const runBinding=`${p.runId}:${p.expectedVersion}`
+        if(seenRunVersions.has(runBinding))reject("REMOTE_RUN_ALREADY_STAGED")
         await current(p)
-        seenRequests.add(p.idempotencyKey);seenNonces.add(p.nonce);seenApprovals.add(p.approval.approvalId)
+        seenRequests.add(p.idempotencyKey);seenNonces.add(p.nonce);seenApprovals.add(p.approval.approvalId);seenRunVersions.add(runBinding)
         const hash=remotePayloadDigest(p)
         requests.set(p.requestId,{request:p,requestHash:hash,claim:null,evidence:null,review:null})
         return Object.freeze({outcome:"staged",requestId:p.requestId,requestHash:hash})
