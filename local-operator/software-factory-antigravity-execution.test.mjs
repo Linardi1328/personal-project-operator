@@ -85,7 +85,8 @@ test("Antigravity execution refuses a hash-bound backend plan or explicit backen
   }
   assert.throws(
     () => assertAntigravityImplementationOwnership(runFixture({
-      task: "Investigate failing backend API tests."
+      task: "Investigate failing backend API tests.",
+      evidence: { planning: [] }
     })),
     (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED"
   )
