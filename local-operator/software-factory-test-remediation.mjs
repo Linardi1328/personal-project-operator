@@ -13,6 +13,7 @@ import {
 import {
   readSoftwareFactoryDispatchCheckpoint
 } from "./software-factory-dispatch-checkpoint.mjs"
+import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
 
 export const SOFTWARE_FACTORY_TEST_REMEDIATION_ID = "software-factory-v0-7-test-remediation"
 export const MAX_REMEDIATION_TEST_IDS = 5
@@ -123,17 +124,30 @@ function matchingFailureEvidence(run, policyIdentity, classifyEvidence = classif
   })
 }
 
-function remediationEvidence(run, context) {
+function reviewedRemediationRole(run) {
+  const planned = latestSoftwareFactoryPlan(run)?.capabilityHint
+  if (planned === "implementation.backend" || planned === "implementation.frontend") {
+    return planned
+  }
+  const task = typeof run?.task === "string" ? run.task.toLowerCase() : ""
+  if (/\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|client-side)\b/u.test(task)) {
+    return "implementation.frontend"
+  }
+  // An untyped or backend failure cannot gain Antigravity edit authority.
+  return null
+}
+
+function remediationEvidence(run, context, capability) {
   return {
     kind: "implementation",
     sha: context.headSha,
     source: SOFTWARE_FACTORY_TEST_REMEDIATION_ID,
-    summary: "Software Factory opened a bounded Antigravity debugging remediation for trusted failed tests.",
+    summary: "Software Factory opened bounded role-scoped remediation for trusted failed tests.",
     metadata: {
       project: run.project.id,
       orchestrator: SOFTWARE_FACTORY_TEST_REMEDIATION_ID,
       outcome: "test_remediation_started",
-      capability: "debugging",
+      capability,
       sourceTestAttempt: context.attempt,
       sourceTestSha: context.headSha,
       testPolicyId: context.policyId,
@@ -156,7 +170,7 @@ export function latestSoftwareFactoryTestRemediation(run) {
       entry?.source === SOFTWARE_FACTORY_TEST_REMEDIATION_ID &&
       entry?.metadata?.orchestrator === SOFTWARE_FACTORY_TEST_REMEDIATION_ID &&
       entry?.metadata?.outcome === "test_remediation_started" &&
-      entry?.metadata?.capability === "debugging"
+      ["debugging", "implementation.frontend", "implementation.backend"].includes(entry?.metadata?.capability)
     ) {
       return entry
     }
@@ -185,6 +199,15 @@ export function createSoftwareFactoryTestRemediationPreparer(dependencies = {}) 
 
     const policyIdentity = resolvePolicyIdentity(run, options)
     const context = matchingFailureEvidence(run, policyIdentity, classifyEvidence)
+    const capability = reviewedRemediationRole(run)
+    if (capability !== "implementation.frontend") {
+      return {
+        ok: false,
+        outcome: "owner_action_required",
+        reason: "codex_test_remediation_not_authorized",
+        run
+      }
+    }
     const expectedCheckpointVersion = await latestCheckpointVersion(run.runId, {
       ...options,
       readCheckpoint: dependencies.readCheckpoint
@@ -192,7 +215,7 @@ export function createSoftwareFactoryTestRemediationPreparer(dependencies = {}) 
     const checkpoint = await recordReadiness({
       runId: run.runId,
       runVersion: run.version,
-      capability: "debugging",
+      capability,
       expectedCheckpointVersion,
       failedAttempts: run.attempts.implementation
     }, options)
@@ -213,7 +236,7 @@ export function createSoftwareFactoryTestRemediationPreparer(dependencies = {}) 
       ...(run.branch ? { branch: run.branch } : {}),
       actor: SOFTWARE_FACTORY_TEST_REMEDIATION_ID,
       reason: "software-factory-test-remediation-ready",
-      evidence: [remediationEvidence(run, context)]
+      evidence: [remediationEvidence(run, context, capability)]
     }, options)
 
     return {
@@ -221,7 +244,7 @@ export function createSoftwareFactoryTestRemediationPreparer(dependencies = {}) 
       outcome: "test_remediation_ready",
       run: transitioned,
       remediation: {
-        capability: "debugging",
+        capability,
         sourceTestAttempt: context.attempt,
         sourceTestSha: context.headSha,
         failedTests: context.failed,
