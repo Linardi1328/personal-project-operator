@@ -35,7 +35,7 @@ import {
 } from "./software-factory-dispatch-checkpoint.mjs"
 import { isTrustedLocalCodexReadiness } from "./development-continue-runtime-profile.mjs"
 import { prepareSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
-import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
+import { latestSoftwareFactoryPlan, resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import {
   classifyAutomatedTestAttemptEvidence,
   canRetryPreviousPpoTimeoutPolicy,
@@ -733,28 +733,9 @@ function latestHardeningStartedEvidence(run) {
 }
 
 export function resolveSoftwareFactoryImplementationCapability(run) {
-  const structuredPlan = latestSoftwareFactoryPlan(run)
-  // The original, hash-bound implementation role survives test remediation and
-  // review hardening. Remediation is not a grant to change execution agents.
-  const plannedRole = structuredPlan?.capabilityHint
-  const planning = Array.isArray(run?.evidence?.planning)
-    ? run.evidence.planning.map((entry) => entry?.summary || "").join("\n")
-    : ""
-  const text = `${run?.task || ""}\n${planning}`.toLowerCase()
-  const explicitFrontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side)\b/u
-  const contextualFrontend = /\b(?:page|form|component)\s+(?:ui|layout|rendering|styling|interaction|accessibility)\b|\b(?:rendered|visual)\s+(?:page|form|component)\b/u
-  const explicitBackend = /\b(backend|api|database|sql|schema|migration|supabase|rls|server|server-side|endpoint|graphql)\b/u
-  const explicitDebugging = /\bdebug(?:ging)?\b|\bdiagnos(?:e|is|tic)\b|\binvestigat(?:e|ion)\b|\broot cause\b|\bfailing (?:test|build|ci)\b|\breproduce (?:bug|issue|failure)\b|\bfix (?:bug|error|crash)\b/u
-
-  const role = plannedRole === "implementation.backend" || plannedRole === "implementation.frontend"
-    ? plannedRole
-    : explicitFrontend.test(text) || contextualFrontend.test(text)
-      ? "implementation.frontend"
-      : explicitBackend.test(text)
-        ? "implementation.backend"
-        : plannedRole === "debugging" || explicitDebugging.test(text)
-          ? "debugging"
-          : "implementation.backend"
+  // Reuse the exact role chosen for runtime probing and execution authorization.
+  // The original hash-bound plan survives test remediation and review hardening.
+  const role = resolveSoftwareFactoryTaskRole(run)
 
   const hardening = latestHardeningStartedEvidence(run)
   if (hardening?.sha === run?.headSha && hardening?.metadata?.outcome === "hardening_started") {
