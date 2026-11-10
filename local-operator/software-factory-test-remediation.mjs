@@ -13,7 +13,7 @@ import {
 import {
   readSoftwareFactoryDispatchCheckpoint
 } from "./software-factory-dispatch-checkpoint.mjs"
-import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
+import { resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 
 export const SOFTWARE_FACTORY_TEST_REMEDIATION_ID = "software-factory-v0-7-test-remediation"
 export const MAX_REMEDIATION_TEST_IDS = 5
@@ -125,16 +125,11 @@ function matchingFailureEvidence(run, policyIdentity, classifyEvidence = classif
 }
 
 function reviewedRemediationRole(run) {
-  const planned = latestSoftwareFactoryPlan(run)?.capabilityHint
-  if (planned === "implementation.backend" || planned === "implementation.frontend") {
-    return planned
-  }
-  const task = typeof run?.task === "string" ? run.task.toLowerCase() : ""
-  if (/\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|client-side)\b/u.test(task)) {
-    return "implementation.frontend"
-  }
-  // An untyped or backend failure cannot gain Antigravity edit authority.
-  return null
+  // Identical authority decision to runtime and implementation dispatch.
+  // A stale or conflicting baseline plan cannot start Antigravity remediation.
+  return resolveSoftwareFactoryTaskRole(run) === "implementation.frontend"
+    ? "implementation.frontend"
+    : null
 }
 
 function remediationEvidence(run, context, capability) {
