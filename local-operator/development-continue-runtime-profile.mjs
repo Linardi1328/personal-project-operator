@@ -23,6 +23,28 @@ import { PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT } from "./developmen
 
 const execFileAsync = promisify(execFile)
 
+// An in-memory trust marker: an arbitrary caller cannot forge a successful
+// local runtime probe by copying a worker-state JSON object. These observations
+// deliberately cannot be serialized into future remote dispatch authority.
+const trustedCodexReadiness = new WeakSet()
+
+export function isTrustedLocalCodexReadiness(observation) {
+  return Boolean(observation && typeof observation === "object" && trustedCodexReadiness.has(observation))
+}
+
+function issueTrustedLocalCodexReadiness() {
+  const observation = Object.freeze({
+    workerId: "codex",
+    integration: "configured",
+    capacity: "degraded",
+    sourceId: "reviewed-runtime-probe",
+    observedAt: new Date().toISOString()
+  })
+  trustedCodexReadiness.add(observation)
+  return observation
+}
+
+
 export const DEVELOPMENT_CONTINUE_RUNTIME_PROFILE_ID = "phase-6k-fixed-local-runtime-profile"
 
 // Metadata only: does not load a runtime or run readiness probes.
@@ -985,13 +1007,7 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     // executable, login-status and sandbox checks above. "degraded" deliberately
     // does not claim a verified quota; Codex usage limits still fail closed in
     // the execution adapter. Orphan recovery cannot manufacture readiness.
-    codexReadiness: orphanRecovery ? null : {
-      workerId: "codex",
-      integration: "configured",
-      capacity: "degraded",
-      sourceId: "reviewed-runtime-probe",
-      observedAt: new Date().toISOString()
-    },
+    codexReadiness: orphanRecovery ? null : issueTrustedLocalCodexReadiness(),
     codexConfig: {
       executablePath: paths.codexExecutablePath,
       gitExecutablePath: paths.gitExecutablePath,
