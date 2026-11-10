@@ -180,8 +180,11 @@ test("evidence enforces lease, signed worker identity, paths, permits and explic
   }else await assert.rejects(f.mock.recordEvidence(p.requestId,signed(e,"codex")),isCode(code))
  }
  const p=request({scope:{mode:"implementation",allowedPaths:["local-operator/"],permits:["workspace.read"]}})
- const f=setup({p}),c=await claimedFixture(f)
- await assert.rejects(f.mock.recordEvidence(p.requestId,signed(evidence(p,c),"codex")),isCode("REMOTE_PERMIT_DENIED"))
+ for(const outcome of ["success","failed","blocked"]){
+  const f=setup({p}),c=await claimedFixture(f)
+  const e=evidence(p,c,{outcome,deniedTools:[]})
+  await assert.rejects(f.mock.recordEvidence(p.requestId,signed(e,"codex")),isCode("REMOTE_PERMIT_DENIED"))
+ }
 })
 
 test("blocked tool denial remains blocked and cannot be converted to accepted review",async()=>{
@@ -212,6 +215,10 @@ test("contract rejects secret-bearing summaries, arbitrary payload fields and ov
   {...p,scope:{...p.scope,allowedPaths:Array.from({length:9},(_,i)=>`safe/file${i}`)}},
   {...p,approval:{...p.approval,ownerId:"ssh@host"}}
  ]) assert.throws(()=>validateRemotePayload(payload),err=>err instanceof SoftwareFactoryRemoteContractError&&["REMOTE_REQUEST_INVALID","REMOTE_FIELDS_INVALID"].includes(err.code))
- const e=evidence(p,claim(p),{summary:"token=SECRET"})
- assert.throws(()=>validateRemotePayload(e),isCode("REMOTE_EVIDENCE_INVALID"))
+ for(const summary of ["Updated task-runner tests","Risk-free simulated claim","Disk-backed adapter is deferred"]){
+  assert.doesNotThrow(()=>validateRemotePayload(evidence(p,claim(p),{summary})))
+ }
+ for(const summary of ["token=SECRET","sk-"+"a".repeat(24),"ghp_"+"a".repeat(24)]){
+  assert.throws(()=>validateRemotePayload(evidence(p,claim(p),{summary})),isCode("REMOTE_EVIDENCE_INVALID"))
+ }
 })
