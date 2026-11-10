@@ -58,12 +58,14 @@ function canonical(value) {
   return JSON.stringify(value)
 }
 export function remotePayloadDigest(payload) {
-  validateRemotePayload(payload)
-  return createHash("sha256").update(canonical(payload)).digest("hex")
+  const snapshot = snapshotPlainData(payload)
+  validateRemotePayload(snapshot)
+  return createHash("sha256").update(canonical(snapshot)).digest("hex")
 }
 
 /** Validate strict v1 shapes and bounded metadata; never treats payload strings as authority. */
 export function validateRemotePayload(p) {
+  assertPlainData(p)
   if (!p || typeof p !== "object" || Array.isArray(p) || !kinds.has(p.kind) ||
       p.schemaVersion !== SOFTWARE_FACTORY_REMOTE_CONTRACT_VERSION) fail("REMOTE_VERSION_OR_KIND_INVALID")
   if (p.kind === "dispatch-request") {
@@ -116,10 +118,11 @@ export function validateRemotePayload(p) {
 
 /** Locally sign synthetic messages; key registration and production transport are out of scope. */
 export function signRemoteEnvelope(payload, signerId, privateKey) {
-  validateRemotePayload(payload)
+  const snapshot = snapshotPlainData(payload)
+  validateRemotePayload(snapshot)
   if (!match(signerId,label) || privateKey?.asymmetricKeyType !== "ed25519") fail("REMOTE_SIGNER_INVALID")
-  const signed = canonical({signerId,payload})
-  return {signerId,payload:structuredClone(payload),signature:cryptoSign(null,Buffer.from(signed),privateKey).toString("base64url")}
+  const signed = canonical({signerId,payload:snapshot})
+  return {signerId,payload:snapshot,signature:cryptoSign(null,Buffer.from(signed),privateKey).toString("base64url")}
 }
 
 // Do not let structuredClone silently normalize class instances, invoke getters,
@@ -132,11 +135,31 @@ function assertPlainData(value, seen = new WeakSet(), depth = 0) {
   }
   if (seen.has(value) || (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value)))) fail("REMOTE_FIELDS_INVALID")
   seen.add(value)
+  if (Array.isArray(value)) {
+    // Sparse slots and decorated array keys must not disappear during canonical
+    // serialization. Checking both density and key count catches hole+extra-key
+    // combinations that a key-count-only check would miss.
+    if (Reflect.ownKeys(value).length !== value.length + 1) fail("REMOTE_FIELDS_INVALID")
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index)) fail("REMOTE_FIELDS_INVALID")
+    }
+  }
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key === "symbol") fail("REMOTE_FIELDS_INVALID")
     const desc = Object.getOwnPropertyDescriptor(value, key)
     if (!desc || !Object.hasOwn(desc, "value")) fail("REMOTE_FIELDS_INVALID")
     assertPlainData(desc.value, seen, depth + 1)
+  }
+}
+// Read one independent plain-data snapshot before validation, digesting, or
+// signing, so all three operations interpret exactly the same bytes.
+function snapshotPlainData(value) {
+  try {
+    assertPlainData(value)
+    return structuredClone(value)
+  } catch (error) {
+    if (error instanceof SoftwareFactoryRemoteContractError) throw error
+    fail("REMOTE_FIELDS_INVALID")
   }
 }
 function deepFreeze(value) {
@@ -149,14 +172,7 @@ function deepFreeze(value) {
 
 /** Verify exactly one stable snapshot; return immutable signed data, not caller-owned references. */
 export function verifyRemoteEnvelope(envelope, expectedSignerId, publicKey) {
-  let snapshot
-  try {
-    assertPlainData(envelope)
-    snapshot = structuredClone(envelope)
-  } catch {
-    fail("REMOTE_FIELDS_INVALID")
-  }
-  envelope = snapshot
+  envelope = snapshotPlainData(envelope)
   object(envelope,["signerId","payload","signature"])
   if (envelope.signerId !== expectedSignerId || !match(envelope.signerId,label) ||
       typeof envelope.signature !== "string" || !/^[A-Za-z0-9_-]{86}$/u.test(envelope.signature) ||
