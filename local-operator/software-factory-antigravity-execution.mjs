@@ -43,7 +43,6 @@ const unsafeControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-
 const sensitiveTextPattern = /(?:github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:])/iu
 const shaPattern = /^[a-f0-9]{40}$/u
 const reviewedCapabilities = new Set([
-  "implementation.backend",
   "implementation.frontend",
   "debugging"
 ])
