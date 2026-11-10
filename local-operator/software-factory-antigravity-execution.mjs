@@ -18,7 +18,7 @@ import {
   ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS
 } from "./software-factory-antigravity-readiness.mjs"
 import { latestSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
-import { latestSoftwareFactoryPlan, resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
+import { SOFTWARE_FACTORY_PLAN_CONTRACT_ID, latestSoftwareFactoryPlan, resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import {
   HARDENING_ORCHESTRATOR_ID
 } from "./development-hardening-orchestrator.mjs"
@@ -48,12 +48,15 @@ const reviewedCapabilities = new Set([
 ])
 
 export function assertAntigravityImplementationOwnership(run) {
-  // Share the exact classifier used by the coordinator and runtime loader so
-  // a frontend task cannot be rejected by a different heuristic here.
-  if (resolveSoftwareFactoryTaskRole(run) === "implementation.backend") {
+  // Check the same role used by the coordinator. Direct execution cannot turn
+  // a stale, misclassified or conflicting structured plan into edit authority.
+  const role = resolveSoftwareFactoryTaskRole(run)
+  const hasStructuredPlan = Array.isArray(run?.evidence?.planning) &&
+    run.evidence.planning.some((entry) => entry?.source === SOFTWARE_FACTORY_PLAN_CONTRACT_ID)
+  if (role === "implementation.backend" || (hasStructuredPlan && role !== "implementation.frontend")) {
     throw executionError(
       "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED",
-      "Backend implementation is reserved for the Codex worker.",
+      "Backend or unresolved implementation ownership is reserved for owner action or the Codex worker.",
       "configuration"
     )
   }
