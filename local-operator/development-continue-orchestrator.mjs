@@ -776,6 +776,13 @@ export function resolveSoftwareFactoryImplementationCapability(run) {
   return role
 }
 
+export function resolveSoftwareFactoryHardeningAdapterId(run) {
+  const role = resolveSoftwareFactoryImplementationCapability(run)
+  if (role === "implementation.backend") return CODEX_EXECUTION_ADAPTER_ID
+  if (role === "implementation.frontend") return ANTIGRAVITY_EXECUTION_ADAPTER_ID
+  return null
+}
+
 export function createSoftwareFactoryImplementationCoordinator(dependencies = {}) {
   const readRunImpl = dependencies.readRun || readDevelopmentRun
   const readCheckpointImpl = dependencies.readCheckpoint || readSoftwareFactoryDispatchCheckpoint
@@ -932,9 +939,9 @@ export async function executeSoftwareFactoryImplementation(runId, options = {}) 
 
 async function executeSoftwareFactoryBoundedHardening(runId, options = {}) {
   const run = await readDevelopmentRun(runId, options)
-  const role = resolveSoftwareFactoryImplementationCapability(run)
+  const adapterId = resolveSoftwareFactoryHardeningAdapterId(run)
 
-  if (role !== "implementation.backend" && role !== "implementation.frontend") {
+  if (!adapterId) {
     return {
       ok: false,
       outcome: "owner_action_required",
@@ -947,9 +954,7 @@ async function executeSoftwareFactoryBoundedHardening(runId, options = {}) {
     ...options,
     hardeningDependencies: {
       executeImplementation: executeSoftwareFactoryImplementation,
-      implementationAdapterId: role === "implementation.backend"
-        ? CODEX_EXECUTION_ADAPTER_ID
-        : ANTIGRAVITY_EXECUTION_ADAPTER_ID
+      implementationAdapterId: adapterId
     }
   })
 }
