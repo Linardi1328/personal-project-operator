@@ -106,6 +106,30 @@ test("Antigravity execution preserves a reviewed frontend plan", () => {
   })), true)
 })
 
+test("Antigravity guard and dispatcher agree on frontend-biased fallback classification", () => {
+  for (const task of [
+    "Fix the hidden CTA in the server-rendered form.",
+    "Repair the visual DOM rendering of the dashboard.",
+    "Update the rendered form component interaction.",
+    "Implement the approved browser layout."
+  ]) {
+    const run = runFixture({ task, evidence: { planning: [] } })
+    assert.equal(assertAntigravityImplementationOwnership(run), true, task)
+  }
+  for (const task of [
+    "Repair backend database migration.",
+    "Investigate failing server API integration tests."
+  ]) {
+    assert.throws(
+      () => assertAntigravityImplementationOwnership(runFixture({
+        task, evidence: { planning: [] }
+      })),
+      (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED",
+      task
+    )
+  }
+})
+
 test("reviewed automation settings accept trusted PPO workspace with file operations", () => {
   const result = validateAntigravityAutomationSettings(
     safeSettings(),
