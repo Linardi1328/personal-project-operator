@@ -3051,10 +3051,17 @@ test("Software Factory frontend coordinator authorizes immediately before Antigr
   assert.equal(calls[2][1].expectedVersion, run.version)
 })
 
-test("real backend runtime profile supplies trusted Codex readiness and config to the coordinator", async () => {
-  const run = makeRun("implementation_in_progress", {
-    task: "Implement the approved backend database repository change."
+test("hash-bound backend form endpoint requires Codex probes and dispatches to Codex only", async () => {
+  const objective = "Accept multipart form data in the backend endpoint."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID, projectId: PROJECT.id, baseSha: BASE_SHA, objective
   })
+  const run = makeRun("implementation_in_progress", {
+    task: objective,
+    evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+  })
+  assert.equal(plan.capabilityHint, "implementation.backend")
+  assert.equal(resolveSoftwareFactoryImplementationCapability(run), "implementation.backend")
   const probes = []
   const profile = await loadDevelopmentContinueRuntimeProfile({
     run,
@@ -3125,6 +3132,30 @@ test("real backend runtime profile supplies trusted Codex readiness and config t
   const result = await coordinator(run.runId, { ...profile, expectedVersion: run.version })
   assert.equal(result.ok, true)
   assert.deepEqual(calls, ["checkpoint", "codex"])
+})
+
+test("stale hash-bound frontend plan cannot silently authorize Antigravity or Codex", async () => {
+  const approved = "Implement the approved responsive signup form."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID, projectId: PROJECT.id, baseSha: BASE_SHA, objective: approved
+  })
+  const changed = makeRun("implementation_in_progress", {
+    task: "Accept multipart form data in the backend endpoint.",
+    evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+  })
+  assert.equal(resolveSoftwareFactoryImplementationCapability(changed), "debugging")
+  let calls = 0
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(changed),
+    recordReadiness: async () => { calls += 1 },
+    recordCodexReadiness: async () => { calls += 1 },
+    execute: async () => { calls += 1 },
+    executeCodex: async () => { calls += 1 }
+  })
+  const outcome = await coordinator(changed.runId, { expectedVersion: changed.version })
+  assert.equal(outcome.outcome, "owner_action_required")
+  assert.equal(outcome.reason, "implementation_role_ambiguous")
+  assert.equal(calls, 0)
 })
 
 test("frontend runtime stays lightweight and Codex probe failures block backend readiness", async () => {
