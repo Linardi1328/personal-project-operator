@@ -782,6 +782,7 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
   const recordReadinessImpl = dependencies.recordReadiness || recordTrustedAntigravityReadiness
   const authorizeImpl = dependencies.authorize || authorizeAntigravityDispatch
   const executeImpl = dependencies.execute || executeAntigravityImplementation
+  const executeCodexImpl = dependencies.executeCodex || executeCodexImplementation
 
   async function latestVersion(runId, options = {}) {
     try {
@@ -800,13 +801,24 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
 
     if (run.status !== "implementation_in_progress" || run.version !== options.expectedVersion) {
       throw continueError(
-        "CONTINUE_ANTIGRAVITY_RUN_STALE",
-        "Software factory implementation run changed before Antigravity dispatch."
+        "CONTINUE_IMPLEMENTATION_RUN_STALE",
+        "Software factory implementation run changed before dispatch."
       )
     }
 
     const structuredPlan = latestSoftwareFactoryPlan(run)
     const capability = resolveSoftwareFactoryImplementationCapability(run)
+
+    // Backend execution uses PPO's existing sandboxed Codex adapter and the
+    // same expected development-run version. Never probe or authorize
+    // Antigravity for a backend task.
+    if (capability === "implementation.backend") {
+      return executeCodexImpl(run.runId, {
+        ...options,
+        expectedVersion: run.version
+      })
+    }
+
     const expectedCheckpointVersion = await latestVersion(run.runId, options)
     const checkpoint = await recordReadinessImpl({
       runId: run.runId,
