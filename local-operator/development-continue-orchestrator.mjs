@@ -834,6 +834,7 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
     if (capability === "implementation.backend") {
       const observation = options.codexReadiness
       if (
+        !observation ||
         !validateCodexReadinessImpl(observation) ||
         observation.workerId !== "codex" ||
         observation.sourceId !== "reviewed-runtime-probe" ||
