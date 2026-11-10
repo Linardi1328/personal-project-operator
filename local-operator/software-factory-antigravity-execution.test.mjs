@@ -3,6 +3,7 @@ import test from "node:test"
 import {
   ANTIGRAVITY_EXECUTION_ADAPTER_ID,
   ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS,
+  assertAntigravityImplementationOwnership,
   buildAntigravityExecutionArgs,
   buildAntigravityImplementationPrompt,
   classifyAntigravityExecutionAttemptEvidence,
@@ -58,6 +59,52 @@ function safeSettings(overrides = {}) {
     ...overrides
   }
 }
+
+test("Antigravity execution refuses a hash-bound backend plan or explicit backend debugging", () => {
+  for (const objective of [
+    "Implement the approved backend API changes.",
+    "Fix the failing database schema migration."
+  ]) {
+    const runId = "A".repeat(43)
+    const baseSha = "a".repeat(40)
+    const plan = buildBaselineSoftwareFactoryPlan({
+      runId,
+      projectId: "khlim-digital-ecosystem",
+      baseSha,
+      objective
+    })
+    assert.throws(
+      () => assertAntigravityImplementationOwnership(runFixture({
+        runId,
+        baseSha,
+        task: objective,
+        evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+      })),
+      (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED"
+    )
+  }
+  assert.throws(
+    () => assertAntigravityImplementationOwnership(runFixture({
+      task: "Investigate failing backend API tests."
+    })),
+    (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED"
+  )
+})
+
+test("Antigravity execution preserves a reviewed frontend plan", () => {
+  const runId = "A".repeat(43)
+  const baseSha = "a".repeat(40)
+  const objective = "Implement the responsive frontend registration form."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId, projectId: "khlim-digital-ecosystem", baseSha, objective
+  })
+  assert.equal(assertAntigravityImplementationOwnership(runFixture({
+    runId,
+    baseSha,
+    task: objective,
+    evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+  })), true)
+})
 
 test("reviewed automation settings accept trusted PPO workspace with file operations", () => {
   const result = validateAntigravityAutomationSettings(
