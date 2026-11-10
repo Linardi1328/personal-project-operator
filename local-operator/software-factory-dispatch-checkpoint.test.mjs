@@ -183,6 +183,61 @@ test("Antigravity capacity evidence cannot authorize Codex-owned backend work", 
   )
 })
 
+test("Codex backend checkpoint records a real policy-bound degraded worker observation", async () => {
+  const fixture = await makePlannedRun()
+  const checkpoint = await recordSoftwareFactoryDispatchCheckpoint({
+    runId: fixture.run.runId,
+    runVersion: fixture.run.version,
+    capability: "implementation.backend",
+    expectedCheckpointVersion: 0,
+    observation: observation({
+      workerId: "codex",
+      sourceId: "reviewed-runtime-probe",
+      capacity: "degraded"
+    })
+  }, {
+    writeDataDir: fixture.writeDataDir,
+    now: () => new Date("2026-10-07T10:00:04.000Z")
+  })
+  assert.equal(checkpoint.workerId, "codex")
+  assert.equal(checkpoint.observation.sourceId, "reviewed-runtime-probe")
+  assert.equal(checkpoint.observation.fresh, true)
+  assert.equal(checkpoint.dispatch.outcome, "ready")
+  assert.equal(checkpoint.dispatch.reasonCode, "WORKER_DEGRADED")
+  assert.equal(checkpoint.runVersion, fixture.run.version)
+  assert.equal(checkpoint.projectId, fixture.run.project.id)
+})
+
+test("Codex backend capacity exhaustion and stale observations fail closed without consuming attempts", async () => {
+  for (const [capacity, observedAt, expectedOutcome] of [
+    ["exhausted", "2026-10-07T10:00:03.000Z", "blocked_capacity"],
+    ["rate_limited", "2026-10-07T10:00:03.000Z", "blocked_capacity"],
+    ["degraded", "2026-10-07T09:00:00.000Z", "blocked_external"]
+  ]) {
+    const fixture = await makePlannedRun()
+    const checkpoint = await recordSoftwareFactoryDispatchCheckpoint({
+      runId: fixture.run.runId,
+      runVersion: fixture.run.version,
+      capability: "implementation.backend",
+      expectedCheckpointVersion: 0,
+      observation: observation({
+        workerId: "codex", sourceId: "reviewed-runtime-probe",
+        capacity, observedAt
+      })
+    }, {
+      writeDataDir: fixture.writeDataDir,
+      now: () => new Date("2026-10-07T10:00:04.000Z")
+    })
+    assert.equal(checkpoint.dispatch.outcome, expectedOutcome)
+    assert.equal(checkpoint.dispatch.consumeAttempt, false)
+    const after = await readDevelopmentRun(fixture.run.runId, {
+      writeDataDir: fixture.writeDataDir
+    })
+    assert.equal(after.version, fixture.run.version)
+    assert.deepEqual(after.attempts, fixture.run.attempts)
+  }
+})
+
 test("stale development-run version is refused", async () => {
   const fixture = await makePlannedRun()
 
