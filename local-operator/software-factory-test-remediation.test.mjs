@@ -222,6 +222,32 @@ test("backend failed tests cannot be reassigned to Antigravity during remediatio
   assert.equal(transitionCount, 0)
 })
 
+test("failed backend form and ambiguous debugging tasks cannot acquire Antigravity remediation", async () => {
+  for (const task of [
+    "Accept multipart form data in the backend endpoint.",
+    "Investigate failing build tests.",
+    "Implement the approved bounded fix."
+  ]) {
+    const run = failedRun({ task })
+    let readinessCount = 0
+    let transitions = 0
+    const prepare = createSoftwareFactoryTestRemediationPreparer({
+      readRun: async () => structuredClone(run),
+      resolvePolicyIdentity: () => POLICY,
+      classifyEvidence: () => "definitive_failed",
+      recordReadiness: async () => { readinessCount += 1; throw Error("must not probe") },
+      transitionRun: async () => { transitions += 1; throw Error("must not transition") }
+    })
+    const result = await prepare(RUN_ID, { expectedVersion: 9 })
+    assert.equal(result.ok, false, task)
+    assert.equal(result.outcome, "owner_action_required", task)
+    assert.equal(result.reason, "codex_test_remediation_not_authorized", task)
+    assert.equal(result.run.status, "tests_failed", task)
+    assert.equal(readinessCount, 0, task)
+    assert.equal(transitions, 0, task)
+  }
+})
+
 test("Antigravity frontend remediation prompt includes bounded failed-test metadata only for matching authorization", async () => {
   const fixture = preparerFixture()
   const result = await fixture.prepare(RUN_ID, { expectedVersion: 9 })
