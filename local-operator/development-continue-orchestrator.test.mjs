@@ -3067,6 +3067,7 @@ test("Software Factory backend dispatch requires a fresh Codex checkpoint before
     recordReadiness: mustNotRunAntigravity,
     authorize: mustNotRunAntigravity,
     execute: mustNotRunAntigravity,
+    validateCodexReadiness: () => true,
     recordCodexReadiness: async (input) => {
       calls.push(["checkpoint", input])
       return {
@@ -3104,6 +3105,26 @@ test("Software Factory backend dispatch requires a fresh Codex checkpoint before
   assert.deepEqual(calls[1][1], { runId: run.runId, expectedVersion: run.version })
 })
 
+test("Software Factory Codex rejects forged local worker state without a trusted probe", async () => {
+  const run = makeRun("implementation_in_progress", { task: "Update backend database schema." })
+  let calls = 0
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    recordCodexReadiness: async () => { calls += 1 },
+    executeCodex: async () => { calls += 1 }
+  })
+  const result = await coordinator(run.runId, {
+    expectedVersion: run.version,
+    codexReadiness: {
+      workerId: "codex", integration: "configured", capacity: "degraded",
+      sourceId: "reviewed-runtime-probe", observedAt: new Date().toISOString()
+    }
+  })
+  assert.equal(result.outcome, "blocked_external")
+  assert.equal(result.reason, "codex_readiness_unverified")
+  assert.equal(calls, 0)
+})
+
 test("Software Factory Codex refuses missing, forged, blocked, expired and mismatched readiness", async () => {
   const run = makeRun("implementation_in_progress", {
     task: "Implement the approved backend API."
@@ -3130,6 +3151,7 @@ test("Software Factory Codex refuses missing, forged, blocked, expired and misma
     let checkpoints = 0
     const coordinator = createSoftwareFactoryImplementationCoordinator({
       readRun: async () => clone(run),
+      validateCodexReadiness: () => true,
       readCheckpoint: async () => ({ checkpointVersion: 0 }),
       recordCodexReadiness: async () => {
         checkpoints += 1
