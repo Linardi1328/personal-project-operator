@@ -2169,7 +2169,10 @@ test("Phase 6K refuses missing Linux Git readiness before Antigravity child muta
 
 test("Phase 6K ordinary Antigravity implementation no longer requires Linux Codex sandbox readiness", async () => {
   const bubblewrapPath = "/usr/bin/bwrap"
-  const fixture = await createStoredRun("implementation_in_progress")
+  // Explicit frontend work must not inherit Codex readiness from the backend default.
+  const fixture = await createStoredRun("implementation_in_progress", {
+    task: "Implement the approved frontend browser registration component."
+  })
   let childCalls = 0
 
   const result = await executeDevelopmentContinue(fixture.run.runId, {
