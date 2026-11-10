@@ -26,12 +26,30 @@ test("frontend implementation routes to Antigravity with the UI UX skill", () =>
   assert.equal(policy.ownerApprovalRequired, false)
 })
 
-test("backend implementation also routes to Antigravity without a Codex fallback", () => {
+test("backend implementation routes to Codex using the reviewed model class", () => {
   const policy = describeSoftwareFactoryCapability("implementation.backend")
 
-  assert.equal(policy.workerId, "antigravity")
+  assert.equal(policy.workerId, "codex")
+  assert.equal(policy.workerKind, "implementation")
   assert.equal(policy.modelClass, "standard")
   assert.deepEqual(policy.skills, [])
+})
+
+test("backend dispatch uses Codex availability, not Antigravity availability", () => {
+  const wrongWorker = assessSoftwareFactoryDispatch({
+    capability: "implementation.backend",
+    workerStates: configured("antigravity")
+  })
+  assert.equal(wrongWorker.workerId, "codex")
+  assert.equal(wrongWorker.outcome, "blocked_external")
+  assert.equal(wrongWorker.consumeAttempt, false)
+
+  const correctWorker = assessSoftwareFactoryDispatch({
+    capability: "implementation.backend",
+    workerStates: configured("codex")
+  })
+  assert.equal(correctWorker.workerId, "codex")
+  assert.equal(correctWorker.outcome, "ready")
 })
 
 test("debugging carries the approved debugging skill", () => {
@@ -79,7 +97,7 @@ test("missing integration fails closed instead of inventing a fallback worker", 
     workerStates: {}
   })
 
-  assert.equal(result.workerId, "antigravity")
+  assert.equal(result.workerId, "codex")
   assert.equal(result.outcome, "blocked_external")
   assert.equal(result.reasonCode, "WORKER_INTEGRATION_UNCONFIGURED")
   assert.equal(result.consumeAttempt, false)
