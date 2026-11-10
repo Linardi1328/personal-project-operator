@@ -87,6 +87,26 @@ test("stage rejects forged coordinator, forged payload, unsupported version and 
  }
 })
 
+test("verified envelopes are independent immutable snapshots and reject accessors",async()=>{
+ const f=setup(),p=f.p,wire=signed(p,"ppo")
+ const verified=verifyRemoteEnvelope(wire,"ppo-control-plane",coordinator.publicKey)
+ assert.notStrictEqual(verified,wire.payload)
+ assert.equal(Object.isFrozen(verified),true)
+ assert.equal(Object.isFrozen(verified.scope),true)
+ assert.equal(Object.isFrozen(verified.scope.permits),true)
+ wire.payload.scope.permits.pop()
+ assert.equal(verified.scope.permits.includes("tests.local"),true)
+ // A dispatch remains pinned to signed bytes even when the caller holds a mutable copy.
+ const issued=signed(p,"ppo")
+ await f.mock.stage(issued)
+ issued.payload.scope.permits.pop()
+ const c=claim(p)
+ assert.equal((await f.mock.claim(p.requestId,signed(c,"codex"))).outcome,"claimed")
+ const hostile=signed(p,"ppo")
+ Object.defineProperty(hostile.payload.scope,"permits",{enumerable:true,get(){return ["workspace.read"]}})
+ await assert.rejects(setup().mock.stage(hostile),isCode("REMOTE_FIELDS_INVALID"))
+})
+
 test("duplicate/idempotency/nonce/approval replays cannot stage a second request",async()=>{
  const f=await staged(setup()),p=f.p
  await assert.rejects(f.mock.stage(signed(p,"ppo")),isCode("REMOTE_REPLAY"))
