@@ -47,6 +47,26 @@ const reviewedCapabilities = new Set([
   "debugging"
 ])
 
+export function assertAntigravityImplementationOwnership(run) {
+  const original = latestSoftwareFactoryPlan(run)?.capabilityHint
+  if (original === "implementation.frontend") return true
+
+  const task = typeof run?.task === "string" ? run.task.toLowerCase() : ""
+  const backend = /\b(backend|api|database|sql|schema|migration|supabase|rls|server|server-side|endpoint|graphql)\b/u.test(task)
+  const frontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|client-side)\b/u.test(task)
+
+  if (original === "implementation.backend" || (backend && !frontend)) {
+    throw executionError(
+      "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED",
+      "Backend implementation is reserved for the Codex worker.",
+      "configuration"
+    )
+  }
+
+  return true
+}
+
+
 export class SoftwareFactoryAntigravityExecutionError extends DevelopmentRunStateError {
   constructor(code, safeMessage, failureClass = "runtime") {
     super(code, safeMessage)
@@ -904,6 +924,9 @@ async function executeInternal(runId, authorization, options = {}) {
       "configuration"
     )
   }
+
+  // A generic debugging capability does not override a backend task's owner.
+  assertAntigravityImplementationOwnership(run)
 
   const inspection = await inspectImplementationWorkspace(runId, options)
   if (!inspection.exists || inspection.status !== "matching") {
