@@ -97,7 +97,7 @@ export function createOfflineRemoteDispatchMock(config) {
         fresh(record.claim.payload.claimedAt,record.claim.payload.leaseExpiresAt)
         if(time(evidence.finishedAt)<time(record.claim.payload.claimedAt) || time(evidence.finishedAt)>nowMs()+60000)reject("REMOTE_EVIDENCE_TIME_INVALID")
         if(evidence.deniedTools.length>0 && evidence.outcome!=="blocked")reject("REMOTE_DENIED_IS_NOT_SUCCESS")
-        if(evidence.outcome==="success" && !p.scope.permits.includes("workspace.write") && evidence.changedPaths.length>0)reject("REMOTE_PERMIT_DENIED")
+        if(!p.scope.permits.includes("workspace.write") && evidence.changedPaths.length>0)reject("REMOTE_PERMIT_DENIED")
         if(evidence.changedPaths.some(path=>!p.scope.allowedPaths.some(prefix=>withinPath(path,prefix))))reject("REMOTE_OUT_OF_SCOPE")
         await current(p)
         record.evidence={payload:evidence,hash:remotePayloadDigest(evidence)}
