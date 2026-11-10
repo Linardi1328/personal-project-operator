@@ -18,7 +18,7 @@ import {
   ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS
 } from "./software-factory-antigravity-readiness.mjs"
 import { latestSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
-import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
+import { SOFTWARE_FACTORY_PLAN_CONTRACT_ID, latestSoftwareFactoryPlan, resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import {
   HARDENING_ORCHESTRATOR_ID
 } from "./development-hardening-orchestrator.mjs"
@@ -43,10 +43,26 @@ const unsafeControlPattern = /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-
 const sensitiveTextPattern = /(?:github_pat_[A-Za-z0-9_]+|gh[opusr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:])/iu
 const shaPattern = /^[a-f0-9]{40}$/u
 const reviewedCapabilities = new Set([
-  "implementation.backend",
   "implementation.frontend",
   "debugging"
 ])
+
+export function assertAntigravityImplementationOwnership(run) {
+  // Check the same role used by the coordinator. Direct execution cannot turn
+  // a stale, misclassified or conflicting structured plan into edit authority.
+  const role = resolveSoftwareFactoryTaskRole(run)
+  const hasStructuredPlan = Array.isArray(run?.evidence?.planning) &&
+    run.evidence.planning.some((entry) => entry?.source === SOFTWARE_FACTORY_PLAN_CONTRACT_ID)
+  if (role === "implementation.backend" || (hasStructuredPlan && role !== "implementation.frontend")) {
+    throw executionError(
+      "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED",
+      "Backend or unresolved implementation ownership is reserved for owner action or the Codex worker.",
+      "configuration"
+    )
+  }
+  return true
+}
+
 
 export class SoftwareFactoryAntigravityExecutionError extends DevelopmentRunStateError {
   constructor(code, safeMessage, failureClass = "runtime") {
@@ -363,17 +379,21 @@ function boundedStructuredPlanPromptLines(run) {
 }
 
 function boundedTestRemediationPromptLines(run, authorization) {
-  if (authorization?.capability !== "debugging") {
+  const capability = authorization?.capability
+  if (capability !== "implementation.frontend" && capability !== "debugging") {
     return []
   }
 
   const evidence = latestSoftwareFactoryTestRemediation(run)
-
   if (!evidence || evidence.sha !== run?.headSha) {
     return []
   }
 
   const metadata = evidence.metadata || {}
+  // Do not transfer remediation details across worker/capability boundaries.
+  if (metadata.capability !== capability) {
+    return []
+  }
   const attempt = Number.isInteger(metadata.sourceTestAttempt) ? metadata.sourceTestAttempt : null
   const failed = Number.isInteger(metadata.failedTests) ? metadata.failedTests : null
   const total = Number.isInteger(metadata.totalTests) ? metadata.totalTests : null
@@ -417,7 +437,8 @@ function latestReviewRemediationMarker(run) {
 }
 
 function boundedReviewRemediationPromptLines(run, authorization) {
-  if (authorization?.capability !== "debugging") {
+  const capability = authorization?.capability
+  if (capability !== "implementation.frontend" && capability !== "debugging") {
     return []
   }
 
@@ -426,6 +447,11 @@ function boundedReviewRemediationPromptLines(run, authorization) {
   if (
     !evidence ||
     evidence.sha !== run?.headSha ||
+    // A frontend authorization may only consume findings from a hardening
+    // round explicitly assigned to Antigravity. Legacy debugging remains
+    // supported without granting frontend authority over Codex-owned work.
+    (capability === "implementation.frontend" &&
+      evidence.metadata?.implementationAdapter !== ANTIGRAVITY_EXECUTION_ADAPTER_ID) ||
     !Number.isInteger(evidence.metadata?.reviewAttempt) ||
     evidence.metadata.reviewAttempt <= 0
   ) {
@@ -905,6 +931,9 @@ async function executeInternal(runId, authorization, options = {}) {
       "configuration"
     )
   }
+
+  // A generic debugging capability does not override a backend task's owner.
+  assertAntigravityImplementationOwnership(run)
 
   const inspection = await inspectImplementationWorkspace(runId, options)
   if (!inspection.exists || inspection.status !== "matching") {

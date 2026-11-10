@@ -71,14 +71,50 @@ function normalizeList(value, label) {
   return normalized
 }
 
-function classifyCapability(objective) {
-  const text = objective.toLowerCase()
-  const frontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side|page|component|form)\b/u
-  const debugging = /\bdebug(?:ging)?\b|\bdiagnos(?:e|is|tic)\b|\binvestigat(?:e|ion)\b|\broot cause\b|\bfailing (?:test|build|ci)\b|\breproduce (?:bug|issue|failure)\b|\bfix (?:bug|error|crash|failure)\b/u
+// A capability hint is hash-bound to the owner objective, but older baseline
+// plans used "form", "page", and "component" as unconditional frontend
+// keywords. Recheck the objective before any worker gets edit authority.
+const backendSignals = /\b(backend|api|database|sql|schema|migration|supabase|rls|server-side|endpoint|graphql)\b|\bserver\b(?!-rendered)/u
+const explicitFrontendSignals = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side)\b|\b(?:page|form|component)\s+(?:ui|layout|rendering|styling|interaction|accessibility)\b|\b(?:rendered|visual)\s+(?:page|form|component)\b/u
+const genericFrontendSignals = /\b(page|form|component)\b/u
+const debuggingSignals = /\bdebug(?:ging)?\b|\bdiagnos(?:e|is|tic)\b|\binvestigat(?:e|ion)\b|\broot cause\b|\bfailing (?:test|build|ci)\b|\breproduce (?:bug|issue|failure)\b|\bfix (?:bug|error|crash|failure)\b/u
 
-  if (frontend.test(text)) return "implementation.frontend"
-  if (debugging.test(text)) return "debugging"
+function classifyCapability(objective) {
+  const text = typeof objective === "string" ? objective.toLowerCase() : ""
+  const backend = backendSignals.test(text)
+  const frontend = explicitFrontendSignals.test(text)
+
+  // Mixed implementation ownership cannot be safely assigned to one worker.
+  if (backend && frontend) return "debugging"
+  if (backend) return "implementation.backend"
+  if (frontend || genericFrontendSignals.test(text)) return "implementation.frontend"
+  if (debuggingSignals.test(text)) return "debugging"
   return "implementation.backend"
+}
+
+// Shared across plan intake, runtime probing, dispatch, test remediation, and
+// the final Antigravity execution guard. A stale, invalid, or historically
+// misclassified structured plan requires owner reconciliation, never a
+// fallback to a less privileged worker's readiness path.
+export function resolveSoftwareFactoryTaskRole(run) {
+  const entries = Array.isArray(run?.evidence?.planning) ? run.evidence.planning : []
+  const hasStructuredPlan = entries.some((entry) => entry?.source === SOFTWARE_FACTORY_PLAN_CONTRACT_ID)
+  const plan = latestSoftwareFactoryPlan(run)
+
+  if (hasStructuredPlan && !plan) {
+    return "debugging"
+  }
+
+  const objectiveRole = typeof run?.task === "string" && run.task.trim()
+    ? classifyCapability(run.task)
+    : "debugging"
+
+  if (plan) {
+    return plan.capabilityHint === objectiveRole ? objectiveRole : "debugging"
+  }
+
+  const planning = entries.map((entry) => entry?.summary || "").join("\n")
+  return classifyCapability(`${run?.task || ""}\n${planning}`)
 }
 
 function classifyRisk(objective) {

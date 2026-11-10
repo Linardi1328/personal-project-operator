@@ -14,6 +14,7 @@ import {
 import { prepareImplementationWorkspace } from "./development-workspace-manager.mjs"
 import {
   CODEX_EXECUTION_FAILURE_CLASSES,
+  CODEX_EXECUTION_ADAPTER_ID,
   classifyCodexExecutionAttemptEvidence,
   executeCodexImplementation,
   recoverOrphanedCodexExecution
@@ -28,13 +29,13 @@ import {
   authorizeAntigravityDispatch,
   recordTrustedAntigravityReadiness
 } from "./software-factory-antigravity-readiness.mjs"
-import { readSoftwareFactoryDispatchCheckpoint } from "./software-factory-dispatch-checkpoint.mjs"
 import {
-  SOFTWARE_FACTORY_TEST_REMEDIATION_ID,
-  latestSoftwareFactoryTestRemediation,
-  prepareSoftwareFactoryTestRemediation
-} from "./software-factory-test-remediation.mjs"
-import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
+  readSoftwareFactoryDispatchCheckpoint,
+  recordSoftwareFactoryDispatchCheckpoint
+} from "./software-factory-dispatch-checkpoint.mjs"
+import { isTrustedLocalCodexReadiness } from "./development-continue-runtime-profile.mjs"
+import { prepareSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
+import { latestSoftwareFactoryPlan, resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import {
   classifyAutomatedTestAttemptEvidence,
   canRetryPreviousPpoTimeoutPolicy,
@@ -125,6 +126,7 @@ const selfDevelopmentScope = Object.freeze({
 })
 const forbiddenCallerOptionKeys = new Set([
   "expectedVersion",
+  "codexReadiness",
   "project",
   "projectId",
   "task",
@@ -177,6 +179,7 @@ const orchestratorOptionKeys = new Set([
 const runtimeProfileOptionKeys = new Set([
   "workspaceRegistry",
   "codexConfig",
+  "codexReadiness",
   "testPolicyRegistry",
   "reviewConfig",
   "githubClient",
@@ -730,50 +733,32 @@ function latestHardeningStartedEvidence(run) {
 }
 
 export function resolveSoftwareFactoryImplementationCapability(run) {
+  // Reuse the exact role chosen for runtime probing and execution authorization.
+  // The original hash-bound plan survives test remediation and review hardening.
+  const role = resolveSoftwareFactoryTaskRole(run)
+
   const hardening = latestHardeningStartedEvidence(run)
+  if (hardening?.sha === run?.headSha && hardening?.metadata?.outcome === "hardening_started") {
+    const expectedAdapter = role === "implementation.backend"
+      ? CODEX_EXECUTION_ADAPTER_ID
+      : role === "implementation.frontend"
+        ? ANTIGRAVITY_EXECUTION_ADAPTER_ID
+        : null
 
-  if (
-    hardening?.source === HARDENING_ORCHESTRATOR_ID &&
-    hardening?.sha === run?.headSha &&
-    hardening?.metadata?.outcome === "hardening_started"
-  ) {
-    return "debugging"
+    // Historical runs with different recorded authority require reconciliation.
+    if (!expectedAdapter || hardening.metadata?.implementationAdapter !== expectedAdapter) {
+      return "debugging"
+    }
   }
 
-  const remediation = latestSoftwareFactoryTestRemediation(run)
+  return role
+}
 
-  if (
-    remediation?.source === SOFTWARE_FACTORY_TEST_REMEDIATION_ID &&
-    remediation?.sha === run?.headSha &&
-    remediation?.metadata?.capability === "debugging"
-  ) {
-    return "debugging"
-  }
-
-  const structuredPlan = latestSoftwareFactoryPlan(run)
-
-  if (structuredPlan?.capabilityHint) {
-    return structuredPlan.capabilityHint
-  }
-
-  const planning = Array.isArray(run?.evidence?.planning)
-    ? run.evidence.planning.map((entry) => entry?.summary || "").join("\n")
-    : ""
-  const text = `${run?.task || ""}\n${planning}`.toLowerCase()
-
-  const explicitFrontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side)\b/u
-  const contextualFrontend = /\b(?:page|form|component)\s+(?:ui|layout|rendering|styling|interaction|accessibility)\b|\b(?:rendered|visual)\s+(?:page|form|component)\b/u
-  const explicitDebugging = /\bdebug(?:ging)?\b|\bdiagnos(?:e|is|tic)\b|\binvestigat(?:e|ion)\b|\broot cause\b|\bfailing (?:test|build|ci)\b|\breproduce (?:bug|issue|failure)\b|\bfix (?:bug|error|crash)\b/u
-
-  if (explicitFrontend.test(text) || contextualFrontend.test(text)) {
-    return "implementation.frontend"
-  }
-
-  if (explicitDebugging.test(text)) {
-    return "debugging"
-  }
-
-  return "implementation.backend"
+export function resolveSoftwareFactoryHardeningAdapterId(run) {
+  const role = resolveSoftwareFactoryImplementationCapability(run)
+  if (role === "implementation.backend") return CODEX_EXECUTION_ADAPTER_ID
+  if (role === "implementation.frontend") return ANTIGRAVITY_EXECUTION_ADAPTER_ID
+  return null
 }
 
 export function createSoftwareFactoryImplementationCoordinator(dependencies = {}) {
@@ -782,6 +767,9 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
   const recordReadinessImpl = dependencies.recordReadiness || recordTrustedAntigravityReadiness
   const authorizeImpl = dependencies.authorize || authorizeAntigravityDispatch
   const executeImpl = dependencies.execute || executeAntigravityImplementation
+  const executeCodexImpl = dependencies.executeCodex || executeCodexImplementation
+  const recordCodexReadinessImpl = dependencies.recordCodexReadiness || recordSoftwareFactoryDispatchCheckpoint
+  const validateCodexReadinessImpl = dependencies.validateCodexReadiness || isTrustedLocalCodexReadiness
 
   async function latestVersion(runId, options = {}) {
     try {
@@ -800,13 +788,82 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
 
     if (run.status !== "implementation_in_progress" || run.version !== options.expectedVersion) {
       throw continueError(
-        "CONTINUE_ANTIGRAVITY_RUN_STALE",
-        "Software factory implementation run changed before Antigravity dispatch."
+        "CONTINUE_IMPLEMENTATION_RUN_STALE",
+        "Software factory implementation run changed before dispatch."
       )
     }
 
     const structuredPlan = latestSoftwareFactoryPlan(run)
     const capability = resolveSoftwareFactoryImplementationCapability(run)
+
+    // No agent has authority over an untyped debugging task.
+    if (capability === "debugging") {
+      return {
+        ok: false,
+        outcome: "owner_action_required",
+        reason: "implementation_role_ambiguous",
+        run
+      }
+    }
+
+    // Backend and frontend use the same canonical versioned dispatch store.
+    // A missing trusted Codex observation never becomes an implicit permit.
+    if (capability === "implementation.backend") {
+      const observation = options.codexReadiness
+      if (
+        !observation ||
+        !validateCodexReadinessImpl(observation) ||
+        observation.workerId !== "codex" ||
+        observation.sourceId !== "reviewed-runtime-probe" ||
+        observation.integration !== "configured"
+      ) {
+        return {
+          ok: false,
+          outcome: "blocked_external",
+          reason: "codex_readiness_unverified",
+          run
+        }
+      }
+
+      const expectedCheckpointVersion = await latestVersion(run.runId, options)
+      const checkpoint = await recordCodexReadinessImpl({
+        runId: run.runId,
+        runVersion: run.version,
+        capability,
+        expectedCheckpointVersion,
+        failedAttempts: run.attempts.implementation,
+        risk: structuredPlan?.risk,
+        observation
+      }, options)
+      const now = options.now ? new Date(options.now()).getTime() : Date.now()
+
+      if (
+        checkpoint.workerId !== "codex" ||
+        checkpoint.runId !== run.runId ||
+        checkpoint.runVersion !== run.version ||
+        checkpoint.capability !== capability ||
+        checkpoint.observation?.sourceId !== "reviewed-runtime-probe" ||
+        checkpoint.observation?.fresh !== true ||
+        !Number.isFinite(Date.parse(checkpoint.observation.expiresAt)) ||
+        Date.parse(checkpoint.observation.expiresAt) < now ||
+        checkpoint.dispatch?.outcome !== "ready" ||
+        checkpoint.dispatch?.consumeAttempt !== true
+      ) {
+        return {
+          ok: false,
+          outcome: checkpoint.dispatch?.outcome === "blocked_capacity"
+            ? "blocked_capacity" : "blocked_external",
+          reason: checkpoint.dispatch?.reasonCode?.toLowerCase() || "codex_dispatch_not_ready",
+          run
+        }
+      }
+
+      return executeCodexImpl(run.runId, {
+        ...options,
+        expectedVersion: run.version
+      })
+    }
+
     const expectedCheckpointVersion = await latestVersion(run.runId, options)
     const checkpoint = await recordReadinessImpl({
       runId: run.runId,
@@ -861,11 +918,23 @@ export async function executeSoftwareFactoryImplementation(runId, options = {}) 
 }
 
 async function executeSoftwareFactoryBoundedHardening(runId, options = {}) {
+  const run = await readDevelopmentRun(runId, options)
+  const adapterId = resolveSoftwareFactoryHardeningAdapterId(run)
+
+  if (!adapterId) {
+    return {
+      ok: false,
+      outcome: "owner_action_required",
+      reason: "implementation_role_ambiguous",
+      run
+    }
+  }
+
   return executeBoundedHardening(runId, {
     ...options,
     hardeningDependencies: {
       executeImplementation: executeSoftwareFactoryImplementation,
-      implementationAdapterId: ANTIGRAVITY_EXECUTION_ADAPTER_ID
+      implementationAdapterId: adapterId
     }
   })
 }

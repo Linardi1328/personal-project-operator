@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import test from "node:test"
 import {
   SOFTWARE_FACTORY_PLAN_CONTRACT_ID,
   buildBaselineSoftwareFactoryPlan,
   latestSoftwareFactoryPlan,
+  resolveSoftwareFactoryTaskRole,
   softwareFactoryPlanEvidence,
   validateSoftwareFactoryPlan
 } from "./software-factory-plan-contract.mjs"
@@ -45,6 +47,72 @@ test("baseline plan classifies debugging and high-risk objectives conservatively
 
   assert.equal(plan.capabilityHint, "debugging")
   assert.equal(plan.risk, "high")
+})
+
+test("backend endpoint form data remains Codex-owned while frontend signup forms stay Antigravity-owned", () => {
+  for (const [objective, expected] of [
+    ["Accept multipart form data in the backend endpoint.", "implementation.backend"],
+    ["Implement backend API validation for a registration form.", "implementation.backend"],
+    ["Implement the approved signup form behavior.", "implementation.frontend"],
+    ["Fix the hidden CTA in the server-rendered form.", "implementation.frontend"],
+    ["Implement browser UI that also changes the backend API.", "debugging"]
+  ]) {
+    const plan = buildBaselineSoftwareFactoryPlan({
+      runId: RUN_ID, projectId: "rivora", baseSha: BASE_SHA, objective
+    })
+    assert.equal(plan.capabilityHint, expected, objective)
+    const run = {
+      runId: RUN_ID,
+      project: { id: "rivora" },
+      task: objective,
+      baseSha: BASE_SHA,
+      evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+    }
+    assert.equal(resolveSoftwareFactoryTaskRole(run), expected, objective)
+  }
+})
+
+test("historically misclassified valid hash-bound plans and changed objectives fail closed", () => {
+  const objective = "Accept multipart form data in the backend endpoint."
+  const corrected = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID, projectId: "rivora", baseSha: BASE_SHA, objective
+  })
+  // Simulate the old baseline classifier: "form" produced frontend, even for
+  // a backend endpoint. Keep the historical plan hash valid for this test.
+  const { planHash: _ignored, ...legacyPayload } = {
+    ...corrected, capabilityHint: "implementation.frontend"
+  }
+  const sortedPayload = Object.fromEntries(
+    Object.keys(legacyPayload).sort().map((key) => [key, legacyPayload[key]])
+  )
+  const legacy = validateSoftwareFactoryPlan({
+    ...legacyPayload,
+    planHash: createHash("sha256")
+      .update(JSON.stringify(sortedPayload)).digest("hex")
+  })
+  const original = {
+    runId: RUN_ID,
+    project: { id: "rivora" },
+    task: objective,
+    baseSha: BASE_SHA,
+    evidence: { planning: [softwareFactoryPlanEvidence(legacy)] }
+  }
+  assert.equal(latestSoftwareFactoryPlan(original)?.capabilityHint, "implementation.frontend")
+  assert.equal(resolveSoftwareFactoryTaskRole(original), "debugging")
+  assert.equal(
+    resolveSoftwareFactoryTaskRole({ ...original, task: "Update backend credentials." }),
+    "debugging"
+  )
+  const changed = {
+    ...original,
+    task: "Implement a responsive signup form."
+  }
+  assert.equal(latestSoftwareFactoryPlan(changed), null)
+  assert.equal(resolveSoftwareFactoryTaskRole(changed), "debugging")
+
+  const tampered = structuredClone(original)
+  tampered.evidence.planning[0].metadata.planHash = "0".repeat(64)
+  assert.equal(resolveSoftwareFactoryTaskRole(tampered), "debugging")
 })
 
 test("plan evidence fits the run-state primitive metadata contract", () => {

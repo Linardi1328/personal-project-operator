@@ -5,6 +5,7 @@ import {
   resolveSoftwareFactoryImplementationCapability
 } from "./development-continue-orchestrator.mjs"
 import {
+  ANTIGRAVITY_EXECUTION_ADAPTER_ID,
   buildAntigravityImplementationPrompt
 } from "./software-factory-antigravity-execution.mjs"
 import {
@@ -105,6 +106,7 @@ function makeReviewRemediationRun(options = {}) {
       securityFindingCount: securityFindings.length,
       testRequirementCount: testsRequired.length,
       remediationHash: hash,
+      ...(options.implementationAdapter ? { implementationAdapter: options.implementationAdapter } : {}),
       outcome: "hardening_started"
     }
   }
@@ -160,6 +162,67 @@ test("Antigravity review remediation receives only validated bounded findings", 
   assert.doesNotMatch(prompt, /UNTRUSTED FREEFORM REVIEW SUMMARY/u)
 })
 
+
+test("frontend hardening prompt includes trusted review findings only for the Antigravity-owned marker", () => {
+  const task = "Improve the approved frontend registration form accessibility."
+  const correct = makeReviewRemediationRun({
+    task,
+    implementationAdapter: ANTIGRAVITY_EXECUTION_ADAPTER_ID
+  })
+  assert.equal(
+    resolveSoftwareFactoryImplementationCapability(correct),
+    "implementation.frontend"
+  )
+  const workspace = {
+    branch: correct.branch,
+    workspaceRef: "factory/frontend-review-hardening"
+  }
+  const authorization = {
+    capability: "implementation.frontend",
+    modelClass: "standard",
+    skills: ["ui-ux-pro-max"]
+  }
+  const prompt = buildAntigravityImplementationPrompt(correct, workspace, authorization)
+
+  assert.match(prompt, /Trusted independent-review remediation context:/u)
+  assert.match(prompt, /Review attempt: 2/u)
+  assert.match(prompt, /Fix the stale authorization binding before execution/u)
+  assert.match(prompt, /Revalidate authority at the dispatch boundary/u)
+  assert.match(prompt, /Add regression coverage for stale authorization refusal/u)
+  assert.doesNotMatch(prompt, /RAW REVIEWER TRANSCRIPT|UNTRUSTED FREEFORM REVIEW SUMMARY/u)
+
+  const codexOwned = makeReviewRemediationRun({
+    task,
+    implementationAdapter: "phase-6d-codex-execution-adapter"
+  })
+  const wrongAdapterPrompt = buildAntigravityImplementationPrompt(
+    codexOwned,
+    workspace,
+    authorization
+  )
+  assert.doesNotMatch(
+    wrongAdapterPrompt,
+    /Trusted independent-review remediation context:|Fix the stale authorization binding/u
+  )
+
+  const missingOwner = makeReviewRemediationRun({ task })
+  const missingOwnerPrompt = buildAntigravityImplementationPrompt(
+    missingOwner,
+    workspace,
+    authorization
+  )
+  assert.doesNotMatch(
+    missingOwnerPrompt,
+    /Trusted independent-review remediation context:|Fix the stale authorization binding/u
+  )
+
+  const wrongCapabilityPrompt = buildAntigravityImplementationPrompt(
+    correct,
+    workspace,
+    { ...authorization, capability: "implementation.backend" }
+  )
+  assert.doesNotMatch(wrongCapabilityPrompt, /Trusted independent-review remediation context:/u)
+})
 
 test("review remediation rejects Unicode line and paragraph separators", () => {
   for (const separator of ["\u2028", "\u2029"]) {

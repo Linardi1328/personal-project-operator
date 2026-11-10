@@ -20,8 +20,31 @@ import {
 } from "./development-review-agent.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
 import { PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT } from "./development-run-state.mjs"
+import { resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 
 const execFileAsync = promisify(execFile)
+
+// An in-memory trust marker: an arbitrary caller cannot forge a successful
+// local runtime probe by copying a worker-state JSON object. These observations
+// deliberately cannot be serialized into future remote dispatch authority.
+const trustedCodexReadiness = new WeakSet()
+
+export function isTrustedLocalCodexReadiness(observation) {
+  return Boolean(observation && typeof observation === "object" && trustedCodexReadiness.has(observation))
+}
+
+function issueTrustedLocalCodexReadiness() {
+  const observation = Object.freeze({
+    workerId: "codex",
+    integration: "configured",
+    capacity: "degraded",
+    sourceId: "reviewed-runtime-probe",
+    observedAt: new Date().toISOString()
+  })
+  trustedCodexReadiness.add(observation)
+  return observation
+}
+
 
 export const DEVELOPMENT_CONTINUE_RUNTIME_PROFILE_ID = "phase-6k-fixed-local-runtime-profile"
 
@@ -876,6 +899,40 @@ function assertReviewedPolicyCoverage() {
   }
 }
 
+function fixedCodexRuntimeConfig(paths, platform) {
+  return {
+      executablePath: paths.codexExecutablePath,
+      gitExecutablePath: paths.gitExecutablePath,
+      args: [
+        "exec",
+        "--ephemeral",
+        "--color",
+        "never",
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        "approval_policy=\"never\"",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--strict-config",
+        "--model",
+        CODEX_PRODUCTION_MODEL,
+        "-"
+      ],
+      timeoutMs: MAX_CODEX_TIMEOUT_MS,
+      env: {
+        HOME: platform === "darwin" ? "/Users/richie" : "/home/ppo",
+        CODEX_HOME: platform === "darwin" ? "/Users/richie/.codex" : "/home/ppo/.codex",
+        PATH: paths.executionPath
+      },
+      remoteGitWritePolicy: {
+        mode: "deny",
+        enforcement: "adapter-git-wrapper"
+      },
+      executionSandbox: buildCodexSandbox(paths, platform)
+    }
+}
+
 async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
   const paths = fixedPathsForPlatform(platform)
   const sourceRepoPath = paths.sourceRepoPaths[projectId]
@@ -893,13 +950,40 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
     await assertDirectory(sourceRepoPath, options)
     await assertDirectory(paths.workspaceRoot, options)
 
+    const workspaceRegistry = {
+      [projectId]: { sourceRepoPath, workspaceRoot: paths.workspaceRoot }
+    }
+    const role = resolveSoftwareFactoryTaskRole(options.runtimeRun)
+    // Frontend and untyped debugging never need Codex access merely to
+    // resolve their existing Antigravity path.
+    if (
+      role !== "implementation.backend" ||
+      /-orphan-recovery$/u.test(options.runtimeAction || "")
+    ) {
+      return { workspaceRegistry, platform }
+    }
+
+    // Backend admission must run trusted Codex executable, login-status and
+    // sandbox checks *before* issuing non-serializable readiness evidence.
+    await assertExecutable(paths.codexExecutablePath, options)
+    const codexRuntimeEnv = {
+      ...sanitizedProbeEnv,
+      HOME: platform === "darwin" ? "/Users/richie" : "/home/ppo",
+      CODEX_HOME: platform === "darwin" ? "/Users/richie/.codex" : "/home/ppo/.codex",
+      PATH: paths.executionPath
+    }
+    await runReadOnlyProbe(paths.codexExecutablePath, ["--version"], {
+      ...options, probeEnv: codexRuntimeEnv
+    })
+    await runReadOnlyProbe(paths.codexExecutablePath, ["login", "status"], {
+      ...options, probeEnv: codexRuntimeEnv
+    })
+    await assertCodexNativeSandboxCapability(paths, platform, options)
+
     return {
-      workspaceRegistry: {
-        [projectId]: {
-          sourceRepoPath,
-          workspaceRoot: paths.workspaceRoot
-        }
-      },
+      workspaceRegistry,
+      codexReadiness: issueTrustedLocalCodexReadiness(),
+      codexConfig: fixedCodexRuntimeConfig(paths, platform),
       platform
     }
   }
@@ -981,37 +1065,12 @@ async function loadRuntimeProfileForProject(projectId, platform, options = {}) {
         workspaceRoot: paths.workspaceRoot
       }
     },
-    codexConfig: {
-      executablePath: paths.codexExecutablePath,
-      gitExecutablePath: paths.gitExecutablePath,
-      args: [
-        "exec",
-        "--ephemeral",
-        "--color",
-        "never",
-        "--sandbox",
-        "workspace-write",
-        "-c",
-        "approval_policy=\"never\"",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--strict-config",
-        "--model",
-        CODEX_PRODUCTION_MODEL,
-        "-"
-      ],
-      timeoutMs: MAX_CODEX_TIMEOUT_MS,
-      env: {
-        HOME: platform === "darwin" ? "/Users/richie" : "/home/ppo",
-        CODEX_HOME: platform === "darwin" ? "/Users/richie/.codex" : "/home/ppo/.codex",
-        PATH: paths.executionPath
-      },
-      remoteGitWritePolicy: {
-        mode: "deny",
-        enforcement: "adapter-git-wrapper"
-      },
-      executionSandbox: codexSandbox
-    },
+    // This is an in-process observation produced only after the reviewed
+    // executable, login-status and sandbox checks above. "degraded" deliberately
+    // does not claim a verified quota; Codex usage limits still fail closed in
+    // the execution adapter. Orphan recovery cannot manufacture readiness.
+    codexReadiness: orphanRecovery ? null : issueTrustedLocalCodexReadiness(),
+    codexConfig: fixedCodexRuntimeConfig(paths, platform),
     testPolicyRegistry: {
       [projectId]: testPolicyForProject(projectId, projectPaths, testSandbox)
     },
@@ -1044,7 +1103,8 @@ export async function loadDevelopmentContinueRuntimeProfile(request = {}, option
   return await loadRuntimeProfileForProject(projectId, platform, {
     ...options,
     runtimeAction: request.action,
-    runtimeHandler: request.handler
+    runtimeHandler: request.handler,
+    runtimeRun: run
   })
 }
 
@@ -1063,7 +1123,9 @@ export async function loadPersonalProjectOperatorSelfDevelopmentRuntimeProfile(r
 
   return await loadRuntimeProfileForProject(projectId, platform, {
     ...options,
-    runtimeAction: request.action
+    runtimeAction: request.action,
+    runtimeHandler: request.handler,
+    runtimeRun: request.run
   })
 }
 

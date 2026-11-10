@@ -11,6 +11,7 @@ import {
 } from "./development-run-state.mjs"
 import {
   CODEX_EXECUTION_ADAPTER_ID,
+  CODEX_PRODUCTION_MODEL,
   CODEX_EXECUTION_POLICY_STORE_DIR,
   CODEX_EXECUTION_SANDBOX_ID,
   PHASE_6F_HARDENING_ORCHESTRATOR_ID
@@ -25,9 +26,11 @@ import {
   executeDevelopmentContinue,
   formatDevelopmentContinueResult,
   handlePpoDevelopmentContinueCommand,
-  resolveSoftwareFactoryImplementationCapability
+  resolveSoftwareFactoryImplementationCapability,
+  resolveSoftwareFactoryHardeningAdapterId
 } from "./development-continue-orchestrator.mjs"
 import {
+  isTrustedLocalCodexReadiness,
   loadDevelopmentContinueRuntimeProfile
 } from "./development-continue-runtime-profile.mjs"
 import { listOrdinaryDevelopmentProjects } from "./github-project-registry.mjs"
@@ -2166,7 +2169,10 @@ test("Phase 6K refuses missing Linux Git readiness before Antigravity child muta
 
 test("Phase 6K ordinary Antigravity implementation no longer requires Linux Codex sandbox readiness", async () => {
   const bubblewrapPath = "/usr/bin/bwrap"
-  const fixture = await createStoredRun("implementation_in_progress")
+  // Explicit frontend work must not inherit Codex readiness from the backend default.
+  const fixture = await createStoredRun("implementation_in_progress", {
+    task: "Implement the approved frontend browser registration component."
+  })
   let childCalls = 0
 
   const result = await executeDevelopmentContinue(fixture.run.runId, {
@@ -2905,7 +2911,7 @@ test("Software Factory implementation capability selection is deterministic and 
         task: "Debug the failing API integration timeout."
       })
     ),
-    "debugging"
+    "implementation.backend"
   )
 
   assert.equal(
@@ -2981,8 +2987,8 @@ test("Software Factory coordinator records blocked capacity without authorizing 
   assert.equal(calls[0][1].expectedCheckpointVersion, 0)
 })
 
-test("Software Factory coordinator authorizes immediately before Antigravity execution", async () => {
-  const objective = "Implement the approved authentication API integration."
+test("Software Factory frontend coordinator authorizes immediately before Antigravity execution", async () => {
+  const objective = "Implement the approved authentication UI component."
   const plan = buildBaselineSoftwareFactoryPlan({
     runId: RUN_ID,
     projectId: PROJECT.id,
@@ -3038,11 +3044,369 @@ test("Software Factory coordinator authorizes immediately before Antigravity exe
   assert.equal(result.outcome, "implementation_ready")
   assert.deepEqual(calls.map((entry) => entry[0]), ["record", "authorize", "execute"])
   assert.equal(calls[0][1].expectedCheckpointVersion, 4)
-  assert.equal(calls[0][1].capability, "implementation.backend")
+  assert.equal(calls[0][1].capability, "implementation.frontend")
   assert.equal(calls[0][1].risk, "high")
   assert.equal(calls[1][1].checkpointVersion, 5)
   assert.equal(calls[2][1].receivedAuthorization, authorization)
   assert.equal(calls[2][1].expectedVersion, run.version)
+})
+
+test("hash-bound backend form endpoint requires Codex probes and dispatches to Codex only", async () => {
+  const objective = "Accept multipart form data in the backend endpoint."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID, projectId: PROJECT.id, baseSha: BASE_SHA, objective
+  })
+  const run = makeRun("implementation_in_progress", {
+    task: objective,
+    evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+  })
+  assert.equal(plan.capabilityHint, "implementation.backend")
+  assert.equal(resolveSoftwareFactoryImplementationCapability(run), "implementation.backend")
+  const probes = []
+  const profile = await loadDevelopmentContinueRuntimeProfile({
+    run,
+    action: "phase-6d-codex-implementation",
+    handler: "executeSoftwareFactoryImplementation"
+  }, {
+    platform: "darwin",
+    statImpl: fakeRuntimeStatFor(),
+    accessImpl: async () => {},
+    execFileImpl: async (_file, args) => {
+      probes.push(args.join(" "))
+      return { stdout: "ok", stderr: "" }
+    },
+    codexSandboxCapabilityProbe: async () => {
+      probes.push("trusted sandbox capability probe")
+      return true
+    }
+  })
+
+  assert.ok(profile.codexConfig)
+  assert.equal(profile.codexConfig.args.at(-2), CODEX_PRODUCTION_MODEL)
+  assert.equal(profile.codexConfig.remoteGitWritePolicy.mode, "deny")
+  assert.equal(profile.codexConfig.executionSandbox.network, "none")
+  assert.equal(profile.codexReadiness.workerId, "codex")
+  assert.equal(profile.codexReadiness.sourceId, "reviewed-runtime-probe")
+  assert.equal(isTrustedLocalCodexReadiness(profile.codexReadiness), true)
+  assert.equal(isTrustedLocalCodexReadiness({ ...profile.codexReadiness }), false)
+  assert.deepEqual(probes, ["--version", "login status", "trusted sandbox capability probe"])
+
+  const calls = []
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => run,
+    readCheckpoint: async () => {
+      const e = new Error("not found")
+      e.code = "FACTORY_CHECKPOINT_NOT_FOUND"
+      throw e
+    },
+    recordCodexReadiness: async (input) => {
+      calls.push("checkpoint")
+      assert.strictEqual(input.observation, profile.codexReadiness)
+      assert.equal(input.capability, "implementation.backend")
+      assert.equal(input.runVersion, run.version)
+      assert.equal(input.expectedCheckpointVersion, 0)
+      return {
+        workerId: "codex",
+        runId: run.runId,
+        runVersion: run.version,
+        capability: "implementation.backend",
+        observation: {
+          sourceId: "reviewed-runtime-probe",
+          fresh: true,
+          expiresAt: new Date(Date.now() + 60_000).toISOString()
+        },
+        dispatch: { outcome: "ready", consumeAttempt: true }
+      }
+    },
+    executeCodex: async (runId, options) => {
+      calls.push("codex")
+      assert.equal(runId, run.runId)
+      assert.equal(options.expectedVersion, run.version)
+      assert.strictEqual(options.codexReadiness, profile.codexReadiness)
+      assert.strictEqual(options.codexConfig, profile.codexConfig)
+      return { ok: true, outcome: "implementation_ready", run: makeRun("implementation_ready") }
+    },
+    execute: async () => { throw new Error("Antigravity execution not permitted") }
+  })
+
+  const result = await coordinator(run.runId, { ...profile, expectedVersion: run.version })
+  assert.equal(result.ok, true)
+  assert.deepEqual(calls, ["checkpoint", "codex"])
+})
+
+test("stale hash-bound frontend plan cannot silently authorize Antigravity or Codex", async () => {
+  const approved = "Implement the approved responsive signup form."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId: RUN_ID, projectId: PROJECT.id, baseSha: BASE_SHA, objective: approved
+  })
+  const changed = makeRun("implementation_in_progress", {
+    task: "Accept multipart form data in the backend endpoint.",
+    evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+  })
+  assert.equal(resolveSoftwareFactoryImplementationCapability(changed), "debugging")
+  let calls = 0
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(changed),
+    recordReadiness: async () => { calls += 1 },
+    recordCodexReadiness: async () => { calls += 1 },
+    execute: async () => { calls += 1 },
+    executeCodex: async () => { calls += 1 }
+  })
+  const outcome = await coordinator(changed.runId, { expectedVersion: changed.version })
+  assert.equal(outcome.outcome, "owner_action_required")
+  assert.equal(outcome.reason, "implementation_role_ambiguous")
+  assert.equal(calls, 0)
+})
+
+test("frontend runtime stays lightweight and Codex probe failures block backend readiness", async () => {
+  const frontend = makeRun("implementation_in_progress", {
+    task: "Fix the hidden CTA on the server-rendered form."
+  })
+  let probes = 0
+  const baseOptions = {
+    platform: "darwin",
+    statImpl: fakeRuntimeStatFor(),
+    accessImpl: async () => {},
+    execFileImpl: async () => { probes += 1; throw Error("no Codex authorization") }
+  }
+  const frontendProfile = await loadDevelopmentContinueRuntimeProfile({
+    run: frontend, handler: "executeSoftwareFactoryImplementation"
+  }, baseOptions)
+  assert.equal(frontendProfile.codexReadiness, undefined)
+  assert.equal(frontendProfile.codexConfig, undefined)
+  assert.equal(probes, 0)
+
+  const backend = makeRun("implementation_in_progress", {
+    task: "Implement the approved backend API."
+  })
+  await assert.rejects(
+    loadDevelopmentContinueRuntimeProfile({
+      run: backend, handler: "executeSoftwareFactoryImplementation"
+    }, baseOptions),
+    (error) => error?.code === "CONTINUE_RUNTIME_NOT_READY"
+  )
+  assert.equal(probes, 1)
+
+  const orphanProfile = await loadDevelopmentContinueRuntimeProfile({
+    run: backend,
+    handler: "executeSoftwareFactoryImplementation",
+    action: "phase-6d-orphan-recovery"
+  }, baseOptions)
+  assert.equal(orphanProfile.codexReadiness, undefined)
+  assert.equal(orphanProfile.codexConfig, undefined)
+  assert.equal(probes, 1)
+})
+
+test("Software Factory backend dispatch requires a fresh Codex checkpoint before executing once", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved database repository change."
+  })
+  const observation = {
+    workerId: "codex",
+    sourceId: "reviewed-runtime-probe",
+    integration: "configured",
+    capacity: "degraded",
+    observedAt: new Date().toISOString()
+  }
+  const calls = []
+  const mustNotRunAntigravity = async () => {
+    throw new Error("Antigravity must never be called for backend implementation")
+  }
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    readCheckpoint: async () => ({ checkpointVersion: 4 }),
+    recordReadiness: mustNotRunAntigravity,
+    authorize: mustNotRunAntigravity,
+    execute: mustNotRunAntigravity,
+    validateCodexReadiness: () => true,
+    recordCodexReadiness: async (input) => {
+      calls.push(["checkpoint", input])
+      return {
+        runId: run.runId,
+        runVersion: run.version,
+        capability: "implementation.backend",
+        workerId: "codex",
+        observation: {
+          sourceId: "reviewed-runtime-probe",
+          fresh: true,
+          expiresAt: new Date(Date.now() + 60000).toISOString()
+        },
+        dispatch: { outcome: "ready", consumeAttempt: true }
+      }
+    },
+    executeCodex: async (runId, options) => {
+      calls.push(["codex", { runId, expectedVersion: options.expectedVersion }])
+      return {
+        ok: true,
+        outcome: "implementation_ready",
+        run: makeRun("implementation_ready", { version: run.version + 1 })
+      }
+    }
+  })
+
+  const result = await coordinator(run.runId, {
+    expectedVersion: run.version,
+    codexReadiness: observation
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(calls.map((entry) => entry[0]), ["checkpoint", "codex"])
+  assert.equal(calls[0][1].expectedCheckpointVersion, 4)
+  assert.equal(calls[0][1].capability, "implementation.backend")
+  assert.equal(calls[0][1].observation, observation)
+  assert.deepEqual(calls[1][1], { runId: run.runId, expectedVersion: run.version })
+})
+
+test("Software Factory Codex rejects forged local worker state without a trusted probe", async () => {
+  const run = makeRun("implementation_in_progress", { task: "Update backend database schema." })
+  let calls = 0
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    recordCodexReadiness: async () => { calls += 1 },
+    executeCodex: async () => { calls += 1 }
+  })
+  const result = await coordinator(run.runId, {
+    expectedVersion: run.version,
+    codexReadiness: {
+      workerId: "codex", integration: "configured", capacity: "degraded",
+      sourceId: "reviewed-runtime-probe", observedAt: new Date().toISOString()
+    }
+  })
+  assert.equal(result.outcome, "blocked_external")
+  assert.equal(result.reason, "codex_readiness_unverified")
+  assert.equal(calls, 0)
+})
+
+test("Software Factory Codex refuses missing, forged, blocked, expired and mismatched readiness", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved backend API."
+  })
+  const observedAt = new Date().toISOString()
+  const observation = {
+    workerId: "codex", sourceId: "reviewed-runtime-probe",
+    integration: "configured", capacity: "degraded", observedAt
+  }
+  const cases = [
+    { name: "no observation", supplied: null },
+    { name: "wrong worker", supplied: { ...observation, workerId: "antigravity" } },
+    { name: "unconfigured", supplied: { ...observation, integration: "unconfigured" } },
+    { name: "untrusted source", supplied: { ...observation, sourceId: "owner-observation" } },
+    { name: "exhausted", supplied: observation, dispatch: { outcome: "blocked_capacity", reasonCode: "WORKER_CAPACITY_EXHAUSTED", consumeAttempt: false } },
+    { name: "offline", supplied: observation, dispatch: { outcome: "blocked_external", reasonCode: "WORKER_UNAVAILABLE", consumeAttempt: false } },
+    { name: "stale observation", supplied: observation, fresh: false },
+    { name: "expired observation", supplied: observation, expiresAt: "2020-01-01T00:00:00.000Z" },
+    { name: "wrong run binding", supplied: observation, runId: "B".repeat(43) },
+    { name: "wrong worker checkpoint", supplied: observation, workerId: "antigravity" }
+  ]
+  for (const scenario of cases) {
+    let executions = 0
+    let checkpoints = 0
+    const coordinator = createSoftwareFactoryImplementationCoordinator({
+      readRun: async () => clone(run),
+      validateCodexReadiness: () => true,
+      readCheckpoint: async () => ({ checkpointVersion: 0 }),
+      recordCodexReadiness: async () => {
+        checkpoints += 1
+        return {
+          runId: scenario.runId || run.runId,
+          runVersion: run.version,
+          capability: "implementation.backend",
+          workerId: scenario.workerId || "codex",
+          observation: {
+            sourceId: "reviewed-runtime-probe",
+            fresh: scenario.fresh ?? true,
+            expiresAt: scenario.expiresAt || new Date(Date.now() + 60000).toISOString()
+          },
+          dispatch: scenario.dispatch || { outcome: "ready", consumeAttempt: true }
+        }
+      },
+      executeCodex: async () => { executions += 1; throw new Error("must not execute") }
+    })
+    const result = await coordinator(run.runId, {
+      expectedVersion: run.version,
+      codexReadiness: scenario.supplied
+    })
+    assert.equal(result.ok, false, scenario.name)
+    assert.equal(executions, 0, scenario.name)
+    assert.equal(checkpoints, scenario.supplied?.workerId === "codex" &&
+      scenario.supplied?.integration === "configured" &&
+      scenario.supplied?.sourceId === "reviewed-runtime-probe" ? 1 : 0, scenario.name)
+  }
+})
+
+test("Software Factory review hardening preserves original backend and frontend worker authority", () => {
+  for (const [objective, expectedRole, adapterId] of [
+    ["Implement approved backend database migration.", "implementation.backend", CODEX_EXECUTION_ADAPTER_ID],
+    ["Implement approved frontend browser accessibility changes.", "implementation.frontend", "software-factory-v0-antigravity-execution"]
+  ]) {
+    const plan = buildBaselineSoftwareFactoryPlan({
+      runId: RUN_ID, projectId: PROJECT.id, baseSha: BASE_SHA, objective
+    })
+    const reviewRun = makeRun("review_changes_requested", {
+      task: objective, headSha: BASE_SHA,
+      evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+    })
+    assert.equal(resolveSoftwareFactoryImplementationCapability(reviewRun), expectedRole)
+    assert.equal(resolveSoftwareFactoryHardeningAdapterId(reviewRun), adapterId)
+
+    const resumed = makeRun("implementation_in_progress", {
+      task: objective, headSha: BASE_SHA,
+      evidence: {
+        planning: [softwareFactoryPlanEvidence(plan)],
+        implementation: [{
+          kind: "implementation",
+          sha: BASE_SHA,
+          source: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+          metadata: {
+            orchestrator: PHASE_6F_HARDENING_ORCHESTRATOR_ID,
+            outcome: "hardening_started",
+            implementationAdapter: adapterId
+          }
+        }]
+      }
+    })
+    assert.equal(resolveSoftwareFactoryImplementationCapability(resumed), expectedRole)
+    assert.equal(resolveSoftwareFactoryHardeningAdapterId(resumed), adapterId)
+
+    const conflicting = clone(resumed)
+    conflicting.evidence.implementation[0].metadata.implementationAdapter =
+      adapterId === CODEX_EXECUTION_ADAPTER_ID
+        ? "software-factory-v0-antigravity-execution" : CODEX_EXECUTION_ADAPTER_ID
+    assert.equal(resolveSoftwareFactoryHardeningAdapterId(conflicting), null)
+  }
+})
+
+test("Software Factory ambiguous debugging role requires owner action without dispatch", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Debug the failing test."
+  })
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    execute: async () => { throw new Error("must not execute") },
+    executeCodex: async () => { throw new Error("must not execute") },
+    recordReadiness: async () => { throw new Error("must not probe") }
+  })
+  const result = await coordinator(run.runId, { expectedVersion: run.version })
+  assert.equal(result.outcome, "owner_action_required")
+  assert.equal(result.reason, "implementation_role_ambiguous")
+})
+
+test("Software Factory backend refuses stale versions before calling either agent", async () => {
+  const run = makeRun("implementation_in_progress", {
+    task: "Implement the approved database repository change."
+  })
+  let calls = 0
+  const coordinator = createSoftwareFactoryImplementationCoordinator({
+    readRun: async () => clone(run),
+    executeCodex: async () => { calls += 1 },
+    execute: async () => { calls += 1 },
+    recordReadiness: async () => { calls += 1 }
+  })
+
+  await assert.rejects(
+    coordinator(run.runId, { expectedVersion: run.version - 1 }),
+    (error) => error?.code === "CONTINUE_IMPLEMENTATION_RUN_STALE"
+  )
+  assert.equal(calls, 0)
 })
 
 test("ordinary Phase 6D routes to Software Factory handler while preserving action compatibility", async () => {

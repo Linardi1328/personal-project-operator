@@ -3,6 +3,7 @@ import test from "node:test"
 import {
   ANTIGRAVITY_EXECUTION_ADAPTER_ID,
   ANTIGRAVITY_EXECUTION_PROMPT_MAX_CHARS,
+  assertAntigravityImplementationOwnership,
   buildAntigravityExecutionArgs,
   buildAntigravityImplementationPrompt,
   classifyAntigravityExecutionAttemptEvidence,
@@ -58,6 +59,105 @@ function safeSettings(overrides = {}) {
     ...overrides
   }
 }
+
+test("Antigravity execution refuses a hash-bound backend plan or explicit backend debugging", () => {
+  for (const objective of [
+    "Implement the approved backend API changes.",
+    "Fix the failing database schema migration."
+  ]) {
+    const runId = "A".repeat(43)
+    const baseSha = "a".repeat(40)
+    const plan = buildBaselineSoftwareFactoryPlan({
+      runId,
+      projectId: "khlim-digital-ecosystem",
+      baseSha,
+      objective
+    })
+    assert.throws(
+      () => assertAntigravityImplementationOwnership(runFixture({
+        runId,
+        baseSha,
+        task: objective,
+        evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+      })),
+      (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED"
+    )
+  }
+  assert.throws(
+    () => assertAntigravityImplementationOwnership(runFixture({
+      task: "Investigate failing backend API tests.",
+      evidence: { planning: [] }
+    })),
+    (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED"
+  )
+})
+
+test("Antigravity execution boundary refuses backend form objectives and stale frontend plans", () => {
+  const runId = "A".repeat(43)
+  const baseSha = "a".repeat(40)
+  const backendTask = "Accept multipart form data in the backend endpoint."
+  const backendPlan = buildBaselineSoftwareFactoryPlan({
+    runId, projectId: "khlim-digital-ecosystem", baseSha, objective: backendTask
+  })
+  assert.equal(backendPlan.capabilityHint, "implementation.backend")
+  assert.throws(
+    () => assertAntigravityImplementationOwnership(runFixture({
+      runId, baseSha, task: backendTask,
+      evidence: { planning: [softwareFactoryPlanEvidence(backendPlan)] }
+    })),
+    (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED"
+  )
+  const frontendTask = "Implement the approved responsive signup form."
+  const frontendPlan = buildBaselineSoftwareFactoryPlan({
+    runId, projectId: "khlim-digital-ecosystem", baseSha, objective: frontendTask
+  })
+  assert.throws(
+    () => assertAntigravityImplementationOwnership(runFixture({
+      runId, baseSha, task: backendTask,
+      evidence: { planning: [softwareFactoryPlanEvidence(frontendPlan)] }
+    })),
+    (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED"
+  )
+})
+
+test("Antigravity execution preserves a reviewed frontend plan", () => {
+  const runId = "A".repeat(43)
+  const baseSha = "a".repeat(40)
+  const objective = "Implement the responsive frontend registration form."
+  const plan = buildBaselineSoftwareFactoryPlan({
+    runId, projectId: "khlim-digital-ecosystem", baseSha, objective
+  })
+  assert.equal(assertAntigravityImplementationOwnership(runFixture({
+    runId,
+    baseSha,
+    task: objective,
+    evidence: { planning: [softwareFactoryPlanEvidence(plan)] }
+  })), true)
+})
+
+test("Antigravity guard and dispatcher agree on frontend-biased fallback classification", () => {
+  for (const task of [
+    "Fix the hidden CTA in the server-rendered form.",
+    "Repair the visual DOM rendering of the dashboard.",
+    "Update the rendered form component interaction.",
+    "Implement the approved browser layout."
+  ]) {
+    const run = runFixture({ task, evidence: { planning: [] } })
+    assert.equal(assertAntigravityImplementationOwnership(run), true, task)
+  }
+  for (const task of [
+    "Repair backend database migration.",
+    "Investigate failing server API integration tests."
+  ]) {
+    assert.throws(
+      () => assertAntigravityImplementationOwnership(runFixture({
+        task, evidence: { planning: [] }
+      })),
+      (error) => error?.code === "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED",
+      task
+    )
+  }
+})
 
 test("reviewed automation settings accept trusted PPO workspace with file operations", () => {
   const result = validateAntigravityAutomationSettings(
