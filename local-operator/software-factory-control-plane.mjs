@@ -85,6 +85,11 @@ export const SOFTWARE_FACTORY_WORKERS = deepFreeze({
     kind: "reasoning",
     adapterId: null
   },
+  codex: {
+    workerId: "codex",
+    kind: "implementation",
+    adapterId: "phase-6d-codex-execution-adapter"
+  },
   antigravity: {
     workerId: "antigravity",
     kind: "implementation",
@@ -138,7 +143,7 @@ export const SOFTWARE_FACTORY_CAPABILITY_POLICY = deepFreeze({
     skills: []
   },
   "implementation.backend": {
-    workerId: "antigravity",
+    workerId: "codex",
     modelClass: "standard",
     ownerApprovalRequired: false,
     skills: []
