@@ -117,6 +117,23 @@ test("duplicate/idempotency/nonce/approval replays cannot stage a second request
  ])await assert.rejects(f.mock.stage(signed({...p,...altered},"ppo")),isCode("REMOTE_REPLAY"))
 })
 
+test("only-nonce and only-approval replay are rejected across distinct run IDs",async()=>{
+ for (const replayed of ["nonce","approval"]) {
+  const f=await staged(setup()),p=f.p,secondRunId="S".repeat(43)
+  // Use another canonical run so the run-version reservation cannot mask the
+  // nonce / approval replay decision.
+  f.setRun({runId:secondRunId,version:p.expectedVersion,status:"implementation_in_progress",
+   project:{id:p.projectId},branch:p.branch,baseSha:p.baseSha,headSha:p.headSha,role:p.capability})
+  const freshRequest={...p,runId:secondRunId,requestId:stamp(200),
+   idempotencyKey:"f".repeat(64),nonce:stamp(201),
+   approval:{...p.approval,approvalId:stamp(202)}}
+  const reused=replayed==="nonce"
+   ? {...freshRequest,nonce:p.nonce}
+   : {...freshRequest,approval:{...freshRequest.approval,approvalId:p.approval.approvalId}}
+  await assert.rejects(f.mock.stage(signed(reused,"ppo")),isCode("REMOTE_REPLAY"),replayed)
+ }
+})
+
 test("simultaneous distinct request IDs cannot reuse one approval or nonce",async()=>{
  const f=setup(),p=f.p
  const other={...p,requestId:stamp(123)}
@@ -126,6 +143,7 @@ test("simultaneous distinct request IDs cannot reuse one approval or nonce",asyn
  ])
  assert.equal(outcomes.filter(x=>x.status==="fulfilled").length,1)
  assert.equal(outcomes.filter(x=>x.status==="rejected").length,1)
+ assert.equal(outcomes.find(x=>x.status==="rejected").reason.code,"REMOTE_CONCURRENT_OPERATION")
 })
 
 test("different approvals cannot stage two requests for the same canonical run version",async()=>{
@@ -183,6 +201,7 @@ test("claim refuses stale run after stage and concurrent claims cannot both win"
  const results=await Promise.allSettled([other.mock.claim(other.p.requestId,signed(c,"codex")),other.mock.claim(other.p.requestId,signed(c,"codex"))])
  assert.equal(results.filter(x=>x.status==="fulfilled").length,1)
  assert.equal(results.filter(x=>x.status==="rejected").length,1)
+ assert.equal(results.find(x=>x.status==="rejected").reason.code,"REMOTE_CONCURRENT_OPERATION")
 })
 
 test("evidence enforces lease, signed worker identity, paths, permits and explicit denials",async()=>{
@@ -226,6 +245,30 @@ test("reviewer impersonation, wrong evidence hash and stale version never author
  f.setRun({...p,version:10,status:"implementation_in_progress",project:{id:"rivora"}})
  await assert.rejects(f.mock.review(p.requestId,signed(r,"reviewer")),isCode("REMOTE_RUN_STALE"))
  assert.equal(f.mock.inspect(p.requestId).releaseAuthorized,false)
+})
+
+test("sparse and decorated arrays are refused by validation, signing, hashing and verification",()=>{
+ const p=request()
+ const hole=new Array(1)
+ const decorated=["local-operator/"]
+ decorated.custom="hidden"
+ const balanced=new Array(1)
+ balanced.custom="hidden" // One hole plus one extra key used to pass key-count-only checks.
+ const cases=[
+  {...p,scope:{...p.scope,allowedPaths:hole}},
+  {...p,scope:{...p.scope,allowedPaths:decorated}},
+  {...p,scope:{...p.scope,allowedPaths:balanced}},
+  {...p,scope:{...p.scope,permits:new Array(1)}},
+  {...p,scope:{...p.scope,permits:Object.assign(["workspace.read"],{extra:"hidden"})}}
+ ]
+ for (const malformed of cases) {
+  assert.throws(()=>validateRemotePayload(malformed),isCode("REMOTE_FIELDS_INVALID"))
+  assert.throws(()=>remotePayloadDigest(malformed),isCode("REMOTE_FIELDS_INVALID"))
+  assert.throws(()=>signRemoteEnvelope(malformed,"ppo-control-plane",coordinator.privateKey),isCode("REMOTE_FIELDS_INVALID"))
+  const wire=signed(p,"ppo")
+  wire.payload=malformed
+  assert.throws(()=>verifyRemoteEnvelope(wire,"ppo-control-plane",coordinator.publicKey),isCode("REMOTE_FIELDS_INVALID"))
+ }
 })
 
 test("contract rejects secret-bearing summaries, arbitrary payload fields and oversized arrays",()=>{
