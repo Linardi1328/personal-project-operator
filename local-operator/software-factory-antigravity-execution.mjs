@@ -18,7 +18,7 @@ import {
   ANTIGRAVITY_REVIEWED_EXECUTABLE_PATHS
 } from "./software-factory-antigravity-readiness.mjs"
 import { latestSoftwareFactoryTestRemediation } from "./software-factory-test-remediation.mjs"
-import { latestSoftwareFactoryPlan } from "./software-factory-plan-contract.mjs"
+import { latestSoftwareFactoryPlan, resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import {
   HARDENING_ORCHESTRATOR_ID
 } from "./development-hardening-orchestrator.mjs"
@@ -48,21 +48,15 @@ const reviewedCapabilities = new Set([
 ])
 
 export function assertAntigravityImplementationOwnership(run) {
-  const original = latestSoftwareFactoryPlan(run)?.capabilityHint
-  if (original === "implementation.frontend") return true
-
-  const task = typeof run?.task === "string" ? run.task.toLowerCase() : ""
-  const backend = /\b(backend|api|database|sql|schema|migration|supabase|rls|server|server-side|endpoint|graphql)\b/u.test(task)
-  const frontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|client-side)\b/u.test(task)
-
-  if (original === "implementation.backend" || (backend && !frontend)) {
+  // Share the exact classifier used by the coordinator and runtime loader so
+  // a frontend task cannot be rejected by a different heuristic here.
+  if (resolveSoftwareFactoryTaskRole(run) === "implementation.backend") {
     throw executionError(
       "ANTIGRAVITY_BACKEND_OWNERSHIP_REFUSED",
       "Backend implementation is reserved for the Codex worker.",
       "configuration"
     )
   }
-
   return true
 }
 
@@ -382,17 +376,21 @@ function boundedStructuredPlanPromptLines(run) {
 }
 
 function boundedTestRemediationPromptLines(run, authorization) {
-  if (authorization?.capability !== "debugging") {
+  const capability = authorization?.capability
+  if (capability !== "implementation.frontend" && capability !== "debugging") {
     return []
   }
 
   const evidence = latestSoftwareFactoryTestRemediation(run)
-
   if (!evidence || evidence.sha !== run?.headSha) {
     return []
   }
 
   const metadata = evidence.metadata || {}
+  // Do not transfer remediation details across worker/capability boundaries.
+  if (metadata.capability !== capability) {
+    return []
+  }
   const attempt = Number.isInteger(metadata.sourceTestAttempt) ? metadata.sourceTestAttempt : null
   const failed = Number.isInteger(metadata.failedTests) ? metadata.failedTests : null
   const total = Number.isInteger(metadata.totalTests) ? metadata.totalTests : null
