@@ -434,7 +434,8 @@ function latestReviewRemediationMarker(run) {
 }
 
 function boundedReviewRemediationPromptLines(run, authorization) {
-  if (authorization?.capability !== "debugging") {
+  const capability = authorization?.capability
+  if (capability !== "implementation.frontend" && capability !== "debugging") {
     return []
   }
 
@@ -443,6 +444,11 @@ function boundedReviewRemediationPromptLines(run, authorization) {
   if (
     !evidence ||
     evidence.sha !== run?.headSha ||
+    // A frontend authorization may only consume findings from a hardening
+    // round explicitly assigned to Antigravity. Legacy debugging remains
+    // supported without granting frontend authority over Codex-owned work.
+    (capability === "implementation.frontend" &&
+      evidence.metadata?.implementationAdapter !== ANTIGRAVITY_EXECUTION_ADAPTER_ID) ||
     !Number.isInteger(evidence.metadata?.reviewAttempt) ||
     evidence.metadata.reviewAttempt <= 0
   ) {
