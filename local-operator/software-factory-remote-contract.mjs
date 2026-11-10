@@ -122,8 +122,41 @@ export function signRemoteEnvelope(payload, signerId, privateKey) {
   return {signerId,payload:structuredClone(payload),signature:cryptoSign(null,Buffer.from(signed),privateKey).toString("base64url")}
 }
 
-/** Enforce exact signer identity and Ed25519 signature before consuming a message. */
+// Do not let structuredClone silently normalize class instances, invoke getters,
+// or preserve cycles into a payload that will be used as dispatch authority.
+function assertPlainData(value, seen = new WeakSet(), depth = 0) {
+  if (depth > 12) fail("REMOTE_FIELDS_INVALID")
+  if (value === null || typeof value !== "object") {
+    if (["function", "symbol", "bigint", "undefined"].includes(typeof value)) fail("REMOTE_FIELDS_INVALID")
+    return
+  }
+  if (seen.has(value) || (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value)))) fail("REMOTE_FIELDS_INVALID")
+  seen.add(value)
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === "symbol") fail("REMOTE_FIELDS_INVALID")
+    const desc = Object.getOwnPropertyDescriptor(value, key)
+    if (!desc || !Object.hasOwn(desc, "value")) fail("REMOTE_FIELDS_INVALID")
+    assertPlainData(desc.value, seen, depth + 1)
+  }
+}
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value)
+    for (const child of Object.values(value)) deepFreeze(child)
+  }
+  return value
+}
+
+/** Verify exactly one stable snapshot; return immutable signed data, not caller-owned references. */
 export function verifyRemoteEnvelope(envelope, expectedSignerId, publicKey) {
+  let snapshot
+  try {
+    assertPlainData(envelope)
+    snapshot = structuredClone(envelope)
+  } catch {
+    fail("REMOTE_FIELDS_INVALID")
+  }
+  envelope = snapshot
   object(envelope,["signerId","payload","signature"])
   if (envelope.signerId !== expectedSignerId || !match(envelope.signerId,label) ||
       typeof envelope.signature !== "string" || !/^[A-Za-z0-9_-]{86}$/u.test(envelope.signature) ||
@@ -135,5 +168,5 @@ export function verifyRemoteEnvelope(envelope, expectedSignerId, publicKey) {
   if (Buffer.byteLength(canonical(envelope),"utf8") > SOFTWARE_FACTORY_REMOTE_MAX_ENVELOPE_BYTES) fail("REMOTE_OVERSIZED")
   const raw=Buffer.from(canonical({signerId:envelope.signerId,payload:envelope.payload}))
   if (!cryptoVerify(null,raw,publicKey,Buffer.from(envelope.signature,"base64url"))) fail("REMOTE_SIGNATURE_INVALID")
-  return envelope.payload
+  return deepFreeze(envelope.payload)
 }
