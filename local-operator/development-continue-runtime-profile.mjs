@@ -929,7 +929,7 @@ function fixedCodexRuntimeConfig(paths, platform) {
         mode: "deny",
         enforcement: "adapter-git-wrapper"
       },
-      executionSandbox: codexSandbox
+      executionSandbox: buildCodexSandbox(paths, platform)
     }
 }
 
