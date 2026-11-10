@@ -71,6 +71,30 @@ function normalizeList(value, label) {
   return normalized
 }
 
+// Shared execution-role resolution. The hash-validated plan is authoritative
+// when it names an implementation worker; fallback classification is common to
+// the dispatcher, runtime-profile loader and Antigravity's final safety gate.
+export function resolveSoftwareFactoryTaskRole(run) {
+  const plannedRole = latestSoftwareFactoryPlan(run)?.capabilityHint
+  if (plannedRole === "implementation.backend" || plannedRole === "implementation.frontend") {
+    return plannedRole
+  }
+
+  const planning = Array.isArray(run?.evidence?.planning)
+    ? run.evidence.planning.map((entry) => entry?.summary || "").join("\n")
+    : ""
+  const text = `${run?.task || ""}\n${planning}`.toLowerCase()
+  const frontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side)\b/u.test(text) ||
+    /\b(?:page|form|component)\s+(?:ui|layout|rendering|styling|interaction|accessibility)\b|\b(?:rendered|visual)\s+(?:page|form|component)\b/u.test(text)
+  const backend = /\b(backend|api|database|sql|schema|migration|supabase|rls|server|server-side|endpoint|graphql)\b/u.test(text)
+  const debugging = /\bdebug(?:ging)?\b|\bdiagnos(?:e|is|tic)\b|\binvestigat(?:e|ion)\b|\broot cause\b|\bfailing (?:test|build|ci)\b|\breproduce (?:bug|issue|failure)\b|\bfix (?:bug|error|crash)\b/u.test(text)
+
+  if (frontend) return "implementation.frontend"
+  if (backend) return "implementation.backend"
+  if (plannedRole === "debugging" || debugging) return "debugging"
+  return "implementation.backend"
+}
+
 function classifyCapability(objective) {
   const text = objective.toLowerCase()
   const frontend = /\b(frontend|ui|ux|browser|css|layout|responsive|accessibility|cta|visual|dom|client-side|page|component|form)\b/u
