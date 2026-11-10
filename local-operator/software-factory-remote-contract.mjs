@@ -15,7 +15,7 @@ const runId = /^[A-Za-z0-9_-]{43}$/u
 const label = /^[a-z][a-z0-9-]{0,63}$/u
 const issueId = /^[A-Z][A-Z0-9]{1,15}-[1-9][0-9]{0,8}$/u
 const ref = /^(?!\/)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,160}$/u
-const forbidden = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|(?:github_pat_|gh[opusr]_|sk-|BEGIN .*PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:])/iu
+const forbidden = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|(?:\bgithub_pat_[A-Za-z0-9_]{10,}|\bgh[opusr]_[A-Za-z0-9]{10,}|\bsk-[A-Za-z0-9_-]{16,}|BEGIN .*PRIVATE KEY|authorization\s*:|password\s*[=:]|token\s*[=:]|secret\s*[=:]|credential\s*[=:])/iu
 const allowedPaths = /^(?!\/)(?!.*(?:^|\/)\.\.?\/)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,120}$/u
 const permits = new Set(["workspace.read", "workspace.write", "tests.local"])
 const capabilities = Object.freeze({"implementation.backend":"codex","implementation.frontend":"antigravity"})
