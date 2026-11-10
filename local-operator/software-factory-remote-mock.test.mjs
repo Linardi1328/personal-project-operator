@@ -108,6 +108,13 @@ test("simultaneous distinct request IDs cannot reuse one approval or nonce",asyn
  assert.equal(outcomes.filter(x=>x.status==="rejected").length,1)
 })
 
+test("different approvals cannot stage two requests for the same canonical run version",async()=>{
+ const f=await staged(setup()),p=f.p
+ const alternate={...p,requestId:stamp(151),nonce:stamp(152),idempotencyKey:"a".repeat(64),
+   approval:{...p.approval,approvalId:stamp(153)}}
+ await assert.rejects(f.mock.stage(signed(alternate,"ppo")),isCode("REMOTE_RUN_ALREADY_STAGED"))
+})
+
 test("stale version, branch/SHA, project, task role and unapproved project fail closed",async()=>{
  for(const opts of [
   {p:request({expectedVersion:10})},
