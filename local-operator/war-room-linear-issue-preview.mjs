@@ -23,7 +23,7 @@ const MAX_SOURCE_CHARS = 400
 const REQUEST_TIMEOUT_MS = 6500
 const terminalControls = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu
 const hasTerminalControl = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u
-const secretTokens = /\b(?:github_pat_[A-Za-z0-9_]{8,}|gh[opusr]_[A-Za-z0-9_]{8,}|lin_api_[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{16,})\b/giu
+const secretTokens = /\b(?:github_pat_[A-Za-z0-9_]{8,}|gh[opusr]_[A-Za-z0-9_]{8,}|lin_(?:api|oauth)_[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{16,})\b/giu
 const bearerSecret = /\bauthorization\s*[:=]\s*bearer\s+[^\s,;]+/giu
 const secretAssignments = /\b(?:authorization|password|secret|access[_-]?token|api[_-]?key|credential)\s*[:=]\s*[^\s,;]+/giu
 
