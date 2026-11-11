@@ -126,8 +126,11 @@ async function writeOnce(directory, name, record, conflictCode) {
       // to a readable state. Never delete or replace the winner's record.
       try {
         await unlink(temporary)
-        await unlink(pending)
         await syncDirectory(directory)
+        // Clear the losing writer's own marker only as the final step.
+        // A crash can restore it and fail closed, but no post-release sync
+        // can throw after the completed winner becomes readable again.
+        await unlink(pending)
       } catch { reject("LEDGER_STORAGE_UNAVAILABLE") }
       reject(conflictCode)
     }
