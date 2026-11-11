@@ -215,6 +215,56 @@ test("canonical run version drift at the second preflight leaves no success", as
   assert.equal((await fx.ledger().inspect(RUN, 7)).reserved, true)
 })
 
+test("asynchronous role resolvers cannot pass preflight then fail ledger reservation", async t => {
+  const fx = await fixture(t)
+  const asyncRole = () => Promise.resolve("implementation.backend")
+  fx.config.preflight.resolveRole = asyncRole
+  fx.config.ledger.resolveRole = asyncRole
+  await assert.rejects(stageOfflineAssignment(fx.sign(), fx.config),
+    fails("PREFLIGHT_TRUSTED_READ_UNAVAILABLE"))
+  assert.deepEqual(await fx.contents(), [])
+})
+
+test("replacing a trusted ledger reader or allowlist mid-preflight is rejected", async t => {
+  for (const changed of ["reader", "allowlist", "in-place-allowlist"]) {
+    const fx = await fixture(t)
+    let replacementReads = 0
+    fx.f.onIssueRead = count => {
+      if (count !== 1) return
+      if (changed === "reader") {
+        fx.config.ledger.readRun = async () => { replacementReads++; return null }
+      } else if (changed === "allowlist") {
+        fx.config.ledger.approvedProjects = ["kynexa"]
+      } else {
+        fx.config.ledger.approvedProjects.push("khlim")
+      }
+    }
+    await assert.rejects(stageOfflineAssignment(fx.sign(), fx.config),
+      fails("STAGING_CONFIGURATION_DRIFT"), changed)
+    assert.equal(replacementReads, 0)
+    assert.deepEqual(await fx.contents(), [], changed)
+  }
+})
+
+test("run mutation inside the second approval check is caught by final canonical read", async t => {
+  const fx = await fixture(t)
+  let approvals = 0
+  fx.f.onApproval = () => {
+    approvals++
+    if (approvals === 2) fx.f.run.version = 8
+  }
+  await assert.rejects(stageOfflineAssignment(fx.sign(), fx.config),
+    fails("STAGING_RUN_STALE"))
+  assert.equal(approvals, 2)
+  assert.equal(fx.f.runReads, 4)
+  // Only the test fixture resets the trusted snapshot for inspection; the
+  // on-disk tombstone remains occupied after the denied staged result.
+  fx.f.run.version = 7
+  assert.equal((await fx.ledger().inspect(RUN, 7)).reserved, true)
+  await assert.rejects(fx.ledger().reserve(fx.sign()),
+    fails("LEDGER_RUN_RESERVED"))
+})
+
 test("caller mutation during async preflight cannot swap verified request", async t => {
   const fx = await fixture(t)
   const signed = fx.sign()
