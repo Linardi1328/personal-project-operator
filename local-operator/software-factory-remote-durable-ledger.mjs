@@ -137,13 +137,17 @@ async function writeOnce(directory, name, record, conflictCode) {
     reject("LEDGER_STORAGE_UNAVAILABLE")
   }
 }
-/** Reject symlinks, non-files, malformed records, oversized records and partial writes. */
-async function readRecord(directory, name, missingCode = "LEDGER_INCOMPLETE") {
+/** Refuse a pending publication; repeated reads close the initial-check/open race. */
+async function assertNoPending(directory, name) {
   const pending = await lstat(join(directory, `${name}.pending`)).catch(e => {
     if (e?.code === "ENOENT") return null
     reject("LEDGER_STORAGE_UNSAFE")
   })
   if (pending) reject("LEDGER_INCOMPLETE")
+}
+/** Reject symlinks, non-files, malformed records, oversized records and partial writes. */
+async function readRecord(directory, name, missingCode = "LEDGER_INCOMPLETE") {
+  await assertNoPending(directory, name)
   let handle
   try {
     handle = await open(join(directory, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -158,6 +162,9 @@ async function readRecord(directory, name, missingCode = "LEDGER_INCOMPLETE") {
     let parsed
     try { parsed = JSON.parse(content) } catch { reject("LEDGER_RECORD_INVALID") }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) reject("LEDGER_RECORD_INVALID")
+    // The writer may have created .pending after our first lstat but before
+    // opening the public name. Recheck before returning any record as usable.
+    await assertNoPending(directory, name)
     return parsed
   } finally {
     await handle.close().catch(() => {})
