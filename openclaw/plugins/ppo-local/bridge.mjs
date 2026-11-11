@@ -21,6 +21,8 @@ import {
   parsePpoNoteConfirmRequest
 } from "../../../local-operator/project-note-approval.mjs";
 
+import { parseWarRoomIssueCommand } from "../../../local-operator/war-room-linear-issue-preview.mjs";
+
 const execFileAsync = promisify(execFile);
 
 const allowedCommands = new Map([
@@ -105,6 +107,7 @@ export function unsupportedPpoToolInput(rawCommand) {
     "- /ppo codex-budget <project> <task>",
     "- /ppo prompt-size <draft>",
     "- /ppo split-task <task>",
+    "- /ppo issue RIC-<number> [Linear read-only preview]",
     "- /ppo issue-create <project> <title> [--body <body>]",
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
@@ -461,6 +464,11 @@ export function toPpoWrapperArgs(rawCommand) {
 
   const commandName = commandEnvelope.token.toLowerCase();
   const normalizedCommand = normalizedStaticCommand(commandName, commandEnvelope.rest);
+
+  if (commandName === "issue") {
+    // Use raw strict parsing: never normalize extra words, control bytes or scope.
+    return parseWarRoomIssueCommand(rawCommand);
+  }
 
   if (commandName === "runs" || commandName === "run") {
     return parseRunCatalogCommand(commandText, rawCommand);

@@ -177,3 +177,10 @@ V1.3 adds an explicit two-step owner release boundary after a `release_ready` fa
 `/ppo release-confirm <request-id>` atomically claims the request before any GitHub write, rejects expired/replayed requests, rebuilds the release package, and requires every binding to remain identical. Only then may it invoke the existing Phase 6G SHA-pinned squash merge.
 
 The release commands never authorize production deployment, production verification, rollback, service control, or VPS mutation.
+
+
+## RBL War Room read-only Linear issue preview (RIC-145)
+
+The phone route `/ppo issue RIC-145` calls the same existing PPO wrapper with the exact `["issue","RIC-145"]` argv, without a new tool or direct model-to-provider API call. It reads a bounded Linear issue preview **only**, using a dedicated `PPO_LINEAR_READ_API_KEY` on the trusted local runtime. The key must be separately configured as **read-only**, never sent through Telegram or committed; if absent the command fails without contacting Linear.
+
+This command never creates a PPO run, claims a worker, stages a task, selects permissions, invokes Codex/Antigravity, changes a GitHub issue/PR, merges or deploys. It accepts only one canonical `RIC-<positive integer>` identifier, strips terminal control characters, redacts **selected known credential patterns** (not every possible secret format), refuses provider-controlled off-Linear URLs, and treats issue body content as **untrusted context**, not authorization. **Do not use the phone preview for issues containing secrets**: unusual token formats or embedded credentials could still appear in the output. See `docs/war-room-linear-issue-preview.md` for setup, threat model and tests. Live Mac/phone-to-Linear connectivity remains unverified until owner-configured credentials and smoke test.

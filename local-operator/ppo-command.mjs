@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  handleWarRoomLinearIssuePreviewCommand,
+  parseWarRoomIssueArgs
+} from "./war-room-linear-issue-preview.mjs";
 import { fileURLToPath } from "node:url";
 import { handleCodexPromptCommand } from "./codex-prompt-generator.mjs";
 import {
@@ -590,6 +594,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs help",
     "  node local-operator/ppo-command.mjs repo khlim-assist",
     "  node local-operator/ppo-command.mjs pr khlim-assist",
+    "  node local-operator/ppo-command.mjs issue RIC-145",
     "  node local-operator/ppo-command.mjs issue-create khlim-assist \"issue title\" \"optional body\"",
     "  node local-operator/ppo-command.mjs note-add khlim-assist \"project note text\"",
     "  node local-operator/ppo-command.mjs state-promote khlim-assist <note-id> current-phase",
@@ -617,6 +622,7 @@ function usage() {
     "  node local-operator/ppo-command.mjs \"/ppo codex-budget ledgerpilot-ai add invoice import workflow\"",
     "  node local-operator/ppo-command.mjs \"/ppo prompt-size Goal: build one focused feature\"",
     "  node local-operator/ppo-command.mjs \"/ppo split-task add GitHub integration and Telegram routing\"",
+    "  node local-operator/ppo-command.mjs \"/ppo issue RIC-145\"",
     "  node local-operator/ppo-command.mjs \"/ppo issue-create khlim-assist issue title --body optional body\"",
     "  node local-operator/ppo-command.mjs \"/ppo issue-confirm <request-id>\"",
     "  node local-operator/ppo-command.mjs \"/ppo note-add khlim-assist project note text\"",
@@ -648,6 +654,7 @@ function usage() {
     "  /ppo codex-budget <project> <task>",
     "  /ppo prompt-size <draft>",
     "  /ppo split-task <task>",
+    "  /ppo issue RIC-<number> [Linear read-only preview]",
     "  /ppo issue-create <project> <title> [--body <body>]",
     "  /ppo issue-confirm <request-id>",
     "  /ppo note-add <project> <note...>",
@@ -699,6 +706,7 @@ function unsupported(command) {
     "- /ppo codex-budget <project> <task>",
     "- /ppo prompt-size <draft>",
     "- /ppo split-task <task>",
+    "- /ppo issue RIC-<number> [Linear read-only preview]",
     "- /ppo issue-create <project> <title> [--body <body>]",
     "- /ppo issue-confirm <request-id>",
     "- /ppo note-add <project> <note...>",
@@ -909,6 +917,7 @@ function applyPpoNamespace(output) {
         "- /ppo codex-budget <project> <task> [local text]",
         "- /ppo prompt-size <draft> [local text]",
         "- /ppo split-task <task> [local text]",
+        "- /ppo issue RIC-<number> [Linear read-only preview]",
         "- /ppo issue-create <project> <title> [approval stage]",
         "- /ppo issue-confirm <request-id> [approved write]",
         "- /ppo note-add <project> <note...> [approval stage]",
@@ -986,6 +995,13 @@ async function runSimulator(args) {
 
 async function main() {
   const rawProcessArgs = process.argv.slice(2);
+  const linearIssueArgs = parseWarRoomIssueArgs(rawProcessArgs);
+  if (linearIssueArgs) {
+    const result = await handleWarRoomLinearIssuePreviewCommand(linearIssueArgs[1]);
+    console.log(result.output);
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
   const strictStart = parseStrictStartArgs(rawProcessArgs);
   const strictRuns = parseStrictRunsArgs(rawProcessArgs);
   const strictRun = parseStrictRunArgs(rawProcessArgs);
