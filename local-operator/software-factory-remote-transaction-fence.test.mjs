@@ -168,6 +168,12 @@ test("malicious accessors and unknown fields rejected before invoking driver",as
   await assert.rejects(f.consume(hostile),deny("TX_BOUNDARY_INVALID"))
   await assert.rejects(f.consume({...f.b,canExecute:true}),
     deny("TX_BOUNDARY_INVALID"))
+  const maliciousCapability={ [Symbol.toPrimitive](){called++;throw Error("coerce")} }
+  await assert.rejects(f.consume({...f.b,capability:maliciousCapability}),
+    deny("TX_BOUNDARY_INVALID"))
+  await assert.rejects(f.consume({...f.b,publicKey:{
+    get asymmetricKeyType(){called++;throw Error("key getter")}
+  }}),deny("TX_BOUNDARY_INVALID"))
   assert.equal(called,0)
   assert.equal(f.state.used.size,0)
 })
