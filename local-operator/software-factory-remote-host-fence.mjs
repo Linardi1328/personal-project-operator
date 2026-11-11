@@ -158,10 +158,14 @@ function hostSnapshot(record, p) {
   if (!record || typeof record !== "object" ||
       record.hostId !== p.hostId || record.workerId !== p.workerId ||
       record.status !== "active" || record.hostEpoch !== p.hostEpoch ||
+      // An epoch rotation must NOT silently inherit a previous claim.
+      // Only a trusted registry can explicitly pin this exact claim to it.
+      record.claimEpoch !== p.hostEpoch || record.claimHash !== p.claimHash ||
       record.publicKey?.asymmetricKeyType !== "ed25519" ||
       record.publicKey.type !== "public") fail("FENCE_HOST_UNTRUSTED")
   return Object.freeze({ hostId: record.hostId, workerId: record.workerId,
-    hostEpoch: record.hostEpoch, publicKey: record.publicKey })
+    hostEpoch: record.hostEpoch, claimHash: record.claimHash,
+    publicKey: record.publicKey })
 }
 
 /** Require positive evidence of complete, non-corrupt synthetic admission. */
