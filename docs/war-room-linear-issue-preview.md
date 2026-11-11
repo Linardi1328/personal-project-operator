@@ -11,7 +11,7 @@ The issue description is external, **untrusted task context**. No Linear text ma
 - In the existing phone route: `/ppo issue RIC-145`
 - Locally: `node local-operator/ppo-command.mjs issue RIC-145`
 - Only canonical RBL issue IDs `RIC-<positive integer>` are accepted. No filters, free-form task content, URLs, extra flags, commands, role/project/permission overrides, or path input.
-- Output is a bounded issue ID, title, state, Linear URL and a short sanitized description excerpt, explicitly marked **READ ONLY**. It does not print raw GraphQL errors or credentials.
+- Output is a bounded issue ID, title, state, Linear URL and a short sanitized description excerpt, explicitly marked **READ ONLY**. It does not print raw GraphQL errors or the configured API key. Sanitization redacts **selected known secret patterns only** (including known Linear API/OAuth token shapes); it cannot recognize every credential format or prevent secrets embedded in unusual prose from appearing. **Do not preview issues containing passwords, tokens, private keys or other secrets**, even through a read-only command.
 - The existing `/ppo issue-create` and `/ppo issue-confirm` GitHub-issue workflow is unrelated and unchanged.
 
 ## Dedicated credential and live readiness
