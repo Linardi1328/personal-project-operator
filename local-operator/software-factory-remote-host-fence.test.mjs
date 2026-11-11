@@ -91,13 +91,34 @@ async function fixture(t) {
     consumeActionFence: async input => {
       state.consumptions++
       state.onConsume?.(input)
+      // Simulated *single synchronous transaction*: every mutable admission,
+      // identity, canonical run, and lease fact is checked with nonce consume.
+      // Production must do this through ONE durable linearizable authority.
       const h = state.host
+      const run = state.run
+      const nowValue = state.now instanceof Date ? state.now.getTime() : Date.parse(state.now)
+      const active = state.active
       const keyStillPinned = h.publicKey === input.publicKey
       if (h.status !== "active" || h.hostEpoch !== input.hostEpoch ||
           h.claimEpoch !== input.hostEpoch || h.claimHash !== input.claimHash ||
           !keyStillPinned || h.hostId !== input.hostId ||
           h.workerId !== input.workerId || state.used.has(input.actionId) ||
-          Date.parse(state.now) >= Date.parse(input.expiresAt)) return false
+          !Number.isFinite(nowValue) || nowValue < Date.parse(input.issuedAt) ||
+          nowValue >= Date.parse(input.expiresAt) ||
+          nowValue >= Date.parse(input.requestExpiresAt) ||
+          nowValue >= Date.parse(claim.leaseExpiresAt) ||
+          input.claimHash !== claimHash || input.requestHash !== requestHash ||
+          run.runId !== input.runId || run.version !== input.expectedVersion ||
+          run.status !== "implementation_in_progress" ||
+          run.project?.id !== input.projectId ||
+          run.branch !== input.branch || run.baseSha !== input.baseSha ||
+          run.headSha !== input.headSha ||
+          input.capability !== request.capability ||
+          state.catalog.valid !== true ||
+          state.catalog.diagnostics?.invalid !== input.requiredCatalogInvalidCount ||
+          !Array.isArray(active) || active.length > input.maxActiveProjects ||
+          new Set(active).size !== active.length ||
+          (active.length === input.maxActiveProjects && !active.includes(input.projectId))) return false
       state.used.add(input.actionId)
       return true
     }
@@ -202,6 +223,44 @@ test("rebound claim mapping is checked again inside atomic consume", async t => 
   await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, f.proof(), f.config),
     code("FENCE_CONSUMPTION_DENIED"))
   assert.equal(f.state.used.size, 0)
+})
+
+test("catalog admission revoked after initial read is rejected at consume", async t => {
+  const f = await fixture(t)
+  f.state.onConsume = () => { f.state.catalog.diagnostics.invalid = 1 }
+  await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, f.proof(), f.config),
+    code("FENCE_CONSUMPTION_DENIED"))
+  assert.equal(f.state.used.size, 0)
+})
+
+test("canonical PPO run version changes after ledger inspection are denied", async t => {
+  const f = await fixture(t)
+  f.state.onConsume = () => { f.state.run.version++ }
+  await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, f.proof(), f.config),
+    code("FENCE_CONSUMPTION_DENIED"))
+  assert.equal(f.state.used.size, 0)
+})
+
+test("claim lease expires during consume even though host proof is still fresh", async t => {
+  const f = await fixture(t)
+  f.state.now = "2026-11-12T02:03:59.000Z"
+  f.state.onConsume = () => { f.state.now = "2026-11-12T02:04:00.001Z" }
+  const proof = f.proof({
+    issuedAt: "2026-11-12T02:03:30.000Z",
+    expiresAt: "2026-11-12T02:04:30.000Z"
+  })
+  await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, proof, f.config),
+    code("FENCE_CONSUMPTION_DENIED"))
+  assert.equal(f.state.used.size, 0)
+})
+
+test("Date clock preserves sub-second expiry precision", async t => {
+  const f = await fixture(t)
+  f.state.now = new Date("2026-11-12T02:03:30.750Z")
+  await assert.rejects(verifyOfflineHostActionFence(f.signedRequest,
+    f.proof({ expiresAt: "2026-11-12T02:03:30.500Z" }), f.config),
+  code("FENCE_PROOF_EXPIRED"))
+  assert.equal(f.state.consumptions, 0)
 })
 
 test("stale epoch change during consume is not treated as valid", async t => {
