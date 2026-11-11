@@ -63,6 +63,9 @@ async function fixture(t) {
     leaseExpiresAt: "2026-11-12T02:04:00.000Z"
   }
   const claimHash = remotePayloadDigest(claim)
+  // Synthetic trusted enrollment explicitly pins this claim to epoch 4.
+  state.host.claimHash = claimHash
+  state.host.claimEpoch = 4
   const ledgerConfig = {
     mode: "offline-durable-proof-only", storeDir,
     coordinatorPublicKey: coordinator.publicKey, now: () => state.now,
@@ -91,6 +94,7 @@ async function fixture(t) {
       const h = state.host
       const keyStillPinned = h.publicKey === input.publicKey
       if (h.status !== "active" || h.hostEpoch !== input.hostEpoch ||
+          h.claimEpoch !== input.hostEpoch || h.claimHash !== input.claimHash ||
           !keyStillPinned || h.hostId !== input.hostId ||
           h.workerId !== input.workerId || state.used.has(input.actionId) ||
           Date.parse(state.now) >= Date.parse(input.expiresAt)) return false
@@ -174,6 +178,11 @@ test("rotating the pinned host key revokes old proof until new epoch and signatu
   await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, old, f.config),
     code("FENCE_HOST_UNTRUSTED"))
   const fresh = f.proof({ hostEpoch: 5 }, rotated.privateKey)
+  await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, fresh, f.config),
+    code("FENCE_HOST_UNTRUSTED"))
+  // Only a separate trusted registry update can deliberately re-bind the old
+  // claim to the new host identity in this synthetic harness.
+  f.state.host.claimEpoch = 5
   const result = await verifyOfflineHostActionFence(f.signedRequest, fresh, f.config)
   assert.equal(result.fenceObserved, true)
   assert.equal(result.canExecute, false)
@@ -182,6 +191,14 @@ test("rotating the pinned host key revokes old proof until new epoch and signatu
 test("host revocation after initial registry read is stopped by final consume boundary", async t => {
   const f = await fixture(t)
   f.state.onConsume = () => { f.state.host.status = "revoked" }
+  await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, f.proof(), f.config),
+    code("FENCE_CONSUMPTION_DENIED"))
+  assert.equal(f.state.used.size, 0)
+})
+
+test("rebound claim mapping is checked again inside atomic consume", async t => {
+  const f = await fixture(t)
+  f.state.onConsume = () => { f.state.host.claimHash = "f".repeat(64) }
   await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, f.proof(), f.config),
     code("FENCE_CONSUMPTION_DENIED"))
   assert.equal(f.state.used.size, 0)
