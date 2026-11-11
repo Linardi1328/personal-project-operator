@@ -20,7 +20,9 @@ const RUN_ID = "R".repeat(43)
 const ISSUE = "2026-11-10T06:00:00.000Z"
 const NOW = "2026-11-10T06:03:00.000Z"
 const EXPIRY = "2026-11-10T06:10:00.000Z"
+/** Construct a 32-hex-byte synthetic nonce. */
 const stamp = n => n.toString(16).padStart(32, "0")
+/** Verify fail-closed errors by exact code, not arbitrary rejection. */
 const errorCode = code => e => e instanceof OfflineClaimLedgerError && e.code === code
 
 /** Build strictly valid Phase 1B dispatch metadata for offline disk tests. */
@@ -62,7 +64,9 @@ async function setup(t, options = {}) {
     resolveRole: actual => actual.role, approvedProjects: ["rivora"],
     workerRegistry: { codex: { hostId: "trusted-mac", online: options.online !== false,
       publicKey: worker.publicKey } } })
+  /** Build a coordinator-signed request with the fixture key. */
   const signed = () => signRemoteEnvelope(p, "ppo-control-plane", coordinator.privateKey)
+  /** Build a worker-signed claim with optional adversarial fields. */
   const signedClaim = (fields = {}) => signRemoteEnvelope(claim(p, fields), "codex", worker.privateKey)
   return { storeDir, coordinator, worker, p, cfg, signed, signedClaim,
     ledger: createOfflineDurableClaimLedger(cfg()), setRun: next => { run = next },
