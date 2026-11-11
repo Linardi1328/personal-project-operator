@@ -131,12 +131,13 @@ test("canonical PPO version, Git refs and run state are enforced",async()=>{
 })
 
 test("catalog invalidity, excessive or duplicate lanes always deny",async()=>{
-  for(const kind of ["invalid","catalog","wip","duplicate"]){
+  for(const kind of ["invalid","catalog","wip","duplicate","no-lane"]){
     const f=fixture()
     if(kind==="invalid")f.state.admission.invalidCount=1
     if(kind==="catalog")f.state.admission.valid=false
     if(kind==="wip")f.state.admission.activeProjects=["kynexa","khlim"]
     if(kind==="duplicate")f.state.admission.activeProjects=["rivora","rivora"]
+    if(kind==="no-lane")f.state.admission.activeProjects=["kynexa"]
     await assert.rejects(f.consume(f.b),deny("TX_ADMISSION_BLOCKED"),kind)
     assert.equal(f.state.used.size,0)
   }
