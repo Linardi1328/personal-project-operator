@@ -29,6 +29,8 @@ export class OfflineHostActionFenceError extends Error {
 
 /** Fail with metadata-only codes; never disclose keys, paths or provider data. */
 function fail(code) { throw new OfflineHostActionFenceError(code) }
+/** Match strings only; never coerce untrusted objects through RegExp.test. */
+function matches(value, pattern) { return typeof value === "string" && pattern.test(value) }
 
 /** Validate an exact scalar-only v1 proof without invoking foreign getters. */
 function snapshotProof(raw) {
@@ -40,14 +42,14 @@ function snapshotProof(raw) {
     fail("FENCE_PROOF_INVALID")
   }
   const p = Object.fromEntries(FIELDS.map(key => [key, Object.getOwnPropertyDescriptor(raw, key).value]))
-  if (p.version !== 1 || !LABEL.test(p.hostId ?? "") ||
-      !LABEL.test(p.workerId ?? "") ||
+  if (p.version !== 1 || !matches(p.hostId, LABEL) ||
+      !matches(p.workerId, LABEL) ||
       !Number.isSafeInteger(p.hostEpoch) || p.hostEpoch < 1 ||
-      !HASH.test(p.requestHash ?? "") || !HASH.test(p.claimHash ?? "") ||
-      !ID.test(p.runId ?? "") ||
+      !matches(p.requestHash, HASH) || !matches(p.claimHash, HASH) ||
+      !matches(p.runId, ID) ||
       !Number.isSafeInteger(p.expectedVersion) || p.expectedVersion < 1 ||
-      p.expectedVersion > 10000000 || !NONCE.test(p.actionId ?? "") ||
-      !ACTIONS.has(p.actionType) || !PATH.test(p.actionPath ?? "") ||
+      p.expectedVersion > 10000000 || !matches(p.actionId, NONCE) ||
+      !ACTIONS.has(p.actionType) || !matches(p.actionPath, PATH) ||
       typeof p.issuedAt !== "string" || typeof p.expiresAt !== "string") {
     fail("FENCE_PROOF_INVALID")
   }
@@ -137,7 +139,7 @@ function trustedConfig(config) {
   const workers = {}
   for (const [id, worker] of Object.entries(config.ledger.workerRegistry)) {
     if (!LABEL.test(id) || !worker || typeof worker !== "object" ||
-        !LABEL.test(worker.hostId ?? "") ||
+        !matches(worker.hostId, LABEL) ||
         worker.publicKey?.asymmetricKeyType !== "ed25519" ||
         worker.publicKey.type !== "public") fail("FENCE_CONFIGURATION_INVALID")
     workers[id] = Object.freeze({ hostId: worker.hostId,
