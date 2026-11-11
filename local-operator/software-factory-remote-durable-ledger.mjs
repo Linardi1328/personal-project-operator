@@ -23,22 +23,28 @@ export class OfflineClaimLedgerError extends Error {
   }
 }
 
+/** Raise a stable error code without exposing raw filesystem or run-state data. */
 function reject(code) { throw new OfflineClaimLedgerError(code) }
+/** Compute a path-safe key from bounded canonical identifiers. */
 function digest(value) { return createHash("sha256").update(value).digest("hex") }
+/** Map an exact canonical run version to its permanently reserved storage slot. */
 function directoryName(runId, expectedVersion) {
   if (!RUN_ID.test(runId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion > 10000000) reject("LEDGER_ID_INVALID")
   return `run-${digest(`${runId}:${expectedVersion}`)}`
 }
+/** Read and validate the injected, testable clock. */
 function clock(now) {
   const value = now()
   const timestamp = value instanceof Date ? value.getTime() : Date.parse(value)
   if (!Number.isFinite(timestamp)) reject("LEDGER_CLOCK_INVALID")
   return timestamp
 }
+/** Reject expired or not-yet-issued envelopes using a bounded skew allowance. */
 function fresh(now, from, to) {
   const timestamp = clock(now)
   if (timestamp < Date.parse(from) - 60000 || timestamp >= Date.parse(to)) reject("LEDGER_EXPIRED")
 }
+/** Compare the exact PPO canonical role, state, Git refs and version binding. */
 function matchCanonicalRun(run, p) {
   return run?.runId === p.runId && run?.version === p.expectedVersion &&
     run?.status === "implementation_in_progress" && run?.project?.id === p.projectId &&
@@ -116,6 +122,7 @@ export function createOfflineDurableClaimLedger(config) {
   const indexes = join(root, "indexes")
   const approvedProjects = new Set(config.approvedProjects)
 
+  /** Verify the private local root and its durable replay-index directory. */
   async function storage() {
     await assertDirectory(root)
     let created = false
@@ -125,6 +132,7 @@ export function createOfflineDurableClaimLedger(config) {
     await assertDirectory(indexes)
     if (created) await syncDirectory(root)
   }
+  /** Recheck the trusted PPO canonical run before every persisted transition. */
   async function current(p) {
     let run
     try { run = await config.readRun(p.runId) } catch { reject("LEDGER_RUN_UNAVAILABLE") }
@@ -133,13 +141,16 @@ export function createOfflineDurableClaimLedger(config) {
     if (role !== p.capability || !["implementation.backend", "implementation.frontend"].includes(role)) reject("LEDGER_ROLE_MISMATCH")
     if (!approvedProjects.has(p.projectId)) reject("LEDGER_PROJECT_DENIED")
   }
+  /** Preserve the verified immutable payload with its original signing identity. */
   function wire(signed, payload) {
     // verifyRemoteEnvelope has already rejected accessors and forged signatures.
     return { signerId: signed.signerId, payload, signature: signed.signature }
   }
+  /** Derive the unique append-only directory for one run version. */
   function entryPath(runId, expectedVersion) {
     return join(root, directoryName(runId, expectedVersion))
   }
+  /** Re-read a completed, signed reservation and its exact authenticated digest. */
   async function entry(p) {
     const dir = entryPath(p.runId, p.expectedVersion)
     await assertDirectory(dir)
@@ -168,6 +179,7 @@ export function createOfflineDurableClaimLedger(config) {
         if (error?.code === "EEXIST") reject("LEDGER_RUN_RESERVED")
         reject("LEDGER_STORAGE_UNAVAILABLE")
       }
+      await syncDirectory(root) // Persist the new directory entry before acknowledging any reservation.
       // The directory itself is the atomic, never-reused run-version fence.
       // All remaining writes are append-only; an interrupted reservation never auto-recovers.
       const requestHash = remotePayloadDigest(p)
