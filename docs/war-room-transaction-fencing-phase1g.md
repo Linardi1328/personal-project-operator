@@ -14,7 +14,7 @@ The future driver must expose one **durable, linearizable** \`transact(async tx 
 2. Authenticated worker claim record: status claimed, exact claim/request digests, run ID/version, worker/host binding, and claim/lease issued and expiresAt (evaluated using the server/database time in the same transaction).
 3. Exact reviewed coordinator request: request hash, run/version/project/role, branch/base/head Git SHAs, unexpired request, allowed permit set and path prefixes.
 4. PPO **canonical** run and expected version/current Git refs. There must not be a second independently writable run source-of-truth. If the current file-backed PPO run cannot participate in the same authoritative CAS/fencing protocol, the operation must **BLOCK** until that boundary is rearchitected.
-5. Full valid catalog admission including zero invalid historical entries, active project lane set with at most two unique projects, and admissibility for the exact target project.
+5. Full valid catalog admission including zero invalid historical entries, active project lane set with at most two unique projects, **including the exact target project** at the action boundary (the project must not have lost its active lane).
 6. Single-use \`(hostId, actionId)\` uniqueness/reservation, tied to the exact request/claim/run/epoch, written in that same commit. Retain nonce tombstones across crashes and never accept stale host epochs or claim reuse.
 
 Only a fully acknowledged commit returns exact \`true\` to Phase 1F; any false, unavailability, partial or ambiguous outcome denies. Do not blindly retry after an unknown commit. The modeled callback itself never grants permission to execute: Phase 1F still always returns \`canExecute:false, releaseAuthorized:false\`.
