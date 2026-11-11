@@ -9,12 +9,14 @@ import {
 export const SOFTWARE_FACTORY_REMOTE_MOCK_ID = "software-factory-phase1b-offline-mock"
 function reject(code) { throw new SoftwareFactoryRemoteContractError(code) }
 function time(value) { return Date.parse(value) }
+/** Match a staged envelope to the exact canonical run state and Git revision. */
 function matchRun(run, p) {
   return run?.runId===p.runId && run?.version===p.expectedVersion &&
     run?.status==="implementation_in_progress" &&
     run?.project?.id===p.projectId && run?.branch===p.branch &&
     run?.baseSha===p.baseSha && run?.headSha===p.headSha
 }
+/** Match an allowed repository path without permitting sibling-prefix escapes. */
 function withinPath(path,prefix) { return path===prefix || (prefix.endsWith("/") && path.startsWith(prefix)) }
 
 /** Simulates exactly one claim without asserting distributed durability or host identity. */
@@ -26,19 +28,24 @@ export function createOfflineRemoteDispatchMock(config) {
       typeof config.workerRegistry!=="object") reject("REMOTE_MOCK_CONFIGURATION_INVALID")
   const approvedProjects=new Set(config.approvedProjects)
   const requests=new Map(), seenRequests=new Set(), seenNonces=new Set(), seenApprovals=new Set(), seenRunVersions=new Set(), locked=new Set()
+  /** Read the injected clock and fail closed on an invalid clock value. */
   const nowMs=()=>{const value=config.now();const n=value instanceof Date?value.getTime():Date.parse(value);if(!Number.isFinite(n))reject("REMOTE_CLOCK_INVALID");return n}
+  /** Reject messages outside their bounded issue/lease validity window. */
   const fresh=(from,to)=>{const n=nowMs();if(n<time(from)-60000 || n>=time(to))reject("REMOTE_EXPIRED")}
+  /** Recheck canonical run version and Phase 1A role before each state transition. */
   const current=async p=>{
     const run=await config.readRun(p.runId)
     if(!matchRun(run,p))reject("REMOTE_RUN_STALE")
     const role=config.resolveRole(run)
     if(role!==p.capability || !["implementation.backend","implementation.frontend"].includes(role))reject("REMOTE_ROLE_MISMATCH")
   }
+  /** Fail closed on overlapping mock operations instead of pretending to offer a durable lock. */
   const guard=async (key,fn)=>{
     if(locked.has(key))reject("REMOTE_CONCURRENT_OPERATION")
     locked.add(key)
     try{return await fn()}finally{locked.delete(key)}
   }
+  /** Look up a previously staged request without creating new dispatch authority. */
   const entry=id=>{const record=requests.get(id);if(!record)reject("REMOTE_REQUEST_UNKNOWN");return record}
 
   return Object.freeze({
