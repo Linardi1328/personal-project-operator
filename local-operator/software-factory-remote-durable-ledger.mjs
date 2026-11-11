@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { constants } from "node:fs"
-import { mkdir, lstat, realpath, open } from "node:fs/promises"
+import { link, mkdir, lstat, realpath, open, unlink } from "node:fs/promises"
 import { isAbsolute, join, resolve } from "node:path"
 import {
   remotePayloadDigest,
@@ -56,41 +56,77 @@ async function assertDirectory(path) {
   const info = await lstat(path).catch(() => reject("LEDGER_STORAGE_UNAVAILABLE"))
   if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 || await realpath(path) !== path) reject("LEDGER_STORAGE_UNSAFE")
 }
-/** Commit an immutable record with O_EXCL, fsync its bytes and directory, never replace it. */
+/** Sync directory entries after creation, publication and tombstone transitions. */
 async function syncDirectory(directory) {
   let dirHandle
   try {
     dirHandle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
     await dirHandle.sync()
-  } catch {
-    reject("LEDGER_STORAGE_UNAVAILABLE")
-  } finally {
-    await dirHandle?.close().catch(() => {})
-  }
+  } catch { reject("LEDGER_STORAGE_UNAVAILABLE") }
+  finally { await dirHandle?.close().catch(() => {}) }
 }
-
+/** Publish a synced immutable record only after a durable, non-reusable pending tombstone exists. */
 async function writeOnce(directory, name, record, conflictCode) {
   const encoded = Buffer.from(JSON.stringify(record), "utf8")
   if (encoded.length > MAX_RECORD_BYTES) reject("LEDGER_RECORD_OVERSIZED")
+  const pending = join(directory, `${name}.pending`)
+  const destination = join(directory, name)
+  const temporary = join(directory, `${name}.payload-${randomBytes(12).toString("hex")}`)
+  // A completed prior record must not be degraded into a stale pending state
+  // by a duplicate operation. The O_EXCL pending and link still handle races.
+  const existing = await lstat(destination).catch(e => {
+    if (e?.code === "ENOENT") return null
+    reject("LEDGER_STORAGE_UNSAFE")
+  })
+  if (existing) reject(conflictCode)
+
+  // The tombstone must be synced first: a crash before publish cannot allow a
+  // second claim, even if the caller retries with a new nonce after restart.
+  let pendingHandle
+  try {
+    pendingHandle = await open(pending, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+    await pendingHandle.sync()
+  } catch (error) {
+    if (error?.code === "EEXIST") reject(conflictCode)
+    reject("LEDGER_STORAGE_UNAVAILABLE")
+  } finally {
+    await pendingHandle?.close().catch(() => {})
+  }
+  await syncDirectory(directory)
+
   let handle
   try {
-    handle = await open(join(directory, name), constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+    handle = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+    await handle.writeFile(encoded)
+    await handle.sync()
+  } catch {
+    reject("LEDGER_STORAGE_UNAVAILABLE")
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+
+  try {
+    // Hard-link creates the public name atomically and exclusively, but only
+    // after the payload bytes have been synced. This cannot replace a record.
+    await link(temporary, destination)
+    await syncDirectory(directory)
+    // Readers reject the public name while pending exists. Clear that fence
+    // only after the committed entry is synced; retain tombstones on failures.
+    await unlink(temporary)
+    await unlink(pending)
+    await syncDirectory(directory)
   } catch (error) {
     if (error?.code === "EEXIST") reject(conflictCode)
     reject("LEDGER_STORAGE_UNAVAILABLE")
   }
-  try {
-    await handle.writeFile(encoded)
-    await handle.sync()
-  } catch {
-    reject("LEDGER_STORAGE_UNAVAILABLE") // Incomplete file is intentionally retained as a tombstone.
-  } finally {
-    await handle.close().catch(() => {})
-  }
-  await syncDirectory(directory)
 }
 /** Reject symlinks, non-files, malformed records, oversized records and partial writes. */
 async function readRecord(directory, name, missingCode = "LEDGER_INCOMPLETE") {
+  const pending = await lstat(join(directory, `${name}.pending`)).catch(e => {
+    if (e?.code === "ENOENT") return null
+    reject("LEDGER_STORAGE_UNSAFE")
+  })
+  if (pending) reject("LEDGER_INCOMPLETE")
   let handle
   try {
     handle = await open(join(directory, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -102,7 +138,10 @@ async function readRecord(directory, name, missingCode = "LEDGER_INCOMPLETE") {
     const info = await handle.stat()
     if (!info.isFile() || (info.mode & 0o077) !== 0 || info.size === 0 || info.size > MAX_RECORD_BYTES) reject("LEDGER_RECORD_INVALID")
     const content = await handle.readFile({ encoding: "utf8" })
-    try { return JSON.parse(content) } catch { reject("LEDGER_RECORD_INVALID") }
+    let parsed
+    try { parsed = JSON.parse(content) } catch { reject("LEDGER_RECORD_INVALID") }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) reject("LEDGER_RECORD_INVALID")
+    return parsed
   } finally {
     await handle.close().catch(() => {})
   }
@@ -125,12 +164,11 @@ export function createOfflineDurableClaimLedger(config) {
   /** Verify the private local root and its durable replay-index directory. */
   async function storage() {
     await assertDirectory(root)
-    let created = false
-    try { await mkdir(indexes, { mode: 0o700 }); created = true } catch (e) {
+    try { await mkdir(indexes, { mode: 0o700 }) } catch (e) {
       if (e?.code !== "EEXIST") reject("LEDGER_STORAGE_UNAVAILABLE")
     }
     await assertDirectory(indexes)
-    if (created) await syncDirectory(root)
+    await syncDirectory(root) // Also repairs an index mkdir that crashed before its parent fsync.
   }
   /** Recheck the trusted PPO canonical run before every persisted transition. */
   async function current(p) {
