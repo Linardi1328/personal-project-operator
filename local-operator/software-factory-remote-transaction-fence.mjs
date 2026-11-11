@@ -183,8 +183,7 @@ export function createOfflineTransactionFenceAdapter(config) {
             !Array.isArray(active) || active.length > b.maxActiveProjects ||
             active.some(id => !matches(id, LABEL)) ||
             new Set(active).size !== active.length ||
-            (active.length === b.maxActiveProjects &&
-              !active.includes(b.projectId))) fail("TX_ADMISSION_BLOCKED")
+            !active.includes(b.projectId)) fail("TX_ADMISSION_BLOCKED")
 
         // This must be an INSERT with a unique constraint or equivalent
         // database-enforced single-use CAS, performed in THIS transaction.
