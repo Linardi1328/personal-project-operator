@@ -2,7 +2,7 @@
 
 ## Purpose
 
-One phone-readable command, `/ppo issue RIC-145`, retrieves **only an issue preview** from Linear into PPO's already-reviewed `/ppo` OpenClaw local bridge. This is a small Milestone C slice of RIC-137, distinct from Phase 1C's unmerged durable claim ledger and distinct from a live remote Mac worker.
+One phone-readable command, `/ppo issue RIC-145`, retrieves **only an issue preview** from Linear into PPO's already-reviewed `/ppo` OpenClaw local bridge. This is a small Milestone C slice of RIC-137, independent of the Phase 1C durable claim ledger and distinct from a live remote Mac worker.
 
 The issue description is external, **untrusted task context**. No Linear text may grant execution, permits, agent/model selection, repository paths, GitHub writes, approvals, owner identity, or a PPO development-run transition. Nothing in this slice stages a dispatch or starts Codex/Antigravity. PPO remains the sole canonical owner of development-run state. RIC-59/RIC-61 operational holds remain unchanged.
 
@@ -30,4 +30,4 @@ GitHub's existing PR syntax, parallel regression, serial regression, critical li
 
 ## Not in scope
 
-No Mac/VPS connection, transport listener, execution sandbox, source/branch/commit mutation, worktree creation, Linear mutation, GitHub issue/PR write, approval, persistent state, run start/continue, worker claim, auto-merge, deployment, release or production action. No changes to RIC-59/RIC-61 catalog/retirement guards or RIC-144's pending PR #146.
+No Mac/VPS connection, transport listener, execution sandbox, source/branch/commit mutation, worktree creation, Linear mutation, GitHub issue/PR write, approval, persistent state, run start/continue, worker claim, auto-merge, deployment, release or production action. No changes to RIC-59/RIC-61 catalog/retirement guards or the RIC-144 Phase 1C durable-claim implementation.
