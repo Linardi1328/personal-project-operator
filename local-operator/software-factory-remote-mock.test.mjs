@@ -18,6 +18,7 @@ const ORIGIN="2026-11-10T06:00:00.000Z",NOW="2026-11-10T06:03:00.000Z"
 const expiry="2026-11-10T06:10:00.000Z",claimed="2026-11-10T06:02:00.000Z"
 const lease="2026-11-10T06:04:00.000Z"
 const stamp=i=>i.toString(16).padStart(32,"0")
+/** Construct a bounded signed-dispatch fixture with overridable role and approvals. */
 const request=({role="implementation.backend",...overrides}={})=>({
   kind:"dispatch-request",schemaVersion:1,requestId:stamp(1),runId:RID,expectedVersion:9,
   projectId:"rivora",branch:"ppo/rivora/test",baseSha:BASE,headSha:SHA,
@@ -28,22 +29,27 @@ const request=({role="implementation.backend",...overrides}={})=>({
   idempotencyKey:"d".repeat(64),issuedAt:ORIGIN,expiresAt:expiry,maxDurationMs:120000,
   ...overrides
 })
+/** Bind a synthetic worker claim to the exact request digest. */
 const claim=p=>({
   kind:"worker-claim",schemaVersion:1,requestId:p.requestId,requestHash:remotePayloadDigest(p),
   runId:p.runId,expectedVersion:p.expectedVersion,workerId:p.workerId,hostId:"trusted-mac",
   claimNonce:stamp(4),claimedAt:claimed,leaseExpiresAt:lease
 })
+/** Produce synthetic execution evidence bound to the request and claim digests. */
 const evidence=(p,c,{outcome="success",changedPaths=["local-operator/test.mjs"],deniedTools=[],...rest}={})=>({
   kind:"execution-evidence",schemaVersion:1,requestHash:remotePayloadDigest(p),claimHash:remotePayloadDigest(c),
   runId:p.runId,expectedVersion:p.expectedVersion,workerId:p.workerId,outcome,changedPaths,deniedTools,
   outputHash:"e".repeat(64),summary:"Synthetic sanitized execution summary",finishedAt:NOW,...rest
 })
+/** Produce a reviewer decision tied to the exact authenticated evidence. */
 const review=(p,e,extra={})=>({
   kind:"review-decision",schemaVersion:1,requestHash:remotePayloadDigest(p),evidenceHash:remotePayloadDigest(e),
   runId:p.runId,expectedVersion:p.expectedVersion,reviewerId:"mock-reviewer",decision:"accept",
   summary:"Synthetic review only; no merge permission",reviewedAt:NOW,...extra
 })
+/** Sign a fixture using the named independent mock identity. */
 const signed=(payload,who)=>signRemoteEnvelope(payload,...({ppo:["ppo-control-plane",coordinator.privateKey],codex:["codex",codex.privateKey],antigravity:["antigravity",antigravity.privateKey],reviewer:["mock-reviewer",reviewer.privateKey]})[who])
+/** Assemble isolated mock state with a mutable canonical run for stale-state tests. */
 function setup({p=request(),runOverrides={},roleOverride=null,projectList=["rivora"],online=true,now=NOW}={}){
   let run={runId:RID,version:9,status:"implementation_in_progress",project:{id:"rivora"},branch:"ppo/rivora/test",baseSha:BASE,headSha:SHA,role:p.capability,...runOverrides}
   const registry={codex:{hostId:"trusted-mac",online,publicKey:codex.publicKey},antigravity:{hostId:"trusted-mac",online,publicKey:antigravity.publicKey}}
@@ -54,8 +60,11 @@ function setup({p=request(),runOverrides={},roleOverride=null,projectList=["rivo
     resolveRole:actual=>roleOverride??actual.role})
   return {p,mock,registry,reads:()=>reads,setRun:next=>{run=next}}
 }
+/** Stage the fixture request through the signed offline entrypoint. */
 async function staged(fixture){await fixture.mock.stage(signed(fixture.p,"ppo"));return fixture}
+/** Stage and claim a request before testing evidence and review transitions. */
 async function claimedFixture(fixture){await staged(fixture);const c=claim(fixture.p);await fixture.mock.claim(fixture.p.requestId,signed(c,fixture.p.workerId));return c}
+/** Match the exact fail-closed contract error rather than any rejected promise. */
 function isCode(code){return err=>err instanceof SoftwareFactoryRemoteContractError&&err.code===code}
 
 test("full synthetic signed flow binds request, single worker claim, sanitized evidence and review",async()=>{
