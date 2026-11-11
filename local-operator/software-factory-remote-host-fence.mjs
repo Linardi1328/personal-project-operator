@@ -192,8 +192,11 @@ async function checkAdmission(trusted, projectId) {
  * A diagnostic action-boundary proof, NOT permission to execute tools.
  *
  * The injected consumeActionFence MUST represent a trusted transactional CAS
- * that rechecks the host's current key/epoch and atomically consumes actionId.
- * The local tests emulate this authority; nothing here implements a durable
+ * that rechecks host epoch/key, catalog and WIP admission, current PPO
+ * run/version/Git refs, signed claim identity and its unexpired lease, and
+ * request/proof expiry IN THE SAME transaction as single-use actionId consume.
+ * An ordinary callback cannot establish this property; the synthetic tests
+ * emulate it. Nothing here implements a durable
  * shared authority, network authentication, or an operational action gateway.
  */
 export async function verifyOfflineHostActionFence(signedRequest, signedHostProof, config) {
@@ -221,8 +224,10 @@ export async function verifyOfflineHostActionFence(signedRequest, signedHostProo
     fail("FENCE_WORKER_UNTRUSTED")
   }
   let now
-  try { now = Date.parse(trusted.now()) }
-  catch { fail("FENCE_CLOCK_INVALID") }
+  try {
+    const value = trusted.now()
+    now = value instanceof Date ? value.getTime() : Date.parse(value)
+  } catch { fail("FENCE_CLOCK_INVALID") }
   if (!Number.isFinite(now) || Date.parse(p.issuedAt) > now ||
       now >= Date.parse(p.expiresAt) ||
       Date.parse(p.issuedAt) < Date.parse(request.issuedAt) ||
@@ -246,16 +251,22 @@ export async function verifyOfflineHostActionFence(signedRequest, signedHostProo
     fail("FENCE_REQUEST_MISMATCH")
   }
 
-  // Last callback must perform the epoch/key/replay check atomically. A stale
-  // host at this exact boundary is denied even if an earlier read was good.
+  // Last callback MUST re-check all mutable authority in one compare/consume
+  // transaction: host/key/epoch, claim lease, run/SHA and catalog/WIP, plus
+  // request/proof expiry. The earlier checks are diagnostic, not an atomic
+  // authority snapshot. No real transactional backend is implemented here.
   let consumed
   try {
     consumed = await trusted.consumeActionFence(Object.freeze({
       hostId: host.hostId, workerId: host.workerId, hostEpoch: host.hostEpoch,
       publicKey: host.publicKey, runId: p.runId,
       expectedVersion: p.expectedVersion, requestHash, claimHash: p.claimHash,
+      projectId: request.projectId, capability: request.capability,
+      branch: request.branch, baseSha: request.baseSha, headSha: request.headSha,
       actionId: p.actionId, actionType: p.actionType, actionPath: p.actionPath,
-      expiresAt: p.expiresAt
+      issuedAt: p.issuedAt, expiresAt: p.expiresAt,
+      requestExpiresAt: request.expiresAt,
+      requiredCatalogInvalidCount: 0, maxActiveProjects: 2
     }))
   } catch { fail("FENCE_CONSUMPTION_UNAVAILABLE") }
   if (consumed !== true) fail("FENCE_CONSUMPTION_DENIED")
