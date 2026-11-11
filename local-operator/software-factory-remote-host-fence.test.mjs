@@ -209,7 +209,8 @@ test("unsupported action, out-of-scope path and wrong digests fail closed", asyn
       assert.throws(bad, code("FENCE_PROOF_INVALID"))
     } else {
       await assert.rejects(verifyOfflineHostActionFence(f.signedRequest,
-        bad(), f.config), e => typeof e?.code === "string" && e.code.startsWith("FENCE_"))
+        bad(), f.config), code(overrides.claimHash
+        ? "LEDGER_FENCE_REJECTED" : "FENCE_ACTION_SCOPE_DENIED"))
     }
     assert.equal(f.state.consumptions, 0)
   }
