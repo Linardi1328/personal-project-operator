@@ -83,8 +83,8 @@ export function signOfflineHostActionProof(payload, privateKey) {
     signature: cryptoSign(null, message(p), privateKey).toString("base64url") })
 }
 
-/** Verify the host signature against a separately pinned, active host key. */
-function verifiedHostProof(signed, publicKey) {
+/** Snapshot signed host input without invoking getters or trusting later mutations. */
+function snapshotSignedHostProof(signed) {
   if (!signed || typeof signed !== "object" || Array.isArray(signed) ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(signed)) ||
       Reflect.ownKeys(signed).length !== 2 ||
@@ -93,8 +93,15 @@ function verifiedHostProof(signed, publicKey) {
       !Object.hasOwn(Object.getOwnPropertyDescriptor(signed, "signature") ?? {}, "value")) {
     fail("FENCE_PROOF_INVALID")
   }
-  const signature = Object.getOwnPropertyDescriptor(signed, "signature").value
-  const p = snapshotProof(Object.getOwnPropertyDescriptor(signed, "payload").value)
+  return Object.freeze({
+    payload: snapshotProof(Object.getOwnPropertyDescriptor(signed, "payload").value),
+    signature: Object.getOwnPropertyDescriptor(signed, "signature").value
+  })
+}
+
+/** Verify the host signature against a separately pinned, active host key. */
+function verifiedHostProof(signed, publicKey) {
+  const { payload: p, signature } = signed
   if (publicKey?.asymmetricKeyType !== "ed25519" || publicKey.type !== "public" ||
       typeof signature !== "string" ||
       !/^[A-Za-z0-9_-]{86}$/u.test(signature) ||
@@ -191,8 +198,10 @@ export async function verifyOfflineHostActionFence(signedRequest, signedHostProo
   } catch { fail("FENCE_REQUEST_INVALID") }
   if (request.kind !== "dispatch-request") fail("FENCE_REQUEST_INVALID")
 
-  // Decode fields first, but do not trust identity until the pinned key verifies.
-  const p = snapshotProof(signedHostProof?.payload)
+  // Pin the exact proof snapshot before any async host or ledger reads.
+  // Identity is not trusted until the independently pinned key verifies it.
+  const stableProof = snapshotSignedHostProof(signedHostProof)
+  const p = stableProof.payload
   const requestHash = remotePayloadDigest(request)
   if (p.requestHash !== requestHash || p.runId !== request.runId ||
       p.expectedVersion !== request.expectedVersion ||
@@ -205,7 +214,9 @@ export async function verifyOfflineHostActionFence(signedRequest, signedHostProo
   if (!worker || worker.online !== true || worker.hostId !== p.hostId) {
     fail("FENCE_WORKER_UNTRUSTED")
   }
-  const now = Date.parse(trusted.now())
+  let now
+  try { now = Date.parse(trusted.now()) }
+  catch { fail("FENCE_CLOCK_INVALID") }
   if (!Number.isFinite(now) || Date.parse(p.issuedAt) > now ||
       now >= Date.parse(p.expiresAt) ||
       Date.parse(p.issuedAt) < Date.parse(request.issuedAt) ||
@@ -217,7 +228,7 @@ export async function verifyOfflineHostActionFence(signedRequest, signedHostProo
   try { record = await trusted.readHost(p.hostId) }
   catch { fail("FENCE_HOST_UNAVAILABLE") }
   const host = hostSnapshot(record, p)
-  verifiedHostProof(signedHostProof, host.publicKey)
+  verifiedHostProof(stableProof, host.publicKey)
 
   await checkAdmission(trusted, request.projectId)
   // The merged ledger independently checks worker claim signature, host label,
