@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, KeyObject } from "node:crypto"
 
 // RIC-157 Phase 1G-A: transactional contract only. The caller MUST supply a
 // trusted linearizable durable driver; this module does not provide a database,
@@ -17,6 +17,7 @@ const SHA = /^[a-f0-9]{40}$/u
 const HASH = /^[a-f0-9]{64}$/u
 const NONCE = /^[a-f0-9]{32}$/u
 const PATH = /^(?!\/)(?!.*\.\.)(?!.*\/\/)(?!\.)(?!.*\/\.\/)[A-Za-z0-9._/-]{1,120}$/u
+const REF = /^(?!\/)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,160}$/u
 const ACTIONS = new Set(["workspace.read", "workspace.write", "tests.local"])
 const ROLE_WORKER = Object.freeze({
   "implementation.backend": "codex",
@@ -47,7 +48,8 @@ function pathAllowed(paths, path) {
 }
 /** Fingerprint only a pinned Ed25519 public key; do not serialize a key object. */
 function fingerprint(publicKey) {
-  if (publicKey?.asymmetricKeyType !== "ed25519" || publicKey.type !== "public") {
+  if (!(publicKey instanceof KeyObject) ||
+      publicKey.asymmetricKeyType !== "ed25519" || publicKey.type !== "public") {
     fail("TX_BOUNDARY_INVALID")
   }
   try {
@@ -75,9 +77,10 @@ function boundarySnapshot(raw) {
       b.expectedVersion > 10000000 ||
       !matches(b.requestHash, HASH) || !matches(b.claimHash, HASH) ||
       !matches(b.projectId, LABEL) ||
+      typeof b.capability !== "string" ||
+      !Object.hasOwn(ROLE_WORKER, b.capability) ||
       ROLE_WORKER[b.capability] !== b.workerId ||
-      typeof b.capability !== "string" || !Object.hasOwn(ROLE_WORKER, b.capability) ||
-      typeof b.branch !== "string" || b.branch.length > 160 ||
+      !matches(b.branch, REF) ||
       !matches(b.baseSha, SHA) || !matches(b.headSha, SHA) ||
       !matches(b.actionId, NONCE) || !ACTIONS.has(b.actionType) ||
       !matches(b.actionPath, PATH) ||
