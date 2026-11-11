@@ -285,6 +285,18 @@ test("missing, failing and ambiguous atomic consume never report success", async
   }
 })
 
+test("non-string proof identifiers never invoke coercion hooks", async t => {
+  const f = await fixture(t)
+  let coercions = 0
+  const signed = f.proof()
+  const hostile = { ...signed.payload, hostId: {
+    [Symbol.toPrimitive]() { coercions++; throw new Error("unexpected coercion") }
+  } }
+  assert.throws(() => signOfflineHostActionProof(hostile, f.hostKey.privateKey),
+    code("FENCE_PROOF_INVALID"))
+  assert.equal(coercions, 0)
+})
+
 test("accessor-backed proof fields are refused without invoking getters", async t => {
   const f = await fixture(t)
   let getterCalls = 0
