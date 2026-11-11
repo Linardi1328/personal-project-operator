@@ -204,6 +204,52 @@ test("failed pre-publication directory sync leaves a claim unreadable after rest
     f.signedClaim({ claimNonce: stamp(245) })), errorCode("LEDGER_ALREADY_CLAIMED"))
 })
 
+test("failed completion sync keeps an unacknowledged reservation permanently blocked", async t => {
+  const f = await setup(t)
+  const originalOpen = fsPromises.open
+  const originalUnlink = fsPromises.unlink
+  let payloadRemoved = false
+  let syncFailed = false
+
+  // Reserve uses the same writeOnce protocol as claim. Fail the final
+  // directory sync after complete.json's temporary payload has been removed.
+  fsPromises.unlink = async (path, ...args) => {
+    const result = await originalUnlink(path, ...args)
+    if (String(path).includes("complete.json.payload-")) payloadRemoved = true
+    return result
+  }
+  fsPromises.open = async (path, ...args) => {
+    const handle = await originalOpen(path, ...args)
+    if (String(path).startsWith(join(f.storeDir, "run-")) &&
+        payloadRemoved && !syncFailed) {
+      handle.sync = async () => {
+        syncFailed = true
+        throw new Error("synthetic reservation pre-publication fsync failure")
+      }
+    }
+    return handle
+  }
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(f.ledger.reserve(f.signed()),
+      errorCode("LEDGER_STORAGE_UNAVAILABLE"))
+  } finally {
+    fsPromises.open = originalOpen
+    fsPromises.unlink = originalUnlink
+    syncBuiltinESMExports()
+  }
+
+  assert.equal(payloadRemoved, true)
+  assert.equal(syncFailed, true)
+  const directory = await reservationDir(f)
+  assert.equal((await readdir(directory)).includes("complete.json.pending"), true)
+  const restarted = createOfflineDurableClaimLedger(f.cfg())
+  await assert.rejects(restarted.inspect(f.p.runId, 9),
+    errorCode("LEDGER_INCOMPLETE"))
+  await assert.rejects(restarted.reserve(f.signed()),
+    errorCode("LEDGER_RUN_RESERVED"))
+})
+
 test("different claim nonces cannot create two claims in one reservation", async t => {
   const f = await setup(t)
   await f.ledger.reserve(f.signed())
