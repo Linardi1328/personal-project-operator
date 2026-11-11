@@ -99,6 +99,9 @@ test("reserve and claim persist across a fresh ledger instance without authorizi
   await assert.rejects(restarted.reserve(f.signed()), errorCode("LEDGER_RUN_RESERVED"))
   await assert.rejects(restarted.claim(f.p.runId, f.p.expectedVersion,
     f.signedClaim({ claimNonce: stamp(7) })), errorCode("LEDGER_ALREADY_CLAIMED"))
+  // A duplicate must not leave a pending marker that blocks a legitimate claim.
+  assert.equal((await restarted.checkFence(f.p.runId, f.p.expectedVersion,
+    remotePayloadDigest(c))).current, true)
   assert.equal((await restarted.inspect(f.p.runId, f.p.expectedVersion)).reserved, true)
 })
 
@@ -231,6 +234,26 @@ test("unregistered worker and out-of-window request never obtain a durable claim
   const fresh = await setup(t)
   fresh.setNow("2026-11-10T06:10:00.000Z")
   await assert.rejects(fresh.ledger.reserve(fresh.signed()), errorCode("LEDGER_EXPIRED"))
+})
+
+test("published completion is not readable while its durable pending marker remains", async t => {
+  const f = await setup(t)
+  await f.ledger.reserve(f.signed())
+  const dir = await reservationDir(f)
+  await writeFile(join(dir, "complete.json.pending"), "", "utf8")
+  await assert.rejects(f.ledger.inspect(f.p.runId, 9), errorCode("LEDGER_INCOMPLETE"))
+  await rm(join(dir, "complete.json.pending"))
+  assert.equal((await f.ledger.inspect(f.p.runId, 9)).reserved, true)
+})
+
+test("JSON null and array roots are rejected with a stable record-corruption code", async t => {
+  for (const payload of ["null", "[]"]) {
+    const f = await setup(t)
+    await f.ledger.reserve(f.signed())
+    await writeFile(join(await reservationDir(f), "claim.json"), payload, "utf8")
+    await assert.rejects(f.ledger.checkFence(f.p.runId, 9,
+      remotePayloadDigest(claim(f.p))), errorCode("LEDGER_RECORD_INVALID"))
+  }
 })
 
 test("two separate Node processes cannot reserve the same run version", async t => {
