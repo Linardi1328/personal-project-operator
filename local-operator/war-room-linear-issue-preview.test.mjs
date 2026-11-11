@@ -103,11 +103,13 @@ test("wrong issue identity and untrusted external source URL are rejected", asyn
 
 test("provider-controlled content is bounded, removes controls and redacts token forms", async () => {
   const secret = "lin_api_abcdefghijklmnopqrstuvwxyz123456"
-  const issue = record({title:"Audit\u001b[31m team",description:`Authorization: Bearer SECRET_TEST_VALUE ${secret} github_pat_abcdefghijklmnopqrstuvwxyz12345678 Task: ${"x".repeat(4000)}`})
+  const oauth = "lin_oauth_abcdefghijklmnopqrstuvwxyz123456"
+  const issue = record({title:"Audit\u001b[31m team",description:`Authorization: Bearer SECRET_TEST_VALUE ${secret} ${oauth} github_pat_abcdefghijklmnopqrstuvwxyz12345678 Task: ${"x".repeat(4000)}`})
   const preview = await fetchWarRoomLinearIssuePreview(ID,{apiKey:KEY,fetchImpl:async()=>response({data:{issue}})})
   assert.equal(preview.title.includes("\u001b"),false)
   assert.ok(preview.summary.length <= 1151)
   assert.ok(!preview.summary.includes(secret))
+  assert.ok(!preview.summary.includes(oauth))
   assert.ok(!preview.summary.includes("SECRET_TEST_VALUE"))
   assert.ok(preview.summary.includes("[redacted]"))
   assert.ok(!formatWarRoomLinearIssuePreview(preview).includes(KEY))
