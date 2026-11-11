@@ -31,25 +31,30 @@ export class SoftwareFactoryRemoteContractError extends Error {
 }
 
 function fail(code) { throw new SoftwareFactoryRemoteContractError(code) }
+/** Require a plain JSON object with exactly the approved schema keys. */
 function object(value, keys) {
   if (value === null || typeof value !== "object" || Array.isArray(value) ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(value)) ||
       Object.keys(value).sort().join("|") !== [...keys].sort().join("|")) fail("REMOTE_FIELDS_INVALID")
 }
 function match(value, pattern) { return typeof value === "string" && pattern.test(value) }
+/** Allow only bounded, trimmed, non-sensitive human-readable metadata. */
 function bounded(value, max = 160) {
   return typeof value === "string" && value.length > 0 && value.length <= max &&
     value === value.trim() && !forbidden.test(value)
 }
+/** Accept canonical ISO timestamps so signatures do not depend on time formatting. */
 function validTime(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value)) &&
     new Date(Date.parse(value)).toISOString() === value
 }
 function int(value, min, max) { return Number.isSafeInteger(value) && value >= min && value <= max }
+/** Require unique repository-relative paths within the remote descriptor limits. */
 function pathList(value) {
   return Array.isArray(value) && value.length > 0 && value.length <= 8 &&
     value.every(x => match(x, allowedPaths) && !x.startsWith(".")) && new Set(value).size === value.length
 }
+/** Serialize validated plain JSON with stable key order for signatures and hashes. */
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
   if (value && typeof value === "object") {
@@ -57,6 +62,7 @@ function canonical(value) {
   }
   return JSON.stringify(value)
 }
+/** Hash a validated snapshot so callers cannot change the signed data mid-operation. */
 export function remotePayloadDigest(payload) {
   const snapshot = snapshotPlainData(payload)
   validateRemotePayload(snapshot)
@@ -127,6 +133,7 @@ export function signRemoteEnvelope(payload, signerId, privateKey) {
 
 // Do not let structuredClone silently normalize class instances, invoke getters,
 // or preserve cycles into a payload that will be used as dispatch authority.
+/** Reject accessors, cycles, unusual prototypes and sparse/decorated arrays before cloning. */
 function assertPlainData(value, seen = new WeakSet(), depth = 0) {
   if (depth > 12) fail("REMOTE_FIELDS_INVALID")
   if (value === null || typeof value !== "object") {
@@ -153,6 +160,7 @@ function assertPlainData(value, seen = new WeakSet(), depth = 0) {
 }
 // Read one independent plain-data snapshot before validation, digesting, or
 // signing, so all three operations interpret exactly the same bytes.
+/** Copy validated plain JSON into an independent payload snapshot. */
 function snapshotPlainData(value) {
   try {
     assertPlainData(value)
@@ -162,6 +170,7 @@ function snapshotPlainData(value) {
     fail("REMOTE_FIELDS_INVALID")
   }
 }
+/** Recursively freeze the verified snapshot, including nested scopes and permits. */
 function deepFreeze(value) {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value)
