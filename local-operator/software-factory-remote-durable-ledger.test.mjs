@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { generateKeyPairSync } from "node:crypto"
 import { spawn } from "node:child_process"
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import fsPromises, { mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -50,7 +51,7 @@ function claim(p, overrides = {}) {
 }
 /** Isolate each fixture's local store and PPO run snapshot; no external services. */
 async function setup(t, options = {}) {
-  const storeDir = await mkdtemp(join(tmpdir(), "ppo-1c-ledger-"))
+  const storeDir = await realpath(await mkdtemp(join(tmpdir(), "ppo-1c-ledger-")))
   t.after(async () => { await rm(storeDir, { recursive: true, force: true }) })
   const coordinator = generateKeyPairSync("ed25519")
   const worker = generateKeyPairSync("ed25519")
@@ -112,6 +113,48 @@ test("reserving the same run version concurrently produces exactly one durable w
   assert.equal(outcomes.filter(o => o.status === "fulfilled").length, 1)
   assert.equal(outcomes.filter(o => o.status === "rejected").length, 1)
   assert.equal(outcomes.find(o => o.status === "rejected").reason.code, "LEDGER_RUN_RESERVED")
+})
+
+test("losing a publication race removes only the losing pending marker and preserves the winner", async t => {
+  const f = await setup(t)
+  await f.ledger.reserve(f.signed())
+  const directory = await reservationDir(f)
+  const pending = join(directory, "claim.json.pending")
+  const destination = join(directory, "claim.json")
+  const validWinner = f.signedClaim()
+  const originalOpen = fsPromises.open
+  let injected = false
+
+  // Force the exact lstat -> pending O_EXCL gap CodeRabbit identified.
+  // A competing writer has completed its record before this writer creates
+  // the pending marker. Intercepting the built-in in this isolated test file
+  // makes the EEXIST publication race deterministic rather than flaky.
+  fsPromises.open = async (path, ...args) => {
+    if (!injected && String(path) === pending) {
+      injected = true
+      const winner = await originalOpen(destination, "wx", 0o600)
+      try {
+        await winner.writeFile(JSON.stringify(validWinner))
+        await winner.sync()
+      } finally { await winner.close() }
+    }
+    return originalOpen(path, ...args)
+  }
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(f.ledger.claim(f.p.runId, 9, f.signedClaim()),
+      errorCode("LEDGER_ALREADY_CLAIMED"))
+  } finally {
+    fsPromises.open = originalOpen
+    syncBuiltinESMExports()
+  }
+
+  assert.equal(injected, true)
+  const names = await readdir(directory)
+  assert.equal(names.includes("claim.json.pending"), false)
+  assert.equal(names.some(name => name.startsWith("claim.json.payload-")), false)
+  assert.equal((await f.ledger.checkFence(f.p.runId, 9,
+    remotePayloadDigest(claim(f.p)))).current, true)
 })
 
 test("different claim nonces cannot create two claims in one reservation", async t => {
