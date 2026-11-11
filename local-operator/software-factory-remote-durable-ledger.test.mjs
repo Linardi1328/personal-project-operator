@@ -157,6 +157,53 @@ test("losing a publication race removes only the losing pending marker and prese
     remotePayloadDigest(claim(f.p)))).current, true)
 })
 
+test("failed pre-publication directory sync leaves a claim unreadable after restart", async t => {
+  const f = await setup(t)
+  await f.ledger.reserve(f.signed())
+  const directory = await reservationDir(f)
+  const originalOpen = fsPromises.open
+  const originalUnlink = fsPromises.unlink
+  let payloadRemoved = false
+  let syncFailed = false
+
+  // Fail precisely at the directory sync following temporary-payload cleanup.
+  // The pending marker must still exist when this sync throws; a reader must
+  // never accept a claim whose writer rejected before publication.
+  fsPromises.unlink = async (path, ...args) => {
+    const result = await originalUnlink(path, ...args)
+    if (String(path).startsWith(join(directory, "claim.json.payload-"))) payloadRemoved = true
+    return result
+  }
+  fsPromises.open = async (path, ...args) => {
+    const handle = await originalOpen(path, ...args)
+    if (String(path) === directory && payloadRemoved && !syncFailed) {
+      handle.sync = async () => {
+        syncFailed = true
+        throw new Error("synthetic final pre-publication fsync failure")
+      }
+    }
+    return handle
+  }
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(f.ledger.claim(f.p.runId, 9, f.signedClaim()),
+      errorCode("LEDGER_STORAGE_UNAVAILABLE"))
+  } finally {
+    fsPromises.open = originalOpen
+    fsPromises.unlink = originalUnlink
+    syncBuiltinESMExports()
+  }
+
+  assert.equal(payloadRemoved, true)
+  assert.equal(syncFailed, true)
+  assert.equal((await readdir(directory)).includes("claim.json.pending"), true)
+  const restarted = createOfflineDurableClaimLedger(f.cfg())
+  await assert.rejects(restarted.checkFence(f.p.runId, 9,
+    remotePayloadDigest(claim(f.p))), errorCode("LEDGER_INCOMPLETE"))
+  await assert.rejects(restarted.claim(f.p.runId, 9,
+    f.signedClaim({ claimNonce: stamp(245) })), errorCode("LEDGER_ALREADY_CLAIMED"))
+})
+
 test("different claim nonces cannot create two claims in one reservation", async t => {
   const f = await setup(t)
   await f.ledger.reserve(f.signed())
