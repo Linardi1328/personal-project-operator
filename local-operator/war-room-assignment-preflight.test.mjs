@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { generateKeyPairSync } from "node:crypto"
 import test from "node:test"
-import { signRemoteEnvelope } from "./software-factory-remote-contract.mjs"
+import { remotePayloadDigest, signRemoteEnvelope } from "./software-factory-remote-contract.mjs"
 import {
   linearIssueRevisionHash,
   preflightOfflineAssignment
@@ -41,7 +41,7 @@ function fixture(role = "implementation.backend") {
     repo: { projectId: "rivora", branch: BRANCH, baseSha: BASE, headSha: HEAD,
       reviewedCanonicalPath: true, isolatedWorktree: true },
     role, active: ["rivora"], catalog: { valid: true }, approval: true,
-    issueProject: "rivora", now: FIXED_NOW, readCount: 0
+    issueProject: "rivora", now: FIXED_NOW, readCount: 0, approvalInputs: []
   }
   const config = {
     mode: "offline-preflight-only", coordinatorPublicKey: coordinator.publicKey,
@@ -52,7 +52,7 @@ function fixture(role = "implementation.backend") {
     readRepo: async () => f.repo,
     readIssue: async () => { f.readCount++; return f.issue },
     resolveIssueProject: () => f.issueProject,
-    verifyOwnerApproval: async () => f.approval,
+    verifyOwnerApproval: async input => { f.approvalInputs.push(input); return f.approval },
     readCatalogAdmission: async () => f.catalog,
     listActiveProjects: async () => f.active
   }
@@ -76,6 +76,16 @@ test("valid backend preflight is diagnostic only and exposes no task or authoriz
   assert.equal(JSON.stringify(result).includes(fx.f.issue.description), false)
   assert.equal(JSON.stringify(result).includes("scope"), false)
   assert.equal(fx.f.readCount, 1)
+  assert.equal(fx.f.approvalInputs.length, 1)
+  const approval = fx.f.approvalInputs[0]
+  assert.equal(approval.ownerId, "richie")
+  assert.equal(approval.approvalId, "3".repeat(32))
+  assert.equal(approval.requestId, fx.p.requestId)
+  assert.equal(approval.requestHash, remotePayloadDigest(fx.p))
+  assert.equal(approval.runId, fx.p.runId)
+  assert.equal(approval.expectedVersion, fx.p.expectedVersion)
+  assert.equal(approval.issueId, fx.f.issue.identifier)
+  assert.equal(approval.issueHash, linearIssueRevisionHash(fx.f.issue))
 })
 
 test("valid frontend preflight preserves Antigravity ownership", async () => {
@@ -114,6 +124,7 @@ test("stale issue content cannot silently authorize work", async () => {
   const fx = fixture()
   fx.f.issue.description = "Changed acceptance criteria"
   await denied(fx, "PREFLIGHT_ISSUE_STALE")
+  assert.equal(fx.f.approvalInputs.length, 0)
 })
 
 test("a mismatched issue ID is rejected even when an input hash matches", async () => {
@@ -136,6 +147,7 @@ test("bad coordinator signature is denied before accessing PPO state", async () 
   signed.signature = "A".repeat(86)
   await denied(fx, "PREFLIGHT_SIGNED_REQUEST_INVALID", signed)
   assert.equal(fx.f.readCount, 0)
+  assert.equal(fx.f.approvalInputs.length, 0)
 })
 
 test("unapproved or unsupported project is denied", async () => {
