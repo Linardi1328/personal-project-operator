@@ -258,7 +258,8 @@ test("Date clock preserves sub-second expiry precision", async t => {
   const f = await fixture(t)
   f.state.now = new Date("2026-11-12T02:03:30.750Z")
   await assert.rejects(verifyOfflineHostActionFence(f.signedRequest,
-    f.proof({ expiresAt: "2026-11-12T02:03:30.500Z" }), f.config),
+    f.proof({ issuedAt: "2026-11-12T02:02:30.500Z",
+      expiresAt: "2026-11-12T02:03:30.500Z" }), f.config),
   code("FENCE_PROOF_EXPIRED"))
   assert.equal(f.state.consumptions, 0)
 })
