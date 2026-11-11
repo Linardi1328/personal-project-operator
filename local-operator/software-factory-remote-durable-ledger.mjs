@@ -110,11 +110,14 @@ async function writeOnce(directory, name, record, conflictCode) {
     // after the payload bytes have been synced. This cannot replace a record.
     await link(temporary, destination)
     await syncDirectory(directory)
-    // Readers reject the public name while pending exists. Clear that fence
-    // only after the committed entry is synced; retain tombstones on failures.
+    // Finish all fallible file/directory syncs while the pending marker still
+    // blocks readers. If any step fails, the marker remains fail-closed.
     await unlink(temporary)
-    await unlink(pending)
     await syncDirectory(directory)
+    // Successful unlink is the final visibility/commit step. Never perform a
+    // fallible sync after readers may observe the completed record. A crash
+    // could restore the pending marker; that loses availability, not safety.
+    await unlink(pending)
   } catch (error) {
     if (error?.code === "EEXIST") {
       // The exclusive pending marker belongs to this writer, but another
