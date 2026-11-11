@@ -14,6 +14,7 @@ const NOW="2026-11-10T06:03:00.000Z",ISSUED="2026-11-10T06:00:00.000Z",EXPIRES="
 const signer=generateKeyPairSync("ed25519")
 const nonce="e".repeat(32)
 
+/** Build the real hash-bound PPO baseline plan for role-integration tests. */
 function plannedRun(objective) {
   const plan=buildBaselineSoftwareFactoryPlan({runId:RID,projectId:"rivora",baseSha:BASE,objective})
   return {
@@ -22,6 +23,7 @@ function plannedRun(objective) {
     evidence:{planning:[softwareFactoryPlanEvidence(plan)]}
   }
 }
+/** Create the signed descriptor expected to match PPO's canonical role decision. */
 function descriptor(role) {
   return {
     kind:"dispatch-request",schemaVersion:1,requestId:"1".repeat(32),runId:RID,
@@ -33,6 +35,7 @@ function descriptor(role) {
     nonce,idempotencyKey:"3".repeat(64),issuedAt:ISSUED,expiresAt:EXPIRES,maxDurationMs:120000
   }
 }
+/** Integrate the offline harness with PPO's actual Phase 1A task-role resolver. */
 function harness(run) {
   return createOfflineRemoteDispatchMock({
     mode:"offline-mock-only",readRun:async()=>structuredClone(run),
