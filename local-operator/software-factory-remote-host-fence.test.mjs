@@ -224,10 +224,13 @@ test("expired host proof, future proof and expired worker lease are denied", asy
     }) : kind === "future" ? f.proof({
       issuedAt: "2026-11-12T02:05:00.000Z",
       expiresAt: "2026-11-12T02:05:30.000Z"
-    }) : f.proof()
+    }) : f.proof({
+      issuedAt: "2026-11-12T02:03:50.000Z",
+      expiresAt: "2026-11-12T02:04:50.000Z"
+    })
     if (kind === "lease") f.state.now = "2026-11-12T02:04:30.000Z"
     await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, proof, f.config),
-      code(kind === "lease" ? "FENCE_PROOF_EXPIRED" : "FENCE_PROOF_EXPIRED"))
+      code(kind === "lease" ? "LEDGER_EXPIRED" : "FENCE_PROOF_EXPIRED"))
     assert.equal(f.state.consumptions, 0)
   }
 })
@@ -262,6 +265,42 @@ test("missing, failing and ambiguous atomic consume never report success", async
       code(kind === "missing" ? "FENCE_CONFIGURATION_INVALID" :
         kind === "throw" ? "FENCE_CONSUMPTION_UNAVAILABLE" : "FENCE_CONSUMPTION_DENIED"))
   }
+})
+
+test("accessor-backed proof fields are refused without invoking getters", async t => {
+  const f = await fixture(t)
+  let getterCalls = 0
+  const signed = f.proof()
+  const hostile = {
+    payload: signed.payload,
+    get signature() {
+      getterCalls++
+      return signed.signature
+    }
+  }
+  await assert.rejects(verifyOfflineHostActionFence(f.signedRequest, hostile, f.config),
+    code("FENCE_PROOF_INVALID"))
+  assert.equal(getterCalls, 0)
+  assert.equal(f.state.consumptions, 0)
+})
+
+test("mutation during trusted host lookup cannot change signed action scope", async t => {
+  const f = await fixture(t)
+  const signed = f.proof()
+  const mutable = { payload: { ...signed.payload }, signature: signed.signature }
+  const originalReadHost = f.config.readHost
+  let consumedAction
+  f.config.readHost = async hostId => {
+    mutable.payload.actionType = "workspace.write"
+    mutable.payload.actionPath = "src/other.mjs"
+    return originalReadHost(hostId)
+  }
+  f.state.onConsume = input => { consumedAction = input }
+  const result = await verifyOfflineHostActionFence(f.signedRequest, mutable, f.config)
+  assert.equal(result.fenceObserved, true)
+  assert.equal(consumedAction.actionType, "workspace.read")
+  assert.equal(consumedAction.actionPath, "src/module.mjs")
+  assert.equal(result.canExecute, false)
 })
 
 test("forged coordinator request is rejected regardless of valid host proof", async t => {
