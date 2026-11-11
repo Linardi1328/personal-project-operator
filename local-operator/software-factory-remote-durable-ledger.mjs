@@ -116,7 +116,18 @@ async function writeOnce(directory, name, record, conflictCode) {
     await unlink(pending)
     await syncDirectory(directory)
   } catch (error) {
-    if (error?.code === "EEXIST") reject(conflictCode)
+    if (error?.code === "EEXIST") {
+      // The exclusive pending marker belongs to this writer, but another
+      // writer published the destination between our lstat and open. Remove
+      // only our payload and marker, then durably restore the valid record
+      // to a readable state. Never delete or replace the winner's record.
+      try {
+        await unlink(temporary)
+        await unlink(pending)
+        await syncDirectory(directory)
+      } catch { reject("LEDGER_STORAGE_UNAVAILABLE") }
+      reject(conflictCode)
+    }
     reject("LEDGER_STORAGE_UNAVAILABLE")
   }
 }
