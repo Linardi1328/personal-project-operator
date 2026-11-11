@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { generateKeyPairSync } from "node:crypto"
 import { spawn } from "node:child_process"
-import fsPromises, { mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import fsPromises, { mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -253,7 +253,9 @@ test("symlinked store root is not accepted", async t => {
 test("partial claim file is never recycled, including across a restart", async t => {
   const f = await setup(t)
   await f.ledger.reserve(f.signed())
-  await writeFile(join(await reservationDir(f), "claim.json"), "{partial", "utf8")
+  const partialPath = join(await reservationDir(f), "claim.json")
+  await writeFile(partialPath, "{partial", { encoding: "utf8", mode: 0o600 })
+  assert.equal((await stat(partialPath)).mode & 0o077, 0)
   await assert.rejects(createOfflineDurableClaimLedger(f.cfg()).claim(f.p.runId, 9,
     f.signedClaim()), errorCode("LEDGER_ALREADY_CLAIMED"))
   await assert.rejects(f.ledger.checkFence(f.p.runId, 9, remotePayloadDigest(claim(f.p))),
@@ -293,7 +295,9 @@ test("JSON null and array roots are rejected with a stable record-corruption cod
   for (const payload of ["null", "[]"]) {
     const f = await setup(t)
     await f.ledger.reserve(f.signed())
-    await writeFile(join(await reservationDir(f), "claim.json"), payload, "utf8")
+    const corruptedPath = join(await reservationDir(f), "claim.json")
+    await writeFile(corruptedPath, payload, { encoding: "utf8", mode: 0o600 })
+    assert.equal((await stat(corruptedPath)).mode & 0o077, 0)
     await assert.rejects(f.ledger.checkFence(f.p.runId, 9,
       remotePayloadDigest(claim(f.p))), errorCode("LEDGER_RECORD_INVALID"))
   }
