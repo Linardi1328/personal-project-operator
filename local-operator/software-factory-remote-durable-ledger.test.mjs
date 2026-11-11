@@ -157,6 +157,40 @@ test("losing a publication race removes only the losing pending marker and prese
     remotePayloadDigest(claim(f.p)))).current, true)
 })
 
+test("a reader rechecks pending when publication starts after its first check", async t => {
+  const f = await setup(t)
+  await f.ledger.reserve(f.signed())
+  const directory = await reservationDir(f)
+  const destination = join(directory, "complete.json")
+  const pending = join(directory, "complete.json.pending")
+  const originalOpen = fsPromises.open
+  let injected = false
+
+  // Force the read's lstat(no pending) -> open(public name) gap. Even a
+  // valid JSON record must not pass while a concurrent publication is pending.
+  fsPromises.open = async (path, ...args) => {
+    if (!injected && String(path) === destination) {
+      injected = true
+      const marker = await originalOpen(pending, "wx", 0o600)
+      try { await marker.sync() } finally { await marker.close() }
+    }
+    return originalOpen(path, ...args)
+  }
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(f.ledger.inspect(f.p.runId, 9),
+      errorCode("LEDGER_INCOMPLETE"))
+  } finally {
+    fsPromises.open = originalOpen
+    syncBuiltinESMExports()
+  }
+
+  assert.equal(injected, true)
+  assert.equal((await readdir(directory)).includes("complete.json.pending"), true)
+  await rm(pending)
+  assert.equal((await f.ledger.inspect(f.p.runId, 9)).reserved, true)
+})
+
 test("failed pre-publication directory sync leaves a claim unreadable after restart", async t => {
   const f = await setup(t)
   await f.ledger.reserve(f.signed())
