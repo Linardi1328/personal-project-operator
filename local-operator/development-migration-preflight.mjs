@@ -82,7 +82,7 @@ export function rehearseSyntheticMigrationPreflight({mode,entries}={}) {
   const groups=new Map(), seen=new Set(), inventory=[], unknown=[]
   for(let index=0;index<entries.length;index++){
     const entry=entries[index]
-    if(!entry||typeof entry.relativePath!=="string"||entry.relativePath.length>240||
+    if(!entry||typeof entry.relativePath!=="string"||entry.relativePath.length>240||!entry.relativePath.isWellFormed()||
         !Buffer.isBuffer(entry.bytes)||entry.bytes.length>MAX_DEVELOPMENT_RUN_RECORD_BYTES)reject()
     const path=entry.relativePath,bytes=Buffer.from(entry.bytes)
     totalBytes+=bytes.length
@@ -92,7 +92,8 @@ export function rehearseSyntheticMigrationPreflight({mode,entries}={}) {
     inventory.push(provenance)
     const duplicate=seen.has(path)
     seen.add(path)
-    const canonical=RECORD.exec(path),marker=MARKER.exec(path)
+    const exact=pattern=>{const m=pattern.exec(path);return m?.[0]===path?m:null}
+    const canonical=exact(RECORD),marker=exact(MARKER)
     if(!canonical&&!marker){
       unknown.push({...provenance,code:duplicate?"duplicate_unknown_path":"unrecognized_entry"})
       continue
@@ -120,14 +121,15 @@ export function rehearseSyntheticMigrationPreflight({mode,entries}={}) {
   const legacyCatalogTruncated=runs.length>MAX_DEVELOPMENT_RUN_CATALOG_SUMMARIES
   const duplicateActiveProject=active.length!==projects.length
   const overWipLimit=projects.length>2
-  const readyForRehearsal=invalid===0&&unknown.length===0&&!legacyCatalogTruncated&&!duplicateActiveProject&&!overWipLimit
+  const emptyInventory=inventory.length===0
+  const readyForRehearsal=!emptyInventory&&invalid===0&&unknown.length===0&&!legacyCatalogTruncated&&!duplicateActiveProject&&!overWipLimit
   return {
     schemaVersion:1,mode:MODE,
     // This digest binds only supplied file identities and exact byte hashes.
     // It is not a source completeness assertion, signature or approval.
     inventoryHash:hashJSON(inventory),
     fileCount:inventory.length,totalBytes,inventory,runs,unknown,
-    diagnostics:{runs:runs.length,invalid,unknown:unknown.length,legacyCatalogTruncated,
+    diagnostics:{runs:runs.length,invalid,unknown:unknown.length,emptyInventory,legacyCatalogTruncated,
       activeProjects:projects,duplicateActiveProject,overWipLimit},
     readyForRehearsal,importAuthorized:false,cutoverAuthorized:false
   }
