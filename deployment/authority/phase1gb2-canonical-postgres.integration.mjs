@@ -410,3 +410,36 @@ test("direct writers use real CAS, deny invalid mutations and reconcile lost com
   assert.equal((await db.readVersions(recovered.runId)).length,1)
   await state.transition(recovered.runId,{expectedVersion:0,status:"cancelled",actor:"test-agent"})
 })
+
+
+test("independent slower writer preserves nondecreasing event and evidence time",{timeout:90000},async()=>{
+  const db=authority(), fast=isolated(db,{now:()=>new Date("2026-03-01T00:00:00.000Z")})
+  const slow=isolated(authority(),{now:()=>new Date("2026-02-01T00:00:00.000Z")})
+  let r=await fast.create(initialInput("rivora"))
+  const time=r.timestamps.updatedAt
+  const versions=[r]
+  const check=next=>{
+    assert.equal(next.timestamps.updatedAt,time)
+    assert.equal(next.history.at(-1).timestamp,time)
+    for(const e of next.history.at(-1).evidence)assert.equal(e.recordedAt,time)
+    versions.push(next)
+    r=next
+  }
+  const transition=async(status,evidence=[])=>check(await slow.transition(r.runId,{expectedVersion:r.version,status,actor:"slow-writer",evidence}))
+  for(const status of ["planning_in_progress","planned","implementation_in_progress"])await transition(status)
+  check(await slow.progress(r.runId,{expectedVersion:r.version,status:r.status,actor:"slow-writer",
+    evidence:[{kind:"implementation",sha:SHA,source:"slow-writer",summary:"Earlier clock"}]}))
+  for(const status of ["implementation_ready","tests_in_progress","tests_passed"])await transition(status)
+  await transition("review_in_progress",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+    summary:"Started",metadata:{project:r.project.id,reviewedSha:SHA,attempt:1,outcome:"review_started"}}])
+  check(await slow.recoverReviewOrphan(r.runId,{expectedVersion:r.version,expectedHeadSha:SHA,reviewAttempt:1,confirmation:REVIEW_ORPHAN_RECOVERY_CONFIRMATION}))
+  await transition("review_in_progress",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+    summary:"Retry",metadata:{project:r.project.id,reviewedSha:SHA,attempt:2,outcome:"review_started"}}])
+  await transition("review_changes_requested",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+    summary:"Runtime failure",metadata:{project:r.project.id,reviewedSha:SHA,attempt:2,
+      outcome:"owner_action_required",decision:"OWNER_ACTION_REQUIRED",mergeAllowed:false,blockers:0,securityFindings:0,
+      testsRequired:0,runtimeFailureClass:"runtime"}}])
+  check(await slow.recoverReviewRuntimeFailure(r.runId,{expectedVersion:r.version,expectedHeadSha:SHA,reviewAttempt:2,confirmation:REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION}))
+  await transition("cancelled")
+  assert.deepEqual(await db.readVersions(r.runId),versions)
+})
