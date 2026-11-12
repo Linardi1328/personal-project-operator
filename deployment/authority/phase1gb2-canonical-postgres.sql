@@ -54,11 +54,12 @@ FROM ppo_authority.run_versions ORDER BY run_id, version DESC;
 -- SQL additionally binds identity, immutable history prefix and expected hash.
 -- It is not a substitute for that semantic validator or authenticated routing.
 CREATE FUNCTION ppo_authority.commit_run(
-  p_id text, p_expected integer, p_expected_hash text, p_record jsonb
+  p_id text, p_expected integer, p_expected_hash text, p_serialized text
 ) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $body$
 DECLARE
   prior ppo_authority.run_versions%ROWTYPE;
+  p_record jsonb;
   v integer;
   h text;
   status text;
@@ -66,10 +67,14 @@ DECLARE
   active_projects integer;
   active_count integer;
 BEGIN
+  -- Logical byte limit is on compact serialized input, not JSONB's expanded
+  -- decimal/whitespace representation. Physical cap is independent.
+  IF p_serialized IS NULL OR octet_length(p_serialized) > 131072 THEN RETURN false; END IF;
+  p_record := p_serialized::jsonb;
   IF p_id IS NULL OR p_id !~ '^[A-Za-z0-9_-]{43}$'
      OR p_expected IS NULL OR p_expected NOT BETWEEN -1 AND 98
      OR p_record IS NULL OR jsonb_typeof(p_record) IS DISTINCT FROM 'object'
-     OR octet_length(p_record::text) > 131072
+     OR octet_length(p_record::text) > 8388608
      OR p_record->>'runId' IS DISTINCT FROM p_id
      OR p_record->'schemaVersion' IS DISTINCT FROM '1'::jsonb
      OR p_record->'version' IS DISTINCT FROM to_jsonb(p_expected + 1)
@@ -88,6 +93,11 @@ BEGIN
      OR p_record->'history'->v->>'toStatus' IS DISTINCT FROM status
      OR p_record->'history'->v->'branch' IS DISTINCT FROM p_record->'branch'
      OR p_record->'history'->v->'headSha' IS DISTINCT FROM p_record->'headSha'
+  THEN RETURN false; END IF;
+
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_record->'history') AS event
+    WHERE event->>'project' IS DISTINCT FROM project OR
+          event->>'repo' IS DISTINCT FROM p_record->'project'->>'fullName')
   THEN RETURN false; END IF;
 
   -- Updating (not only locking) forces stale repeatable-read/serializable
@@ -138,7 +148,7 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog,
 $body$;
 REVOKE ALL ON ALL TABLES IN SCHEMA ppo_authority FROM PUBLIC, ppo_authority_writer, ppo_authority_reader;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA ppo_authority FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION ppo_authority.commit_run(text,integer,text,jsonb) TO ppo_authority_writer;
+GRANT EXECUTE ON FUNCTION ppo_authority.commit_run(text,integer,text,text) TO ppo_authority_writer;
 GRANT EXECUTE ON FUNCTION ppo_authority.read_run(text), ppo_authority.read_versions(text)
 TO ppo_authority_writer, ppo_authority_reader;
 COMMIT;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -39,7 +40,7 @@ const literals=v=>v===null?"NULL":
   typeof v==="string"?"convert_from(decode('"+Buffer.from(v,"utf8").toString("base64")+"','base64'),'UTF8')":
   (()=>{throw Error("invalid test parameter")})()
 const statements={
-  "SELECT ppo_authority.commit_run($1::text,$2::integer,$3::text,$4::jsonb) AS accepted":"accepted",
+  "SELECT ppo_authority.commit_run($1::text,$2::integer,$3::text,$4::text) AS accepted":"accepted",
   "SELECT ppo_authority.read_run($1::text) AS record":"record",
   "SELECT ppo_authority.read_versions($1::text) AS records":"records"
 }
@@ -64,7 +65,7 @@ async function fixture(project){
     const first=await transitionDevelopmentRun(initial.runId,{expectedVersion:0,status:"planning_in_progress",actor:"test-agent"},options)
     const planned=await transitionDevelopmentRun(initial.runId,{expectedVersion:1,status:"planned",actor:"test-agent"},options)
     const implementing=await transitionDevelopmentRun(initial.runId,{expectedVersion:2,status:"implementation_in_progress",actor:"test-agent"},options)
-    const progress=await recordDevelopmentRunProgress(initial.runId,{expectedVersion:3,status:"implementation_in_progress",actor:"test-agent",reason:"synthetic progress"},options)
+    const progress=await recordDevelopmentRunProgress(initial.runId,{expectedVersion:3,status:"implementation_in_progress",actor:"test-agent",reason:"synthetic progress",evidence:[{kind:"implementation",sha:"b".repeat(40),source:"test-agent",summary:"Large numeric metadata and Unicode 😀",metadata:Object.fromEntries(Array.from({length:16},(_,i)=>["n"+i,Array(16).fill(1e308)]))}]},options)
     const cancelled=await transitionDevelopmentRun(initial.runId,{expectedVersion:4,status:"cancelled",actor:"test-agent"},options)
     return {initial,first,planned,implementing,progress,cancelled}
   }finally{await rm(dir,{recursive:true,force:true})}
@@ -78,7 +79,21 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   const writer=authority(),reader=authority("ppo_authority_reader")
   const a=await fixture("rivora")
   assert.equal(await reader.readRun(a.initial.runId),null)
-  const createSql="SELECT ppo_authority.commit_run("+[a.initial.runId,-1,null,JSON.stringify(a.initial)].map(literals).join(",") + "::jsonb);"
+  const stable=value=>Array.isArray(value)?"["+value.map(stable).join(",")+"]":value&&typeof value==="object"?"{"+Object.keys(value).sort().map(k=>JSON.stringify(k)+":"+stable(value[k])).join(",")+"}":JSON.stringify(value)
+  function contradict(record,key,value){
+    const altered=structuredClone(record),event=altered.history.at(-1)
+    event[key]=value
+    delete event.eventHash
+    event.eventHash=createHash("sha256").update(stable(event)).digest("hex")
+    altered.historyHash=event.eventHash
+    return altered
+  }
+  for(const [key,value] of [["project","kynexa"],["repo","another/repo"]]){
+    const wrong=contradict(a.initial,key,value)
+    await assert.rejects(commit(writer,wrong))
+    assert.equal(await reader.readRun(a.initial.runId),null)
+  }
+  const createSql="SELECT ppo_authority.commit_run("+[a.initial.runId,-1,null,JSON.stringify(a.initial)].map(literals).join(",") + "::text);"
   assert.equal(await sql("BEGIN; "+createSql+" ROLLBACK;","ppo_authority_writer"),"t")
   assert.equal(await reader.readRun(a.initial.runId),null)
   assert.deepEqual(await reader.readVersions(a.initial.runId),[])
@@ -92,7 +107,7 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   // Direct trusted SQL writer bypasses the JS validator here intentionally:
   // the DB must still refuse a rewrite of an existing history prefix.
   const forkResult=await query("ppo_authority_writer")(
-    "SELECT ppo_authority.commit_run($1::text,$2::integer,$3::text,$4::jsonb) AS accepted",
+    "SELECT ppo_authority.commit_run($1::text,$2::integer,$3::text,$4::text) AS accepted",
     [a.initial.runId,1,a.first.historyHash,JSON.stringify(fork)])
   assert.equal(forkResult.rows[0].accepted,false)
   assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first])
@@ -100,7 +115,14 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   assert.equal(await commit(writer,a.implementing,a.planned),true)
   const wrongHead={...a.progress,headSha:"c".repeat(40)}
   await assert.rejects(commit(writer,wrongHead,a.implementing))
+  for(const [key,value] of [["project","kynexa"],["repo","another/repo"]]){
+    await assert.rejects(commit(writer,contradict(a.progress,key,value),a.implementing))
+    assert.deepEqual(await reader.readRun(a.initial.runId),a.implementing)
+  }
+  assert.ok(Buffer.byteLength(JSON.stringify(a.progress))<131072)
   assert.equal(await commit(writer,a.progress,a.implementing),true)
+  const physical=Number(await sql("SELECT octet_length(record::text) FROM ppo_authority.current_runs WHERE run_id="+literals(a.initial.runId)+";"))
+  assert.ok(physical>131072,"exercise actual JSONB numeric expansion")
   assert.equal(await commit(writer,a.first,a.initial),false)
   assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first,a.planned,a.implementing,a.progress])
   assert.deepEqual(await reader.readRun(a.initial.runId),a.progress)
@@ -115,7 +137,10 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
     "UPDATE ppo_authority.gate SET revision=0;"
   ])await assert.rejects(sql(statement,"ppo_authority_writer"),/permission denied/)
   await assert.rejects(commit(reader,a.cancelled,a.progress),/permission denied/)
-  await assert.rejects(sql("DELETE FROM ppo_authority.run_versions;","postgres"),/append-only/)
+  for(const statement of ["DELETE FROM ppo_authority.run_versions;","UPDATE ppo_authority.run_versions SET history_hash=history_hash;","TRUNCATE ppo_authority.run_versions;"])
+    await assert.rejects(sql(statement,"postgres"),/append-only/)
+  await assert.rejects(sql("SELECT * FROM ppo_authority.run_versions;","ppo_authority_reader"),/permission denied/)
+  await assert.rejects(sql("CREATE TABLE ppo_authority.fake(id int);","ppo_authority_writer"),/permission denied/)
 
   // Two different newly active projects contend for the last lane.
   const b=await fixture("kynexa"),c=await fixture("khlim-assist")
