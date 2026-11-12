@@ -19,7 +19,7 @@ const IMPORT="SELECT ppo_authority.import_synthetic_snapshot($1::text,$2::text) 
 const ARCHIVE="SELECT ppo_authority.read_synthetic_archive($1::text) AS archive"
 function deny(){throw Error("Synthetic migration rehearsal rejected.")}
 const exact=(pattern,value)=>pattern.exec(value)?.[0]===value
-const owned=info=>typeof process.getuid==="function"&&info.uid===process.getuid()&&(info.mode&0o077n)===0n
+const owned=info=>typeof process.getuid==="function"&&info.uid===BigInt(process.getuid())&&(info.mode&0o077n)===0n
 // Compare inode, size, mode, owner and precise modification metadata.
 // These observations detect changes, not a malicious same-UID replacement.
 function same(a,b){
