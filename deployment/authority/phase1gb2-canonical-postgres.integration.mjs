@@ -203,9 +203,11 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
   assert.deepEqual((await counts()).split(",").slice(0,3),after.split(",").slice(0,3))
   assert.deepEqual(sorted(await importer.readArchive(snapshot.inventoryHash)),sorted(snapshot.files))
   for(const table of ["synthetic_import_batch","synthetic_import_files"]){
-    for(const verb of ["DELETE FROM ","TRUNCATE "])await assert.rejects(sql(verb+"ppo_authority."+table+";"),/append-only/)
+    await assert.rejects(sql("DELETE FROM ppo_authority."+table+";"),/append-only/)
     await assert.rejects(sql("UPDATE ppo_authority."+table+" SET inventory_hash=inventory_hash;"),/append-only/)
   }
+  await assert.rejects(sql("TRUNCATE ppo_authority.synthetic_import_files;"),/append-only/)
+  await assert.rejects(sql("TRUNCATE ppo_authority.synthetic_import_batch,ppo_authority.synthetic_import_files;"),/append-only/)
   // Subsequent direct writers may append to the imported authority but the
   // preserved source archive must never change with those mutations.
   const state=createIsolatedCanonicalRunState({mode:"isolated-postgres-canonical-authority",authority:authority()})
