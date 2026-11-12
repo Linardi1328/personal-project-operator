@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto"
-import { mkdtempSync, realpathSync, rmSync } from "node:fs"
+import { linkSync, mkdtempSync, realpathSync, rmSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
@@ -245,4 +245,98 @@ test("lab cannot open a different database, wrong token or non-lab directory",as
   assert.throws(()=>openSqliteFenceLab(f.directory,"0".repeat(64)))
   assert.throws(()=>openSqliteFenceLab(realpathSync(tmpdir()),f.token))
   assert.equal(count(f),0)
+})
+
+
+test("nonce provenance cannot be replaced even when recursive triggers are off",async t=>{
+  const f=await fixture(t)
+  assert.equal(await f.consume(f.b),true)
+  const before=withDb(f,db=>db.prepare("SELECT * FROM consumed").get())
+  withDb(f,db=>{
+    db.exec("PRAGMA recursive_triggers=OFF")
+    assert.equal(db.prepare("PRAGMA recursive_triggers").get().recursive_triggers,0)
+    const replacement=db.prepare(
+      "INSERT OR REPLACE INTO consumed(host_id,action_id,request_hash,claim_hash,run_id,run_version,host_epoch,consumed_ms,expires_ms) VALUES(?,?,?,?,?,?,?,?,?)"
+    ).run(before.host_id,before.action_id,"f".repeat(64),"a".repeat(64),
+      "R".repeat(43),before.run_version+1,before.host_epoch+1,
+      before.consumed_ms,before.expires_ms)
+    assert.equal(replacement.changes,0)
+    assert.throws(()=>db.exec("UPDATE consumed SET host_epoch=99"),/immutable laboratory nonce/)
+    assert.throws(()=>db.exec("DELETE FROM consumed"),/immutable laboratory nonce/)
+    assert.deepEqual(db.prepare("SELECT * FROM consumed").all(),[before])
+  })
+  await assert.rejects(adapter(openSqliteFenceLab(f.directory,f.token))(f.b),code("TX_REPLAY_OR_AMBIGUOUS"))
+  assert.deepEqual(withDb(f,db=>db.prepare("SELECT * FROM consumed").all()),[before])
+})
+
+test("a valid new host epoch cannot reuse a consumed action ID",async t=>{
+  const f=await fixture(t)
+  assert.equal(await f.consume(f.b),true)
+  const original=withDb(f,db=>db.prepare("SELECT * FROM consumed").get())
+  const key=generateKeyPairSync("ed25519").publicKey
+  const fingerprint=createHash("sha256").update(key.export({type:"spki",format:"der"})).digest("hex")
+  const newClaim="f".repeat(64)
+  put(f,"hosts",f.b.hostId,{...f.host,hostEpoch:8,claimEpoch:8,
+    claimHash:newClaim,keyFingerprint:fingerprint})
+  put(f,"claims",newClaim,{...f.claim,claimHash:newClaim})
+  const rotated={...f.b,hostEpoch:8,publicKey:key,claimHash:newClaim}
+  await assert.rejects(f.consume(rotated),code("TX_REPLAY_OR_AMBIGUOUS"))
+  assert.deepEqual(withDb(f,db=>db.prepare("SELECT * FROM consumed").all()),[original])
+  // Positive control: the new epoch and claim are valid with a new nonce.
+  assert.equal(await f.consume({...rotated,actionId:"a".repeat(32)}),true)
+  assert.equal(count(f),2)
+})
+
+test("late post-COMMIT or cleanup acknowledgment denies and burns the committed nonce",{timeout:20000},async t=>{
+  for(const phase of ["commit","close"]){
+    const f=await fixture(t)
+    const deadline=Date.now()+3000
+    f.b.expiresAt=iso(deadline)
+    let injected=false
+    // Inject real synchronous latency at the native call boundary, without
+    // replacing SQLite storage, the transaction or the authority clock.
+    function crossDeadline(){
+      assert.ok(Date.now()<deadline,"must observe a fresh deadline before latency")
+      injected=true
+      const waitMs=Math.max(1,deadline-Date.now()+50)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,waitMs)
+      assert.ok(Date.now()>=deadline,"latency must cross the deadline")
+    }
+    const proto=DatabaseSync.prototype
+    const method=phase==="commit"?"exec":"close"
+    const original=proto[method]
+    const mocked=t.mock.method(proto,method,function(...args){
+      const result=original.apply(this,args)
+      if(phase==="close"||args[0]==="COMMIT")crossDeadline()
+      return result
+    })
+    try{
+      await assert.rejects(f.consume(f.b),code("TX_UNAVAILABLE_OR_AMBIGUOUS"),phase)
+    }finally{
+      mocked.mock.restore()
+    }
+    assert.equal(injected,true,phase)
+    const before=withDb(f,db=>db.prepare("SELECT * FROM consumed").all())
+    assert.equal(before.length,1,phase)
+    // A fresh boundary with the same nonce must reach replay detection, not
+    // just fail because the original proof's time has already expired.
+    const now=Date.now()
+    const fresh={...f.b,issuedAt:iso(now-1000),expiresAt:iso(now+10000)}
+    await assert.rejects(adapter(openSqliteFenceLab(f.directory,f.token))(fresh),
+      code("TX_REPLAY_OR_AMBIGUOUS"),phase)
+    assert.deepEqual(withDb(f,db=>db.prepare("SELECT * FROM consumed").all()),before)
+  }
+})
+
+test("non-lab database metadata, obsolete schema and hard links are rejected",async t=>{
+  for(const kind of ["application-id","schema-version","metadata","hard-link"]){
+    const f=await fixture(t)
+    if(kind==="application-id")withDb(f,db=>db.exec("PRAGMA application_id=0"))
+    if(kind==="schema-version")withDb(f,db=>db.exec("PRAGMA user_version=1"))
+    if(kind==="metadata")withDb(f,db=>db.exec("DELETE FROM lab_meta"))
+    if(kind==="hard-link")linkSync(join(f.directory,"fence-lab.sqlite"),join(f.directory,"other.sqlite"))
+    assert.throws(()=>openSqliteFenceLab(f.directory,f.token),undefined,kind)
+    if(kind==="hard-link")unlinkSync(join(f.directory,"other.sqlite"))
+    assert.equal(count(f),0)
+  }
 })

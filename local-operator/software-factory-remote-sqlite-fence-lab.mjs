@@ -13,6 +13,7 @@ import { softwareFactoryRunConsumesWip } from "./software-factory-admission.mjs"
 const PREFIX = "ppo-phase1g-lab-"
 const DB_NAME = "fence-lab.sqlite"
 const APPLICATION_ID = 1347438407
+const SCHEMA_VERSION = 2
 const MAX_RUNS = 100
 const SYNTHETIC_TASK = "RIC-157 synthetic lab:"
 const CLOCK = "CAST(unixepoch('subsec') * 1000 AS INTEGER)"
@@ -23,6 +24,9 @@ const SCHEMA = [
   "CREATE TABLE requests (id TEXT PRIMARY KEY, payload TEXT NOT NULL CHECK(json_valid(payload) AND json_extract(payload,'$.requestHash') IS id)) STRICT",
   "CREATE TABLE canonical_runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL CHECK(json_valid(payload) AND json_extract(payload,'$.runId') IS id)) STRICT",
   "CREATE TABLE consumed (host_id TEXT NOT NULL, action_id TEXT NOT NULL, request_hash TEXT NOT NULL, claim_hash TEXT NOT NULL, run_id TEXT NOT NULL, run_version INTEGER NOT NULL CHECK(run_version>=1), host_epoch INTEGER NOT NULL CHECK(host_epoch>=1), consumed_ms INTEGER NOT NULL, expires_ms INTEGER NOT NULL CHECK(consumed_ms<expires_ms), PRIMARY KEY(host_id,action_id)) STRICT",
+  // BEFORE INSERT also runs for REPLACE, even on a connection with
+  // recursive_triggers disabled. A duplicate must never overwrite its provenance.
+  "CREATE TRIGGER consumed_no_replace BEFORE INSERT ON consumed WHEN EXISTS (SELECT 1 FROM consumed WHERE host_id=NEW.host_id AND action_id=NEW.action_id) BEGIN SELECT RAISE(IGNORE); END",
   "CREATE TRIGGER consumed_no_update BEFORE UPDATE ON consumed BEGIN SELECT RAISE(ABORT,'immutable laboratory nonce'); END",
   "CREATE TRIGGER consumed_no_delete BEFORE DELETE ON consumed BEGIN SELECT RAISE(ABORT,'immutable laboratory nonce'); END"
 ].join(";\n") + ";"
@@ -32,7 +36,7 @@ function tempRoot() { return realpathSync(tmpdir()) }
 function checkPrivate(path, directory) {
   const info = lstatSync(path)
   if ((directory ? !info.isDirectory() : !info.isFile()) ||
-      info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
+      info.isSymbolicLink() || (!directory && info.nlink !== 1) || (info.mode & 0o077) !== 0 ||
       typeof process.getuid !== "function" || info.uid !== process.getuid() ||
       realpathSync(path) !== path) deny()
 }
@@ -48,9 +52,10 @@ function connect(directory, token) {
   if (typeof token !== "string" || !/^[a-f0-9]{64}$/u.test(token)) deny()
   const db = new DatabaseSync(labPath(directory))
   try {
-    db.exec("PRAGMA busy_timeout=0; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")
+    db.exec("PRAGMA busy_timeout=0; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA recursive_triggers=ON;")
     if (db.prepare("PRAGMA application_id").get().application_id !== APPLICATION_ID ||
-        db.prepare("PRAGMA user_version").get().user_version !== 1 ||
+        db.prepare("PRAGMA user_version").get().user_version !== SCHEMA_VERSION ||
+        db.prepare("PRAGMA recursive_triggers").get().recursive_triggers !== 1 ||
         db.prepare("PRAGMA journal_mode").get().journal_mode !== "wal" ||
         db.prepare("PRAGMA synchronous").get().synchronous !== 2 ||
         db.prepare("SELECT token FROM lab_meta WHERE id=1").get()?.token !== token) deny()
@@ -67,11 +72,11 @@ export function createSqliteFenceLab() {
     chmodSync(directory, 0o700)
     closeSync(openSync(join(directory, DB_NAME), "wx", 0o600))
     db = new DatabaseSync(labPath(directory))
-    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA recursive_triggers=ON;")
     db.exec("BEGIN IMMEDIATE")
     db.exec(SCHEMA)
     db.prepare("INSERT INTO lab_meta VALUES (1,?,1)").run(token)
-    db.exec("PRAGMA application_id=" + APPLICATION_ID + "; PRAGMA user_version=1; COMMIT")
+    db.exec("PRAGMA application_id=" + APPLICATION_ID + "; PRAGMA user_version=" + SCHEMA_VERSION + "; COMMIT")
     db.close()
     db = null
     return Object.freeze({ directory, token, transact: openSqliteFenceLab(directory, token) })
@@ -81,7 +86,12 @@ export function createSqliteFenceLab() {
   }
 }
 
-/** Reopen the same synthetic authority from another process. */
+/**
+ * Reopen the same synthetic authority from another process.
+ * Trusted laboratory infrastructure ONLY: transact(callback) is not an
+ * authorization API and must not accept an untrusted or unbounded callback.
+ * The Phase 1G-A adapter owns the full boundary validation.
+ */
 export function openSqliteFenceLab(directory, token) {
   const probe = connect(directory, token)
   probe.close()
@@ -93,6 +103,7 @@ export function openSqliteFenceLab(directory, token) {
     let pending = null
     let attempted = false
     let lastClock = -1
+    let commitFresh = false
     function requireActive() { if (!active) deny() }
     function clock() {
       requireActive()
@@ -197,12 +208,22 @@ export function openSqliteFenceLab(directory, token) {
       }
       db.exec("COMMIT")
       begun = false
-      // COMMIT and ACK can be delayed. A late/unknown ACK never returns true.
-      // If COMMIT succeeded, its nonce remains burned even on a later denial.
-      return fresh(pending.lower,pending.upper)
+      // Observe actual database time after COMMIT, but do not decide success
+      // yet: closing the last connection can checkpoint WAL and block.
+      // An expired/unknown ACK never grants; a committed nonce stays burned.
+      commitFresh = fresh(pending.lower,pending.upper)
     } finally {
       active = false
       try { if (begun) db.exec("ROLLBACK") } finally { db.close() }
     }
+    // B1-01: decide the local diagnostic acknowledgment ONLY after all
+    // potentially blocking database cleanup. SQLite's clock and Date.now()
+    // share this trusted single-host wall-clock domain. This is supplemental
+    // to the database predicate and pre/post-COMMIT checks, not a substitute.
+    // Nothing that can block on storage follows this final observation.
+    // Later consumers still need their own expiry/revocation fence.
+    const ackNow = Date.now()
+    return commitFresh && Number.isSafeInteger(ackNow) && ackNow >= lastClock &&
+      ackNow >= pending.lower && ackNow < pending.upper
   }
 }
