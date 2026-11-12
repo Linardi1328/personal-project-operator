@@ -1961,3 +1961,42 @@ test("legacy CI provenance survives reconciliation but does not establish curren
   }), fixture)
   await assertRejectsCode(reconcileGitHubDelivery(run.runId, opts), "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID")
 })
+
+
+test("legacy merge-ready history denies a new merge but permits exact remote completion reconciliation", async () => {
+  const fixture = await makeReviewPassedFixture()
+  const pr = makePr(fixture.project, fixture.run.branch, fixture.headSha)
+  const legacy = deliveryProgressEvidence(fixture.run, "ci_passed", {
+    prNumber: pr.number, workflowName: "PPO PR validation", workflowRunId: 99,
+    workflowConclusion: "success", requiredSteps: 6, checkedAt: "2026-08-21T12:00:02.000Z"
+  })
+  let run = await appendDeliveryProgress(fixture.run, legacy, fixture)
+  run = await appendDeliveryProgress(run, remoteReviewProgressEvidence(run, pr), fixture, REMOTE_PR_REVIEW_AGENT_ID)
+  run = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version, status: "merge_ready", actor: GITHUB_DELIVERY_AGENT_ID,
+    evidence: [deliveryProgressEvidence(run, "merge_ready", { prNumber: pr.number, branch: run.branch,
+      base: "main", prHeadSha: run.headSha, workflowRunId: 99, remoteReviewedSha: run.headSha,
+      remoteDecision: REVIEW_DECISIONS.APPROVED })]
+  }, { writeDataDir: fixture.writeDataDir, now: fixture.now })
+  const client = makeGitHubClient(fixture.project, run.branch, run.headSha, { prs: [pr],
+    jobs: [{...successJobs()[0], steps: successJobs()[0].steps.filter(s => s.name !== "PostgreSQL canonical authority integration (isolated)")}], mainSha: "c".repeat(40) })
+  const opts = { expectedVersion: run.version, writeDataDir: fixture.writeDataDir, workspaceRegistry: fixture.registry,
+    githubClient: client, now: fixture.now }
+  await assertRejectsCode(executeShaPinnedMerge(run.runId, opts), "GITHUB_DELIVERY_CI_FAILED")
+  assert.equal(client.state.mergeCalls.length, 0)
+  assert.deepEqual(await readDevelopmentRun(run.runId, opts), run)
+  // Model a historical remote merge already completed; read-only recovery
+  // verifies the exact PR/main facts without granting another merge.
+  run = await appendDeliveryProgress(run, deliveryProgressEvidence(run, "merge_started", {
+    prNumber: pr.number, expectedHeadSha: run.headSha, mergeMethod: "squash"
+  }), fixture)
+  client.state.prs[0].state = "closed"
+  client.state.prs[0].merged = true
+  client.state.prs[0].mergeCommitSha = MERGE_SHA
+  client.state.mainSha = MERGE_SHA
+  const readonly = readOnlyGithubClient(client)
+  assert.equal((await reconcileGitHubDelivery(run.runId, {...opts, githubClient: readonly})).delivery.mergeStatus, "merged_remote")
+  assert.deepEqual(readonly.writes, [])
+  assert.deepEqual(await readDevelopmentRun(run.runId, opts), run)
+  assert.equal(client.state.mergeCalls.length, 0)
+})
