@@ -1,4 +1,3 @@
-import { parseUniqueJson } from "./unique-json.mjs"
 import { createHash, randomBytes } from "node:crypto"
 import { classifyReviewedImplementationEvidence } from "./software-factory-implementation-evidence.mjs"
 import { constants as fsConstants } from "node:fs"
@@ -1784,7 +1783,7 @@ function parseRunRecordEnvelope(payload, expectedRunId = null, options = {}) {
   let parsed
 
   try {
-    parsed = parseUniqueJson(payload,{maxBytes:MAX_DEVELOPMENT_RUN_RECORD_BYTES})
+    parsed = JSON.parse(payload)
   } catch {
     throw runStateError(
       "RUN_RECORD_INVALID",

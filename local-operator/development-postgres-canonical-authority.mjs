@@ -1,3 +1,4 @@
+import { parseUniqueJson } from "./unique-json.mjs"
 import {
   normalizeDevelopmentRunId, parseDevelopmentRunRecord, MAX_DEVELOPMENT_RUN_RECORD_BYTES
 } from "./development-run-state.mjs"
@@ -20,6 +21,9 @@ function postgresCompatible(value) {
 }
 function validate(serialized, id = null) {
   if (typeof serialized !== "string") deny()
+  // Fresh canonical submissions must be unambiguous. Legacy filesystem/raw
+  // archive parsing retains its separately documented last-key-wins contract.
+  parseUniqueJson(serialized,{maxBytes:MAX_DEVELOPMENT_RUN_RECORD_BYTES})
   const r = parseDevelopmentRunRecord(serialized, id)
   const last = r.history.at(-1)
   // Retain exact Git-ref binding even if the underlying record parser does

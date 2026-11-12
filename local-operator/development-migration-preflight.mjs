@@ -29,9 +29,10 @@ function compatible(value) {
 }
 function parse(bytes, runId) {
   const source = decoder.decode(bytes)
-  // Inspect every literal (keys included) for unsupported encoding, even in
-  // overwritten values. The shared record reader then rejects duplicate
-  // decoded names and validates full JSON grammar before normalization.
+  // Preserve the raw archive's last-key-wins value contract, but inspect
+  // every original literal for unsupported encoding, even overwritten ones.
+  // Canonical text transports enforce unique names at their own boundary.
+  JSON.parse(source)
   for (const match of source.matchAll(/"(?:[^"\\]|\\.)*"/gsu)) {
     if (!compatible(JSON.parse(match[0]))) return {code:"unsupported_encoding"}
   }

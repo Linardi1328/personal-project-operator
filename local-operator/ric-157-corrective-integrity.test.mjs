@@ -67,15 +67,15 @@ for(const [name,replace] of [
   ["overwritten malformed",s=>s.replace('"actor":','"actor":{},"actor":')],
   ["nested metadata",s=>s.replace('"large":','"large":false,"large":')]
 ]){
-  for(const path of ["parser","preflight","catalog","writer"]){
+  for(const path of ["catalog","writer"]){
     test("M-02 "+path+" rejects "+name+" before normalization",async()=>{
       const entries=files.map(e=>({path:e.path,serialized:replace(e.serialized)}))
       assert.ok(entries.some((e,i)=>e.serialized!==files[i].serialized))
       const serialized=entries.find(e=>e.path==="records/"+id+".json").serialized
       // Last-key-wins JSON values, including all event hashes, are unchanged.
       assert.deepEqual(JSON.parse(serialized),target(files))
-      if(path==="parser")assert.throws(()=>parseDevelopmentRunRecord(serialized))
-      if(path==="preflight")assert.equal(scan(entries).readyForRehearsal,false)
+      assert.doesNotThrow(()=>parseDevelopmentRunRecord(serialized))
+      assert.equal(scan(entries).readyForRehearsal,true) // raw archive contract preserved
       if(path==="catalog")assert.equal((await catalog(entries).list()).code,"catalog_invalid")
       if(path==="writer")await writerRejects(serialized)
     })

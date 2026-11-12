@@ -179,6 +179,31 @@ async function exactImported(snapshot,extra=[],querySql=sql){
   assert.deepEqual(orderFiles(await importer.readArchive(snapshot.inventoryHash)),orderFiles(snapshot.files))
 }
 
+test("legacy raw duplicate archive semantics and exact bytes survive canonical transport hardening",{timeout:30000},async()=>{
+  const mode="synthetic-migration-import-rehearsal-only"
+  const source=await captureSyntheticMigrationRehearsal({mode})
+  const files=source.files.map(f=>({path:f.path,bytesBase64:Buffer.from(Buffer.from(f.bytesBase64,"base64").toString("utf8").replaceAll('"actor":','"actor":false,"actor":')).toString("base64")}))
+  assert.ok(files.some((f,i)=>f.bytesBase64!==source.files[i].bytesBase64))
+  const manifest=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
+  assert.equal(manifest.readyForRehearsal,true)
+  const snapshot={inventoryHash:manifest.inventoryHash,runCount:source.runCount,files}
+  await installImportAuthority()
+  try{
+    await sql(await readFile(new URL("./phase1gb2-canonical-catalog.sql",import.meta.url),"utf8"))
+    const importer=createSyntheticMigrationImporter({mode,query:query("ppo_authority_importer")})
+    assert.equal((await importer.rehearse(snapshot)).rehearsalCommitted,true)
+    await exactImported(snapshot)
+    const catalog=createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:query("ppo_authority_reader")})
+    assert.equal((await catalog.list()).ok,true)
+    const raw=Buffer.from(files.find(f=>f.path.startsWith("records/")).bytesBase64,"base64").toString("utf8")
+    // The raw archive is allowed to retain duplicate properties; the same
+    // text cannot enter the fresh canonical writer transport ambiguously.
+    const r=JSON.parse(raw)
+    await assert.rejects(authority().commitRecord(raw,r.version-1,r.history.at(-1).previousHistoryHash),/Duplicate/)
+    await exactImported(snapshot)
+  }finally{await dropImportAuthority()}
+})
+
 test("F-05 coordinated mixed importer/writer races, rollback and stale snapshots",{timeout:180000},async()=>{
   const snapshot=await captureSyntheticMigrationRehearsal({mode:"synthetic-migration-import-rehearsal-only"})
   const writer=await fixture("kynexa") // same project as the imported active run
