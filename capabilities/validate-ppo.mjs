@@ -93,7 +93,11 @@ export function validatePpoSources(sources) {
   check("github-workflow", manifest.github.workflow === paths.workflow && manifest.github.job === "validate" &&
     Array.isArray(steps) && steps.every(Boolean) &&
     equal(steps.map(s => s.name), manifest.github.requiredSteps) &&
-    equal(steps.map(s => s.command), [...policy.gates.map(g => g.command.join(" ")), "git diff --check"]) &&
+    // The server database integration is a CI-only fixed command, not a
+    // local Darwin runtime requirement. Preserve the exact gate order.
+    equal(steps.map(s => s.command), [policy.gates[0].command.join(" "),
+      "bash deployment/scripts/test-ppo-postgres-authority.sh",
+      ...policy.gates.slice(1).map(g => g.command.join(" ")), "git diff --check"]) &&
     /^  pull_request:\n    branches:\n      - main$/mu.test(sources.workflow))
   check("deployment-boundary", equal(manifest.deploymentProvider, { id: "ppo-self-managed-ubuntu",
     kind: "self-managed-ubuntu-vps", profileId: "personal-project-operator-production",
