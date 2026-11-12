@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { mkdtemp, rm, readdir } from "node:fs/promises"
@@ -14,6 +14,8 @@ import {
   REVIEW_ORPHAN_RECOVERY_CONFIRMATION, REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION
 } from "../../local-operator/development-run-state.mjs"
 import { createPostgresCanonicalAuthority } from "../../local-operator/development-postgres-canonical-authority.mjs"
+import { captureSyntheticMigrationRehearsal, createSyntheticMigrationImporter } from "../../local-operator/development-migration-rehearsal.mjs"
+import { rehearseSyntheticMigrationPreflight } from "../../local-operator/development-migration-preflight.mjs"
 
 // Deliberately not a .test.mjs: the explicit CI step starts a fresh isolated
 // PostgreSQL container. No environment DSN or host database is ever used.
@@ -22,7 +24,7 @@ if(process.env.CI!=="true"||!/^ppo-authority-ci-[0-9]+-[0-9]+$/u.test(container|
   throw Error("Dedicated disposable CI authority container required")
 }
 function sql(input,role="postgres"){
-  if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci"].includes(role))throw Error("invalid test role")
+  if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci","ppo_authority_importer"].includes(role))throw Error("invalid test role")
   return new Promise((resolve,reject)=>{
     const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
     let out="",err=""
@@ -48,7 +50,9 @@ const literals=v=>v===null?"NULL":
 const statements={
   "SELECT ppo_authority.commit_run($1::text,$2::integer,$3::text,$4::text) AS accepted":"accepted",
   "SELECT ppo_authority.read_run($1::text) AS record":"record",
-  "SELECT ppo_authority.read_versions($1::text) AS records":"records"
+  "SELECT ppo_authority.read_versions($1::text) AS records":"records",
+  "SELECT ppo_authority.import_synthetic_snapshot($1::text,$2::text) AS accepted":"accepted",
+  "SELECT ppo_authority.read_synthetic_archive($1::text) AS archive":"archive"
 }
 function query(role){
   return async (statement,values)=>{
@@ -132,10 +136,142 @@ async function staleSnapshot(isolation,record,next,commitA){
   }
 }
 
-test("real PostgreSQL canonical authority: CAS, history, roles and serialized WIP",{timeout:90000},async()=>{
-  const migration=await readFile(new URL("./phase1gb2-canonical-postgres.sql",import.meta.url),"utf8")
-  await sql(migration)
+test("synthetic capture and atomic PostgreSQL import preserve all original bytes and history",{timeout:90000},async()=>{
+  await sql(await readFile(new URL("./phase1gb2-canonical-postgres.sql",import.meta.url),"utf8"))
+  await sql(await readFile(new URL("./phase1gb2-synthetic-import.sql",import.meta.url),"utf8"))
   console.log("PostgreSQL integration runtime:",await sql("SHOW server_version;"))
+  const mode="synthetic-migration-import-rehearsal-only"
+  const snapshot=await captureSyntheticMigrationRehearsal({mode})
+  const importer=createSyntheticMigrationImporter({mode,query:query("ppo_authority_importer")})
+  const read=authority("ppo_authority_reader")
+  const wire=files=>files.map(file=>({...file,normalizedBase64:Buffer.from(JSON.stringify(JSON.parse(Buffer.from(file.bytesBase64,"base64")))).toString("base64")}))
+  const importSql=(hash,files)=>"SELECT ppo_authority.import_synthetic_snapshot("+[hash,JSON.stringify(wire(files))].map(literals).join(",")+");"
+  const counts=()=>sql("SELECT (SELECT count(*) FROM ppo_authority.run_versions)||','||(SELECT count(*) FROM ppo_authority.synthetic_import_batch)||','||(SELECT count(*) FROM ppo_authority.synthetic_import_files)||','||(SELECT revision FROM ppo_authority.gate);")
+  const empty=await counts()
+  assert.equal(empty,"0,0,0,0")
+  assert.equal(snapshot.runCount,3)
+  assert.equal(await importer.readArchive(snapshot.inventoryHash),null)
+  // Identical valid source bytes, independent Node processes with genuinely
+  // different default collation. The same digest must be accepted by SQL.
+  const moduleURL=new URL("../../local-operator/development-migration-preflight.mjs",import.meta.url).href
+  const localeProbe=`
+    import {readFileSync} from "node:fs";
+    import {rehearseSyntheticMigrationPreflight as scan} from ${JSON.stringify(moduleURL)};
+    const files=JSON.parse(readFileSync(0,"utf8"));
+    const result=scan({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))});
+    console.log(JSON.stringify({numeric:new Intl.Collator().resolvedOptions().numeric,hash:result.inventoryHash,ready:result.readyForRehearsal}));
+  `
+  for(const [locale,numeric] of [["en_US.UTF-8",false],["en-u-kn-true",true]]){
+    const child=spawnSync(process.execPath,["--input-type=module","-e",localeProbe],{input:JSON.stringify(snapshot.files),encoding:"utf8",env:{...process.env,LANG:locale,LC_ALL:locale,LC_COLLATE:locale},timeout:10000})
+    assert.equal(child.status,0,child.stderr)
+    assert.deepEqual(JSON.parse(child.stdout),{numeric,hash:snapshot.inventoryHash,ready:true})
+  }
+
+  // Failure after archive insertion and some history appends: remove the
+  // final active run's version 1 marker, recompute the *actual* manifest.
+  // The database must roll back the complete batch, not just the bad run.
+  const activeFile=snapshot.files.find(f=>f.path.startsWith("records/")&&JSON.parse(Buffer.from(f.bytesBase64,"base64")).status==="implementation_in_progress")
+  const active=JSON.parse(Buffer.from(activeFile.bytesBase64,"base64"))
+  // Preserve the JS-parsed values and every original history hash, while
+  // changing exact decimal tokens in the active run's source and markers.
+  for(const [from,to] of [["1e+308","1.00000000000000001e308"],
+    ["9007199254740992","9007199254740993"],['"zero":0','"zero":1e-100000']]){
+    let changed=0
+    const files=snapshot.files.map(file=>{
+      if(file.path!==activeFile.path&&!file.path.startsWith("versions/"+active.runId+"/"))return file
+      const raw=Buffer.from(file.bytesBase64,"base64").toString("utf8")
+      const altered=raw.replaceAll(from,to)
+      if(altered!==raw)changed++
+      assert.deepEqual(JSON.parse(altered),JSON.parse(raw))
+      return {...file,bytesBase64:Buffer.from(altered).toString("base64")}
+    })
+    assert.ok(changed>=2)
+    const manifest=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
+    assert.equal(manifest.readyForRehearsal,true)
+    assert.notEqual(manifest.inventoryHash,snapshot.inventoryHash)
+    let calls=0,dbError
+    const checked=createSyntheticMigrationImporter({mode,query:async(statement,args)=>{
+      calls++
+      try{return await query("ppo_authority_importer")(statement,args)}
+      catch(error){dbError=error;throw error}
+    }})
+    await assert.rejects(checked.rehearse({...snapshot,files,inventoryHash:manifest.inventoryHash}),error=>error.code==="MIGRATION_COMMIT_UNKNOWN")
+    assert.equal(calls,1)
+    assert.match(dbError?.message||"",/normalized numeric or value parity mismatch|numeric field overflow|value overflows numeric format/)
+    assert.equal(await counts(),empty)
+    assert.equal(await importer.readArchive(manifest.inventoryHash),null)
+  }
+  const incomplete=snapshot.files.filter(f=>f.path!=="versions/"+active.runId+"/000001.json")
+  const invalid=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:incomplete.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
+  assert.equal(invalid.readyForRehearsal,false)
+  await assert.rejects(sql(importSql(invalid.inventoryHash,incomplete),"ppo_authority_importer"),/synthetic history import rejected/)
+  assert.equal(await counts(),empty)
+  assert.equal(await importer.readArchive(invalid.inventoryHash),null)
+  // Tampered digest fails even if the file contents are otherwise valid.
+  await assert.rejects(sql(importSql("f".repeat(64),snapshot.files),"ppo_authority_importer"),/digest mismatch/)
+  assert.equal(await counts(),empty)
+  await assert.rejects(importer.rehearse({...snapshot,inventoryHash:"f".repeat(64)}))
+  assert.equal(await counts(),empty)
+  // Successful SQL function return inside a rolled back transaction is
+  // deliberately NOT treated as an acknowledged import.
+  assert.equal(await sql("BEGIN; "+importSql(snapshot.inventoryHash,snapshot.files)+" ROLLBACK;","ppo_authority_importer"),"t")
+  assert.equal(await counts(),empty)
+  // Ordinary writer, reader and importer roles must remain distinct.
+  for(const role of ["ppo_authority_writer","ppo_authority_reader"]){
+    await assert.rejects(sql(importSql(snapshot.inventoryHash,snapshot.files),role),/permission denied/)
+    await assert.rejects(sql("SELECT ppo_authority.read_synthetic_archive("+literals(snapshot.inventoryHash)+");",role),/permission denied/)
+  }
+  await assert.rejects(sql("SELECT * FROM ppo_authority.synthetic_import_files;","ppo_authority_importer"),/permission denied/)
+  await assert.rejects(sql("UPDATE ppo_authority.gate SET revision=0;","ppo_authority_importer"),/permission denied/)
+  await assert.rejects(sql("SELECT ppo_authority.commit_run(NULL,NULL,NULL,NULL);","ppo_authority_importer"),/permission denied/)
+
+  // Two independent clients race for the empty target. Inject loss of the
+  // winning acknowledgement AFTER the psql autocommit has actually completed.
+  let attempts=0,commits=0
+  const loseAck=()=>createSyntheticMigrationImporter({mode,query:async(statement,args)=>{
+    attempts++
+    const result=await query("ppo_authority_importer")(statement,args)
+    if(result.rows[0].accepted===true){commits++;throw Error("synthetic lost committed import response")}
+    return result
+  }})
+  const results=await Promise.allSettled([loseAck().rehearse(snapshot),loseAck().rehearse(snapshot)])
+  assert.equal(attempts,2)
+  assert.equal(commits,1)
+  assert.equal(results.filter(r=>r.status==="rejected"&&r.reason.code==="MIGRATION_COMMIT_UNKNOWN"&&r.reason.inventoryHash===snapshot.inventoryHash).length,1)
+  assert.equal(results.filter(r=>r.status==="rejected"&&r.reason.message==="Synthetic migration rehearsal rejected.").length,1)
+  assert.deepEqual((await counts()).split(",").slice(0,3),["17","1","20"])
+  const archive=await importer.readArchive(snapshot.inventoryHash)
+  const sorted=files=>[...files].sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0)
+  assert.deepEqual(sorted(archive),sorted(snapshot.files))
+  const rechecked=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:archive.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
+  assert.equal(rechecked.inventoryHash,snapshot.inventoryHash)
+  assert.equal(rechecked.readyForRehearsal,true)
+  for(const file of archive.filter(f=>f.path.startsWith("records/"))){
+    const record=JSON.parse(Buffer.from(file.bytesBase64,"base64"))
+    const expected=sorted(archive.filter(f=>f.path.startsWith("versions/"+record.runId+"/"))).map(f=>JSON.parse(Buffer.from(f.bytesBase64,"base64")))
+    assert.deepEqual(await read.readVersions(record.runId),expected)
+    assert.deepEqual(await read.readRun(record.runId),record)
+  }
+  const after=await counts()
+  await assert.rejects(importer.rehearse(snapshot))
+  // Rejected import can advance the internal gate revision only.
+  assert.deepEqual((await counts()).split(",").slice(0,3),after.split(",").slice(0,3))
+  assert.deepEqual(sorted(await importer.readArchive(snapshot.inventoryHash)),sorted(snapshot.files))
+  for(const table of ["synthetic_import_batch","synthetic_import_files"]){
+    await assert.rejects(sql("DELETE FROM ppo_authority."+table+";"),/append-only/)
+    await assert.rejects(sql("UPDATE ppo_authority."+table+" SET inventory_hash=inventory_hash;"),/append-only/)
+  }
+  await assert.rejects(sql("TRUNCATE ppo_authority.synthetic_import_files;"),/append-only/)
+  await assert.rejects(sql("TRUNCATE ppo_authority.synthetic_import_batch,ppo_authority.synthetic_import_files;"),/append-only/)
+  // Subsequent direct writers may append to the imported authority but the
+  // preserved source archive must never change with those mutations.
+  const state=createIsolatedCanonicalRunState({mode:"isolated-postgres-canonical-authority",authority:authority()})
+  await state.transition(active.runId,{expectedVersion:active.version,status:"cancelled",actor:"synthetic-import"})
+  assert.deepEqual(sorted(await importer.readArchive(snapshot.inventoryHash)),sorted(snapshot.files))
+  assert.equal((await read.readVersions(active.runId)).length,active.version+2)
+})
+
+test("real PostgreSQL canonical authority: CAS, history, roles and serialized WIP",{timeout:90000},async()=>{
   const writer=authority(),reader=authority("ppo_authority_reader")
   const a=await fixture("rivora")
   assert.equal(await reader.readRun(a.initial.runId),null)
