@@ -103,7 +103,7 @@ BEGIN
     IF NOT FOUND OR prior.version IS DISTINCT FROM p_expected
        OR p_expected_hash IS NULL OR prior.history_hash IS DISTINCT FROM p_expected_hash
        OR p_record->'history'->v->>'previousHistoryHash' IS DISTINCT FROM prior.history_hash
-       OR (p_record->'history' - v) IS DISTINCT FROM prior.record->'history'
+       OR ((p_record->'history') - v) IS DISTINCT FROM prior.record->'history'
        OR p_record->'project' IS DISTINCT FROM prior.record->'project'
        OR p_record->'task' IS DISTINCT FROM prior.record->'task'
        OR p_record->'baseSha' IS DISTINCT FROM prior.record->'baseSha'
