@@ -119,7 +119,7 @@ BEGIN
     final_record := run_row.final;
     FOR marker_row IN
       SELECT path,bytes FROM ppo_authority.synthetic_import_files
-      WHERE inventory_hash=p_hash AND path LIKE 'versions/'||run_row.id||'/%'
+      WHERE inventory_hash=p_hash AND path LIKE 'versions/%' AND split_part(path,'/',2)=run_row.id
       ORDER BY path COLLATE "C"
     LOOP
       -- Avoid SQL LIKE wildcard interpretation of underscores in run IDs.
