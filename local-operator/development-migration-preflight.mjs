@@ -29,10 +29,9 @@ function compatible(value) {
 }
 function parse(bytes, runId) {
   const source = decoder.decode(bytes)
-  // Establish valid JSON syntax before scanning every literal (keys included).
-  // JSON.parse alone discards overwritten duplicate properties; the source
-  // scan also checks literals that normalization or last-key-wins would hide.
-  JSON.parse(source)
+  // Inspect every literal (keys included) for unsupported encoding, even in
+  // overwritten values. The shared record reader then rejects duplicate
+  // decoded names and validates full JSON grammar before normalization.
   for (const match of source.matchAll(/"(?:[^"\\]|\\.)*"/gsu)) {
     if (!compatible(JSON.parse(match[0]))) return {code:"unsupported_encoding"}
   }

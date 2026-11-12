@@ -1,7 +1,7 @@
+import { createPostgresTestSession } from "./postgres-test-session.mjs"
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { once } from "node:events"
 import { mkdtemp, rm, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -24,23 +24,13 @@ const container=process.env.PPO_AUTHORITY_TEST_CONTAINER
 if(process.env.CI!=="true"||!/^ppo-authority-ci-[0-9]+-[0-9]+$/u.test(container||"")){
   throw Error("Dedicated disposable CI authority container required")
 }
-function sql(input,role="postgres"){
+async function sql(input,role="postgres"){
   if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci","ppo_authority_importer"].includes(role))throw Error("invalid test role")
-  return new Promise((resolve,reject)=>{
-    const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
-    let out="",err=""
-    const timer=setTimeout(()=>p.kill("SIGKILL"),20000)
-    p.stdout.on("data",x=>{out+=x})
-    p.stderr.on("data",x=>{err+=x})
-    p.on("error",error=>{clearTimeout(timer);reject(error)})
-    p.on("close",code=>{
-      clearTimeout(timer)
-      if(code!==0)reject(Error("PostgreSQL CI statement failed: "+err.slice(0,1200)))
-      else resolve(out.trim())
-    })
-    p.stdin.on("error",()=>{})
-    p.stdin.end("SET statement_timeout='15s'; SET ROLE "+role+";\n"+input+"\n")
-  })
+  const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
+  const client=createPostgresTestSession(p,{timeoutMs:20000})
+  try{return await client.send("SET statement_timeout='15s'; SET ROLE "+role+";\n"+input)}
+  catch(error){throw Error("PostgreSQL CI statement failed: "+error.message.slice(0,1200))}
+  finally{await client.close()}
 }
 // Only the fixed adapter statements are supported. Base64 text encoding is
 // for the psql test transport, NOT a replacement for production bind params.
@@ -102,70 +92,23 @@ const commitSql=(record,prior=null)=>"SELECT ppo_authority.commit_run("+[record.
 // Hold a known snapshot in an independent session, then let A commit. B
 // is provably not merely scheduled after A: its read completed beforehand.
 async function staleSnapshot(isolation,record,next,commitA){
-  const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
-  let out="",err="",ready=false
-  const done=once(p,"close")
-  // Attach a rejection handler immediately; failures before the marker must
-  // not leave an unhandled process error or a lingering writer session.
-  done.catch(()=>{})
-  p.stderr.on("data",x=>{err+=x})
-  p.stdin.on("error",()=>{})
-  const marker=new Promise((resolve,reject)=>{
-    p.stdout.on("data",x=>{out+=x;if(!ready&&out.includes("SNAPSHOT_READY")){ready=true;resolve()}})
-    done.then(()=>{if(!ready)reject(Error("snapshot session exited early: "+err))},reject)
-  })
-  const timer=setTimeout(()=>p.kill("SIGKILL"),20000)
+  const client=session("canonical-stale-snapshot","ppo_authority_writer")
   try{
-    p.stdin.write("SET statement_timeout='15s'; SET idle_in_transaction_session_timeout='15s'; SET ROLE ppo_authority_writer;\n"+
-      "\\set VERBOSITY verbose\nBEGIN ISOLATION LEVEL "+isolation+";\n"+
-      "SELECT ppo_authority.read_run("+literals(record.runId)+") IS NOT NULL;\n"+
-      "\\echo SNAPSHOT_READY\n")
-    await marker
+    await client.ready()
+    assert.equal(await client.send("BEGIN ISOLATION LEVEL "+isolation+"; SELECT ppo_authority.read_run("+literals(record.runId)+") IS NOT NULL;"),"t")
     await commitA()
-    p.stdin.end(commitSql(next,record)+" COMMIT;\n")
-    const [code]=await done
-    if(isolation==="READ COMMITTED"){
-      assert.equal(code,0,err)
-      assert.equal(out.trim().split("\n").at(-1),"f")
-    }else{
-      assert.notEqual(code,0)
-      assert.match(err,/40001/)
-    }
-  }finally{
-    clearTimeout(timer)
-    if(p.exitCode===null&&p.signalCode===null)p.kill("SIGKILL")
-    await done.catch(()=>{})
-  }
+    if(isolation==="READ COMMITTED")assert.equal(await client.send(commitSql(next,record)+" COMMIT;"),"f")
+    else await assert.rejects(client.send(commitSql(next,record)+" COMMIT;"),/40001/)
+  }finally{await client.close()}
 }
 
 // Interactive independent transactions use server-observed blocking, never
 // sleeps to choose a winner. Every send is delimited after execution by psql.
 function session(name,role){
   const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
-  let out="",err="",sequence=0,pending=null
-  const done=once(p,"close");done.catch(()=>{})
-  p.stdin.on("error",()=>{})
-  p.stderr.on("data",x=>{err+=x})
-  p.stdout.on("data",x=>{
-    out+=x
-    if(pending&&out.includes(pending.marker)){
-      const {resolve,marker,start}=pending;pending=null
-      resolve(out.slice(start,out.indexOf(marker)).trim())
-    }
-  })
-  done.then(()=>{if(pending){pending.reject(Error(err));pending=null}},()=>{})
-  const timer=setTimeout(()=>p.kill("SIGKILL"),30000)
-  function send(statement){
-    assert.equal(pending,null)
-    const marker="DONE_"+(++sequence)
-    return new Promise((resolve,reject)=>{
-      pending={resolve,reject,marker,start:out.length}
-      p.stdin.write(statement+"\n\\echo "+marker+"\n")
-    })
-  }
-  return {name,send,
-    ready:()=>send("\\set VERBOSITY verbose\nSELECT set_config('application_name',"+literals(name)+",false); SET statement_timeout='15s'; SET idle_in_transaction_session_timeout='15s'; SET ROLE "+role+";"),
-    async close(){clearTimeout(timer);p.stdin.end();if(p.exitCode===null&&p.signalCode===null)p.kill("SIGKILL");await done.catch(()=>{})}
+  const client=createPostgresTestSession(p)
+  return {...client,name,
+    ready:()=>client.send("\\set VERBOSITY verbose\nSELECT set_config('application_name',"+literals(name)+",false); SET statement_timeout='15s'; SET idle_in_transaction_session_timeout='15s'; SET ROLE "+role+";")
   }
 }
 async function blockedBy(waiter,leader){
@@ -187,9 +130,48 @@ async function dropImportAuthority(){
   // Disposable database fixture teardown only; never a reset endpoint.
   await sql("DROP SCHEMA IF EXISTS ppo_authority CASCADE; DROP OWNED BY ppo_authority_owner; DROP ROLE IF EXISTS ppo_authority_importer,ppo_authority_reader,ppo_authority_writer,ppo_authority_owner;")
 }
-async function exactImported(snapshot,extra=[]){
+async function exactImported(snapshot,extra=[],querySql=sql){
+  // Independent oracle: original bytea -> PostgreSQL JSONB, never through
+  // JSON.parse/binary64, compared against the entire version/current sets.
+  const native=JSON.parse(await querySql(`
+    WITH archive AS (
+      SELECT split_part(path,'/',2) AS run_id,split_part(split_part(path,'/',3),'.',1)::integer AS version,
+             convert_from(bytes,'UTF8')::jsonb AS record
+      FROM ppo_authority.synthetic_import_files WHERE inventory_hash=${literals(snapshot.inventoryHash)} AND path LIKE 'versions/%'
+    ), extra AS (
+      SELECT r->>'runId' AS run_id,(r->>'version')::integer AS version,r AS record
+      FROM jsonb_array_elements(${literals(JSON.stringify(extra))}::jsonb) r
+    ), expected AS (SELECT * FROM archive UNION ALL SELECT * FROM extra),
+    differences AS (
+      SELECT count(*) FILTER (WHERE v.run_id IS NULL) AS missing,
+             count(*) FILTER (WHERE e.run_id IS NULL) AS unexpected,
+             count(*) FILTER (WHERE e.run_id IS NOT NULL AND v.run_id IS NOT NULL AND e.record IS DISTINCT FROM v.record) AS different
+      FROM expected e FULL JOIN ppo_authority.run_versions v USING(run_id,version)
+    ), archive_current AS (
+      SELECT substring(path from 9 for 43) AS run_id,convert_from(bytes,'UTF8')::jsonb AS record
+      FROM ppo_authority.synthetic_import_files WHERE inventory_hash=${literals(snapshot.inventoryHash)} AND path LIKE 'records/%'
+    ), archive_latest AS (SELECT DISTINCT ON(run_id) run_id,record FROM archive ORDER BY run_id,version DESC),
+    expected_current AS (SELECT DISTINCT ON(run_id) run_id,record FROM expected ORDER BY run_id,version DESC)
+    SELECT jsonb_build_object(
+      'archiveVersions',(SELECT count(*) FROM archive),
+      'archiveRuns',(SELECT count(*) FROM archive_current),
+      'extraVersions',(SELECT count(*) FROM extra),
+      'actualVersions',(SELECT count(*) FROM ppo_authority.run_versions),
+      'missing',d.missing,'unexpected',d.unexpected,'different',d.different,
+      'duplicateExpected',(SELECT count(*)-count(DISTINCT (run_id,version)) FROM expected),
+      'versionGaps',(SELECT count(*) FROM (SELECT run_id FROM expected GROUP BY run_id HAVING min(version)<>0 OR max(version)+1<>count(*)) g),
+      'invalidExtras',(SELECT count(*) FROM extra x WHERE EXISTS(SELECT 1 FROM archive a WHERE a.run_id=x.run_id AND a.version>=x.version)),
+      'archiveCanonicalDifferences',(SELECT count(*) FROM archive_current c FULL JOIN archive_latest a USING(run_id) WHERE c.run_id IS NULL OR a.run_id IS NULL OR c.record IS DISTINCT FROM a.record),
+      'canonicalDifferences',(SELECT count(*) FROM expected_current e FULL JOIN ppo_authority.current_runs c USING(run_id) WHERE e.run_id IS NULL OR c.run_id IS NULL OR e.record IS DISTINCT FROM c.record)
+    ) FROM differences d;
+  `))
+  const archiveVersions=snapshot.files.filter(f=>f.path.startsWith("versions/")).length
+  assert.deepEqual(native,{archiveVersions,archiveRuns:snapshot.runCount,extraVersions:extra.length,
+    actualVersions:archiveVersions+extra.length,missing:0,unexpected:0,different:0,
+    duplicateExpected:0,versionGaps:0,invalidExtras:0,archiveCanonicalDifferences:0,canonicalDifferences:0},"native archive parity")
+  // Supplement native equality with independent JS readback and byte checks.
   const expected=snapshot.files.filter(f=>f.path.startsWith("versions/")).map(f=>JSON.parse(Buffer.from(f.bytesBase64,"base64"))).concat(extra)
-  const actual=JSON.parse(await sql("SELECT coalesce(jsonb_agg(record ORDER BY run_id,version),'[]') FROM ppo_authority.run_versions;"))
+  const actual=JSON.parse(await querySql("SELECT coalesce(jsonb_agg(record ORDER BY run_id,version),'[]') FROM ppo_authority.run_versions;"))
   const order=rows=>rows.sort((a,b)=>a.runId<b.runId?-1:a.runId>b.runId?1:a.version-b.version)
   assert.deepEqual(order(actual),order(expected))
   const importer=createSyntheticMigrationImporter({mode:"synthetic-migration-import-rehearsal-only",query:query("ppo_authority_importer")})
@@ -273,25 +255,30 @@ test("F-05 coordinated mixed importer/writer races, rollback and stale snapshots
   // Fail late after archive staging/history replay while a writer is waiting.
   // ON_ERROR_STOP disconnects the failed transaction, rolling everything back.
   await installImportAuthority()
-  const a=session("f05-failed-import","ppo_authority_importer"),b=session("f05-surviving-writer","ppo_authority_writer")
+  await sql(`CREATE FUNCTION ppo_authority.ci_import_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $body$ BEGIN PERFORM pg_advisory_xact_lock(158001); RETURN NEW; END $body$;
+    CREATE TRIGGER ci_import_barrier AFTER INSERT ON ppo_authority.synthetic_import_batch FOR EACH ROW EXECUTE FUNCTION ppo_authority.ci_import_barrier();`)
+  const a=session("f05-failed-import","ppo_authority_importer"),b=session("f05-surviving-writer","ppo_authority_writer"),barrier=session("f05-import-barrier","postgres")
   try{
-    await Promise.all([a.ready(),b.ready()])
-    // Hold the gate before calling the deliberately incomplete import, so
-    // the competing writer is provably waiting when the import fails late.
-    await a.send("BEGIN; SET ROLE ppo_authority_owner; UPDATE ppo_authority.gate SET revision=revision+1; SET ROLE ppo_authority_importer;")
-    const waiting=b.send(commitSql(writer.initial));waiting.catch(()=>{})
-    await blockedBy(b,a)
-    const active= snapshot.files.find(f=>f.path.startsWith("records/")&&JSON.parse(Buffer.from(f.bytesBase64,"base64")).status==="implementation_in_progress")
+    await Promise.all([a.ready(),b.ready(),barrier.ready()])
+    await barrier.send("BEGIN; SELECT pg_advisory_xact_lock(158001);")
+    const active=snapshot.files.find(f=>f.path.startsWith("records/")&&JSON.parse(Buffer.from(f.bytesBase64,"base64")).status==="implementation_in_progress")
     const id=JSON.parse(Buffer.from(active.bytesBase64,"base64")).runId
     const files=snapshot.files.filter(f=>f.path!=="versions/"+id+"/000001.json")
     const manifest=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
-    await assert.rejects(a.send(importStatement({inventoryHash:manifest.inventoryHash,files})),/synthetic history import rejected/)
+    // The test-only AFTER INSERT trigger pauses after import itself updates
+    // the canonical gate. No artificial gate lock/update precedes import.
+    const importing=a.send("BEGIN; "+importStatement({inventoryHash:manifest.inventoryHash,files}));importing.catch(()=>{})
+    await blockedBy(a,barrier)
+    const waiting=b.send(commitSql(writer.initial));waiting.catch(()=>{})
+    await blockedBy(b,a)
+    await barrier.send("COMMIT;")
+    await assert.rejects(importing,/synthetic history import rejected/)
     assert.equal(await waiting,"t")
     await noArchive()
     assert.equal(await sql("SELECT count(*) FROM ppo_authority.run_versions;"),"1")
     assert.deepEqual(await authority().readVersions(writer.initial.runId),[writer.initial])
     assert.equal(await revision(),1)
-  }finally{await Promise.all([a.close(),b.close()]);await dropImportAuthority()}
+  }finally{await Promise.all([a.close(),b.close(),barrier.close()]);await dropImportAuthority()}
 })
 
 test("synthetic capture and atomic PostgreSQL import preserve all original bytes and history",{timeout:90000},async()=>{
@@ -425,6 +412,23 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
     assert.deepEqual(inspected.versions,await read.readVersions(record.runId))
   }
   await assert.rejects(sql("SELECT ppo_authority.read_catalog_snapshot();","ppo_authority_importer"),/permission denied/)
+  // M-01: a correctly rounded JS readback cannot expose this native decimal
+  // corruption. The exact oracle must reject it inside this rollback-only
+  // independent session, while the source archive remains untouched.
+  const corrupt=session("oracle-decimal-corruption","postgres")
+  try{
+    await corrupt.ready()
+    await corrupt.send("BEGIN; ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=replace(record::text,'9007199254740992','9007199254740993')::jsonb WHERE version>=4;")
+    await assert.rejects(exactImported(snapshot,[],statement=>corrupt.send(statement)),/native archive parity/)
+    await corrupt.send("ROLLBACK;")
+    await corrupt.send("BEGIN; ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; DELETE FROM ppo_authority.run_versions WHERE run_id="+literals(active.runId)+" AND version=1;")
+    await assert.rejects(exactImported(snapshot,[],statement=>corrupt.send(statement)),/native archive parity/)
+    await corrupt.send("ROLLBACK;")
+    await corrupt.send("BEGIN; INSERT INTO ppo_authority.run_versions SELECT repeat('Z',43),version,history_hash,jsonb_set(record,'{runId}',to_jsonb(repeat('Z',43))) FROM ppo_authority.run_versions WHERE version=0 LIMIT 1;")
+    await assert.rejects(exactImported(snapshot,[],statement=>corrupt.send(statement)),/native archive parity/)
+    await corrupt.send("ROLLBACK;")
+  }finally{await corrupt.close()}
+  await exactImported(snapshot)
   const after=await counts()
   await assert.rejects(importer.rehearse(snapshot))
   // Rejected import can advance the internal gate revision only.
@@ -479,7 +483,10 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
   assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=replace(record::text,'9007199254740992','9007199254740993')::jsonb WHERE version>=4;")).code,"catalog_invalid")
   assert.equal((await injectedRead("INSERT INTO ppo_authority.run_versions SELECT lpad(i::text,43,'A'),0,history_hash,jsonb_set(record,'{runId}',to_jsonb(lpad(i::text,43,'A'))) FROM generate_series(1,101) i CROSS JOIN (SELECT * FROM ppo_authority.run_versions WHERE version=0 LIMIT 1) v;")).code,"catalog_truncated")
   assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=record||jsonb_build_object('oversize',repeat('x',33*1024*1024)) WHERE run_id="+literals(active.runId)+" AND version=0;")).code,"catalog_truncated")
-  await exactImported(snapshot,(await read.readVersions(active.runId)).slice(active.version+1))
+  await assert.rejects(exactImported(snapshot),/native archive parity/) // unaccounted post-import version
+  const extras=(await read.readVersions(active.runId)).slice(active.version+1)
+  await exactImported(snapshot,extras)
+  await assert.rejects(exactImported(snapshot,[...extras,...extras]),/native archive parity/)
 })
 
 test("real PostgreSQL canonical authority: CAS, history, roles and serialized WIP",{timeout:90000},async()=>{

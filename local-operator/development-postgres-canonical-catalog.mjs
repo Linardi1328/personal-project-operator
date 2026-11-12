@@ -1,3 +1,4 @@
+import { parseUniqueJson } from "./unique-json.mjs"
 import { isDeepStrictEqual } from "node:util"
 import { rehearseSyntheticMigrationPreflight } from "./development-migration-preflight.mjs"
 import { parseDevelopmentRunRecord, DEVELOPMENT_RUN_ID_PATTERN, isDevelopmentRunTerminalStatus } from "./development-run-state.mjs"
@@ -62,7 +63,7 @@ export function createPostgresCanonicalCatalog({mode,query}={}){
       let bytes=0
       entries=entries.map(e=>{
         if(!keys(e,["path","serialized"])||typeof e.path!=="string"||typeof e.serialized!=="string")throw Error()
-        const record=JSON.parse(e.serialized)
+        const record=parseUniqueJson(e.serialized,{maxBytes:MAX_BYTES})
         const serialized=JSON.stringify(record)
         const normalized=parseDevelopmentRunRecord(serialized)
         // Never discard extensions, malformed original values or normalization
