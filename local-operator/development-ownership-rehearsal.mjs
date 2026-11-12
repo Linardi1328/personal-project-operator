@@ -85,9 +85,10 @@ export function createSyntheticOwnershipRehearsal({mode,query}={}){
       generation:fields.generation,manifest:fields.manifest,attempt:fields.attempt??null,fence:fields.fence??null})
     const channel=action==="source_commit"?"source":action==="target_commit"?"target":"control"
     const previousUncertainty=uncertain
-    submitted.add(operationId);uncertain=d;last=d;viewVersion++
+    submitted.add(operationId);uncertain=d;last=d;const ticket=++viewVersion
     try{
       const e=one(await query(SQL[channel],[body]),"evidence")
+      if(ticket!==viewVersion)deny("REHEARSAL_SUPERSEDED")
       if(e?.accepted===false&&!e.operationId){uncertain=previousUncertainty;viewVersion++;return false}
       permit=validateEvidence(e,d);uncertain=null;viewVersion++
       return permit.accepted

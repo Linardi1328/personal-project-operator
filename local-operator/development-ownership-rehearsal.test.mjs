@@ -144,3 +144,23 @@ test("reconciled CAS/WIP rejection is explicit and retains committed evidence",a
   assert.equal(reconciled.status,"rejected");assert.equal(reconciled.evidence.accepted,false)
   assert.equal(c.pending(),null)
 })
+test("delayed import acknowledgment cannot replace a newer committed abort permit",async()=>{
+  const h=transport();let release,started
+  const blocked=new Promise(resolve=>{release=resolve}),ready=new Promise(resolve=>{started=resolve})
+  const c=createSyntheticOwnershipRehearsal({mode,query:async(s,a)=>{
+    const result=await h.query(s,a)
+    if(s===S.control&&JSON.parse(a[0]).action==="import"){started();await blocked}
+    return result
+  }})
+  await c.seed();await c.freeze()
+  const importing=c.import();const settled=importing.catch(error=>error);await ready
+  try{
+    assert.equal((await c.abort()).phase,"aborted")
+    release()
+    const result=await settled
+    assert.equal(result.code,"REHEARSAL_COMMIT_UNKNOWN")
+    assert.equal(c.pending(),null)
+    const id=JSON.parse(Buffer.from((await c.observe()).files[0].bytesBase64,"base64")).runId
+    assert.equal((await c.sourceAuthority.readRun(id)).runId,id)
+  }finally{release();await settled}
+})
