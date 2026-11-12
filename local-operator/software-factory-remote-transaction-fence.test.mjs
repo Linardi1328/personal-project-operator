@@ -25,6 +25,7 @@ function fixture() {
   }
   const state = {
     now:"2026-11-12T02:03:00.000Z", used:new Set(),
+    beforeAdmission:null, beforeConsume:null, beforeCommit:null, driverCalls:0,
     host:{hostId:b.hostId,workerId:b.workerId,hostEpoch:7,claimEpoch:7,
       claimHash:CLAIM,keyFingerprint,status:"active"},
     claim:{state:"claimed",claimHash:CLAIM,requestHash:REQ,runId:RUN,
@@ -49,21 +50,38 @@ function fixture() {
       previous=turn
       await before
       try {
-        return await callback({
+        state.driverCalls++
+        let pending = null
+        const fresh = input => {
+          const now = state.now instanceof Date ? state.now.getTime() : Date.parse(state.now)
+          return Number.isFinite(now) && now >= input.claimNotBeforeMs &&
+            now >= input.proofNotBeforeMs && now < input.claimExpiresAtMs &&
+            now < input.proofExpiresAtMs && now < input.requestExpiresAtMs
+        }
+        const result = await callback({
           now:()=>state.now,
           readHostForUpdate:()=>({...state.host}),
           readClaimForUpdate:()=>({...state.claim}),
           readRequestForUpdate:()=>({...state.request}),
           readRunForUpdate:()=>({...state.run,project:{...state.run.project}}),
-          readAdmissionForUpdate:()=>({...state.admission,
-            activeProjects:[...state.admission.activeProjects]}),
-          tryConsumeOnce:input=>{
+          readAdmissionForUpdate:async()=>{
+            await state.beforeAdmission?.()
+            return {...state.admission,activeProjects:[...state.admission.activeProjects]}
+          },
+          tryConsumeFreshOnce:async input=>{
+            await state.beforeConsume?.()
             const id=input.hostId+":"+input.actionId
-            if(state.used.has(id))return false
-            state.used.add(id)
+            if(!fresh(input)||pending||state.used.has(id))return false
+            pending={id,input}
             return true
           }
         })
+        // Simulate a commit-time condition with no await between the final
+        // clock check and publishing the nonce. Not a real database guarantee.
+        await state.beforeCommit?.()
+        if(result!==true||!pending||!fresh(pending.input))return false
+        state.used.add(pending.id)
+        return true
       }finally{unlock()}
     }
   }
@@ -210,4 +228,56 @@ test("untrusted transaction driver cannot yield an unchecked success",async()=>{
   assert.equal(calls,0)
   await assert.rejects(consume(f.b),deny("TX_DRIVER_INVALID"))
   assert.equal(calls,1)
+})
+
+
+test("expiry after asynchronous reads cannot consume a nonce",async()=>{
+  for(const kind of ["proof","claim","request"]){
+    const f=fixture()
+    // Independently exercise a shorter claim or simultaneous proof/request deadline.
+    if(kind==="claim")f.state.claim.leaseExpiresAt="2026-11-12T02:03:15.000Z"
+    if(kind==="request"){
+      f.b.requestExpiresAt=f.b.expiresAt
+      f.state.request.expiresAt=f.b.expiresAt
+    }
+    f.state.beforeAdmission=async()=>{
+      f.state.now=kind==="claim"?"2026-11-12T02:03:15.000Z":"2026-11-12T02:03:30.000Z"
+    }
+    await assert.rejects(f.consume(f.b),deny("TX_EXPIRED"),kind)
+    assert.equal(f.state.used.size,0)
+  }
+})
+
+test("freshness is enforced by the conditional insert and acknowledged commit",async()=>{
+  for(const hook of ["beforeConsume","beforeCommit"]){
+    for(const kind of ["proof","claim","request"]){
+      const f=fixture()
+      if(kind==="claim")f.state.claim.leaseExpiresAt="2026-11-12T02:03:15.000Z"
+      if(kind==="request"){
+        f.b.requestExpiresAt=f.b.expiresAt
+        f.state.request.expiresAt=f.b.expiresAt
+      }
+      f.state[hook]=async()=>{
+        f.state.now=kind==="claim"?"2026-11-12T02:03:15.000Z":"2026-11-12T02:03:30.000Z"
+      }
+      await assert.rejects(f.consume(f.b),
+        deny(hook==="beforeConsume"?"TX_REPLAY_OR_AMBIGUOUS":"TX_UNAVAILABLE_OR_AMBIGUOUS"),
+        hook+":"+kind)
+      assert.equal(f.state.used.size,0)
+    }
+  }
+})
+
+test("external timestamp fields require immutable canonical ISO strings before driver invocation",async()=>{
+  for(const field of ["issuedAt","expiresAt","requestExpiresAt"]){
+    const f=fixture()
+    let coercions=0
+    for(const value of [new Date(f.b[field]),new String(f.b[field]),
+      {toString(){coercions++;return f.b[field]}}]){
+      await assert.rejects(f.consume({...f.b,[field]:value}),deny("TX_BOUNDARY_INVALID"),field)
+    }
+    assert.equal(coercions,0)
+    assert.equal(f.state.driverCalls,0)
+    assert.equal(f.state.used.size,0)
+  }
 })
