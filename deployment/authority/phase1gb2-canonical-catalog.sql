@@ -28,14 +28,14 @@ BEGIN
   IF runs>100 OR versions>10000 THEN
     RETURN jsonb_build_object('revision',revision,'code','catalog_truncated','entries','[]'::jsonb);
   END IF;
-  SELECT coalesce(sum(octet_length(record::text)+128),0) INTO physical_bytes FROM (
+  SELECT coalesce(sum(octet_length(to_json(record::text)::text)+128),0) INTO physical_bytes FROM (
     SELECT record FROM ppo_authority.current_runs
     UNION ALL SELECT record FROM ppo_authority.run_versions
   ) r;
   IF physical_bytes>32*1024*1024 THEN
     RETURN jsonb_build_object('revision',revision,'code','catalog_truncated','entries','[]'::jsonb);
   END IF;
-  SELECT coalesce(jsonb_agg(jsonb_build_object('path',path,'record',record) ORDER BY path COLLATE "C"),'[]'::jsonb)
+  SELECT coalesce(jsonb_agg(jsonb_build_object('path',path,'serialized',record::text) ORDER BY path COLLATE "C"),'[]'::jsonb)
     INTO entries FROM (
       SELECT 'records/'||run_id||'.json' AS path,record FROM ppo_authority.current_runs
       UNION ALL

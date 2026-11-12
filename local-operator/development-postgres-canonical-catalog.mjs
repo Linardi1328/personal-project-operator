@@ -16,6 +16,26 @@ const summary=r=>({schemaVersion:1,catalog:DEVELOPMENT_RUN_CATALOG_ID,runId:r.ru
   terminal:isDevelopmentRunTerminalStatus(r.status),canonicalState:"canonical_current",recoveryRequired:false})
 const order=(a,b)=>Number(a.terminal)-Number(b.terminal)||Date.parse(b.updatedAt)-Date.parse(a.updatedAt)||a.runId.localeCompare(b.runId)
 
+// Compare native decimal values before binary64 rounding can conceal a
+// changed database value. JSON syntax is checked first. Strings stay strings;
+// numeric tokens become canonical coefficient/exponent strings for deep
+// comparison independent of key order and PostgreSQL's expanded notation.
+function exactNumbers(serialized){
+  JSON.parse(serialized)
+  return JSON.parse(serialized.replace(/"(?:[^"\\]|\\.)*"|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/gu,token=>{
+    if(token.startsWith('"'))return token
+    const [mantissa,exponent="0"]=token.toLowerCase().split("e")
+    const negative=mantissa.startsWith("-")
+    const unsigned=negative?mantissa.slice(1):mantissa
+    const fraction=unsigned.includes(".")?unsigned.length-unsigned.indexOf(".")-1:0
+    const coefficient=unsigned.replace(".","").replace(/^0+/u,"")
+    if(!coefficient)return '"decimal:0"'
+    const digits=coefficient.replace(/0+$/u,"")
+    const power=BigInt(exponent)-BigInt(fraction)+BigInt(coefficient.length-digits.length)
+    return JSON.stringify("decimal:"+(negative?"-":"")+digits+"e"+power)
+  }))
+}
+
 // Explicit synthetic read seam. No environment, filesystem or production
 // callers. The transport executes this exact statement with parameter binding,
 // read-committed autocommit, and a bounded response; never retries/falls back.
@@ -32,21 +52,26 @@ export function createPostgresCanonicalCatalog({mode,query}={}){
         !Array.isArray(snapshot.entries)||snapshot.entries.length>10100||
         Buffer.byteLength(JSON.stringify(snapshot))>MAX_BYTES)throw Error()
     }catch{return failure("store_unavailable")}
-    const {revision,entries,code}=snapshot
+    const {revision,code}=snapshot
+    let entries=snapshot.entries
     if(expectedRevision!==undefined&&revision!==expectedRevision)return failure("stale_observation",revision)
     if(code==="catalog_truncated"&&entries.length===0)return failure(code,revision)
     if(code!=="ok")return failure("store_unavailable")
     let manifest,records
     try{
       let bytes=0
-      const inventory=entries.map(e=>{
-        if(!keys(e,["path","record"])||typeof e.path!=="string")throw Error()
-        const serialized=JSON.stringify(e.record)
+      entries=entries.map(e=>{
+        if(!keys(e,["path","serialized"])||typeof e.path!=="string"||typeof e.serialized!=="string")throw Error()
+        const record=JSON.parse(e.serialized)
+        const serialized=JSON.stringify(record)
         const normalized=parseDevelopmentRunRecord(serialized)
         // Never discard extensions, malformed original values or normalization
         // loss from the canonical database before validating the full chain.
-        if(!isDeepStrictEqual(normalized,e.record))throw Error()
-        const buffer=Buffer.from(serialized)
+        if(!isDeepStrictEqual(normalized,record)||!isDeepStrictEqual(exactNumbers(e.serialized),exactNumbers(JSON.stringify(normalized))))throw Error()
+        return {path:e.path,record:normalized}
+      })
+      const inventory=entries.map(e=>{
+        const buffer=Buffer.from(JSON.stringify(e.record))
         bytes+=buffer.length
         if(bytes>MAX_BYTES)throw Error()
         return {relativePath:e.path,bytes:buffer}

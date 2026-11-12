@@ -17,7 +17,9 @@ before(async()=>{
 const catalog=(value=snapshot)=>createPostgresCanonicalCatalog({mode,query:async(statement,args)=>{
   assert.equal(statement,"SELECT ppo_authority.read_catalog_snapshot() AS snapshot")
   assert.deepEqual(args,[])
-  return {rows:[{snapshot:structuredClone(value)}]}
+  const response=structuredClone(value)
+  if(Array.isArray(response?.entries))response.entries=response.entries.map(e=>e&&Object.hasOwn(e,"record")?{path:e.path,serialized:JSON.stringify(e.record)}:e)
+  return {rows:[{snapshot:response}]}
 }})
 const altered=fn=>{const value=structuredClone(snapshot);fn(value);return catalog(value)}
 
@@ -147,4 +149,24 @@ test("valid same-project and third-project WIP conflicts invalidate observations
     conflict.entries.push({path:"records/"+same.runId+".json",record:same},{path:"versions/"+same.runId+"/000000.json",record:same})
     assert.equal((await catalog(conflict).list()).code,"catalog_invalid")
   }finally{await rm(dir,{recursive:true,force:true})}
+})
+
+test("database exact decimals cannot hide behind matching binary64 values",async()=>{
+  for(const [from,to] of [["9007199254740992","9007199254740993"],["1e+308","1.00000000000000001e308"],['"zero":0','"zero":1e-100000']]){
+    let changed=0
+    const value=structuredClone(snapshot)
+    value.entries=value.entries.map(e=>{
+      const source=JSON.stringify(e.record)
+      const altered=source.replaceAll(from,to)
+      if(source!==altered)changed++
+      assert.deepEqual(JSON.parse(source),JSON.parse(altered))
+      return {path:e.path,serialized:altered}
+    })
+    assert.ok(changed>0)
+    assert.equal((await catalog(value).list()).code,"catalog_invalid")
+  }
+  // Expanded exact PostgreSQL decimal notation remains a valid positive.
+  const value=structuredClone(snapshot)
+  value.entries=value.entries.map(e=>({path:e.path,serialized:JSON.stringify(e.record).replaceAll('1e+308','1'+'0'.repeat(308))}))
+  assert.equal((await catalog(value).list()).ok,true)
 })

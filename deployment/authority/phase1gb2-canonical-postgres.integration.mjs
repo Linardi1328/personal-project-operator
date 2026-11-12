@@ -476,6 +476,7 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
     return createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:async()=>({rows:[JSON.parse(await sql("BEGIN; "+mutation+" SET LOCAL ROLE ppo_authority_reader; "+bound+" ROLLBACK;"))]})}).list()
   }
   assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=jsonb_set(record,'{history,0,actor}','\"corrupt\"') WHERE version=0;")).code,"catalog_invalid")
+  assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=replace(record::text,'9007199254740992','9007199254740993')::jsonb WHERE version>=4;")).code,"catalog_invalid")
   assert.equal((await injectedRead("INSERT INTO ppo_authority.run_versions SELECT lpad(i::text,43,'A'),0,history_hash,jsonb_set(record,'{runId}',to_jsonb(lpad(i::text,43,'A'))) FROM generate_series(1,101) i CROSS JOIN (SELECT * FROM ppo_authority.run_versions WHERE version=0 LIMIT 1) v;")).code,"catalog_truncated")
   assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=record||jsonb_build_object('oversize',repeat('x',33*1024*1024)) WHERE run_id="+literals(active.runId)+" AND version=0;")).code,"catalog_truncated")
   await exactImported(snapshot,(await read.readVersions(active.runId)).slice(active.version+1))
