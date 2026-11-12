@@ -109,6 +109,7 @@ export async function runPostgresActionCases(t,h){
  }))
  await t.test("canonical mutations serialize with consumption; invalid catalog/lost lane/stale refs fail closed",async()=>fixture(async({c,run,registered,f})=>{
   const a=session("action-run-writer","ppo_rehearsal_target"),b=session("action-run-consumer","ppo_action_consumer")
+  let targetOperation
   try{
    await a.ready();await b.ready()
    // Existing trusted target state machine supplies the valid CAS candidate;
@@ -118,14 +119,15 @@ export async function runPostgresActionCases(t,h){
     {rows:[{evidence:JSON.parse(await a.send(bind(s,args)+";"))}]}:ownQuery(s,args)})
    await other.reconcile(c.operation())
    await other.target.progress(run.runId,{expectedVersion:run.version,status:run.status,actor:"action-test",reason:"canonical CAS race"})
+   targetOperation=other.operation()
    const waiting=b.send(rawConsume(registered.ticket));await blockedBy(b,a);await a.send("COMMIT;")
    assert.equal(JSON.parse(await waiting).consumed,false)
   }finally{await a.close();await b.close()}
-  // New valid context follows current run; then a legitimate cancellation loses lane.
-  await c.reconcile({...c.operation()}).catch(()=>{})
+  // New valid context follows the current run, with a matching host epoch.
   const current=JSON.parse(await sql("SELECT ppo_authority.read_run("+L(run.runId)+");","ppo_authority_reader"))
-  const n=signedActionFixture(current,{keys:f.keys});await host(n,1)
+  const n=signedActionFixture(current,{keys:f.keys,epoch:2});await host(n,1)
   const r=await verifier(n).register(n.input)
+  assert.equal(JSON.parse(await sql("BEGIN; "+rawConsume(r.ticket)+" ROLLBACK;","ppo_action_consumer")).consumed,true)
   // Privileged rollback-only probes never alter stored histories.
   for(const mutation of ["UPDATE ppo_authority.rehearsal_owner SET generation=generation+1;",
    "UPDATE ppo_authority.run_versions SET record=jsonb_set(record,'{actor}','false') WHERE run_id="+L(run.runId)+";",
@@ -133,6 +135,11 @@ export async function runPostgresActionCases(t,h){
    const result=JSON.parse(await sql("BEGIN; ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; "+mutation+" SET LOCAL ROLE ppo_action_consumer; "+rawConsume(r.ticket)+" ROLLBACK;"))
    assert.equal(result.consumed,false)
   }
+  const resumed=createSyntheticOwnershipRehearsal({mode:"synthetic-ownership-cutover-rehearsal-only",query:ownQuery})
+  assert.equal((await resumed.reconcile(targetOperation)).status,"committed")
+  await resumed.target.transition(run.runId,{expectedVersion:current.version,status:"cancelled",actor:"action-test"})
+  assert.equal(JSON.parse(await sql(rawConsume(r.ticket),"ppo_action_consumer")).consumed,false)
+  assert.equal(JSON.parse(await sql("SELECT ppo_authority.read_run("+L(run.runId)+");","ppo_authority_reader")).status,"cancelled")
   assert.equal(await count(),"0")
  }))
  await t.test("independent host grants, paths, key/worker/role and Git refs are enforced inside consume",async()=>fixture(async({run,f})=>{
