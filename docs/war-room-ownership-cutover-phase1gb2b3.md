@@ -1,0 +1,67 @@
+# RIC-157 — synthetic ownership and cutover rehearsal
+
+Base: PR #158 squash `2b1f9e84aeda5c0ac9dcf2ddf66852cc4a694b63`. This is the remaining B2b3 laboratory slice. It adds no production routing, connection configuration, source capture endpoint, host enrollment, execution, deployment, retirement or factory cycle. RIC-157 remains In Progress; RIC-59/RIC-61 remain held. B2c host/claim/action-nonce/freshness and actual resource-side fencing stay separate. No merge without owner approval.
+
+## What the source fence actually protects
+
+The fixed private fixture generator produces only synthetic filesystem records, then removes its scratch tree. Its exact bytes and separately validated normalized values seed a new **durable PostgreSQL source corpus** in `rehearsal_source_files`. All later source mutations occur in that corpus, not in the filesystem. No caller-supplied filesystem root, real record or arbitrary source capture is exposed.
+
+This deliberately models two logical authorities within one disposable PostgreSQL fault/transaction domain: the source byte corpus and the existing target canonical tables. The exclusive fence is enforced at the actual source SQL mutation boundary under the same existing canonical gate used by ownership and target writers. It is not a routing boolean, a JavaScript lock, a filesystem lock or a claim of Mac/VPS quiescence. It does not prove a transaction spanning two independent databases or a filesystem and database. A real filesystem source requires separately reviewed protected writer/host fences and quiescence, authenticated routing and operational proof. Same-UID/privileged filesystem interference during initial private fixture generation remains outside that generator's trusted single-process boundary.
+
+Every source state-machine entrypoint (`create`, transition/cancellation, progress and both review recoveries) uses the existing isolated canonical state-machine factory and validator with a source authority adapter. All commits converge on `rehearsal_source_commit`; ordinary roles cannot mutate source tables directly. The source SQL operation enforces expected version/hash, immutable history prefix and project/task/base bindings, exact native value storage and prospective WIP admission. Target commits delegate to the unchanged `commit_run` after ownership validation. No dual writes or historical repair is implemented.
+
+## Identity, generations and states
+
+The optional CI-only schema adds a server-generated UUID target identity on fresh installation, and a separate server-generated UUID source identity at one-shot bootstrap. They persist across process/database restart and are never derived from revision, manifest or database name. Ordinary roles cannot replace either identity. Every mutation binds both IDs and the current ownership generation. A fresh authority at the same revision/generation has different identities and rejects old handles and receipts. Administrator cloning/restoring the entire database with the same identities is not detected: anti-rollback/restore identity policy is a production gate, not a claimed laboratory guarantee.
+
+Ownership generation is an exact decimal string at the JS boundary, stored as bigint bounded to 1..1,000,000,000. It advances on every committed ownership change; it never wraps or resets. Canonical gate revision remains a separate exact decimal string. The existing gate and CAS/WIP implementation are not redesigned. The optional wrappers also advance the gate for ownership/source/receipt operations, so its laboratory revision includes those operations.
+
+| Phase | Source mutation | Target mutation | Evidence |
+| --- | --- | --- | --- |
+| empty | denied | denied | new target identity; no source identity/permit |
+| source, generation 1 | current source permit only | denied | committed bootstrap/source receipt |
+| held, generation 2 | denied | denied | durable attempt ID, exclusive fence UUID and manifest |
+| target, generation 3 | denied | current target permit only | committed activation receipt and native parity proof |
+| aborted, generation 3 | fresh source permit only | denied permanently | committed conditional pre-activation abort |
+
+Import is staging within `held`; it does not transfer ownership. The held fence persists across controller/server crashes, through source capture, import, complete validation and handoff. Freeze first compares the exact observed revision/manifest under the gate and revokes the source permit. The subsequent capture/verification reads the held source and target in one PostgreSQL statement snapshot. A source write racing freeze either completes first and invalidates its revision/manifest, or follows freeze and is denied before changing source data.
+
+## Handoff and mutation authority
+
+Only the fixed controller function can bootstrap, freeze, import, activate or abort. Separate NOLOGIN roles can execute only the source or target mutation wrapper. Readers receive a bounded observation without writer permits. Receipts/permits are internal trusted-server capabilities, not client credentials or host/action execution authorization.
+
+The optional module revokes the old writer's direct `commit_run` permission and the old importer's direct import permission **in the disposable lab only**. This closes bypasses before and after activation; read privileges/archive inspection remain. Helpers and direct tables are not executable/writable by those roles. The original canonical/import/catalog SQL and production filesystem routing remain unchanged.
+
+While held, the controller imports from the durable source corpus itself, not caller-supplied replacement bytes. The existing archive validator/normalizer is reused for bootstrap, including raw/normalized native decimal equality. Source raw last-key-wins archive compatibility remains intact. Canonical text submissions/catalogs still reject duplicate decoded keys. JS revalidates the entire source history/preflight and complete target catalog, refusing invalid/truncated/unavailable data. SQL activation independently rechecks held fence/attempt, both identities, generation, exact current revision, manifest and complete native JSONB and bytea parity across source, immutable archive, all target versions and all current records. Missing/unexpected rows or binary64-hidden value differences deny activation. Import and its independent stable parity query use separate SPI commands so verification sees the transaction's staged writes.
+
+Writer permits are opaque server-generated UUIDs, rotated after each acknowledged successful or CAS/WIP-rejected authorized mutation. A permit returned inside an uncommitted transaction is not usable evidence: the trusted transport must resolve only after acknowledged COMMIT. Unknown/lost responses cannot supply the next unpredictable permit. This is ownership coordination only, not B2c host claims, signed leases, freshness or execution nonce consumption.
+
+## Ambiguity, crash and reconciliation
+
+Each submission has a bounded UUID operation identity and SHA-256 of its exact serialized request. Its immutable receipt commits atomically with the state/data/ownership effect. It records action, outcome, identities, manifest, generation, revision, fence/attempt and the current private writer permit where applicable. No automatic mutation retry, duplicate-operation replay or filesystem fallback exists. Repeated operation IDs are rejected; reconciliation is a separate read.
+
+The caller must preserve the bounded operation descriptor **before dispatch** (available through `pending()`/`operation()` to the trusted transport). This lab has no production transport/outbox. The real integration test journals that descriptor to a private file and fsyncs it before sending activation. The journal contains no writer permit and cannot authorize a mutation. A new Node process reads that journal after an unclean restart of the disposable PostgreSQL server and independently fetches the committed receipt. Whole-machine filesystem/power-loss durability of that caller journal is not claimed.
+
+Unknown acknowledgment latches the coordinator and denies both its writer interfaces and further ordinary transitions. A restarted client starts without any permit. Absence, stale receipts, malformed responses, mismatched hashes/identities/generations or unavailable storage never grant authority. `reconcile(descriptor)` uses an independent fresh autocommit read of the exact operation ID/hash; it adopts only a positive receipt whose owner identity, phase, generation, manifest, fence/attempt, import stage and current permit still agree with durable ownership. Historical superseded receipts remain stored but cannot reactivate an old writer. If another authorized actor has advanced the permit/ownership, this API conservatively stays blocked; an operator needs the appropriate current committed descriptor. It does not infer noncommit from absence or automatically retry.
+
+A fence acquisition that has not committed cannot be claimed as held: that coordinator remains blocked and target writes remain impossible. Other actors may still be legitimate source-only writers until freeze actually commits. Once held, all source SQL mutations are denied globally. Following an unknown activation, target authority can be obtained only through positive committed evidence, never by predicting a generation or reading a routing flag.
+
+## Abort is not reverse migration
+
+Abort is permitted only from the matching held fence/generation, with a fresh revision/manifest and no committed activation receipt. It acquires the same gate, then advances generation and issues a fresh source permit. Thus in-flight requests settle before abort; even delayed requests not yet at the gate carry the old generation and cannot activate afterward. A restarted uncertain controller can explicitly abort from the exact held fence pinned in its saved operation descriptor plus positive current held-state evidence. A positive committed abort receipt, not a missing activation receipt, authorizes source resumption.
+
+Abort never deletes imported archive/history or resets the target. If import staged successfully, that target stays quarantined/read-only; source bytes initially remain unchanged. There is no second freeze/import attempt on an aborted instance. After target activation, abort/source resumption is always denied; a separately proven reverse migration is required. No reverse migration API is included.
+
+## Bounds and production prerequisites
+
+The source is limited to 20 runs, 2,100 files, 128 KiB per raw/normalized file, and separately 4 MiB aggregate raw and normalized bytes. Requests are capped at 12 MiB; observations at 40 MiB (including the existing 32 MiB catalog bound); receipts at 4 KiB and 1,000 rows. The last receipt slot is reserved for explicit abort. Exhausted bounds fail closed without pruning or resetting history. The source may be valid yet produce an oversized target catalog (e.g. native decimal expansion); such a handoff remains blocked and may only pre-activation abort.
+
+These are accepted-input/result bounds, not CPU, I/O, query-cost or process-memory ceilings. The source/target parity scans and existing current-run views/catalog sums can still scan, parse, sort and serialize substantial data. [M-03 measured resource budgets](war-room-canonical-catalog-phase1gb2b3.md) remain mandatory before any production installation or routing proposal: pre-statement timeouts, lock/idle budgets, memory/temp disk/connection/concurrency/transport limits, worst-case EXPLAIN/load and cancellation evidence, retention/index strategy and protected identity/restore/auth/source fences. This PR does not establish those production budgets.
+
+## Verification
+
+The existing explicit disposable PostgreSQL workflow step installs this module only in fresh test fixtures and tears those fixtures down; schema drops there are test cleanup, not a protocol reset endpoint. No production migration or deployment installs it.
+
+Tests cover source-only/held/target-only boundaries; SQL role and old-entrypoint bypass denial; source/target CAS/WIP rejection; exact source/archive/history parity; source permit misuse after target ownership; native hidden-decimal activation denial; invalid/truncated catalog refusal; concurrent source mutation/freeze with server-observed blocking; simultaneous cutovers; wrong IDs, manifest, generation/fence and stale revisions; repeatable-read/serializable source writers; committed lost acknowledgment, operation identity and independent new-process reconciliation; real disposable PostgreSQL SIGKILL/WAL restart; backend termination before activation commit; absent-receipt uncertainty; late import failure with atomic rollback; abort before/after staging and no source revival after activation; authority replacement at identical revision/generation. Unit tests cover strict typed/bounded transport evidence, identity replacement and persistent fail-closed client latches. Existing tests retain raw byte/native JSONB/archive immutability and both recovery paths.
+
+Run focused ownership/validation tests, `bash deployment/scripts/test-ppo-postgres-authority.sh` in its explicit disposable CI context, and all seven workflow gates. Record the exact head, CI URLs and fresh independent review in the PR/Linear. Owner approval is required before merge.
