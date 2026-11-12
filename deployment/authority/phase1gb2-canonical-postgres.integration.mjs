@@ -1,7 +1,7 @@
+import { createPostgresTestSession } from "./postgres-test-session.mjs"
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { once } from "node:events"
 import { mkdtemp, rm, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -15,6 +15,7 @@ import {
 } from "../../local-operator/development-run-state.mjs"
 import { createPostgresCanonicalAuthority } from "../../local-operator/development-postgres-canonical-authority.mjs"
 import { captureSyntheticMigrationRehearsal, createSyntheticMigrationImporter } from "../../local-operator/development-migration-rehearsal.mjs"
+import { createPostgresCanonicalCatalog } from "../../local-operator/development-postgres-canonical-catalog.mjs"
 import { rehearseSyntheticMigrationPreflight } from "../../local-operator/development-migration-preflight.mjs"
 
 // Deliberately not a .test.mjs: the explicit CI step starts a fresh isolated
@@ -23,23 +24,13 @@ const container=process.env.PPO_AUTHORITY_TEST_CONTAINER
 if(process.env.CI!=="true"||!/^ppo-authority-ci-[0-9]+-[0-9]+$/u.test(container||"")){
   throw Error("Dedicated disposable CI authority container required")
 }
-function sql(input,role="postgres"){
+async function sql(input,role="postgres"){
   if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci","ppo_authority_importer"].includes(role))throw Error("invalid test role")
-  return new Promise((resolve,reject)=>{
-    const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
-    let out="",err=""
-    const timer=setTimeout(()=>p.kill("SIGKILL"),20000)
-    p.stdout.on("data",x=>{out+=x})
-    p.stderr.on("data",x=>{err+=x})
-    p.on("error",error=>{clearTimeout(timer);reject(error)})
-    p.on("close",code=>{
-      clearTimeout(timer)
-      if(code!==0)reject(Error("PostgreSQL CI statement failed: "+err.slice(0,1200)))
-      else resolve(out.trim())
-    })
-    p.stdin.on("error",()=>{})
-    p.stdin.end("SET statement_timeout='15s'; SET ROLE "+role+";\n"+input+"\n")
-  })
+  const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
+  const client=createPostgresTestSession(p,{timeoutMs:20000})
+  try{return await client.send("SET statement_timeout='15s'; SET ROLE "+role+";\n"+input)}
+  catch(error){throw Error("PostgreSQL CI statement failed: "+error.message.slice(0,1200))}
+  finally{await client.close()}
 }
 // Only the fixed adapter statements are supported. Base64 text encoding is
 // for the psql test transport, NOT a replacement for production bind params.
@@ -51,6 +42,7 @@ const statements={
   "SELECT ppo_authority.commit_run($1::text,$2::integer,$3::text,$4::text) AS accepted":"accepted",
   "SELECT ppo_authority.read_run($1::text) AS record":"record",
   "SELECT ppo_authority.read_versions($1::text) AS records":"records",
+  "SELECT ppo_authority.read_catalog_snapshot() AS snapshot":"snapshot",
   "SELECT ppo_authority.import_synthetic_snapshot($1::text,$2::text) AS accepted":"accepted",
   "SELECT ppo_authority.read_synthetic_archive($1::text) AS archive":"archive"
 }
@@ -100,45 +92,224 @@ const commitSql=(record,prior=null)=>"SELECT ppo_authority.commit_run("+[record.
 // Hold a known snapshot in an independent session, then let A commit. B
 // is provably not merely scheduled after A: its read completed beforehand.
 async function staleSnapshot(isolation,record,next,commitA){
-  const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
-  let out="",err="",ready=false
-  const done=once(p,"close")
-  // Attach a rejection handler immediately; failures before the marker must
-  // not leave an unhandled process error or a lingering writer session.
-  done.catch(()=>{})
-  p.stderr.on("data",x=>{err+=x})
-  p.stdin.on("error",()=>{})
-  const marker=new Promise((resolve,reject)=>{
-    p.stdout.on("data",x=>{out+=x;if(!ready&&out.includes("SNAPSHOT_READY")){ready=true;resolve()}})
-    done.then(()=>{if(!ready)reject(Error("snapshot session exited early: "+err))},reject)
-  })
-  const timer=setTimeout(()=>p.kill("SIGKILL"),20000)
+  const client=session("canonical-stale-snapshot","ppo_authority_writer")
   try{
-    p.stdin.write("SET statement_timeout='15s'; SET idle_in_transaction_session_timeout='15s'; SET ROLE ppo_authority_writer;\n"+
-      "\\set VERBOSITY verbose\nBEGIN ISOLATION LEVEL "+isolation+";\n"+
-      "SELECT ppo_authority.read_run("+literals(record.runId)+") IS NOT NULL;\n"+
-      "\\echo SNAPSHOT_READY\n")
-    await marker
+    await client.ready()
+    assert.equal(await client.send("BEGIN ISOLATION LEVEL "+isolation+"; SELECT ppo_authority.read_run("+literals(record.runId)+") IS NOT NULL;"),"t")
     await commitA()
-    p.stdin.end(commitSql(next,record)+" COMMIT;\n")
-    const [code]=await done
-    if(isolation==="READ COMMITTED"){
-      assert.equal(code,0,err)
-      assert.equal(out.trim().split("\n").at(-1),"f")
-    }else{
-      assert.notEqual(code,0)
-      assert.match(err,/40001/)
-    }
-  }finally{
-    clearTimeout(timer)
-    if(p.exitCode===null&&p.signalCode===null)p.kill("SIGKILL")
-    await done.catch(()=>{})
+    if(isolation==="READ COMMITTED")assert.equal(await client.send(commitSql(next,record)+" COMMIT;"),"f")
+    else await assert.rejects(client.send(commitSql(next,record)+" COMMIT;"),/40001/)
+  }finally{await client.close()}
+}
+
+// Interactive independent transactions use server-observed blocking, never
+// sleeps to choose a winner. Every send is delimited after execution by psql.
+function session(name,role){
+  const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
+  const client=createPostgresTestSession(p)
+  return {...client,name,
+    ready:()=>client.send("\\set VERBOSITY verbose\nSELECT set_config('application_name',"+literals(name)+",false); SET statement_timeout='15s'; SET idle_in_transaction_session_timeout='15s'; SET ROLE "+role+";")
   }
 }
+async function blockedBy(waiter,leader){
+  const deadline=Date.now()+10000
+  while(Date.now()<deadline){
+    const waiting=await sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity w JOIN pg_stat_activity b ON b.pid=ANY(pg_blocking_pids(w.pid)) WHERE w.application_name="+literals(waiter.name)+" AND b.application_name="+literals(leader.name)+" AND w.wait_event_type='Lock');")
+    if(waiting==="t")return
+  }
+  assert.fail("expected server-observed gate contention")
+}
+const importStatement=snapshot=>"SELECT ppo_authority.import_synthetic_snapshot("+[
+  snapshot.inventoryHash,JSON.stringify(snapshot.files.map(f=>({...f,normalizedBase64:Buffer.from(JSON.stringify(JSON.parse(Buffer.from(f.bytesBase64,"base64")))).toString("base64")})))
+].map(literals).join(",")+");"
+async function installImportAuthority(){
+  for(const name of ["phase1gb2-canonical-postgres.sql","phase1gb2-synthetic-import.sql"])
+    await sql(await readFile(new URL("./"+name,import.meta.url),"utf8"))
+}
+async function dropImportAuthority(){
+  // Disposable database fixture teardown only; never a reset endpoint.
+  await sql("DROP SCHEMA IF EXISTS ppo_authority CASCADE; DROP OWNED BY ppo_authority_owner; DROP ROLE IF EXISTS ppo_authority_importer,ppo_authority_reader,ppo_authority_writer,ppo_authority_owner;")
+}
+async function exactImported(snapshot,extra=[],querySql=sql){
+  // Independent oracle: original bytea -> PostgreSQL JSONB, never through
+  // JSON.parse/binary64, compared against the entire version/current sets.
+  const native=JSON.parse(await querySql(`
+    WITH archive AS (
+      SELECT split_part(path,'/',2) AS run_id,split_part(split_part(path,'/',3),'.',1)::integer AS version,
+             convert_from(bytes,'UTF8')::jsonb AS record
+      FROM ppo_authority.synthetic_import_files WHERE inventory_hash=${literals(snapshot.inventoryHash)} AND path LIKE 'versions/%'
+    ), extra AS (
+      SELECT r->>'runId' AS run_id,(r->>'version')::integer AS version,r AS record
+      FROM jsonb_array_elements(${literals(JSON.stringify(extra))}::jsonb) r
+    ), expected AS (SELECT * FROM archive UNION ALL SELECT * FROM extra),
+    differences AS (
+      SELECT count(*) FILTER (WHERE v.run_id IS NULL) AS missing,
+             count(*) FILTER (WHERE e.run_id IS NULL) AS unexpected,
+             count(*) FILTER (WHERE e.run_id IS NOT NULL AND v.run_id IS NOT NULL AND e.record IS DISTINCT FROM v.record) AS different
+      FROM expected e FULL JOIN ppo_authority.run_versions v USING(run_id,version)
+    ), archive_current AS (
+      SELECT substring(path from 9 for 43) AS run_id,convert_from(bytes,'UTF8')::jsonb AS record
+      FROM ppo_authority.synthetic_import_files WHERE inventory_hash=${literals(snapshot.inventoryHash)} AND path LIKE 'records/%'
+    ), archive_latest AS (SELECT DISTINCT ON(run_id) run_id,record FROM archive ORDER BY run_id,version DESC),
+    expected_current AS (SELECT DISTINCT ON(run_id) run_id,record FROM expected ORDER BY run_id,version DESC)
+    SELECT jsonb_build_object(
+      'archiveVersions',(SELECT count(*) FROM archive),
+      'archiveRuns',(SELECT count(*) FROM archive_current),
+      'extraVersions',(SELECT count(*) FROM extra),
+      'actualVersions',(SELECT count(*) FROM ppo_authority.run_versions),
+      'missing',d.missing,'unexpected',d.unexpected,'different',d.different,
+      'duplicateExpected',(SELECT count(*)-count(DISTINCT (run_id,version)) FROM expected),
+      'versionGaps',(SELECT count(*) FROM (SELECT run_id FROM expected GROUP BY run_id HAVING min(version)<>0 OR max(version)+1<>count(*)) g),
+      'invalidExtras',(SELECT count(*) FROM extra x WHERE EXISTS(SELECT 1 FROM archive a WHERE a.run_id=x.run_id AND a.version>=x.version)),
+      'archiveCanonicalDifferences',(SELECT count(*) FROM archive_current c FULL JOIN archive_latest a USING(run_id) WHERE c.run_id IS NULL OR a.run_id IS NULL OR c.record IS DISTINCT FROM a.record),
+      'canonicalDifferences',(SELECT count(*) FROM expected_current e FULL JOIN ppo_authority.current_runs c USING(run_id) WHERE e.run_id IS NULL OR c.run_id IS NULL OR e.record IS DISTINCT FROM c.record)
+    ) FROM differences d;
+  `))
+  const archiveVersions=snapshot.files.filter(f=>f.path.startsWith("versions/")).length
+  assert.deepEqual(native,{archiveVersions,archiveRuns:snapshot.runCount,extraVersions:extra.length,
+    actualVersions:archiveVersions+extra.length,missing:0,unexpected:0,different:0,
+    duplicateExpected:0,versionGaps:0,invalidExtras:0,archiveCanonicalDifferences:0,canonicalDifferences:0},"native archive parity")
+  // Supplement native equality with independent JS readback and byte checks.
+  const expected=snapshot.files.filter(f=>f.path.startsWith("versions/")).map(f=>JSON.parse(Buffer.from(f.bytesBase64,"base64"))).concat(extra)
+  const actual=JSON.parse(await querySql("SELECT coalesce(jsonb_agg(record ORDER BY run_id,version),'[]') FROM ppo_authority.run_versions;"))
+  const order=rows=>rows.sort((a,b)=>a.runId<b.runId?-1:a.runId>b.runId?1:a.version-b.version)
+  assert.deepEqual(order(actual),order(expected))
+  const importer=createSyntheticMigrationImporter({mode:"synthetic-migration-import-rehearsal-only",query:query("ppo_authority_importer")})
+  const orderFiles=files=>[...files].sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0)
+  assert.deepEqual(orderFiles(await importer.readArchive(snapshot.inventoryHash)),orderFiles(snapshot.files))
+}
+
+test("legacy raw duplicate archive semantics and exact bytes survive canonical transport hardening",{timeout:30000},async()=>{
+  const mode="synthetic-migration-import-rehearsal-only"
+  const source=await captureSyntheticMigrationRehearsal({mode})
+  const files=source.files.map(f=>({path:f.path,bytesBase64:Buffer.from(Buffer.from(f.bytesBase64,"base64").toString("utf8").replaceAll('"actor":','"actor":false,"actor":')).toString("base64")}))
+  assert.ok(files.some((f,i)=>f.bytesBase64!==source.files[i].bytesBase64))
+  const manifest=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
+  assert.equal(manifest.readyForRehearsal,true)
+  const snapshot={inventoryHash:manifest.inventoryHash,runCount:source.runCount,files}
+  await installImportAuthority()
+  try{
+    await sql(await readFile(new URL("./phase1gb2-canonical-catalog.sql",import.meta.url),"utf8"))
+    const importer=createSyntheticMigrationImporter({mode,query:query("ppo_authority_importer")})
+    assert.equal((await importer.rehearse(snapshot)).rehearsalCommitted,true)
+    await exactImported(snapshot)
+    const catalog=createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:query("ppo_authority_reader")})
+    assert.equal((await catalog.list()).ok,true)
+    const raw=Buffer.from(files.find(f=>f.path.startsWith("records/")).bytesBase64,"base64").toString("utf8")
+    // The raw archive is allowed to retain duplicate properties; the same
+    // text cannot enter the fresh canonical writer transport ambiguously.
+    const r=JSON.parse(raw)
+    await assert.rejects(authority().commitRecord(raw,r.version-1,r.history.at(-1).previousHistoryHash),/Duplicate/)
+    await exactImported(snapshot)
+  }finally{await dropImportAuthority()}
+})
+
+test("F-05 coordinated mixed importer/writer races, rollback and stale snapshots",{timeout:180000},async()=>{
+  const snapshot=await captureSyntheticMigrationRehearsal({mode:"synthetic-migration-import-rehearsal-only"})
+  const writer=await fixture("kynexa") // same project as the imported active run
+  const free=await fixture("rivora")
+  const importedVersions=snapshot.files.filter(f=>f.path.startsWith("versions/")).length
+  const revision=async()=>Number(await sql("SELECT revision FROM ppo_authority.gate;"))
+  const noArchive=async()=>{
+    assert.equal(await sql("SELECT count(*) FROM ppo_authority.synthetic_import_batch;"),"0")
+    assert.equal(await sql("SELECT count(*) FROM ppo_authority.synthetic_import_files;"),"0")
+  }
+  // Writer first: import waits, then denies nonempty target. Writer rollback:
+  // importer sees empty target and commits all bytes/versions instead.
+  // Import first: conflicting writer waits and denies WIP; rollback admits it.
+  for(const first of ["writer","importer"]){
+    for(const rollback of [false,true]){
+      await installImportAuthority()
+      const a=session("f05-leader","ppo_authority_"+(first==="writer"?"writer":"importer"))
+      const b=session("f05-waiter","ppo_authority_"+(first==="writer"?"importer":"writer"))
+      try{
+        await Promise.all([a.ready(),b.ready()])
+        assert.equal(await a.send("BEGIN; "+(first==="writer"?commitSql(writer.initial):importStatement(snapshot))),"t")
+        const waiting=b.send(first==="writer"?importStatement(snapshot):commitSql(writer.initial))
+        waiting.catch(()=>{})
+        await blockedBy(b,a)
+        await a.send(rollback?"ROLLBACK;":"COMMIT;")
+        assert.equal(await waiting,rollback?"t":"f")
+        const imported=first==="writer"?rollback:!rollback
+        if(imported){
+          await exactImported(snapshot)
+          assert.equal(await authority().readRun(writer.initial.runId),null)
+          assert.equal(await revision(),importedVersions+1+(rollback?0:1))
+          // One remaining lane admits a different project; a third project
+          // and the already occupied project are both rejected.
+          assert.equal(await commit(authority(),free.initial),true)
+          const third=await fixture("khlim-assist")
+          assert.equal(await commit(authority(),third.initial),false)
+          assert.equal(await commit(authority(),writer.initial),false)
+          await exactImported(snapshot,[free.initial])
+        }else{
+          await noArchive()
+          assert.deepEqual(await authority().readVersions(writer.initial.runId),[writer.initial])
+          assert.equal(await sql("SELECT count(*) FROM ppo_authority.run_versions;"),"1")
+          assert.equal(await revision(),rollback?1:2)
+        }
+      }finally{await Promise.all([a.close(),b.close()]);await dropImportAuthority()}
+    }
+  }
+  // Stale importer snapshot is established on an empty target before the
+  // writer changes the gate. Even a rolled-back writer does not make a
+  // snapshot stale; that positive control must import successfully.
+  for(const isolation of ["REPEATABLE READ","SERIALIZABLE"]){
+    for(const rollback of [false,true]){
+      await installImportAuthority()
+      const a=session("f05-stale","ppo_authority_importer")
+      try{
+        await a.ready()
+        assert.equal(await a.send("BEGIN ISOLATION LEVEL "+isolation+"; SELECT ppo_authority.read_synthetic_archive("+literals(snapshot.inventoryHash)+") IS NULL;"),"t")
+        assert.equal(await sql("BEGIN; "+commitSql(writer.initial)+(rollback?" ROLLBACK;":" COMMIT;"),"ppo_authority_writer"),"t")
+        if(rollback){
+          assert.equal(await a.send(importStatement(snapshot)),"t")
+          await a.send("COMMIT;")
+          await exactImported(snapshot)
+          assert.equal(await revision(),importedVersions+1)
+        }else{
+          await assert.rejects(a.send(importStatement(snapshot)),/40001/)
+          await noArchive()
+          assert.equal(await sql("SELECT count(*) FROM ppo_authority.run_versions;"),"1")
+          assert.deepEqual(await authority().readVersions(writer.initial.runId),[writer.initial])
+          assert.equal(await revision(),1)
+        }
+      }finally{await a.close();await dropImportAuthority()}
+    }
+  }
+  // Fail late after archive staging/history replay while a writer is waiting.
+  // ON_ERROR_STOP disconnects the failed transaction, rolling everything back.
+  await installImportAuthority()
+  await sql(`CREATE FUNCTION ppo_authority.ci_import_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $body$ BEGIN PERFORM pg_advisory_xact_lock(158001); RETURN NEW; END $body$;
+    CREATE TRIGGER ci_import_barrier AFTER INSERT ON ppo_authority.synthetic_import_batch FOR EACH ROW EXECUTE FUNCTION ppo_authority.ci_import_barrier();`)
+  const a=session("f05-failed-import","ppo_authority_importer"),b=session("f05-surviving-writer","ppo_authority_writer"),barrier=session("f05-import-barrier","postgres")
+  try{
+    await Promise.all([a.ready(),b.ready(),barrier.ready()])
+    await barrier.send("BEGIN; SELECT pg_advisory_xact_lock(158001);")
+    const active=snapshot.files.find(f=>f.path.startsWith("records/")&&JSON.parse(Buffer.from(f.bytesBase64,"base64")).status==="implementation_in_progress")
+    const id=JSON.parse(Buffer.from(active.bytesBase64,"base64")).runId
+    const files=snapshot.files.filter(f=>f.path!=="versions/"+id+"/000001.json")
+    const manifest=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
+    // The test-only AFTER INSERT trigger pauses after import itself updates
+    // the canonical gate. No artificial gate lock/update precedes import.
+    const importing=a.send("BEGIN; "+importStatement({inventoryHash:manifest.inventoryHash,files}));importing.catch(()=>{})
+    await blockedBy(a,barrier)
+    const waiting=b.send(commitSql(writer.initial));waiting.catch(()=>{})
+    await blockedBy(b,a)
+    await barrier.send("COMMIT;")
+    await assert.rejects(importing,/synthetic history import rejected/)
+    assert.equal(await waiting,"t")
+    await noArchive()
+    assert.equal(await sql("SELECT count(*) FROM ppo_authority.run_versions;"),"1")
+    assert.deepEqual(await authority().readVersions(writer.initial.runId),[writer.initial])
+    assert.equal(await revision(),1)
+  }finally{await Promise.all([a.close(),b.close(),barrier.close()]);await dropImportAuthority()}
+})
 
 test("synthetic capture and atomic PostgreSQL import preserve all original bytes and history",{timeout:90000},async()=>{
   await sql(await readFile(new URL("./phase1gb2-canonical-postgres.sql",import.meta.url),"utf8"))
   await sql(await readFile(new URL("./phase1gb2-synthetic-import.sql",import.meta.url),"utf8"))
+  await sql(await readFile(new URL("./phase1gb2-canonical-catalog.sql",import.meta.url),"utf8"))
   console.log("PostgreSQL integration runtime:",await sql("SHOW server_version;"))
   const mode="synthetic-migration-import-rehearsal-only"
   const snapshot=await captureSyntheticMigrationRehearsal({mode})
@@ -252,6 +423,37 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
     assert.deepEqual(await read.readVersions(record.runId),expected)
     assert.deepEqual(await read.readRun(record.runId),record)
   }
+  // Independent catalog operation must validate complete archive histories and
+  // expose the same legacy summaries without reading any filesystem store.
+  const catalog=createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:query("ppo_authority_reader")})
+  const listed=await catalog.list()
+  assert.equal(listed.ok,true)
+  assert.equal(listed.summaries.length,3)
+  for(const file of archive.filter(f=>f.path.startsWith("records/"))){
+    const record=JSON.parse(Buffer.from(file.bytesBase64,"base64"))
+    const inspected=await catalog.inspect(record.runId,{expectedRevision:listed.revision})
+    assert.equal(inspected.ok,true)
+    assert.deepEqual(inspected.record,record)
+    assert.deepEqual(inspected.versions,await read.readVersions(record.runId))
+  }
+  await assert.rejects(sql("SELECT ppo_authority.read_catalog_snapshot();","ppo_authority_importer"),/permission denied/)
+  // M-01: a correctly rounded JS readback cannot expose this native decimal
+  // corruption. The exact oracle must reject it inside this rollback-only
+  // independent session, while the source archive remains untouched.
+  const corrupt=session("oracle-decimal-corruption","postgres")
+  try{
+    await corrupt.ready()
+    await corrupt.send("BEGIN; ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=replace(record::text,'9007199254740992','9007199254740993')::jsonb WHERE version>=4;")
+    await assert.rejects(exactImported(snapshot,[],statement=>corrupt.send(statement)),/native archive parity/)
+    await corrupt.send("ROLLBACK;")
+    await corrupt.send("BEGIN; ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; DELETE FROM ppo_authority.run_versions WHERE run_id="+literals(active.runId)+" AND version=1;")
+    await assert.rejects(exactImported(snapshot,[],statement=>corrupt.send(statement)),/native archive parity/)
+    await corrupt.send("ROLLBACK;")
+    await corrupt.send("BEGIN; INSERT INTO ppo_authority.run_versions SELECT repeat('Z',43),version,history_hash,jsonb_set(record,'{runId}',to_jsonb(repeat('Z',43))) FROM ppo_authority.run_versions WHERE version=0 LIMIT 1;")
+    await assert.rejects(exactImported(snapshot,[],statement=>corrupt.send(statement)),/native archive parity/)
+    await corrupt.send("ROLLBACK;")
+  }finally{await corrupt.close()}
+  await exactImported(snapshot)
   const after=await counts()
   await assert.rejects(importer.rehearse(snapshot))
   // Rejected import can advance the internal gate revision only.
@@ -266,9 +468,50 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
   // Subsequent direct writers may append to the imported authority but the
   // preserved source archive must never change with those mutations.
   const state=createIsolatedCanonicalRunState({mode:"isolated-postgres-canonical-authority",authority:authority()})
-  await state.transition(active.runId,{expectedVersion:active.version,status:"cancelled",actor:"synthetic-import"})
+  const held=session("catalog-held-snapshot","ppo_authority_reader")
+  const barrier=session("catalog-snapshot-barrier","ppo_authority_writer")
+  try{
+    await Promise.all([held.ready(),barrier.ready()])
+    await barrier.send("BEGIN; SELECT pg_advisory_xact_lock(157003);")
+    const before=await query("ppo_authority_reader")("SELECT ppo_authority.read_catalog_snapshot() AS snapshot",[])
+    // This READ COMMITTED statement establishes its snapshot, then waits at
+    // the advisory barrier BEFORE executing the catalog function. A VOLATILE
+    // replacement would see the subsequently committed writer and fail parity.
+    const pending=held.send("WITH barrier AS MATERIALIZED (SELECT pg_advisory_xact_lock(157003)) SELECT ppo_authority.read_catalog_snapshot() FROM barrier;")
+    pending.catch(()=>{})
+    await blockedBy(held,barrier)
+    await state.transition(active.runId,{expectedVersion:active.version,status:"cancelled",actor:"synthetic-import"})
+    await barrier.send("COMMIT;")
+    const oldSnapshot=JSON.parse(await pending)
+    assert.deepEqual(oldSnapshot,before.rows[0].snapshot)
+    const current=await catalog.list()
+    assert.notEqual(current.revision,oldSnapshot.revision)
+    const stale=createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:async()=>({rows:[{snapshot:oldSnapshot}]})})
+    assert.equal((await stale.list({expectedRevision:current.revision})).code,"stale_observation")
+    assert.equal((await stale.inspect(active.runId)).record.status,"implementation_in_progress")
+    assert.equal((await catalog.inspect(active.runId)).record.status,"cancelled")
+  }finally{await Promise.all([held.close(),barrier.close()])}
   assert.deepEqual(sorted(await importer.readArchive(snapshot.inventoryHash)),sorted(snapshot.files))
   assert.equal((await read.readVersions(active.runId)).length,active.version+2)
+  assert.equal((await catalog.list({expectedRevision:listed.revision})).code,"stale_observation")
+  const updated=await catalog.inspect(active.runId)
+  assert.equal(updated.record.status,"cancelled")
+  assert.deepEqual(updated.versions,await read.readVersions(active.runId))
+  // Privileged corruption exists only in rollback-only test transactions.
+  // Fixed ordinary reader function must surface invalid data through the
+  // trusted validator, and server bounds must stop before aggregating it.
+  async function injectedRead(mutation){
+    const bound="SELECT row_to_json(q) FROM (SELECT ppo_authority.read_catalog_snapshot() AS snapshot) q;"
+    return createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:async()=>({rows:[JSON.parse(await sql("BEGIN; "+mutation+" SET LOCAL ROLE ppo_authority_reader; "+bound+" ROLLBACK;"))]})}).list()
+  }
+  assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=jsonb_set(record,'{history,0,actor}','\"corrupt\"') WHERE version=0;")).code,"catalog_invalid")
+  assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=replace(record::text,'9007199254740992','9007199254740993')::jsonb WHERE version>=4;")).code,"catalog_invalid")
+  assert.equal((await injectedRead("INSERT INTO ppo_authority.run_versions SELECT lpad(i::text,43,'A'),0,history_hash,jsonb_set(record,'{runId}',to_jsonb(lpad(i::text,43,'A'))) FROM generate_series(1,101) i CROSS JOIN (SELECT * FROM ppo_authority.run_versions WHERE version=0 LIMIT 1) v;")).code,"catalog_truncated")
+  assert.equal((await injectedRead("ALTER TABLE ppo_authority.run_versions DISABLE TRIGGER immutable_versions; UPDATE ppo_authority.run_versions SET record=record||jsonb_build_object('oversize',repeat('x',33*1024*1024)) WHERE run_id="+literals(active.runId)+" AND version=0;")).code,"catalog_truncated")
+  await assert.rejects(exactImported(snapshot),/native archive parity/) // unaccounted post-import version
+  const extras=(await read.readVersions(active.runId)).slice(active.version+1)
+  await exactImported(snapshot,extras)
+  await assert.rejects(exactImported(snapshot,[...extras,...extras]),/native archive parity/)
 })
 
 test("real PostgreSQL canonical authority: CAS, history, roles and serialized WIP",{timeout:90000},async()=>{
@@ -348,6 +591,7 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   await assert.rejects(sql("SELECT * FROM ppo_authority.run_versions;","ppo_authority_reader"),/permission denied/)
   await assert.rejects(sql("CREATE TABLE ppo_authority.fake(id int);","ppo_authority_writer"),/permission denied/)
   await sql("CREATE ROLE ppo_untrusted_ci NOLOGIN; GRANT USAGE ON SCHEMA ppo_authority TO ppo_untrusted_ci;")
+  await assert.rejects(sql("SELECT ppo_authority.read_catalog_snapshot();","ppo_untrusted_ci"),/permission denied/)
   await assert.rejects(sql("SELECT ppo_authority.read_run("+literals(a.initial.runId)+");","ppo_untrusted_ci"),/permission denied/)
   await assert.rejects(sql(commitSql(a.cancelled,a.progress),"ppo_untrusted_ci"),/permission denied/)
   assert.equal(await sql("CREATE TEMP TABLE current_runs(run_id text,record jsonb); CREATE TEMP TABLE gate(singleton boolean,revision bigint); SELECT ppo_authority.read_run("+literals(a.initial.runId)+")->>'runId';","ppo_authority_writer"),a.initial.runId)

@@ -1416,6 +1416,7 @@ function validateHistoryEventShape(event) {
     event.schemaVersion !== DEVELOPMENT_RUN_SCHEMA_VERSION ||
     !Number.isInteger(event.version) ||
     !isIsoTimestamp(event.timestamp) ||
+    typeof event.actor !== "string" ||
     !actorPattern.test(event.actor) ||
     (event.reason !== null && typeof event.reason !== "string") ||
     typeof event.project !== "string" ||
@@ -1425,7 +1426,7 @@ function validateHistoryEventShape(event) {
     !stageSet.has(event.toStage) ||
     (event.fromStage !== null && !stageSet.has(event.fromStage)) ||
     (event.branch !== null && typeof event.branch !== "string") ||
-    (event.headSha !== null && !shaPattern.test(event.headSha)) ||
+    (event.headSha !== null && (typeof event.headSha !== "string" || event.headSha.length !== 40 || !shaPattern.test(event.headSha) || event.headSha !== event.headSha.toLowerCase())) ||
     !Array.isArray(event.evidence) ||
     event.evidence.length > MAX_DEVELOPMENT_RUN_EVIDENCE_PER_TRANSITION ||
     typeof event.eventHash !== "string"
@@ -1443,17 +1444,18 @@ function validateHistoryEventShape(event) {
   )
 
   if (event.reason !== null) {
-    normalizeSafeText(event.reason, {
+    const normalizedReason = normalizeSafeText(event.reason, {
       fieldName: "History reason",
       maxChars: 500,
       required: false,
       code: "RUN_HISTORY_INVALID",
       safeMessage: "Stored development run transition history is invalid."
     })
+    if (event.reason !== normalizedReason) throw historyFailure("history_event_shape_invalid")
   }
 
-  if (event.branch !== null) {
-    normalizeBranch(event.branch)
+  if (event.branch !== null && event.branch !== normalizeBranch(event.branch)) {
+    throw historyFailure("history_event_shape_invalid")
   }
 
   for (const entry of event.evidence) {

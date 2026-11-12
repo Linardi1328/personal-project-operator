@@ -29,9 +29,9 @@ function compatible(value) {
 }
 function parse(bytes, runId) {
   const source = decoder.decode(bytes)
-  // Establish valid JSON syntax before scanning every literal (keys included).
-  // JSON.parse alone discards overwritten duplicate properties; the source
-  // scan also checks literals that normalization or last-key-wins would hide.
+  // Preserve the raw archive's last-key-wins value contract, but inspect
+  // every original literal for unsupported encoding, even overwritten ones.
+  // Canonical text transports enforce unique names at their own boundary.
   JSON.parse(source)
   for (const match of source.matchAll(/"(?:[^"\\]|\\.)*"/gsu)) {
     if (!compatible(JSON.parse(match[0]))) return {code:"unsupported_encoding"}
