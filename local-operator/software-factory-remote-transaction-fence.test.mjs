@@ -153,7 +153,7 @@ test("catalog invalidity, excessive or duplicate lanes always deny",async()=>{
     const f=fixture()
     if(kind==="invalid")f.state.admission.invalidCount=1
     if(kind==="catalog")f.state.admission.valid=false
-    if(kind==="wip")f.state.admission.activeProjects=["kynexa","khlim"]
+    if(kind==="wip")f.state.admission.activeProjects=["rivora","kynexa","khlim"]
     if(kind==="duplicate")f.state.admission.activeProjects=["rivora","rivora"]
     if(kind==="no-lane")f.state.admission.activeProjects=["kynexa"]
     await assert.rejects(f.consume(f.b),deny("TX_ADMISSION_BLOCKED"),kind)
@@ -280,4 +280,60 @@ test("external timestamp fields require immutable canonical ISO strings before d
     assert.equal(f.state.driverCalls,0)
     assert.equal(f.state.used.size,0)
   }
+})
+
+
+test("driver acknowledgment without successful callback completion fails closed",async()=>{
+  for(const kind of ["skipped","swallowed","unawaited"]){
+    const f=fixture()
+    const consume=createOfflineTransactionFenceAdapter({
+      mode:"offline-transaction-contract-only",
+      transact:async callback=>{
+        if(kind==="skipped")return true
+        if(kind==="swallowed"){
+          try{await callback({})}catch{}
+          return true
+        }
+        // The callback is still suspended on the clock when the driver
+        // acknowledges; it must not later reach nonce consumption.
+        let release
+        const suspended=new Promise(resolve=>{release=resolve})
+        const late=callback({
+          now:()=>suspended,readHostForUpdate:()=>f.state.host,
+          readClaimForUpdate:()=>f.state.claim,readRequestForUpdate:()=>f.state.request,
+          readRunForUpdate:()=>f.state.run,readAdmissionForUpdate:()=>f.state.admission,
+          tryConsumeFreshOnce:()=>{f.state.used.add("unexpected");return true}
+        })
+        f.state.finishLate=async()=>{
+          release(f.state.now)
+          await assert.rejects(late,deny("TX_DRIVER_INVALID"))
+        }
+        return true
+      }
+    })
+    await assert.rejects(consume(f.b),deny("TX_UNAVAILABLE_OR_AMBIGUOUS"),kind)
+    if(f.state.finishLate)await f.state.finishLate()
+    assert.equal(f.state.used.size,0)
+  }
+})
+
+test("driver cannot obtain a success by calling the transaction callback twice",async()=>{
+  const f=fixture()
+  const consume=createOfflineTransactionFenceAdapter({
+    mode:"offline-transaction-contract-only",
+    transact:async callback=>{
+      // Simulated driver; do not publish any mutation for a rejected transaction.
+      const tx={
+        now:()=>f.state.now,readHostForUpdate:()=>f.state.host,
+        readClaimForUpdate:()=>f.state.claim,readRequestForUpdate:()=>f.state.request,
+        readRunForUpdate:()=>f.state.run,readAdmissionForUpdate:()=>f.state.admission,
+        tryConsumeFreshOnce:()=>true
+      }
+      assert.equal(await callback(tx),true)
+      await assert.rejects(callback(tx),deny("TX_DRIVER_INVALID"))
+      return true
+    }
+  })
+  await assert.rejects(consume(f.b),deny("TX_UNAVAILABLE_OR_AMBIGUOUS"))
+  assert.equal(f.state.used.size,0)
 })
