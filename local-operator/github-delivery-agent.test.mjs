@@ -1337,7 +1337,10 @@ test("PR reconciliation and exact-head CI reject duplicate, stale, pending, fail
     [[successRun(fixture.baseSha)], successJobs(), "GITHUB_DELIVERY_CI_OLDER_SHA_REJECTED"],
     [[successRun(fixture.headSha, { status: "in_progress", conclusion: null })], successJobs(), "GITHUB_DELIVERY_CI_PENDING"],
     [[successRun(fixture.headSha, { conclusion: "failure" })], successJobs(), "GITHUB_DELIVERY_CI_FAILED"],
-    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.slice(0, 3) }], "GITHUB_DELIVERY_CI_FAILED"]
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.slice(0, 3) }], "GITHUB_DELIVERY_CI_FAILED"],
+    // A successful legacy six-step run cannot satisfy the new exact-head policy.
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.filter(step => step.name !== "PostgreSQL canonical authority integration (isolated)") }], "GITHUB_DELIVERY_CI_FAILED"],
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.map(step => step.name === "PostgreSQL canonical authority integration (isolated)" ? { ...step, conclusion: "skipped" } : step) }], "GITHUB_DELIVERY_CI_FAILED"]
   ]) {
     const ciClient = makeGitHubClient(fixture.project, fixture.run.branch, fixture.headSha, {
       prs: [makePr(fixture.project, fixture.run.branch, fixture.headSha)],
