@@ -133,8 +133,20 @@ export function createOfflineTransactionFenceAdapter(config) {
   return async function consumeActionFence(input) {
     const b = boundarySnapshot(input)
     let outcome
+    let callbackStarted = false
+    let callbackCompleted = false
+    let callbackRepeated = false
+    let acceptingCallback = true
     try {
       outcome = await transact(async tx => {
+        // A driver must invoke this callback exactly once and await it. A
+        // bare acknowledgment, a second invocation or a late invocation is
+        // never evidence of an authorized transaction.
+        if (!acceptingCallback || callbackStarted) {
+          callbackRepeated = true
+          fail("TX_DRIVER_INVALID")
+        }
+        callbackStarted = true
         requireDriver(tx)
         const now = timestamp(await tx.now())
         if (!Number.isFinite(now) || now < timestamp(b.issuedAt) ||
@@ -207,6 +219,7 @@ export function createOfflineTransactionFenceAdapter(config) {
             freshNow >= proofExpiresAtMs || freshNow >= requestExpiresAtMs) {
           fail("TX_EXPIRED")
         }
+        if (!acceptingCallback || callbackRepeated) fail("TX_DRIVER_INVALID")
         const consumed = await tx.tryConsumeFreshOnce(Object.freeze({
           hostId: b.hostId, actionId: b.actionId,
           requestHash: b.requestHash, claimHash: b.claimHash,
@@ -216,13 +229,19 @@ export function createOfflineTransactionFenceAdapter(config) {
           proofExpiresAtMs, requestExpiresAtMs
         }))
         if (consumed !== true) fail("TX_REPLAY_OR_AMBIGUOUS")
+        if (!acceptingCallback || callbackRepeated) fail("TX_DRIVER_INVALID")
+        callbackCompleted = true
         return true
       })
     } catch (error) {
       if (error instanceof OfflineTransactionFenceError) throw error
       fail("TX_UNAVAILABLE_OR_AMBIGUOUS")
+    } finally {
+      acceptingCallback = false
     }
-    if (outcome !== true) fail("TX_UNAVAILABLE_OR_AMBIGUOUS")
+    if (outcome !== true || !callbackCompleted || callbackRepeated) {
+      fail("TX_UNAVAILABLE_OR_AMBIGUOUS")
+    }
     // Matches Phase 1F's callback signature; Phase 1F STILL returns canExecute:false.
     return true
   }
