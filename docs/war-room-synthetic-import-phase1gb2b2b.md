@@ -1,0 +1,27 @@
+# RIC-157 — Phase 1G-B2b2b: synthetic source capture and atomic target import
+
+## Scope
+
+Source-only implementation for the disposable PostgreSQL CI authority. No live data, external filesystem paths, source export endpoint, production credentials, actual authority switch or execution. The existing production filesystem remains authoritative. RIC-59 and RIC-61 remain held.
+
+## Source capture and provenance
+
+The fixed synthetic generator creates its own private temporary store, uses PPO's existing filesystem state-machine writer to create two cancelled histories in one project and an active history in another, and awaits every mutation before capture. It has no caller-supplied root, callback, credentials or real-record import. It captures only the generated records and version-marker tree, requires private owned directories and single-link regular files, opens files without following final-component symlinks, compares inode and metadata before/after bounded reads, checks directory listings/metadata, and compares two complete captures. Scratch data is removed in finally. This is a trusted, single-process synthetic quiescence boundary, not an adversarial filesystem snapshot or proof of quiescence on Mac/VPS. It cannot prevent a hostile same-UID/privileged writer, filesystem namespace substitution or restore between observations. Real capture requires a separately reviewed held writer fence.
+
+Reuse B2b2a preflight for full marker-chain/identity/encoding/WIP checks and exact path/content digest. The import rehearsal additionally requires raw JSON values to match the normalized canonical record (no discarded extension fields). Base64 preserves source bytes independently of JSONB normalization. The captured immutable strings/digest are rechecked by the importer before any database call. Bounds are inherited from preflight: 32 MiB total bytes, 128 KiB/file, 10,100 entries, legacy 20-run readiness limit. No caller-provided manifest is taken on trust.
+
+## Atomic target operation
+
+Install the additional SQL only in the disposable database named ppo_authority_ci, following B2a's schema. A dedicated NOLOGIN importer role has execute access to two fixed security-definer functions with pinned search path, not the canonical writer role or direct table privileges. The trusted JS seam enforces full semantic validation; SQL independently validates bounded base64 bytes/path names, exact byte hashes and inventory digest, complete version sequences, final canonical parity and existing fixed commit_run CAS/admission constraints. Ordinary readers/writers cannot call the importer or access archive contents.
+
+The import transaction acquires the same canonical gate used by direct writers, rejects a nonempty target or previous import, stages the exact source archive and replays every marker through commit_run. It imports non-WIP final states first and then WIP-consuming final states to construct a deterministic valid rehearsal order; this is not reconstruction or proof of real cross-run historical admission order. No general privileged WIP bypass or destructive reset. Any error rolls back the entire archive and all run versions. The final count and JSONB equality checks bind every marker to the imported version, and every canonical file to the latest record. Both archive tables are append-only for ordinary roles, with mutation-rejecting triggers (privileged administrators can still change/drop schema or restore backups). Later ordinary state-machine writes may append to the imported state, never modify the original source archive.
+
+A true result is meaningful only after acknowledged transaction commit by the trusted query transport. Invalid/false result denies; a lost or unexpected acknowledgment is unknown, retains the exact inventory hash, and never retries or falls back. Read-only archive inspection revalidates the entire archive and digest. Absence alone cannot rule out a still-in-flight commit. The diagnostic receipt never grants production import or cutover authorization.
+
+## CI and limitations
+
+Real PostgreSQL integration runs the new test first on a freshly installed isolated authority. It verifies a deliberately incomplete last run rolls back previously staged archive and histories, digest mismatch, explicit transaction rollback, importer role separation, concurrent one-shot import, exact byte and complete history parity via independent connections, archive immutability and subsequent direct-writer append. The active synthetic lane is released before existing regression cases. Unit tests verify immutable capture, malformed/tampered inputs, unsupported normalization loss, unrecognized acknowledgments, no retry and corrupted archive readback. The injected CI query seam remains a trusted test transport, not a production driver. Actual network/host failure, backup/restore, source acquisition under real held quiescence, historical over-WIP reconciliation, externally protected workflow integrity and all live reader/writer routing remain future gates. No arbitrary source capture or target import of real data.
+
+## Next
+
+Review and validate this source-only PR. Then complete canonical catalog/inspection integration, writer ownership and cutover rehearsal with explicit reconciliation/rollback. Keep the shared host/claim/nonce/freshness and actual resource-side fencing work in B2c. Production cutover and trusted host pilot require separate owner authorization and verified prerequisites.
