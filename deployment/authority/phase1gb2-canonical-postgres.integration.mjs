@@ -281,13 +281,6 @@ function tick(){
 function isolated(storage=authority(), options={}){
   return createIsolatedCanonicalRunState({mode:MODE,authority:storage,...options})
 }
-async function advanceToReview(state, record){
-  for(const status of ["planning_in_progress","planned","implementation_in_progress","implementation_ready","tests_in_progress","tests_passed","review_in_progress"]){
-    const evidence=status==="review_in_progress"?[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",summary:"Synthetic review started",metadata:{project:record.project.id,reviewedSha:SHA,attempt:1,outcome:"review_started"}}]:[]
-    record=await state.transition(record.runId,{expectedVersion:record.version,status,actor:"test-agent",evidence})
-  }
-  return record
-}
 const errorCode=code=>error=>error?.code===code
 
 test("direct PostgreSQL state machine matches filesystem history and guarded review recovery",{timeout:90000},async()=>{
