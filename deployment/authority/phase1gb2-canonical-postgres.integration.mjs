@@ -62,9 +62,11 @@ async function fixture(project){
     const initial=await createDevelopmentRun({projectId:project,task:"RIC-157 shared authority synthetic: canonical CAS fixture",
       baseSha:"a".repeat(40),headSha:"b".repeat(40),branch:"feature/authority-ci",actor:"test-agent"},options)
     const first=await transitionDevelopmentRun(initial.runId,{expectedVersion:0,status:"planning_in_progress",actor:"test-agent"},options)
-    const progress=await recordDevelopmentRunProgress(initial.runId,{expectedVersion:1,status:"planning_in_progress",actor:"test-agent",reason:"synthetic progress"},options)
-    const cancelled=await transitionDevelopmentRun(initial.runId,{expectedVersion:2,status:"cancelled",actor:"test-agent"},options)
-    return {initial,first,progress,cancelled}
+    const planned=await transitionDevelopmentRun(initial.runId,{expectedVersion:1,status:"planned",actor:"test-agent"},options)
+    const implementing=await transitionDevelopmentRun(initial.runId,{expectedVersion:2,status:"implementation_in_progress",actor:"test-agent"},options)
+    const progress=await recordDevelopmentRunProgress(initial.runId,{expectedVersion:3,status:"implementation_in_progress",actor:"test-agent",reason:"synthetic progress"},options)
+    const cancelled=await transitionDevelopmentRun(initial.runId,{expectedVersion:4,status:"cancelled",actor:"test-agent"},options)
+    return {initial,first,planned,implementing,progress,cancelled}
   }finally{await rm(dir,{recursive:true,force:true})}
 }
 const commit=(a,record,prior=null)=>a.commitRecord(JSON.stringify(record),prior?.version??-1,prior?.historyHash??null)
@@ -80,12 +82,14 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   assert.equal(await commit(writer,a.initial),false)
   const outcomes=await Promise.all([commit(writer,a.first,a.initial),commit(authority(),a.first,a.initial)])
   assert.deepEqual(outcomes.sort(),[false,true])
-  assert.equal(await writer.commitRecord(JSON.stringify(a.progress),1,"f".repeat(64)),false)
+  assert.equal(await writer.commitRecord(JSON.stringify(a.planned),1,"f".repeat(64)),false)
+  assert.equal(await commit(writer,a.planned,a.first),true)
+  assert.equal(await commit(writer,a.implementing,a.planned),true)
   const wrongHead={...a.progress,headSha:"c".repeat(40)}
-  await assert.rejects(commit(writer,wrongHead,a.first))
-  assert.equal(await commit(writer,a.progress,a.first),true)
+  await assert.rejects(commit(writer,wrongHead,a.implementing))
+  assert.equal(await commit(writer,a.progress,a.implementing),true)
   assert.equal(await commit(writer,a.first,a.initial),false)
-  assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first,a.progress])
+  assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first,a.planned,a.implementing,a.progress])
   assert.deepEqual(await reader.readRun(a.initial.runId),a.progress)
 
   // The restricted role cannot mutate, erase, or directly read the tables.
@@ -109,11 +113,13 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   const duplicate=await fixture(winner.initial.project.id)
   assert.equal(await commit(writer,duplicate.initial),false)
   assert.equal(await commit(writer,winner.first,winner.initial),true)
-  assert.equal(await commit(writer,winner.progress,winner.first),true)
+  assert.equal(await commit(writer,winner.planned,winner.first),true)
+  assert.equal(await commit(writer,winner.implementing,winner.planned),true)
+  assert.equal(await commit(writer,winner.progress,winner.implementing),true)
   assert.equal(await commit(writer,winner.cancelled,winner.progress),true)
   assert.equal(await commit(writer,loser.initial),true)
   assert.equal(await commit(writer,a.cancelled,a.progress),true)
-  assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first,a.progress,a.cancelled])
+  assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first,a.planned,a.implementing,a.progress,a.cancelled])
   // New sessions observe durable latest state. No retry after unknown commit.
   assert.deepEqual(await authority("ppo_authority_reader").readRun(a.initial.runId),a.cancelled)
 })
