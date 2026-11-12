@@ -28,7 +28,15 @@ function compatible(value) {
   return true
 }
 function parse(bytes, runId) {
-  const r = parseDevelopmentRunRecord(decoder.decode(bytes),runId)
+  const source = decoder.decode(bytes)
+  // Establish valid JSON syntax before scanning every literal (keys included).
+  // JSON.parse alone discards overwritten duplicate properties; the source
+  // scan also checks literals that normalization or last-key-wins would hide.
+  JSON.parse(source)
+  for (const match of source.matchAll(/"(?:[^"\\]|\\.)*"/gsu)) {
+    if (!compatible(JSON.parse(match[0]))) return {code:"unsupported_encoding"}
+  }
+  const r = parseDevelopmentRunRecord(source,runId)
   if (!r.task.startsWith(TASK_PREFIX)) return {code:"out_of_scope"}
   if (!compatible(r)) return {code:"unsupported_encoding"}
   const last=r.history.at(-1)

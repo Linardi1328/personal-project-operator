@@ -103,6 +103,23 @@ test("scope, malformed UTF-8, unsupported encodings and unknown paths cannot be 
   const unsupported=await fixture(t,{task:"RIC-157 shared authority synthetic: lone surrogate \ud800"})
   assert.equal(scan(unsupported.entries).runs[0].code,"unsupported_encoding")
   const f=await fixture(t)
+  for(const [key,value] of [["extra","\u0000"],["extra","\ud800"],["\ud800","valid"],["\u0000","valid"]]){
+    for(const path of [canonical(f.next.runId),marker(f.next.runId,1)]){
+      const record=JSON.parse(get(f.entries,path).toString("utf8"))
+      record.project[key]=value
+      const changed=replace(f.entries,path,Buffer.from(JSON.stringify(record)))
+      const result=scan(changed)
+      assert.equal(result.runs[0].code,"unsupported_encoding")
+      assert.equal(result.readyForRehearsal,false)
+    }
+  }
+  const raw=get(f.entries,canonical(f.next.runId)).toString("utf8")
+  const overwritten=raw.replace('"project":{','"project":{"extra":"\\u0000","extra":"valid",')
+  assert.notEqual(overwritten,raw)
+  assert.equal(scan(replace(f.entries,canonical(f.next.runId),Buffer.from(overwritten))).runs[0].code,"unsupported_encoding")
+  const unicode=JSON.parse(raw)
+  unicode.project.extra="Valid supplementary character 😀"
+  assert.equal(scan(replace(f.entries,canonical(f.next.runId),Buffer.from(JSON.stringify(unicode)))).readyForRehearsal,true)
   const invalid=replace(f.entries,canonical(f.next.runId),Buffer.from([0xc3,0x28]))
   assert.equal(scan(invalid).runs[0].code,"record_invalid")
   const unknown={relativePath:"../../private-name",bytes:Buffer.from("PRIVATE_SYNTHETIC_BYTES")}
