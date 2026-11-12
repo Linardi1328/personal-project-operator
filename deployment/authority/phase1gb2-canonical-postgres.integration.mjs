@@ -17,7 +17,7 @@ if(process.env.CI!=="true"||!/^ppo-authority-ci-[0-9]+-[0-9]+$/u.test(container|
   throw Error("Dedicated disposable CI authority container required")
 }
 function sql(input,role="postgres"){
-  if(!["postgres","ppo_authority_writer","ppo_authority_reader"].includes(role))throw Error("invalid test role")
+  if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci"].includes(role))throw Error("invalid test role")
   return new Promise((resolve,reject)=>{
     const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
     let out="",err=""
@@ -69,6 +69,20 @@ async function fixture(project,task="RIC-157 shared authority synthetic: canonic
     const progress=await recordDevelopmentRunProgress(initial.runId,{expectedVersion:3,status:"implementation_in_progress",actor:"test-agent",reason:"synthetic progress",evidence:[{kind:"implementation",sha:"b".repeat(40),source:"test-agent",summary:"Large numeric metadata and Unicode 😀",metadata:Object.fromEntries(Array.from({length:16},(_,i)=>["n"+i,Array(16).fill(1e308)]))}]},options)
     const cancelled=await transitionDevelopmentRun(initial.runId,{expectedVersion:4,status:"cancelled",actor:"test-agent"},options)
     return {initial,first,planned,implementing,progress,cancelled}
+  }finally{await rm(dir,{recursive:true,force:true})}
+}
+async function releasedFixture(project){
+  const dir=await mkdtemp(join(tmpdir(),"ppo-shared-release-"))
+  let clock=Date.parse("2026-01-01T00:00:00.000Z")
+  const options={writeDataDir:dir,now:()=>new Date(clock+=1000)}
+  try{
+    const initial=await createDevelopmentRun({projectId:project,task:"RIC-157 shared authority synthetic: release reentry",
+      baseSha:"a".repeat(40),headSha:"b".repeat(40),branch:"feature/authority-ci",actor:"test-agent"},options)
+    const records=[initial]
+    for(const status of ["planning_in_progress","planned","implementation_in_progress","implementation_ready","tests_in_progress","tests_passed","review_in_progress","review_passed","merge_ready","merged","deploy_in_progress","deployed","verification_in_progress","verification_failed","rollback_in_progress","rolled_back","implementation_in_progress"]){
+      records.push(await transitionDevelopmentRun(initial.runId,{expectedVersion:records.at(-1).version,status,actor:"test-agent"},options))
+    }
+    return {released:records.at(-2),reactivated:records.at(-1),history:records.slice(0,-1)}
   }finally{await rm(dir,{recursive:true,force:true})}
 }
 const commit=(a,record,prior=null)=>a.commitRecord(JSON.stringify(record),prior?.version??-1,prior?.historyHash??null)
@@ -192,6 +206,10 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
     await assert.rejects(sql(statement,"postgres"),/append-only/)
   await assert.rejects(sql("SELECT * FROM ppo_authority.run_versions;","ppo_authority_reader"),/permission denied/)
   await assert.rejects(sql("CREATE TABLE ppo_authority.fake(id int);","ppo_authority_writer"),/permission denied/)
+  await sql("CREATE ROLE ppo_untrusted_ci NOLOGIN; GRANT USAGE ON SCHEMA ppo_authority TO ppo_untrusted_ci;")
+  await assert.rejects(sql("SELECT ppo_authority.read_run("+literals(a.initial.runId)+");","ppo_untrusted_ci"),/permission denied/)
+  await assert.rejects(sql(commitSql(a.cancelled,a.progress),"ppo_untrusted_ci"),/permission denied/)
+  assert.equal(await sql("CREATE TEMP TABLE current_runs(run_id text,record jsonb); CREATE TEMP TABLE gate(singleton boolean,revision bigint); SELECT ppo_authority.read_run("+literals(a.initial.runId)+")->>'runId';","ppo_authority_writer"),a.initial.runId)
 
   // Two different newly active projects contend for the last lane.
   const b=await fixture("kynexa"),c=await fixture("khlim-assist")
@@ -225,4 +243,18 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
     for(const [next,prior] of [[r.planned,r.first],[r.implementing,r.planned],[r.progress,r.implementing],[r.cancelled,r.progress]])
       assert.equal(await commit(writer,next,prior),true)
   }
+
+  // The loser from the earlier creation race still occupies one lane.
+  // Rehearse two independently released projects competing to re-enter
+  // the final lane; the second transaction has an explicit prior snapshot.
+  const releasedA=await releasedFixture("rivora"),releasedB=await releasedFixture("portfolio")
+  for(const r of [releasedA,releasedB]){
+    for(let i=0;i<r.history.length;i++)assert.equal(await commit(writer,r.history[i],r.history[i-1]||null),true)
+    assert.deepEqual(await reader.readRun(r.released.runId),r.released)
+  }
+  await staleSnapshot("READ COMMITTED",releasedB.released,releasedB.reactivated,async()=>{
+    assert.equal(await commit(writer,releasedA.reactivated,releasedA.released),true)
+  })
+  assert.deepEqual(await reader.readRun(releasedA.released.runId),releasedA.reactivated)
+  assert.deepEqual(await reader.readRun(releasedB.released.runId),releasedB.released)
 })
