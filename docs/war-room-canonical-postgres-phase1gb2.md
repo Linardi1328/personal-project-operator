@@ -1,0 +1,31 @@
+# RIC-157 — Phase 1G-B2a: PostgreSQL canonical storage candidate
+
+**Scope:** implementation and real PostgreSQL CI integration, not a production migration or live action authority. The existing filesystem remains the production PPO canonical authority. No dual write, no live readers/writers redirected, no Mac/VPS connection, no worker execution. RIC-59 and RIC-61 remain in force.
+
+## Decision
+
+Select PostgreSQL as the candidate server-owned transaction domain for Phase 1G-B2. It supplies shared transactional persistence, database roles, constraints and serialization across independent connections. The final hosting decision (including whether to use an existing managed PostgreSQL service) is deferred until the authority, migration and operational requirements have been reviewed. SQLite remains only the completed B1 experiment.
+
+## Implemented storage boundary
+
+- The version table stores complete immutable PPO record snapshots, keyed by run ID and version. The latest version is derived from that single history, not from an independently writable current-state table. Ordinary writer and reader roles cannot directly read or mutate tables, change the gate, update/delete/truncate history or execute arbitrary privileged functions.
+- The fixed commit operation checks expected version AND expected history hash, enforces the next version, exact previous history prefix and immutable project/task/base identity, binds summary Git refs to the last history event, and appends one version. A stale or conflicting writer is denied. No automatic retry of unknown commits.
+- The Node storage seam validates complete records with PPO's existing parseDevelopmentRunRecord, also verifies final Git-ref consistency, and uses parameterized, fixed SQL calls. The writer role is trusted server infrastructure and the SQL schema does not independently reproduce the JavaScript history hash/transition validator. Do not grant this role to clients or expose arbitrary snapshots from clients.
+- A single updated gate row serializes every canonical writer and prospective admission decision. Updating the row also forces stale repeatable-read/serializable writers to abort on conflicts. Full current records are evaluated, not a display page; two WIP-consuming projects maximum, one WIP-consuming run per project. Cancellation or release may free a lane. This candidate enforces limits on all admitted writes; no import of legacy invalid/over-limit records is attempted.
+- Read-only functions expose current and ordered version records to the explicitly trusted service roles. This is not tenant-level access control or an end-user API. Full recovery/catalog diagnostics, historical provenance, and role-to-caller authentication remain implementation gates. PostgreSQL JSONB preserves JSON values, not original file serialization bytes; migration must separately preserve exact source bytes and hashes.
+- SQL installation refuses any database name other than ppo_authority_ci and the commit operation requires the synthetic task prefix. These are accidental-use guards, not a malicious administrator boundary. Installation is explicit and not registered in any production migration runner.
+
+## Required CI
+
+The existing PR validation job starts a disposable PostgreSQL 16 container with no network connectivity or published port. The integration suite uses independent psql processes inside that container and the actual Node storage seam, never a production DSN. The CI transport encodes test parameters as base64 literals; a deployed service must use actual driver bind parameters. CI creates the schema, generates valid synthetic records using the existing PPO state-machine API in deleted scratch stores, and exercises concurrent version CAS, wrong expected hash, progress/cancellation history, Git-ref mismatch, writer/reader role restrictions, immutable history, and concurrent admission for the last lane. A new connection verifies persisted latest state. Docker teardown removes all test data.
+
+This is real server-backed transaction testing, but not proof of cross-host network partitions, crash/restart, authenticated service sessions, production storage durability or action-fence expiry. Role tests use SET ROLE from the isolated test administrator; no production credential or service login is provisioned. The PostgreSQL major version is pinned; CI prints its actual version.
+
+## Remaining Phase 1G-B2 work
+
+1. Integrate the same canonical storage interface into actual creation, transition, progress, cancellation, recovery, catalog and all dispatch/delivery writers. Extract/reuse state-machine construction without creating a second writable run store. No fallback to filesystem after authority cutover.
+2. Inventory all actual writers/readers and rehearse complete migration, including immutable historical files, invalid/recovery-required entries, exact provenance and WIP policy. No deletion, repair or retirement of existing records in this slice.
+3. Extend the same transaction domain/gate to authenticated host lifecycle, request/claim bindings, nonce consumption, revocation and authoritative freshness. Use fixed authenticated server operations and restricted database credentials; do not expose a transaction callback to a remote caller.
+4. Prove failure, partition, restart, ambiguous commit and restore behavior, including no resurrected nonce or revoked epoch. Verify actual side-effect fencing before enabling any action. Obtain independent security review and separate owner approval for any real migration or host pilot.
+
+PR merge is source-only and does not authorize these operational changes. RIC-157 remains In Progress until shared authority and its integration are delivered.
