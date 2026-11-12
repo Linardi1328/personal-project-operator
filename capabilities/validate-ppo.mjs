@@ -57,7 +57,8 @@ export function matchesSchema(value, schema) {
 // New YAML constructs require explicit review rather than optimistic parsing.
 function workflowSteps(text) {
   const job = text.split("\n  validate:\n")
-  if (job.length !== 2 || /\n  [A-Za-z_-]+:/.test(job[1])) return null
+  // Exact reviewed top-level envelope; reject defaults, env, alternate events and extra jobs.
+  if (job.length !== 2 || job[0] !== "name: PPO PR validation\n\non:\n  pull_request:\n    branches:\n      - main\n  push:\n    branches:\n      - 'phase/**'\n      - 'feature/**'\n      - 'fix/**'\n      - 'hotfix/**'\n\npermissions:\n  contents: read\n\njobs:" || /\n  [A-Za-z_-]+:/.test(job[1])) return null
   const steps = job[1].split("\n    steps:\n")
   if (steps.length !== 2 || steps[0].trim() !== "runs-on: ubuntu-latest") return null
   const blocks = steps[1].trimEnd().split(/\n(?=      - )/u).map(block => block.trimEnd())

@@ -51,6 +51,11 @@ export const REQUIRED_PPO_PR_VALIDATION_STEPS = Object.freeze([
   "Phase 6Q integrated user acceptance",
   "Diff whitespace checks"
 ])
+export const PPO_CI_CONTRACT_ID = "ppo-pr-validation-v2"
+export const PPO_CI_CONTRACT_HASH = createHash("sha256").update(JSON.stringify({
+  id: PPO_CI_CONTRACT_ID, workflow: PPO_PR_VALIDATION_WORKFLOW_FILE,
+  job: "validate", steps: REQUIRED_PPO_PR_VALIDATION_STEPS
+})).digest("hex")
 
 const shaPattern = /^[a-f0-9]{40}$/u
 const branchPattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/u
@@ -546,7 +551,15 @@ function validateDeliveryEvidenceForBoundSha(run, entry, boundSha) {
     )
   }
 
-  if (metadata.requiredSteps !== undefined && metadata.requiredSteps !== REQUIRED_PPO_PR_VALIDATION_STEPS.length) {
+  // Historical provenance is not present-day merge authorization.
+  const hasCiFields = metadata.requiredSteps !== undefined || metadata.ciContractId !== undefined ||
+    metadata.ciContractHash !== undefined || metadata.outcome === "ci_passed"
+  const legacyCi = metadata.requiredSteps === 6 && metadata.ciContractId === undefined && metadata.ciContractHash === undefined
+  const currentCi = metadata.requiredSteps === REQUIRED_PPO_PR_VALIDATION_STEPS.length &&
+    metadata.ciContractId === PPO_CI_CONTRACT_ID && metadata.ciContractHash === PPO_CI_CONTRACT_HASH
+  if (hasCiFields && (!(legacyCi || currentCi) || metadata.outcome !== "ci_passed" ||
+      metadata.workflowName !== PPO_PR_VALIDATION_WORKFLOW_NAME || metadata.workflowConclusion !== "success" ||
+      !Number.isInteger(metadata.workflowRunId) || metadata.workflowRunId <= 0)) {
     throw deliveryError(
       "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID",
       "GitHub delivery CI evidence does not match the approved validation contract."
@@ -1082,7 +1095,7 @@ function normalizeWorkflowJob(raw) {
 
   return {
     id: Number(raw.id),
-    name: normalizeSafeText(raw.name || "validate", { maxChars: 120 }),
+    name: normalizeSafeText(raw.name || "", { maxChars: 120 }),
     status: normalizeSafeText(raw.status || "", { maxChars: 40 }),
     conclusion: raw.conclusion ? normalizeSafeText(raw.conclusion, { maxChars: 40 }) : null,
     steps
@@ -1454,24 +1467,16 @@ export async function requireExactHeadCi(acceptance, pr, options = {}) {
   }
 
   const jobs = await client.listWorkflowRunJobs(acceptance.project, latest.id)
-  const completedJobs = jobs.filter((job) => job.status === "completed" && job.conclusion === "success")
-  const stepConclusions = new Map()
-
-  for (const job of completedJobs) {
-    for (const step of job.steps) {
-      stepConclusions.set(step.name, step)
-    }
-  }
-
-  for (const stepName of REQUIRED_PPO_PR_VALIDATION_STEPS) {
-    const step = stepConclusions.get(stepName)
-
-    if (!step || step.status !== "completed" || step.conclusion !== "success") {
-      throw deliveryError(
-        "GITHUB_DELIVERY_CI_FAILED",
-        "Exact-head PPO PR validation did not complete every required step successfully."
-      )
-    }
+  const job = Array.isArray(jobs) && jobs.length === 1 ? jobs[0] : null
+  const steps = job?.steps
+  const required = Array.isArray(steps) ? steps.filter(step => REQUIRED_PPO_PR_VALIDATION_STEPS.includes(step.name)) : []
+  if (job?.name !== "validate" || job.status !== "completed" || job.conclusion !== "success" ||
+      !Array.isArray(steps) || new Set(steps.map(step => step.name)).size !== steps.length ||
+      required.length !== REQUIRED_PPO_PR_VALIDATION_STEPS.length ||
+      required.some((step,i) => step.name !== REQUIRED_PPO_PR_VALIDATION_STEPS[i] ||
+        step.status !== "completed" || step.conclusion !== "success")) {
+    throw deliveryError("GITHUB_DELIVERY_CI_FAILED",
+      "Exact-head PPO PR validation did not complete the unique ordered required gates in the validate job.")
   }
 
   return {
@@ -1481,7 +1486,9 @@ export async function requireExactHeadCi(acceptance, pr, options = {}) {
     workflowRunId: latest.id,
     workflowConclusion: latest.conclusion,
     headSha: latest.headSha,
-    requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length
+    requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+    ciContractId: PPO_CI_CONTRACT_ID,
+    ciContractHash: PPO_CI_CONTRACT_HASH
   }
 }
 
@@ -1924,6 +1931,8 @@ export async function executeGitHubDeliveryToMergeReady(runId, options = {}) {
     workflowRunId: ci.workflowRunId,
     workflowConclusion: ci.workflowConclusion,
     requiredSteps: ci.requiredSteps,
+    ciContractId: ci.ciContractId,
+    ciContractHash: ci.ciContractHash,
     checkedAt: timestamp(options)
   }, "Exact-head PPO PR validation passed."), options, "phase-6g-ci-pass")
 
