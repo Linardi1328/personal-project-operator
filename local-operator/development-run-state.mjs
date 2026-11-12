@@ -2651,7 +2651,51 @@ function validatePersonalProjectOperatorSelfDevelopmentInput(input = {}) {
   return PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT
 }
 
-async function createDevelopmentRunWithProject(input, project, options = {}) {
+// The synthetic shared-authority path is explicit and internal. Existing
+// filesystem APIs never pass this capability, including via options.
+const SYNTHETIC_AUTHORITY_TASK_PREFIX = "RIC-157 shared authority synthetic:"
+
+function assertSyntheticAuthorityRecord(record) {
+  if (!record.task.startsWith(SYNTHETIC_AUTHORITY_TASK_PREFIX)) {
+    throw runStateError("AUTHORITY_SCOPE_DENIED", "Only synthetic canonical authority records are permitted.")
+  }
+  return record
+}
+
+async function readAuthorityRun(authority, runId) {
+  const id = normalizeDevelopmentRunId(runId)
+  const record = await authority.readRun(id)
+  if (record === null) throw runStateError("RUN_NOT_FOUND", "Development run was not found.")
+  return assertSyntheticAuthorityRecord(parseRunRecord(serializeRecord(record), id))
+}
+
+async function persistAuthorityRun(authority, next, current = null) {
+  const serialized = serializeRecord(assertSyntheticAuthorityRecord(next))
+  parseRunRecord(serialized, next.runId)
+  let accepted
+  try {
+    accepted = await authority.commitRecord(serialized, current?.version ?? -1, current?.historyHash ?? null)
+  } catch {
+    // A transport exception does not establish rollback. Never retry or
+    // switch stores; authoritative reconciliation is required.
+    throw runStateError("AUTHORITY_COMMIT_UNKNOWN", "Canonical authority commit outcome is unknown; reload authoritative state before further action.")
+  }
+  if (accepted === false) throw runStateError("AUTHORITY_COMMIT_REJECTED", "Canonical authority rejected the version or admission; reload before further action.")
+  if (accepted !== true) throw runStateError("AUTHORITY_COMMIT_UNKNOWN", "Canonical authority commit outcome is unknown; reload authoritative state before further action.")
+  return cloneJson(next)
+}
+
+async function readMutationRun(runId, options, authority) {
+  return authority ? await readAuthorityRun(authority, runId) : await readDevelopmentRunInternal(runId, options)
+}
+
+async function persistMutationRun(runId, next, current, options, authority) {
+  if (authority) return await persistAuthorityRun(authority, next, current)
+  await commitRecord(storePaths(runId, options), next)
+  return cloneJson(next)
+}
+
+async function createDevelopmentRunWithProject(input, project, options = {}, authority = null) {
   const task = normalizeSafeText(input?.task, {
     fieldName: "Task",
     maxChars: MAX_DEVELOPMENT_RUN_TASK_CHARS,
@@ -2664,6 +2708,12 @@ async function createDevelopmentRunWithProject(input, project, options = {}) {
   const headSha = normalizeOptionalSha(input?.headSha, "Head SHA")
   const actor = normalizeActor(input?.actor)
   const createdAt = timestamp(nowDate(options))
+  if (authority) {
+    // Admission denial and ID collision are intentionally not retried.
+    const record = buildInitialRecord({runId: makeDevelopmentRunId(options), project, task,
+      baseSha, branch, headSha, createdAt, actor})
+    return await persistAuthorityRun(authority, record)
+  }
   const basePaths = storePaths(null, options)
 
   await ensureStore(basePaths)
@@ -2782,7 +2832,7 @@ async function readDevelopmentRunInternal(runId, options = {}) {
   return cloneJson(canonical)
 }
 
-async function transitionDevelopmentRunInternal(runId, transition, options = {}) {
+async function transitionDevelopmentRunInternal(runId, transition, options = {}, authority = null) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const expectedVersion = normalizeExpectedVersion(transition?.expectedVersion)
   const toStatus = normalizeDevelopmentRunStatus(transition?.status)
@@ -2799,7 +2849,7 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {})
     ...options,
     now: () => now
   })
-  const current = await readDevelopmentRunInternal(normalizedRunId, options)
+  const current = await readMutationRun(normalizedRunId, options, authority)
 
   if (current.version !== expectedVersion) {
     throw runStateError(
@@ -2818,13 +2868,10 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {})
     now,
     recoveryToken: options.reviewRuntimeRecoveryToken
   })
-  const paths = storePaths(normalizedRunId, options)
-
-  await commitRecord(paths, next)
-  return cloneJson(next)
+  return await persistMutationRun(normalizedRunId, next, current, options, authority)
 }
 
-async function recordDevelopmentRunProgressInternal(runId, progress, options = {}) {
+async function recordDevelopmentRunProgressInternal(runId, progress, options = {}, authority = null) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const expectedVersion = normalizeExpectedVersion(progress?.expectedVersion)
   const expectedStatus = Object.hasOwn(progress || {}, "status")
@@ -2844,7 +2891,7 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
     now: () => now
   })
   const incrementAttempt = progress?.incrementAttempt === true
-  const current = await readDevelopmentRunInternal(normalizedRunId, options)
+  const current = await readMutationRun(normalizedRunId, options, authority)
 
   if (current.version !== expectedVersion || (expectedStatus !== null && current.status !== expectedStatus)) {
     throw runStateError(
@@ -2862,10 +2909,7 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
     now,
     incrementAttempt
   })
-  const paths = storePaths(normalizedRunId, options)
-
-  await commitRecord(paths, next)
-  return cloneJson(next)
+  return await persistMutationRun(normalizedRunId, next, current, options, authority)
 }
 
 function latestIndependentReviewDecisionForRuntimeRecovery(record) {
@@ -2980,7 +3024,7 @@ function assertReviewRuntimeFailureRecoveryCandidate(record, {
   }
 }
 
-async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, recovery, options = {}) {
+async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, recovery, options = {}, authority = null) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const expectedVersion = normalizeExpectedVersion(recovery?.expectedVersion)
   const expectedHeadSha = normalizeOptionalSha(recovery?.expectedHeadSha, "Expected head SHA")
@@ -2991,7 +3035,7 @@ async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, rec
     code: "REVIEW_RUNTIME_RECOVERY_CONFIRMATION_REQUIRED",
     safeMessage: "Exact confirmation is required for review runtime failure recovery."
   })
-  const current = await readDevelopmentRunInternal(normalizedRunId, options)
+  const current = await readMutationRun(normalizedRunId, options, authority)
 
   if (current.version !== expectedVersion) {
     throw runStateError(
@@ -3034,13 +3078,10 @@ async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, rec
     now,
     recoveryToken: reviewRuntimeFailureRecoveryToken
   })
-  const paths = storePaths(normalizedRunId, options)
-
-  await commitRecord(paths, next)
-  return cloneJson(next)
+  return await persistMutationRun(normalizedRunId, next, current, options, authority)
 }
 
-async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, options = {}) {
+async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, options = {}, authority = null) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const expectedVersion = normalizeExpectedVersion(recovery?.expectedVersion)
   const expectedHeadSha = normalizeOptionalSha(recovery?.expectedHeadSha, "Expected head SHA")
@@ -3051,7 +3092,7 @@ async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, o
     code: "REVIEW_ORPHAN_RECOVERY_CONFIRMATION_REQUIRED",
     safeMessage: "Exact confirmation is required for orphaned review recovery."
   })
-  const current = await readDevelopmentRunInternal(normalizedRunId, options)
+  const current = await readMutationRun(normalizedRunId, options, authority)
 
   if (current.version !== expectedVersion) {
     throw runStateError(
@@ -3093,10 +3134,35 @@ async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, o
     now,
     recoveryToken: reviewOrphanRecoveryToken
   })
-  const paths = storePaths(normalizedRunId, options)
+  return await persistMutationRun(normalizedRunId, next, current, options, authority)
+}
 
-  await commitRecord(paths, next)
-  return cloneJson(next)
+/**
+ * Explicit isolated canonical state machine; not a production routing switch.
+ * Authority and clock are trusted server infrastructure. No raw-record
+ * mutation, file-store fallback, self-development override or recovery token
+ * is exposed. Existing APIs never select this path.
+ */
+export function createIsolatedCanonicalRunState({mode, authority, now, randomBytesImpl} = {}) {
+  if (mode !== "isolated-postgres-canonical-authority" ||
+      typeof authority?.readRun !== "function" || typeof authority?.commitRecord !== "function" ||
+      (now !== undefined && typeof now !== "function") ||
+      (randomBytesImpl !== undefined && typeof randomBytesImpl !== "function")) {
+    throw runStateError("AUTHORITY_SCOPE_DENIED", "Explicit isolated canonical authority is required.")
+  }
+  const storage = Object.freeze({readRun: authority.readRun.bind(authority), commitRecord: authority.commitRecord.bind(authority)})
+  const options = Object.freeze({now, randomBytesImpl})
+  const safe = async (operation) => {
+    try { return await operation() } catch (error) { throw safeRunStateFailure(error) }
+  }
+  return Object.freeze({
+    create: input => safe(() => createDevelopmentRunWithProject(input, resolveDevelopmentRunProject(input?.projectId), options, storage)),
+    read: runId => safe(() => readAuthorityRun(storage, runId)),
+    transition: (runId, transition) => safe(() => transitionDevelopmentRunInternal(runId, transition, options, storage)),
+    progress: (runId, progress) => safe(() => recordDevelopmentRunProgressInternal(runId, progress, options, storage)),
+    recoverReviewRuntimeFailure: (runId, recovery) => safe(() => recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, recovery, options, storage)),
+    recoverReviewOrphan: (runId, recovery) => safe(() => recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, options, storage))
+  })
 }
 
 export async function createDevelopmentRun(input, options = {}) {
