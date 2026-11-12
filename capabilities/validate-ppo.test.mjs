@@ -41,6 +41,11 @@ for (const [label, workflow] of [
   ["conditional step", sources.workflow.replace("        run: node", "        if: false\n        run: node")],
   ["allowed failure", sources.workflow.replace("        run: node", "        continue-on-error: true\n        run: node")],
   ["missing step", sources.workflow.replace(/      - name: Repository syntax checks[\s\S]*?(?=      - name:)/, "")],
+  ["missing database integration", sources.workflow.replace(/      - name: PostgreSQL canonical authority integration \(isolated\)[\s\S]*?(?=      - name:)/, "")],
+  ["changed database gate", sources.workflow.replace("bash deployment/scripts/test-ppo-postgres-authority.sh", "true")],
+  ["conditional database gate", sources.workflow.replace("        run: bash deployment/scripts/test-ppo-postgres-authority.sh", "        if: false\n        run: bash deployment/scripts/test-ppo-postgres-authority.sh")],
+  ["workflow shell override", sources.workflow.replace("jobs:", "defaults:\n  run:\n    shell: 'true {0}'\n\njobs:")],
+  ["workflow environment override", sources.workflow.replace("jobs:", "env:\n  NODE_OPTIONS: '--require /tmp/noop.js'\n\njobs:")],
   ["duplicate job", sources.workflow + "\n  validate:\n    steps: []\n"]
 ]) {
   test(`workflow rejects ${label}`, () => {

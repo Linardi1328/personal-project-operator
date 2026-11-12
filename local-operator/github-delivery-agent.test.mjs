@@ -50,6 +50,7 @@ import {
   PHASE_6G_APPROVED_MERGE_METHOD,
   PPO_PR_VALIDATION_WORKFLOW_FILE,
   REQUIRED_PPO_PR_VALIDATION_STEPS,
+  PPO_CI_CONTRACT_ID, PPO_CI_CONTRACT_HASH,
   createOrReconcileApprovedPullRequest,
   executeGitHubDeliveryToMergeReady,
   executePhase6GDelivery,
@@ -844,7 +845,7 @@ test("read-only delivery reconciliation observes review_passed delivery progress
           workflowName: "PPO PR validation",
           workflowRunId: 100,
           workflowConclusion: "success",
-          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          requiredSteps: 6,
           checkedAt: "2026-08-21T12:00:02.000Z"
         })
       ],
@@ -882,7 +883,7 @@ test("read-only delivery reconciliation observes review_passed delivery progress
           workflowName: "PPO PR validation",
           workflowRunId: 100,
           workflowConclusion: "success",
-          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          requiredSteps: 6,
           checkedAt: "2026-08-21T12:00:02.000Z"
         }),
         remoteReviewProgressEvidence(run, pr)
@@ -1332,12 +1333,21 @@ test("PR reconciliation and exact-head CI reject duplicate, stale, pending, fail
   })
   assert.equal(ciPass.outcome, "ci_passed")
   assert.equal(ciPass.headSha, fixture.headSha)
+  assert.equal(ciPass.ciContractId, PPO_CI_CONTRACT_ID)
+  assert.equal(ciPass.ciContractHash, PPO_CI_CONTRACT_HASH)
 
   for (const [runs, jobs, code] of [
     [[successRun(fixture.baseSha)], successJobs(), "GITHUB_DELIVERY_CI_OLDER_SHA_REJECTED"],
     [[successRun(fixture.headSha, { status: "in_progress", conclusion: null })], successJobs(), "GITHUB_DELIVERY_CI_PENDING"],
     [[successRun(fixture.headSha, { conclusion: "failure" })], successJobs(), "GITHUB_DELIVERY_CI_FAILED"],
-    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.slice(0, 3) }], "GITHUB_DELIVERY_CI_FAILED"]
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.slice(0, 3) }], "GITHUB_DELIVERY_CI_FAILED"],
+    // A successful legacy six-step run cannot satisfy the new exact-head policy.
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.filter(step => step.name !== "PostgreSQL canonical authority integration (isolated)") }], "GITHUB_DELIVERY_CI_FAILED"],
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.map(step => step.name === "PostgreSQL canonical authority integration (isolated)" ? { ...step, conclusion: "skipped" } : step) }], "GITHUB_DELIVERY_CI_FAILED"],
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], name: "other" }], "GITHUB_DELIVERY_CI_FAILED"],
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: successJobs()[0].steps.slice(0,3) }, { ...successJobs()[0], name: "other", steps: successJobs()[0].steps.slice(3) }], "GITHUB_DELIVERY_CI_FAILED"],
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: [...successJobs()[0].steps, successJobs()[0].steps[1]] }], "GITHUB_DELIVERY_CI_FAILED"],
+    [[successRun(fixture.headSha)], [{ ...successJobs()[0], steps: [...successJobs()[0].steps].reverse() }], "GITHUB_DELIVERY_CI_FAILED"]
   ]) {
     const ciClient = makeGitHubClient(fixture.project, fixture.run.branch, fixture.headSha, {
       prs: [makePr(fixture.project, fixture.run.branch, fixture.headSha)],
@@ -1920,4 +1930,73 @@ test("Phase 6G exposes no command route, deployment action, or broad GitHub writ
   assert.match(moduleSource, /merge_method/)
   assert.match(moduleSource, /sha=\$\{normalizeSha\(expectedHeadSha/)
   assert.match(moduleSource, /GITHUB_DELIVERY_AGENT_ID/)
+})
+
+
+test("legacy CI provenance survives reconciliation but does not establish current CI success", async () => {
+  const fixture = await makeReviewPassedFixture()
+  const pr = makePr(fixture.project, fixture.run.branch, fixture.headSha)
+  const legacy = deliveryProgressEvidence(fixture.run, "ci_passed", {
+    prNumber: pr.number, workflowName: "PPO PR validation", workflowRunId: 99,
+    workflowConclusion: "success", requiredSteps: 6, checkedAt: "2026-08-21T12:00:02.000Z"
+  })
+  let run = await appendDeliveryProgress(fixture.run, legacy, fixture)
+  const legacyJobs = [{ ...successJobs()[0], steps: successJobs()[0].steps.filter(s => s.name !== "PostgreSQL canonical authority integration (isolated)") }]
+  const client = readOnlyGithubClient(makeGitHubClient(fixture.project, run.branch, run.headSha, { prs: [pr], jobs: legacyJobs }))
+  const opts = { writeDataDir: fixture.writeDataDir, workspaceRegistry: fixture.registry,
+    gitRunner: makeGitRunner({ branchSha: run.headSha }), githubClient: client }
+  const before = await readDevelopmentRun(run.runId, opts)
+  assert.equal((await reconcileGitHubDelivery(run.runId, opts)).delivery.ciStatus, "failed")
+  client.state.jobs = successJobs()
+  assert.equal((await reconcileGitHubDelivery(run.runId, opts)).delivery.ciStatus, "passed")
+  assert.deepEqual(await readDevelopmentRun(run.runId, opts), before)
+  assert.deepEqual(client.writes, [])
+  run = await appendDeliveryProgress(run, deliveryProgressEvidence(run, "ci_passed", {
+    ...legacy.metadata, requiredSteps: 7, ciContractId: PPO_CI_CONTRACT_ID, ciContractHash: PPO_CI_CONTRACT_HASH
+  }), fixture)
+  assert.equal((await reconcileGitHubDelivery(run.runId, opts)).delivery.ciStatus, "passed")
+  assert.deepEqual(run.evidence.merge.slice(0,before.evidence.merge.length), before.evidence.merge)
+  run = await appendDeliveryProgress(run, deliveryProgressEvidence(run, "ci_passed", {
+    ...legacy.metadata, ciContractId: PPO_CI_CONTRACT_ID, ciContractHash: PPO_CI_CONTRACT_HASH
+  }), fixture)
+  await assertRejectsCode(reconcileGitHubDelivery(run.runId, opts), "GITHUB_DELIVERY_RECONCILE_EVIDENCE_INVALID")
+})
+
+
+test("legacy merge-ready history denies a new merge but permits exact remote completion reconciliation", async () => {
+  const fixture = await makeReviewPassedFixture()
+  const pr = makePr(fixture.project, fixture.run.branch, fixture.headSha)
+  const legacy = deliveryProgressEvidence(fixture.run, "ci_passed", {
+    prNumber: pr.number, workflowName: "PPO PR validation", workflowRunId: 99,
+    workflowConclusion: "success", requiredSteps: 6, checkedAt: "2026-08-21T12:00:02.000Z"
+  })
+  let run = await appendDeliveryProgress(fixture.run, legacy, fixture)
+  run = await appendDeliveryProgress(run, remoteReviewProgressEvidence(run, pr), fixture, REMOTE_PR_REVIEW_AGENT_ID)
+  run = await transitionDevelopmentRun(run.runId, {
+    expectedVersion: run.version, status: "merge_ready", actor: GITHUB_DELIVERY_AGENT_ID,
+    evidence: [deliveryProgressEvidence(run, "merge_ready", { prNumber: pr.number, branch: run.branch,
+      base: "main", prHeadSha: run.headSha, workflowRunId: 99, remoteReviewedSha: run.headSha,
+      remoteDecision: REVIEW_DECISIONS.APPROVED })]
+  }, { writeDataDir: fixture.writeDataDir, now: fixture.now })
+  const client = makeGitHubClient(fixture.project, run.branch, run.headSha, { prs: [pr],
+    jobs: [{...successJobs()[0], steps: successJobs()[0].steps.filter(s => s.name !== "PostgreSQL canonical authority integration (isolated)")}], mainSha: "c".repeat(40) })
+  const opts = { expectedVersion: run.version, writeDataDir: fixture.writeDataDir, workspaceRegistry: fixture.registry,
+    githubClient: client, now: fixture.now }
+  await assertRejectsCode(executeShaPinnedMerge(run.runId, opts), "GITHUB_DELIVERY_CI_FAILED")
+  assert.equal(client.state.mergeCalls.length, 0)
+  assert.deepEqual(await readDevelopmentRun(run.runId, opts), run)
+  // Model a historical remote merge already completed; read-only recovery
+  // verifies the exact PR/main facts without granting another merge.
+  run = await appendDeliveryProgress(run, deliveryProgressEvidence(run, "merge_started", {
+    prNumber: pr.number, expectedHeadSha: run.headSha, mergeMethod: "squash"
+  }), fixture)
+  client.state.prs[0].state = "closed"
+  client.state.prs[0].merged = true
+  client.state.prs[0].mergeCommitSha = MERGE_SHA
+  client.state.mainSha = MERGE_SHA
+  const readonly = readOnlyGithubClient(client)
+  assert.equal((await reconcileGitHubDelivery(run.runId, {...opts, githubClient: readonly})).delivery.mergeStatus, "merged_remote")
+  assert.deepEqual(readonly.writes, [])
+  assert.deepEqual(await readDevelopmentRun(run.runId, opts), run)
+  assert.equal(client.state.mergeCalls.length, 0)
 })

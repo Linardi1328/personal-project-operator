@@ -25,6 +25,9 @@ jobs:
       - name: Repository syntax checks
         run: node deployment/scripts/run-ppo-development-quality.mjs syntax
 
+      - name: PostgreSQL canonical authority integration (isolated)
+        run: bash deployment/scripts/test-ppo-postgres-authority.sh
+
       - name: Parallel regression suite
         run: node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
 

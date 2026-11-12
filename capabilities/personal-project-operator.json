@@ -46,6 +46,7 @@
     "job": "validate",
     "requiredSteps": [
       "Repository syntax checks",
+      "PostgreSQL canonical authority integration (isolated)",
       "Parallel regression suite",
       "Full serial regression suite",
       "Critical Phase 6 lifecycle stability",

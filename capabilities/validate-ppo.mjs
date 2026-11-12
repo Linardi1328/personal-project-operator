@@ -57,7 +57,8 @@ export function matchesSchema(value, schema) {
 // New YAML constructs require explicit review rather than optimistic parsing.
 function workflowSteps(text) {
   const job = text.split("\n  validate:\n")
-  if (job.length !== 2 || /\n  [A-Za-z_-]+:/.test(job[1])) return null
+  // Exact reviewed top-level envelope; reject defaults, env, alternate events and extra jobs.
+  if (job.length !== 2 || job[0] !== "name: PPO PR validation\n\non:\n  pull_request:\n    branches:\n      - main\n  push:\n    branches:\n      - 'phase/**'\n      - 'feature/**'\n      - 'fix/**'\n      - 'hotfix/**'\n\npermissions:\n  contents: read\n\njobs:" || /\n  [A-Za-z_-]+:/.test(job[1])) return null
   const steps = job[1].split("\n    steps:\n")
   if (steps.length !== 2 || steps[0].trim() !== "runs-on: ubuntu-latest") return null
   const blocks = steps[1].trimEnd().split(/\n(?=      - )/u).map(block => block.trimEnd())
@@ -93,7 +94,11 @@ export function validatePpoSources(sources) {
   check("github-workflow", manifest.github.workflow === paths.workflow && manifest.github.job === "validate" &&
     Array.isArray(steps) && steps.every(Boolean) &&
     equal(steps.map(s => s.name), manifest.github.requiredSteps) &&
-    equal(steps.map(s => s.command), [...policy.gates.map(g => g.command.join(" ")), "git diff --check"]) &&
+    // The server database integration is a CI-only fixed command, not a
+    // local Darwin runtime requirement. Preserve the exact gate order.
+    equal(steps.map(s => s.command), [policy.gates[0].command.join(" "),
+      "bash deployment/scripts/test-ppo-postgres-authority.sh",
+      ...policy.gates.slice(1).map(g => g.command.join(" ")), "git diff --check"]) &&
     /^  pull_request:\n    branches:\n      - main$/mu.test(sources.workflow))
   check("deployment-boundary", equal(manifest.deploymentProvider, { id: "ppo-self-managed-ubuntu",
     kind: "self-managed-ubuntu-vps", profileId: "personal-project-operator-production",
