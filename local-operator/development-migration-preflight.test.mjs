@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
+import { spawnSync } from "node:child_process"
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -156,4 +157,35 @@ test("complete source scan preserves WIP policy and legacy catalog truncation ho
   assert.equal(truncated.diagnostics.legacyCatalogTruncated,true)
   assert.equal(truncated.readyForRehearsal,false)
   assert.deepEqual(truncated.diagnostics.activeProjects,[])
+})
+
+
+test("real synthetic marker provenance uses ASCII order under numeric default collation",async t=>{
+  const f=await fixture(t,{seed:1})
+  let r=f.next
+  for(const status of ["planned","implementation_in_progress","implementation_ready","cancelled"]){
+    r=await transitionDevelopmentRun(r.runId,{expectedVersion:r.version,status,actor:"test-agent"},
+      {writeDataDir:f.dir,now:()=>new Date("2026-01-01T00:01:00Z")})
+  }
+  const entries=await f.snapshot(),manifest=scan(entries)
+  assert.equal(manifest.readyForRehearsal,true)
+  const ordinal=manifest.inventory.map(x=>x.pathHash)
+  const numeric=[...ordinal].sort(new Intl.Collator("en",{numeric:true}).compare)
+  assert.notDeepEqual(numeric,ordinal,"fixture must distinguish the previous locale-sensitive comparator")
+  const moduleURL=new URL("./development-migration-preflight.mjs",import.meta.url).href
+  const script=`
+    import {readFileSync} from "node:fs";
+    import {rehearseSyntheticMigrationPreflight as scan} from ${JSON.stringify(moduleURL)};
+    const files=JSON.parse(readFileSync(0,"utf8"));
+    const result=scan({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytes,"base64")}))});
+    console.log(JSON.stringify({numeric:new Intl.Collator().resolvedOptions().numeric,hash:result.inventoryHash,ready:result.readyForRehearsal}));
+  `
+  for(const [locale,numeric] of [["en_US.UTF-8",false],["en-u-kn-true",true]]){
+    const child=spawnSync(process.execPath,["--input-type=module","-e",script],{
+      input:JSON.stringify(entries.map(e=>({path:e.relativePath,bytes:e.bytes.toString("base64")}))),
+      encoding:"utf8",env:{...process.env,LANG:locale,LC_ALL:locale,LC_COLLATE:locale},timeout:10000
+    })
+    assert.equal(child.status,0,child.stderr)
+    assert.deepEqual(JSON.parse(child.stdout),{numeric,hash:manifest.inventoryHash,ready:true})
+  }
 })

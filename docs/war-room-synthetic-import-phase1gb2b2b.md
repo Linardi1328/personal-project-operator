@@ -25,3 +25,7 @@ Real PostgreSQL integration runs the new test first on a freshly installed isola
 ## Next
 
 Review and validate this source-only PR. Then complete canonical catalog/inspection integration, writer ownership and cutover rehearsal with explicit reconciliation/rollback. Keep the shared host/claim/nonce/freshness and actual resource-side fencing work in B2c. Production cutover and trusted host pilot require separate owner authorization and verified prerequisites.
+
+## Independent review follow-up
+
+Numeric parity tests alter exact decimal tokens in the active history while preserving JS values and history hashes, including the binary64 integer boundary and underflow. Real PostgreSQL must reject the recomputed inventory atomically; the original fixture, including finite 1e308, remains the positive control and supports a later canonical append. Separate Node processes with standard and numeric default collation hash identical valid path/byte inventories; SQL accepts the common digest. A concurrent importer test loses the winning response after actual commit and reconciles the exact archived inventory, without retrying the uncertain outcome. The scratch cleanup is mandatory; cleanup failure causes capture to fail, can mask the original failure, and requires operator investigation of any leftover scratch data. Dedicated mixed importer/writer and stale importer transaction tests remain a B2b3 gate; the shared gate is unchanged. No broader production durability guarantee is claimed.

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { mkdtemp, rm, readdir } from "node:fs/promises"
@@ -151,6 +151,21 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
   assert.equal(empty,"0,0,0,0")
   assert.equal(snapshot.runCount,3)
   assert.equal(await importer.readArchive(snapshot.inventoryHash),null)
+  // Identical valid source bytes, independent Node processes with genuinely
+  // different default collation. The same digest must be accepted by SQL.
+  const moduleURL=new URL("../../local-operator/development-migration-preflight.mjs",import.meta.url).href
+  const localeProbe=`
+    import {readFileSync} from "node:fs";
+    import {rehearseSyntheticMigrationPreflight as scan} from ${JSON.stringify(moduleURL)};
+    const files=JSON.parse(readFileSync(0,"utf8"));
+    const result=scan({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))});
+    console.log(JSON.stringify({numeric:new Intl.Collator().resolvedOptions().numeric,hash:result.inventoryHash,ready:result.readyForRehearsal}));
+  `
+  for(const [locale,numeric] of [["en_US.UTF-8",false],["en-u-kn-true",true]]){
+    const child=spawnSync(process.execPath,["--input-type=module","-e",localeProbe],{input:JSON.stringify(snapshot.files),encoding:"utf8",env:{...process.env,LANG:locale,LC_ALL:locale,LC_COLLATE:locale},timeout:10000})
+    assert.equal(child.status,0,child.stderr)
+    assert.deepEqual(JSON.parse(child.stdout),{numeric,hash:snapshot.inventoryHash,ready:true})
+  }
 
   // Failure after archive insertion and some history appends: remove the
   // final active run's version 1 marker, recompute the *actual* manifest.
@@ -210,11 +225,21 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
   await assert.rejects(sql("UPDATE ppo_authority.gate SET revision=0;","ppo_authority_importer"),/permission denied/)
   await assert.rejects(sql("SELECT ppo_authority.commit_run(NULL,NULL,NULL,NULL);","ppo_authority_importer"),/permission denied/)
 
-  // Two independent import clients race for the empty target.
-  const results=await Promise.allSettled([importer.rehearse(snapshot),createSyntheticMigrationImporter({mode,query:query("ppo_authority_importer")}).rehearse(snapshot)])
-  assert.equal(results.filter(r=>r.status==="fulfilled").length,1)
-  const receipt=results.find(r=>r.status==="fulfilled").value
-  assert.deepEqual(receipt,{inventoryHash:snapshot.inventoryHash,runCount:3,fileCount:snapshot.files.length,rehearsalCommitted:true,importAuthorized:false,cutoverAuthorized:false})
+  // Two independent clients race for the empty target. Inject loss of the
+  // winning acknowledgement AFTER the psql autocommit has actually completed.
+  let attempts=0,commits=0
+  const loseAck=()=>createSyntheticMigrationImporter({mode,query:async(statement,args)=>{
+    attempts++
+    const result=await query("ppo_authority_importer")(statement,args)
+    if(result.rows[0].accepted===true){commits++;throw Error("synthetic lost committed import response")}
+    return result
+  }})
+  const results=await Promise.allSettled([loseAck().rehearse(snapshot),loseAck().rehearse(snapshot)])
+  assert.equal(attempts,2)
+  assert.equal(commits,1)
+  assert.equal(results.filter(r=>r.status==="rejected"&&r.reason.code==="MIGRATION_COMMIT_UNKNOWN"&&r.reason.inventoryHash===snapshot.inventoryHash).length,1)
+  assert.equal(results.filter(r=>r.status==="rejected"&&r.reason.message==="Synthetic migration rehearsal rejected.").length,1)
+  assert.deepEqual((await counts()).split(",").slice(0,3),["17","1","20"])
   const archive=await importer.readArchive(snapshot.inventoryHash)
   const sorted=files=>[...files].sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0)
   assert.deepEqual(sorted(archive),sorted(snapshot.files))
