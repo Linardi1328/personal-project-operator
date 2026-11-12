@@ -90,6 +90,24 @@ function payload(entries){
   }
   return entries.map(e=>({path:e.relativePath,bytesBase64:e.bytes.toString("base64")}))
 }
+function decodeFiles(files){
+  if(!Array.isArray(files)||files.length>MAX_FILES)deny()
+  let total=0
+  return files.map(file=>{
+    if(typeof file?.path!=="string"||typeof file.bytesBase64!=="string"||
+      file.bytesBase64.length>Math.ceil(MAX_DEVELOPMENT_RUN_RECORD_BYTES/3)*4)deny()
+    const bytes=Buffer.from(file.bytesBase64,"base64")
+    if(bytes.toString("base64")!==file.bytesBase64)deny()
+    total+=bytes.length
+    if(total>MAX_BYTES)deny()
+    return {relativePath:file.path,bytes}
+  })
+}
+function verifiedArchive(files,expectedHash){
+  const entries=decodeFiles(files),manifest=preflight(entries)
+  if(!manifest.readyForRehearsal||manifest.inventoryHash!==expectedHash)deny()
+  return {manifest,files:payload(entries)}
+}
 function one(result,key){
   if(!Array.isArray(result?.rows)||result.rows.length!==1||!Object.hasOwn(result.rows[0],key))deny()
   return result.rows[0][key]
@@ -143,25 +161,14 @@ export function createSyntheticMigrationImporter({mode,query}={}){
     async rehearse(snapshot){
       // Snapshot is a trusted synthetic capture, but validate and snapshot
       // every input again. Never trust caller-supplied manifest readiness.
-      const files=snapshot?.files
-      if(!Array.isArray(files)||files.length>MAX_FILES)deny()
-      let total=0
-      const entries=files.map(file=>{
-        if(typeof file?.path!=="string"||typeof file.bytesBase64!=="string"||
-          file.bytesBase64.length>Math.ceil(MAX_DEVELOPMENT_RUN_RECORD_BYTES/3)*4)deny()
-        const bytes=Buffer.from(file.bytesBase64,"base64")
-        if(bytes.toString("base64")!==file.bytesBase64)deny()
-        total+=bytes.length
-        if(total>MAX_BYTES)deny()
-        return {relativePath:file.path,bytes}
-      })
-      const manifest=preflight(entries)
-      if(!manifest.readyForRehearsal||manifest.inventoryHash!==snapshot.inventoryHash||
-         manifest.runs.length!==snapshot.runCount)deny()
-      const body=JSON.stringify(payload(entries))
+      const {manifest,files}=verifiedArchive(snapshot?.files,snapshot?.inventoryHash)
+      if(manifest.runs.length!==snapshot.runCount)deny()
+      const body=JSON.stringify(files)
       let accepted
-      try{accepted=one(await query(IMPORT,[manifest.inventoryHash,body]),"accepted")}
-      catch{
+      try{
+        accepted=one(await query(IMPORT,[manifest.inventoryHash,body]),"accepted")
+        if(accepted!==true&&accepted!==false)deny()
+      }catch{
         // May have committed. Caller may inspect the exact archive digest;
         // absence alone is not proof that an uncertain write cannot complete.
         const error=Error("Synthetic migration commit outcome unknown; reconcile archive before any further action.")
@@ -175,7 +182,9 @@ export function createSyntheticMigrationImporter({mode,query}={}){
     },
     async readArchive(inventoryHash){
       if(typeof inventoryHash!=="string"||!/^[a-f0-9]{64}$/u.test(inventoryHash)||inventoryHash.length!==64)deny()
-      return one(await query(ARCHIVE,[inventoryHash]),"archive")
+      const archive=one(await query(ARCHIVE,[inventoryHash]),"archive")
+      if(archive===null)return null
+      return Object.freeze(verifiedArchive(archive,inventoryHash).files.map(Object.freeze))
     }
   })
 }
