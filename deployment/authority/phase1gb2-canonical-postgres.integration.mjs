@@ -78,11 +78,24 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   const writer=authority(),reader=authority("ppo_authority_reader")
   const a=await fixture("rivora")
   assert.equal(await reader.readRun(a.initial.runId),null)
+  const createSql="SELECT ppo_authority.commit_run("+[a.initial.runId,-1,null,JSON.stringify(a.initial)].map(literals).join(",") + "::jsonb);"
+  assert.equal(await sql("BEGIN; "+createSql+" ROLLBACK;","ppo_authority_writer"),"t")
+  assert.equal(await reader.readRun(a.initial.runId),null)
+  assert.deepEqual(await reader.readVersions(a.initial.runId),[])
   assert.equal(await commit(writer,a.initial),true)
   assert.equal(await commit(writer,a.initial),false)
   const outcomes=await Promise.all([commit(writer,a.first,a.initial),commit(authority(),a.first,a.initial)])
   assert.deepEqual(outcomes.sort(),[false,true])
   assert.equal(await writer.commitRecord(JSON.stringify(a.planned),1,"f".repeat(64)),false)
+  const fork=structuredClone(a.planned)
+  fork.history[0].actor="rewritten"
+  // Direct trusted SQL writer bypasses the JS validator here intentionally:
+  // the DB must still refuse a rewrite of an existing history prefix.
+  const forkResult=await query("ppo_authority_writer")(
+    "SELECT ppo_authority.commit_run($1::text,$2::integer,$3::text,$4::jsonb) AS accepted",
+    [a.initial.runId,1,a.first.historyHash,JSON.stringify(fork)])
+  assert.equal(forkResult.rows[0].accepted,false)
+  assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first])
   assert.equal(await commit(writer,a.planned,a.first),true)
   assert.equal(await commit(writer,a.implementing,a.planned),true)
   const wrongHead={...a.progress,headSha:"c".repeat(40)}
