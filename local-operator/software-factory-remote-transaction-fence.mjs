@@ -84,6 +84,9 @@ function boundarySnapshot(raw) {
       !matches(b.baseSha, SHA) || !matches(b.headSha, SHA) ||
       !matches(b.actionId, NONCE) || !ACTIONS.has(b.actionType) ||
       !matches(b.actionPath, PATH) ||
+      typeof b.issuedAt !== "string" ||
+      typeof b.expiresAt !== "string" ||
+      typeof b.requestExpiresAt !== "string" ||
       !Number.isFinite(timestamp(b.issuedAt)) ||
       !Number.isFinite(timestamp(b.expiresAt)) ||
       !Number.isFinite(timestamp(b.requestExpiresAt)) ||
@@ -102,7 +105,7 @@ function requireDriver(tx) {
   for (const name of [
     "now", "readHostForUpdate", "readClaimForUpdate",
     "readRequestForUpdate", "readRunForUpdate",
-    "readAdmissionForUpdate", "tryConsumeOnce"
+    "readAdmissionForUpdate", "tryConsumeFreshOnce"
   ]) {
     if (typeof tx?.[name] !== "function") fail("TX_DRIVER_INVALID")
   }
@@ -114,7 +117,10 @@ function requireDriver(tx) {
  * The supplied transact(callback) MUST be a single durable, linearizable
  * transaction that holds locks on host, claim, canonical PPO run, request,
  * catalog/lane admission and nonce state through COMMIT. The final true must
- * mean commit is acknowledged. This cannot be proven by passing a callback.
+ * mean commit is acknowledged AND freshness was enforced by the driver
+ * at the final authoritative consume/commit boundary. A transaction-start
+ * timestamp or a separate JavaScript clock read is not sufficient.
+ * This cannot be proven by passing a callback.
  *
  * In-memory test transactions are only executable specifications, not
  * production authorization. A false/ambiguous/crashed transaction never
@@ -144,14 +150,16 @@ export function createOfflineTransactionFenceAdapter(config) {
             host.keyFingerprint !== b.hostKeyFingerprint) fail("TX_HOST_STALE")
 
         const claim = await tx.readClaimForUpdate(b.claimHash)
+        const claimNotBeforeMs = timestamp(claim?.claimedAt)
+        const claimExpiresAtMs = timestamp(claim?.leaseExpiresAt)
         if (claim?.state !== "claimed" || claim.claimHash !== b.claimHash ||
             claim.requestHash !== b.requestHash || claim.runId !== b.runId ||
             claim.expectedVersion !== b.expectedVersion ||
             claim.hostId !== b.hostId || claim.workerId !== b.workerId ||
-            !Number.isFinite(timestamp(claim.claimedAt)) ||
-            !Number.isFinite(timestamp(claim.leaseExpiresAt)) ||
-            timestamp(claim.claimedAt) > now ||
-            now >= timestamp(claim.leaseExpiresAt)) fail("TX_CLAIM_STALE")
+            !Number.isFinite(claimNotBeforeMs) ||
+            !Number.isFinite(claimExpiresAtMs) ||
+            claimNotBeforeMs > now ||
+            now >= claimExpiresAtMs) fail("TX_CLAIM_STALE")
 
         const request = await tx.readRequestForUpdate(b.requestHash)
         if (request?.requestHash !== b.requestHash ||
@@ -185,13 +193,27 @@ export function createOfflineTransactionFenceAdapter(config) {
             new Set(active).size !== active.length ||
             !active.includes(b.projectId)) fail("TX_ADMISSION_BLOCKED")
 
-        // This must be an INSERT with a unique constraint or equivalent
-        // database-enforced single-use CAS, performed in THIS transaction.
-        const consumed = await tx.tryConsumeOnce(Object.freeze({
+        // The locked claim/request dates must become immutable scalar limits.
+        // The driver MUST condition nonce insertion on its own actual current
+        // time at the linearization boundary, not transaction-start time,
+        // and prevent commit from acknowledging a grant after these limits.
+        // A driver unable to enforce that contract is not eligible for use.
+        const proofNotBeforeMs = timestamp(b.issuedAt)
+        const proofExpiresAtMs = timestamp(b.expiresAt)
+        const requestExpiresAtMs = timestamp(b.requestExpiresAt)
+        const freshNow = timestamp(await tx.now())
+        if (!Number.isFinite(freshNow) || freshNow < claimNotBeforeMs ||
+            freshNow < proofNotBeforeMs || freshNow >= claimExpiresAtMs ||
+            freshNow >= proofExpiresAtMs || freshNow >= requestExpiresAtMs) {
+          fail("TX_EXPIRED")
+        }
+        const consumed = await tx.tryConsumeFreshOnce(Object.freeze({
           hostId: b.hostId, actionId: b.actionId,
           requestHash: b.requestHash, claimHash: b.claimHash,
           runId: b.runId, expectedVersion: b.expectedVersion,
-          hostEpoch: b.hostEpoch
+          hostEpoch: b.hostEpoch,
+          claimNotBeforeMs, claimExpiresAtMs, proofNotBeforeMs,
+          proofExpiresAtMs, requestExpiresAtMs
         }))
         if (consumed !== true) fail("TX_REPLAY_OR_AMBIGUOUS")
         return true
