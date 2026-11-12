@@ -130,6 +130,7 @@ BEGIN
       candidate->'version' IS DISTINCT FROM to_jsonb(expected+1) OR
       coalesce(candidate->>'task','') NOT LIKE 'RIC-157 shared authority synthetic:%' OR
       candidate->'history'->(expected+1)->>'eventHash' IS DISTINCT FROM candidate->>'historyHash' OR
+      candidate->'history'->(expected+1)->>'toStatus' IS DISTINCT FROM candidate->>'status' OR
       candidate->'history'->(expected+1)->'branch' IS DISTINCT FROM candidate->'branch' OR
       candidate->'history'->(expected+1)->'headSha' IS DISTINCT FROM candidate->'headSha' OR
       (expected=-1 AND (prior IS NOT NULL OR r->>'expectedHash' IS NOT NULL OR candidate->>'status'<>'created' OR candidate->'history'->0->'previousHistoryHash' IS DISTINCT FROM 'null'::jsonb)) OR
@@ -202,7 +203,7 @@ CREATE FUNCTION ppo_authority.rehearsal_source_commit(p_request text) RETURNS js
  SELECT ppo_authority.rehearsal_apply(p_request,'source') $b$;
 CREATE FUNCTION ppo_authority.rehearsal_target_commit(p_request text) RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
  SELECT ppo_authority.rehearsal_apply(p_request,'target') $b$;
-CREATE FUNCTION ppo_authority.read_rehearsal() RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
+CREATE FUNCTION ppo_authority.rehearsal_observation(p_target boolean) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
 DECLARE files jsonb; owner jsonb;
 BEGIN
  SELECT to_jsonb(o)-'source_key'-'target_key'-'singleton' INTO owner FROM ppo_authority.rehearsal_owner o WHERE singleton;
@@ -210,9 +211,19 @@ BEGIN
  IF (SELECT count(*) FROM ppo_authority.rehearsal_source_files)>2100 OR
     (SELECT coalesce(sum(octet_length(bytes)),0) FROM ppo_authority.rehearsal_source_files)>4*1024*1024 THEN RAISE EXCEPTION 'source bound'; END IF;
  SELECT coalesce(jsonb_agg(jsonb_build_object('path',path,'bytesBase64',replace(encode(bytes,'base64'),chr(10),'')) ORDER BY path COLLATE "C"),'[]') INTO files FROM ppo_authority.rehearsal_source_files;
+ IF p_target THEN
+  RETURN jsonb_build_object('owner',owner||jsonb_build_object('generation',owner->>'generation'),'revision',(SELECT revision::text FROM ppo_authority.gate WHERE singleton),
+   'files',files,'digest',ppo_authority.rehearsal_source_digest(),'catalog',ppo_authority.read_catalog_snapshot(),'parity',ppo_authority.rehearsal_parity());
+ END IF;
+ -- Abort/source resumption must not inspect or parse a quarantined target.
+ -- This remains one bounded owner/source snapshot with all fence/revision pins.
  RETURN jsonb_build_object('owner',owner||jsonb_build_object('generation',owner->>'generation'),'revision',(SELECT revision::text FROM ppo_authority.gate WHERE singleton),
-  'files',files,'digest',ppo_authority.rehearsal_source_digest(),'catalog',ppo_authority.read_catalog_snapshot(),'parity',ppo_authority.rehearsal_parity());
+  'files',files,'digest',ppo_authority.rehearsal_source_digest(),'catalog',NULL,'parity',NULL);
 END $b$;
+CREATE FUNCTION ppo_authority.read_rehearsal() RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
+ SELECT ppo_authority.rehearsal_observation(true) $b$;
+CREATE FUNCTION ppo_authority.read_rehearsal_source() RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
+ SELECT ppo_authority.rehearsal_observation(false) $b$;
 CREATE FUNCTION ppo_authority.read_rehearsal_receipt(p_id uuid,p_hash text) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
 DECLARE e jsonb; o ppo_authority.rehearsal_owner%ROWTYPE;
 BEGIN
@@ -230,9 +241,9 @@ END $b$;
 REVOKE EXECUTE ON FUNCTION ppo_authority.commit_run(text,integer,text,text) FROM ppo_authority_writer;
 REVOKE EXECUTE ON FUNCTION ppo_authority.import_synthetic_snapshot(text,text) FROM ppo_authority_importer;
 REVOKE ALL ON ALL TABLES IN SCHEMA ppo_authority FROM ppo_rehearsal_controller,ppo_rehearsal_source,ppo_rehearsal_target;
-REVOKE ALL ON FUNCTION ppo_authority.rehearsal_apply(text,text),ppo_authority.rehearsal_source_digest(),ppo_authority.rehearsal_parity(),ppo_authority.rehearsal_immutable_marker() FROM PUBLIC;
+REVOKE ALL ON FUNCTION ppo_authority.rehearsal_apply(text,text),ppo_authority.rehearsal_source_digest(),ppo_authority.rehearsal_parity(),ppo_authority.rehearsal_immutable_marker(),ppo_authority.rehearsal_observation(boolean) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ppo_authority.rehearsal_control(text),ppo_authority.read_rehearsal_receipt(uuid,text) TO ppo_rehearsal_controller;
 GRANT EXECUTE ON FUNCTION ppo_authority.rehearsal_source_commit(text) TO ppo_rehearsal_source;
 GRANT EXECUTE ON FUNCTION ppo_authority.rehearsal_target_commit(text) TO ppo_rehearsal_target;
-GRANT EXECUTE ON FUNCTION ppo_authority.read_rehearsal() TO ppo_rehearsal_controller,ppo_rehearsal_source,ppo_rehearsal_target,ppo_authority_reader;
+GRANT EXECUTE ON FUNCTION ppo_authority.read_rehearsal(),ppo_authority.read_rehearsal_source() TO ppo_rehearsal_controller,ppo_rehearsal_source,ppo_rehearsal_target,ppo_authority_reader;
 COMMIT;

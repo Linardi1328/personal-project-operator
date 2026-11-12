@@ -6,29 +6,37 @@ const mode="synthetic-ownership-cutover-rehearsal-only"
 const sha=s=>createHash("sha256").update(s).digest("hex")
 function transport(){
   const owner={target_id:randomUUID(),source_id:null,generation:"1",phase:"empty",fence:null,attempt:null,manifest:null,imported:false}
-  let files=[],rev="0",key=null,digest=null,freezeFailure=false,receiptOverride=null,readOverride=null
+  let files=[],rev="0",key=null,digest=null,lostAction=null,receiptOverride=null,readOverride=null
   const receipts=new Map(),calls=[]
   const query=async(s,a)=>{
     calls.push({s,a})
-    if(s===S.read){
+    if(s===S.read||s===S.sourceRead){
       const o={owner:{...owner},files:structuredClone(files),revision:rev,digest,parity:false,catalog:{revision:rev,code:"ok",entries:[]}}
-      return {rows:[{observation:readOverride?readOverride(o):o}]}
+      if(s===S.sourceRead){o.catalog=null;o.parity=null}
+      return {rows:[{observation:readOverride&&s===S.read?readOverride(o):o}]}
     }
     if(s===S.receipt)return {rows:[{evidence:receiptOverride?receiptOverride(receipts.get(a[0])??null):receipts.get(a[0])??null}]}
-    assert.equal(s,S.control)
+    assert.ok([S.control,S.source].includes(s))
     const r=JSON.parse(a[0])
+    if(receipts.size>=999&&r.action!=="abort")return {rows:[{evidence:{accepted:false}}]}
     if(r.action==="seed"){
       owner.source_id=randomUUID();owner.phase="source";key=randomUUID();files=r.files.map(({path,bytesBase64})=>({path,bytesBase64}));digest=r.manifest;owner.manifest=digest;rev="1"
+    }else if(r.action==="source_commit"){
+      key=randomUUID();rev=String(BigInt(rev)+1n)
     }else if(r.action==="freeze"){
       owner.phase="held";owner.generation="2";owner.fence=randomUUID();owner.attempt=r.operationId;key=null;rev="2"
+    }else if(r.action==="import"){
+      owner.imported=true;rev="3"
+    }else if(r.action==="abort"){
+      owner.phase="aborted";owner.generation="3";key=randomUUID();rev="4"
     }else throw Error("unexpected test mutation")
-    const e={operationId:r.operationId,requestHash:sha(a[0]),action:r.action,accepted:true,sourceId:owner.source_id,targetId:owner.target_id,
-      generation:owner.generation,phase:owner.phase,fence:owner.fence,attempt:owner.attempt,manifest:digest,imported:false,key,revision:rev}
+    const e={operationId:r.operationId,requestHash:sha(a[0]),action:r.action,accepted:r.action!=="source_commit",sourceId:owner.source_id,targetId:owner.target_id,
+      generation:owner.generation,phase:owner.phase,fence:owner.fence,attempt:owner.attempt,manifest:digest,imported:owner.imported,key,revision:rev}
     receipts.set(r.operationId,e)
-    if(r.action==="freeze"&&freezeFailure)throw Error("synthetic lost ack")
+    if(r.action===lostAction)throw Error("synthetic lost ack")
     return {rows:[{evidence:structuredClone(e)}]}
   }
-  return {query,calls,owner,freezeLost:()=>{freezeFailure=true},setReceipt:fn=>{receiptOverride=fn},setRead:fn=>{readOverride=fn}}
+  return {query,calls,owner,freezeLost:()=>{lostAction="freeze"},loseAction:action=>{lostAction=action},setReceipt:fn=>{receiptOverride=fn},setRead:fn=>{readOverride=fn}}
 }
 test("ownership rehearsal requires explicit mode and trusted transport",()=>{
   assert.throws(()=>createSyntheticOwnershipRehearsal())
@@ -83,4 +91,56 @@ test("authority identity is distinct from revision; typed bounded pins fail clos
     o=>({...o,owner:{...o.owner,target_id:[o.owner.target_id]}}),o=>({...o,files:Array(2101).fill(null)})]){
     h.setRead(mutate);await assert.rejects(c.observe())
   }
+})
+
+for(const kind of ["invalid","truncated"]){
+  test("held imported "+kind+" target cannot activate but may explicitly abort",async()=>{
+    const h=transport(),c=createSyntheticOwnershipRehearsal({mode,query:h.query})
+    await c.seed();await c.freeze();await c.import()
+    const before=await c.observe(),id=JSON.parse(Buffer.from(before.files[0].bytesBase64,"base64")).runId
+    h.setRead(o=>({...o,catalog:kind==="truncated"?{revision:o.revision,code:"catalog_truncated",entries:[]}:
+      {revision:o.revision,code:"ok",entries:[{path:"records/"+id+".json",serialized:"{}"}]}}))
+    await assert.rejects(c.activate(),e=>e.code==="CATALOG_INVALID")
+    const receipt=await c.abort()
+    assert.equal(receipt.phase,"aborted");assert.equal(receipt.generation,"3");assert.equal(receipt.imported,true)
+    assert.equal((await c.sourceAuthority.readRun(id)).runId,id)
+    assert.equal(h.calls.filter(c=>c.s===S.control).length,4)
+  })
+}
+
+test("client submissions preserve a bounded final abort slot even after rejected operations",async()=>{
+  const h=transport(),c=createSyntheticOwnershipRehearsal({mode,query:h.query})
+  await c.seed();const o=await c.observe(),r=JSON.parse(Buffer.from(o.files[0].bytesBase64,"base64"))
+  for(let i=0;i<997;i++)assert.equal(await c.sourceAuthority.commitRecord(JSON.stringify(r),r.version-1,r.history.at(-1).previousHistoryHash),false)
+  await c.freeze() // 999 submitted/receipted operations
+  await assert.rejects(c.import()) // must not consume the local abort slot
+  const aborted=await c.abort()
+  assert.equal(aborted.phase,"aborted");assert.equal(aborted.generation,"3")
+})
+test("delayed reconciliation cannot replace a newer committed abort permit",async()=>{
+  const h=transport();let release,started,delay=false
+  const blocked=new Promise(resolve=>{release=resolve}),ready=new Promise(resolve=>{started=resolve})
+  const c=createSyntheticOwnershipRehearsal({mode,query:async(s,a)=>{
+    const result=await h.query(s,a)
+    if(s===S.receipt&&delay){delay=false;started();await blocked}
+    return result
+  }})
+  await c.seed();await c.freeze();h.loseAction("import");await assert.rejects(c.import())
+  delay=true;const reconciling=c.reconcile();await ready
+  try{
+    assert.equal((await c.abort()).phase,"aborted")
+    release()
+    assert.equal((await reconciling).status,"superseded")
+    assert.equal(c.pending(),null)
+    const id=JSON.parse(Buffer.from((await c.observe()).files[0].bytesBase64,"base64")).runId
+    assert.equal((await c.sourceAuthority.readRun(id)).runId,id)
+  }finally{release();await reconciling.catch(()=>{})}
+})
+test("reconciled CAS/WIP rejection is explicit and retains committed evidence",async()=>{
+  const h=transport(),c=createSyntheticOwnershipRehearsal({mode,query:h.query})
+  await c.seed();const o=await c.observe(),r=JSON.parse(Buffer.from(o.files[0].bytesBase64,"base64"))
+  assert.equal(await c.sourceAuthority.commitRecord(JSON.stringify(r),r.version-1,r.history.at(-1).previousHistoryHash),false)
+  const reconciled=await c.reconcile(c.operation())
+  assert.equal(reconciled.status,"rejected");assert.equal(reconciled.evidence.accepted,false)
+  assert.equal(c.pending(),null)
 })

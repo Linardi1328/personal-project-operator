@@ -8,7 +8,7 @@ import { createSyntheticOwnershipRehearsal, OWNERSHIP_REHEARSAL_SQL as S } from 
 const mode="synthetic-ownership-cutover-rehearsal-only"
 export async function runOwnershipRehearsalCases(t,h){
   const {sql,session,blockedBy,literals,exactImported,installImportAuthority,dropImportAuthority,container}=h
-  const roles={[S.read]:"ppo_rehearsal_controller",[S.receipt]:"ppo_rehearsal_controller",[S.control]:"ppo_rehearsal_controller",[S.source]:"ppo_rehearsal_source",[S.target]:"ppo_rehearsal_target"}
+  const roles={[S.read]:"ppo_rehearsal_controller",[S.sourceRead]:"ppo_rehearsal_controller",[S.receipt]:"ppo_rehearsal_controller",[S.control]:"ppo_rehearsal_controller",[S.source]:"ppo_rehearsal_source",[S.target]:"ppo_rehearsal_target"}
   const bound=(statement,args)=>statement.replace(/\$([12])/gu,(_,i)=>literals(args[Number(i)-1]))
   const q=async(statement,args)=>{
     if(!Object.hasOwn(roles,statement))throw Error("unexpected ownership statement")
@@ -235,7 +235,7 @@ export async function runOwnershipRehearsalCases(t,h){
     for(const isolation of ["REPEATABLE READ","SERIALIZABLE"])await fixture(async c=>{
       const a=session("ownership-stale-source","ppo_rehearsal_source")
       try{
-        await a.ready();const stale=make((s,args)=>[S.read,S.source].includes(s)?a.send("SELECT row_to_json(q) FROM ("+bound(s,args)+") q;").then(out=>({rows:[JSON.parse(out)]})):q(s,args))
+        await a.ready();const stale=make((s,args)=>[S.read,S.sourceRead,S.source].includes(s)?a.send("SELECT row_to_json(q) FROM ("+bound(s,args)+") q;").then(out=>({rows:[JSON.parse(out)]})):q(s,args))
         await stale.reconcile(c.operation());await a.send("BEGIN ISOLATION LEVEL "+isolation+";")
         const {active}=await current(stale) // old source-only snapshot now established
         await c.freeze()
@@ -246,6 +246,29 @@ export async function runOwnershipRehearsalCases(t,h){
         assert.equal(o.files.filter(f=>f.path.startsWith("versions/")).length,17)
         await c.abort()
       }finally{await a.close()}
+    })
+  })
+  await t.test("invalid/truncated staged target may abort and resume source without changing quarantined data",async()=>{
+    for(const kind of ["invalid","truncated"])await fixture(async c=>{
+      const {active}=await current(c)
+      await c.freeze();await c.import();const before=await c.observe(),snap=snapshot(before)
+      if(kind==="truncated"){
+        await sql("INSERT INTO ppo_authority.run_versions SELECT lpad(i::text,43,'Z'),0,history_hash,jsonb_set(record,'{runId}',to_jsonb(lpad(i::text,43,'Z'))) FROM generate_series(1,101) i CROSS JOIN (SELECT * FROM ppo_authority.run_versions WHERE version=0 LIMIT 1) v;")
+      }else{
+        await sql("INSERT INTO ppo_authority.run_versions SELECT repeat('Z',43),0,history_hash,jsonb_set(record||jsonb_build_object('history',NULL),'{runId}',to_jsonb(repeat('Z',43))) FROM ppo_authority.run_versions WHERE version=0 LIMIT 1;")
+      }
+      const count=await sql("SELECT count(*) FROM ppo_authority.run_versions;")
+      await assert.rejects(c.activate(),e=>e.code==="CATALOG_INVALID")
+      assert.equal((await raw("activate",capturePins(before,{fence:before.owner.fence,attempt:before.owner.attempt}))).accepted,false)
+      const aborted=await c.abort();assert.equal(aborted.phase,"aborted");assert.equal(aborted.generation,"3");assert.equal(aborted.imported,true)
+      const progress=await c.source.progress(active.runId,{expectedVersion:active.version,status:active.status,actor:"quarantine-source",reason:"resume after catalog failure"})
+      assert.equal(progress.version,active.version+1)
+      assert.equal(await sql("SELECT count(*) FROM ppo_authority.run_versions;"),count)
+      const archive=JSON.parse(await sql("SELECT ppo_authority.read_synthetic_archive("+literals(snap.inventoryHash)+");","ppo_authority_importer"))
+      const order=files=>[...files].sort((a,b)=>a.path<b.path?-1:1)
+      assert.deepEqual(order(archive),order(snap.files))
+      await assert.rejects(c.target.transition(active.runId,{expectedVersion:active.version,status:"cancelled",actor:"denied-target"}))
+      await assert.rejects(c.freeze())
     })
   })
   await t.test("bounded receipt ledger reserves the terminal abort slot without deleting evidence",async()=>{

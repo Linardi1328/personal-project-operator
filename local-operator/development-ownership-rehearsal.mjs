@@ -21,6 +21,7 @@ export const OWNERSHIP_REHEARSAL_SQL=Object.freeze({
   source:"SELECT ppo_authority.rehearsal_source_commit($1::text) AS evidence",
   target:"SELECT ppo_authority.rehearsal_target_commit($1::text) AS evidence",
   read:"SELECT ppo_authority.read_rehearsal() AS observation",
+  sourceRead:"SELECT ppo_authority.read_rehearsal_source() AS observation",
   receipt:"SELECT ppo_authority.read_rehearsal_receipt($1::uuid,$2::text) AS evidence"
 })
 const SQL=OWNERSHIP_REHEARSAL_SQL
@@ -49,13 +50,13 @@ function validateEvidence(e,d){
 // DSN, environment, filesystem routing or production capability is installed.
 export function createSyntheticOwnershipRehearsal({mode,query}={}){
   if(mode!==MODE||typeof query!=="function")deny()
-  let permit=null,uncertain=null,last=null
+  let permit=null,uncertain=null,last=null,viewVersion=0
   const submitted=new Set()
-  async function observe(){
-    const o=one(await query(SQL.read,[]),"observation")
+  async function observe(withTarget=true){
+    const o=one(await query(withTarget?SQL.read:SQL.sourceRead,[]),"observation")
     if(!o||Buffer.byteLength(JSON.stringify(o))>40*1024*1024||!o.owner||!uuid(o.owner.target_id)||
       !generation(o.owner.generation)||typeof o.owner.imported!=="boolean"||!revision(o.revision)||!Array.isArray(o.files)||o.files.length>2100||
-      !["empty","source","held","target","aborted"].includes(o.owner.phase)||typeof o.parity!=="boolean")deny()
+      !["empty","source","held","target","aborted"].includes(o.owner.phase)||(withTarget?typeof o.parity!=="boolean":o.parity!==null||o.catalog!==null))deny()
     if(permit&&(o.owner.target_id!==permit.targetId||o.owner.source_id!==permit.sourceId))deny("AUTHORITY_REPLACED")
     let bytes=0
     const entries=o.files.map(f=>{
@@ -69,24 +70,26 @@ export function createSyntheticOwnershipRehearsal({mode,query}={}){
       const manifest=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries})
       if(!manifest.readyForRehearsal||manifest.inventoryHash!==o.digest)deny("SOURCE_INVALID")
     }else if(entries.length!==0||o.owner.source_id!==null)deny()
-    const catalog=await createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:async()=>({rows:[{snapshot:o.catalog}]})}).list()
-    if(!catalog.ok||catalog.revision!==o.revision)deny("CATALOG_INVALID")
+    if(withTarget){
+      const catalog=await createPostgresCanonicalCatalog({mode:"isolated-postgres-canonical-catalog",query:async()=>({rows:[{snapshot:o.catalog}]})}).list()
+      if(!catalog.ok||catalog.revision!==o.revision)deny("CATALOG_INVALID")
+    }
     return structuredClone(o)
   }
   async function apply(action,fields,operationId=randomUUID(),allowAbort=false){
     if(uncertain&&!allowAbort)deny("REHEARSAL_UNCERTAIN")
-    if(!uuid(operationId)||submitted.has(operationId)||submitted.size>=1000)deny()
+    if(!uuid(operationId)||submitted.has(operationId)||submitted.size>=(action==="abort"?1000:999))deny()
     const body=JSON.stringify({action,operationId,...fields})
     if(Buffer.byteLength(body)>12*1024*1024)deny()
     const d=Object.freeze({action,operationId,requestHash:sha(body),sourceId:fields.sourceId??null,targetId:fields.targetId,
       generation:fields.generation,manifest:fields.manifest,attempt:fields.attempt??null,fence:fields.fence??null})
     const channel=action==="source_commit"?"source":action==="target_commit"?"target":"control"
     const previousUncertainty=uncertain
-    submitted.add(operationId);uncertain=d;last=d
+    submitted.add(operationId);uncertain=d;last=d;viewVersion++
     try{
       const e=one(await query(SQL[channel],[body]),"evidence")
-      if(e?.accepted===false&&!e.operationId){uncertain=previousUncertainty;return false}
-      permit=validateEvidence(e,d);uncertain=null
+      if(e?.accepted===false&&!e.operationId){uncertain=previousUncertainty;viewVersion++;return false}
+      permit=validateEvidence(e,d);uncertain=null;viewVersion++
       return permit.accepted
     }catch{
       const e=Error("Synthetic ownership commit unknown; reconcile this exact operation before further mutation.")
@@ -96,7 +99,7 @@ export function createSyntheticOwnershipRehearsal({mode,query}={}){
   function pins(){if(!permit)deny();return {sourceId:permit.sourceId,targetId:permit.targetId,generation:permit.generation}}
   async function control(action,{operationId}={}){
     if(uncertain&&action!=="abort")deny("REHEARSAL_UNCERTAIN")
-    const o=await observe()
+    const o=await observe(action!=="abort")
     // A restarted uncertain controller may explicitly abort using the exact
     // held fence pinned in its durable operation descriptor. This is positive
     // held-ownership evidence plus a conditional generation advance, never
@@ -124,7 +127,7 @@ export function createSyntheticOwnershipRehearsal({mode,query}={}){
           runId:values[0],expectedVersion:values[1],expectedHash:values[2],serialized:values[3]})
         return {rows:[{accepted}]}
       }
-      const o=await observe()
+      const o=await observe(side==="target")
       if(o.owner.generation!==p.generation)deny()
       const entries=side==="source"?o.files.map(f=>({path:f.path,record:JSON.parse(Buffer.from(f.bytesBase64,"base64"))})):
         o.catalog.entries.map(f=>({path:f.path,record:JSON.parse(f.serialized)}))
@@ -134,7 +137,7 @@ export function createSyntheticOwnershipRehearsal({mode,query}={}){
     }})
   }
   const sourceAuthority=authority("source"),targetAuthority=authority("target")
-  return Object.freeze({observe,
+  return Object.freeze({observe:()=>observe(true),
     pending:()=>uncertain?{...uncertain}:null,
     operation:()=>last?{...last}:null,
     async seed({operationId}={}){
@@ -157,11 +160,15 @@ export function createSyntheticOwnershipRehearsal({mode,query}={}){
     async reconcile(operation=uncertain){
       if(!operation||!uuid(operation.operationId)||!hash(operation.requestHash)||!uuid(operation.targetId)||!generation(operation.generation))deny()
       if(uncertain&&!isDeepStrictEqual(uncertain,operation))deny()
-      uncertain=Object.freeze({...operation})
-      const e=one(await query(SQL.receipt,[operation.operationId,operation.requestHash]),"evidence")
-      if(e===null)return {status:"unknown",operation:{...operation}}
-      permit=validateEvidence(e,operation);uncertain=null
-      return {status:"committed",evidence:{...permit}}
+      const descriptor=Object.freeze({...operation}),ticket=++viewVersion
+      uncertain=descriptor
+      const e=one(await query(SQL.receipt,[descriptor.operationId,descriptor.requestHash]),"evidence")
+      // An abort or a newer reconciliation may have advanced local state
+      // while this independent read was in flight. Never install its old view.
+      if(ticket!==viewVersion)return {status:"superseded",operation:{...descriptor}}
+      if(e===null)return {status:"unknown",operation:{...descriptor}}
+      permit=validateEvidence(e,descriptor);uncertain=null;viewVersion++
+      return {status:permit.accepted?"committed":"rejected",evidence:{...permit}}
     },
     sourceAuthority,targetAuthority,
     source:createIsolatedCanonicalRunState({mode:"isolated-postgres-canonical-authority",authority:sourceAuthority}),
