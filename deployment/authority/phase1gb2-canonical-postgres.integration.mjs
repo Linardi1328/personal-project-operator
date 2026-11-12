@@ -2,12 +2,17 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { readFile } from "node:fs/promises"
 import test from "node:test"
-import { createDevelopmentRun, transitionDevelopmentRun, recordDevelopmentRunProgress } from "../../local-operator/development-run-state.mjs"
+import {
+  createDevelopmentRun, transitionDevelopmentRun, recordDevelopmentRunProgress,
+  createIsolatedCanonicalRunState, recoverDevelopmentRunReviewOrphanState,
+  recoverDevelopmentRunReviewRuntimeFailureState,
+  REVIEW_ORPHAN_RECOVERY_CONFIRMATION, REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION
+} from "../../local-operator/development-run-state.mjs"
 import { createPostgresCanonicalAuthority } from "../../local-operator/development-postgres-canonical-authority.mjs"
 
 // Deliberately not a .test.mjs: the explicit CI step starts a fresh isolated
@@ -257,4 +262,184 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   })
   assert.deepEqual(await reader.readRun(releasedA.released.runId),releasedA.reactivated)
   assert.deepEqual(await reader.readRun(releasedB.released.runId),releasedB.released)
+  // Release the synthetic lanes for the direct state-machine integration.
+  const direct=createIsolatedCanonicalRunState({mode:"isolated-postgres-canonical-authority",authority:writer})
+  await direct.transition(releasedA.reactivated.runId,{expectedVersion:releasedA.reactivated.version,status:"cancelled",actor:"test-agent"})
+  await direct.transition(loser.initial.runId,{expectedVersion:0,status:"cancelled",actor:"test-agent"})
+})
+
+
+const MODE="isolated-postgres-canonical-authority"
+const SHA="b".repeat(40)
+const initialInput=(projectId="rivora",task="RIC-157 shared authority synthetic: direct state machine")=>({
+  projectId,task,baseSha:"a".repeat(40),headSha:SHA,branch:"feature/direct-authority",actor:"test-agent"
+})
+function tick(){
+  let time=Date.parse("2026-02-01T00:00:00.000Z")
+  return ()=>new Date(time+=1000)
+}
+function isolated(storage=authority(), options={}){
+  return createIsolatedCanonicalRunState({mode:MODE,authority:storage,...options})
+}
+const errorCode=code=>error=>error?.code===code
+
+test("direct PostgreSQL state machine matches filesystem history and guarded review recovery",{timeout:90000},async()=>{
+  // Two separate disposable authorities with the SAME synthetic deterministic
+  // input form an oracle comparison only; no mirroring or production dual write.
+  const scratch=await mkdtemp(join(tmpdir(),"ppo-writer-parity-"))
+  const marker=await mkdtemp(join(tmpdir(),"ppo-no-file-fallback-"))
+  const oldRoot=process.env.PPO_WRITE_DATA_DIR
+  process.env.PPO_WRITE_DATA_DIR=marker
+  try{
+    const fileOptions={writeDataDir:scratch,now:tick(),randomBytesImpl:n=>Buffer.alloc(n,71)}
+    const db=authority(),state=isolated(db,{now:tick(),randomBytesImpl:n=>Buffer.alloc(n,71)})
+    const file={
+      create:input=>createDevelopmentRun(input,fileOptions),
+      read:id=>Promise.reject(new Error("not needed")),
+      transition:(id,input)=>transitionDevelopmentRun(id,input,fileOptions),
+      progress:(id,input)=>recordDevelopmentRunProgress(id,input,fileOptions),
+      recoverReviewOrphan:(id,input)=>recoverDevelopmentRunReviewOrphanState(id,input,fileOptions),
+      recoverReviewRuntimeFailure:(id,input)=>recoverDevelopmentRunReviewRuntimeFailureState(id,input,fileOptions)
+    }
+    let actual=await state.create(initialInput()),expected=await file.create(initialInput())
+    const versions=[expected]
+    assert.deepEqual(actual,expected)
+    // Every transition and progress event must have byte-equivalent JSON values
+    // and the same history hash under a fixed clock/ID, not just same status.
+    const both=async(method,input)=>{
+      actual=await state[method](actual.runId,input)
+      expected=await file[method](expected.runId,input)
+      assert.deepEqual(actual,expected)
+      assert.deepEqual(await state.read(actual.runId),expected)
+      versions.push(expected)
+    }
+    const transition=async(status,evidence=[])=>both("transition",{
+      expectedVersion:actual.version,status,actor:"test-agent",evidence
+    })
+    for(const status of ["planning_in_progress","planned","implementation_in_progress"])await transition(status)
+    await both("progress",{expectedVersion:actual.version,status:actual.status,actor:"test-agent",
+      reason:"synthetic progress",incrementAttempt:true,headSha:SHA})
+    for(const status of ["implementation_ready","tests_in_progress","tests_passed"])await transition(status)
+    await transition("review_in_progress",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+      summary:"Synthetic review started",metadata:{project:actual.project.id,reviewedSha:SHA,attempt:1,outcome:"review_started"}}])
+    const orphan={expectedVersion:actual.version,expectedHeadSha:SHA,reviewAttempt:1,confirmation:REVIEW_ORPHAN_RECOVERY_CONFIRMATION}
+    // Rejected recovery must leave the exact version/history unchanged. The
+    // confirmation check happens before clock consumption in both paths.
+    await assert.rejects(state.recoverReviewOrphan(actual.runId,{...orphan,confirmation:"wrong"}),errorCode("REVIEW_ORPHAN_RECOVERY_CONFIRMATION_REQUIRED"))
+    assert.deepEqual(await state.read(actual.runId),expected)
+    await both("recoverReviewOrphan",orphan)
+    assert.equal(actual.status,"tests_passed")
+    await transition("review_in_progress",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+      summary:"Synthetic review retry",metadata:{project:actual.project.id,reviewedSha:SHA,attempt:2,outcome:"review_started"}}])
+    await transition("review_changes_requested",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+      summary:"Synthetic reviewer runtime failure",metadata:{project:actual.project.id,reviewedSha:SHA,attempt:2,
+        outcome:"owner_action_required",decision:"OWNER_ACTION_REQUIRED",mergeAllowed:false,blockers:0,securityFindings:0,
+        testsRequired:0,runtimeFailureClass:"runtime"}}])
+    const runtime={expectedVersion:actual.version,expectedHeadSha:SHA,reviewAttempt:2,confirmation:REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION}
+    await assert.rejects(state.recoverReviewRuntimeFailure(actual.runId,{...runtime,expectedHeadSha:"c".repeat(40)}),errorCode("REVIEW_RUNTIME_RECOVERY_HEAD_MISMATCH"))
+    assert.deepEqual(await state.read(actual.runId),expected)
+    await both("recoverReviewRuntimeFailure",runtime)
+    await transition("cancelled")
+    assert.deepEqual(await db.readVersions(actual.runId),versions)
+    assert.deepEqual(await readdir(marker),[])
+  }finally{
+    if(oldRoot===undefined)delete process.env.PPO_WRITE_DATA_DIR
+    else process.env.PPO_WRITE_DATA_DIR=oldRoot
+    await rm(scratch,{recursive:true,force:true})
+    await rm(marker,{recursive:true,force:true})
+  }
+})
+
+test("direct writers use real CAS, deny invalid mutations and reconcile lost commit acknowledgments",{timeout:90000},async()=>{
+  const db=authority(), state=isolated(db)
+  const initial=await state.create(initialInput("rivora"))
+  await assert.rejects(state.create(initialInput("rivora")),errorCode("AUTHORITY_COMMIT_REJECTED"))
+  await assert.rejects(state.create(initialInput("kynexa","not synthetic")),errorCode("AUTHORITY_SCOPE_DENIED"))
+  await assert.rejects(state.transition(initial.runId,{expectedVersion:0,status:"merged",actor:"test-agent"}),errorCode("INVALID_RUN_TRANSITION"))
+  await assert.rejects(state.transition(initial.runId,{expectedVersion:9,status:"planning_in_progress",actor:"test-agent"}),errorCode("STALE_RUN_VERSION"))
+  assert.deepEqual(await db.readVersions(initial.runId),[initial])
+  // Both independent state machines observe the same version BEFORE either
+  // can submit its different candidate. PostgreSQL decides the CAS winner.
+  let reads=0,release
+  const barrier=new Promise(resolve=>{release=resolve})
+  function competing(){
+    const connection=authority()
+    return isolated({commitRecord:connection.commitRecord,async readRun(id){
+      const r=await connection.readRun(id)
+      if(++reads===2)release()
+      await barrier
+      return r
+    }})
+  }
+  const contenders=await Promise.allSettled(["writer-a","writer-b"].map(actor=>competing().transition(initial.runId,{
+    expectedVersion:0,status:"planning_in_progress",actor
+  })))
+  assert.equal(contenders.filter(r=>r.status==="fulfilled").length,1)
+  const winner=contenders.find(r=>r.status==="fulfilled").value
+  assert.equal(contenders.find(r=>r.status==="rejected").reason.code,"AUTHORITY_COMMIT_REJECTED")
+  assert.deepEqual(await db.readVersions(initial.runId),[initial,winner])
+  // Simulate a lost acknowledgement only AFTER actual committed append.
+  let writes=0
+  const uncertain=isolated({readRun:db.readRun,async commitRecord(...args){
+    writes++
+    assert.equal(await db.commitRecord(...args),true)
+    throw Error("synthetic lost acknowledgment")
+  }})
+  let observation
+  await assert.rejects(uncertain.transition(initial.runId,{expectedVersion:1,status:"planned",actor:"test-agent"}),error=>{
+    observation=error.observation
+    return error.code==="AUTHORITY_COMMIT_UNKNOWN"&&error.stateCommitted!==true
+  })
+  assert.equal(writes,1)
+  const current=await state.read(initial.runId)
+  assert.deepEqual(observation,{runId:current.runId,version:current.version,historyHash:current.historyHash})
+  assert.equal(current.status,"planned")
+  assert.equal((await db.readVersions(initial.runId)).length,3)
+  await assert.rejects(state.transition(initial.runId,{expectedVersion:1,status:"planned",actor:"test-agent"}),errorCode("STALE_RUN_VERSION"))
+  await state.transition(initial.runId,{expectedVersion:2,status:"cancelled",actor:"test-agent"})
+  // Unknown initial creation still carries the exact generated run ID.
+  let created
+  await assert.rejects(uncertain.create(initialInput("kynexa")),error=>{
+    created=error.observation
+    return error.code==="AUTHORITY_COMMIT_UNKNOWN"
+  })
+  assert.equal(writes,2)
+  const recovered=await state.read(created.runId)
+  assert.equal(recovered.historyHash,created.historyHash)
+  assert.equal(recovered.version,0)
+  assert.equal((await db.readVersions(recovered.runId)).length,1)
+  await state.transition(recovered.runId,{expectedVersion:0,status:"cancelled",actor:"test-agent"})
+})
+
+
+test("independent slower writer preserves nondecreasing event and evidence time",{timeout:90000},async()=>{
+  const db=authority(), fast=isolated(db,{now:()=>new Date("2026-03-01T00:00:00.000Z")})
+  const slow=isolated(authority(),{now:()=>new Date("2026-02-01T00:00:00.000Z")})
+  let r=await fast.create(initialInput("rivora"))
+  const time=r.timestamps.updatedAt
+  const versions=[r]
+  const check=next=>{
+    assert.equal(next.timestamps.updatedAt,time)
+    assert.equal(next.history.at(-1).timestamp,time)
+    for(const e of next.history.at(-1).evidence)assert.equal(e.recordedAt,time)
+    versions.push(next)
+    r=next
+  }
+  const transition=async(status,evidence=[])=>check(await slow.transition(r.runId,{expectedVersion:r.version,status,actor:"slow-writer",evidence}))
+  for(const status of ["planning_in_progress","planned","implementation_in_progress"])await transition(status)
+  check(await slow.progress(r.runId,{expectedVersion:r.version,status:r.status,actor:"slow-writer",
+    evidence:[{kind:"implementation",sha:SHA,source:"slow-writer",summary:"Earlier clock"}]}))
+  for(const status of ["implementation_ready","tests_in_progress","tests_passed"])await transition(status)
+  await transition("review_in_progress",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+    summary:"Started",metadata:{project:r.project.id,reviewedSha:SHA,attempt:1,outcome:"review_started"}}])
+  check(await slow.recoverReviewOrphan(r.runId,{expectedVersion:r.version,expectedHeadSha:SHA,reviewAttempt:1,confirmation:REVIEW_ORPHAN_RECOVERY_CONFIRMATION}))
+  await transition("review_in_progress",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+    summary:"Retry",metadata:{project:r.project.id,reviewedSha:SHA,attempt:2,outcome:"review_started"}}])
+  await transition("review_changes_requested",[{kind:"review",sha:SHA,source:"phase-6f-independent-review-agent",
+    summary:"Runtime failure",metadata:{project:r.project.id,reviewedSha:SHA,attempt:2,
+      outcome:"owner_action_required",decision:"OWNER_ACTION_REQUIRED",mergeAllowed:false,blockers:0,securityFindings:0,
+      testsRequired:0,runtimeFailureClass:"runtime"}}])
+  check(await slow.recoverReviewRuntimeFailure(r.runId,{expectedVersion:r.version,expectedHeadSha:SHA,reviewAttempt:2,confirmation:REVIEW_RUNTIME_FAILURE_RECOVERY_CONFIRMATION}))
+  await transition("cancelled")
+  assert.deepEqual(await db.readVersions(r.runId),versions)
 })
