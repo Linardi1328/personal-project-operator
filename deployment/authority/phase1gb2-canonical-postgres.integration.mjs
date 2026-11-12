@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
+import { once } from "node:events"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -55,12 +56,12 @@ function query(role){
 function authority(role="ppo_authority_writer"){
   return createPostgresCanonicalAuthority({mode:"isolated-postgres-canonical-authority",query:query(role)})
 }
-async function fixture(project){
+async function fixture(project,task="RIC-157 shared authority synthetic: canonical CAS fixture"){
   const dir=await mkdtemp(join(tmpdir(),"ppo-shared-authority-"))
   let clock=Date.parse("2026-01-01T00:00:00.000Z")
   const options={writeDataDir:dir,now:()=>new Date(clock+=1000)}
   try{
-    const initial=await createDevelopmentRun({projectId:project,task:"RIC-157 shared authority synthetic: canonical CAS fixture",
+    const initial=await createDevelopmentRun({projectId:project,task,
       baseSha:"a".repeat(40),headSha:"b".repeat(40),branch:"feature/authority-ci",actor:"test-agent"},options)
     const first=await transitionDevelopmentRun(initial.runId,{expectedVersion:0,status:"planning_in_progress",actor:"test-agent"},options)
     const planned=await transitionDevelopmentRun(initial.runId,{expectedVersion:1,status:"planned",actor:"test-agent"},options)
@@ -71,6 +72,46 @@ async function fixture(project){
   }finally{await rm(dir,{recursive:true,force:true})}
 }
 const commit=(a,record,prior=null)=>a.commitRecord(JSON.stringify(record),prior?.version??-1,prior?.historyHash??null)
+const commitSql=(record,prior=null)=>"SELECT ppo_authority.commit_run("+[record.runId,prior?.version??-1,prior?.historyHash??null,JSON.stringify(record)].map(literals).join(",")+");"
+
+// Hold a known snapshot in an independent session, then let A commit. B
+// is provably not merely scheduled after A: its read completed beforehand.
+async function staleSnapshot(isolation,record,next,commitA){
+  const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
+  let out="",err="",ready=false
+  const done=once(p,"close")
+  // Attach a rejection handler immediately; failures before the marker must
+  // not leave an unhandled process error or a lingering writer session.
+  done.catch(()=>{})
+  p.stderr.on("data",x=>{err+=x})
+  p.stdin.on("error",()=>{})
+  const marker=new Promise((resolve,reject)=>{
+    p.stdout.on("data",x=>{out+=x;if(!ready&&out.includes("SNAPSHOT_READY")){ready=true;resolve()}})
+    done.then(()=>{if(!ready)reject(Error("snapshot session exited early: "+err))},reject)
+  })
+  const timer=setTimeout(()=>p.kill("SIGKILL"),20000)
+  try{
+    p.stdin.write("SET statement_timeout='15s'; SET idle_in_transaction_session_timeout='15s'; SET ROLE ppo_authority_writer;\n"+
+      "\\set VERBOSITY verbose\nBEGIN ISOLATION LEVEL "+isolation+";\n"+
+      "SELECT ppo_authority.read_run("+literals(record.runId)+") IS NOT NULL;\n"+
+      "\\echo SNAPSHOT_READY\n")
+    await marker
+    await commitA()
+    p.stdin.end(commitSql(next,record)+" COMMIT;\n")
+    const [code]=await done
+    if(isolation==="READ COMMITTED"){
+      assert.equal(code,0,err)
+      assert.equal(out.trim().split("\n").at(-1),"f")
+    }else{
+      assert.notEqual(code,0)
+      assert.match(err,/40001/)
+    }
+  }finally{
+    clearTimeout(timer)
+    if(p.exitCode===null&&p.signalCode===null)p.kill("SIGKILL")
+    await done.catch(()=>{})
+  }
+}
 
 test("real PostgreSQL canonical authority: CAS, history, roles and serialized WIP",{timeout:90000},async()=>{
   const migration=await readFile(new URL("./phase1gb2-canonical-postgres.sql",import.meta.url),"utf8")
@@ -91,6 +132,7 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   for(const [key,value] of [["project","kynexa"],["repo","another/repo"]]){
     const wrong=contradict(a.initial,key,value)
     await assert.rejects(commit(writer,wrong))
+    assert.equal(await sql(commitSql(wrong),"ppo_authority_writer"),"f")
     assert.equal(await reader.readRun(a.initial.runId),null)
   }
   const createSql="SELECT ppo_authority.commit_run("+[a.initial.runId,-1,null,JSON.stringify(a.initial)].map(literals).join(",") + "::text);"
@@ -99,6 +141,15 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   assert.deepEqual(await reader.readVersions(a.initial.runId),[])
   assert.equal(await commit(writer,a.initial),true)
   assert.equal(await commit(writer,a.initial),false)
+  const duplicateFree=await fixture("rivora")
+  assert.equal(await commit(writer,duplicateFree.initial),false)
+  assert.equal(await reader.readRun(duplicateFree.initial.runId),null)
+  await assert.rejects(writer.commitRecord(JSON.stringify(duplicateFree.initial)+" ".repeat(131072),-1,null))
+  const oversizedSql="SELECT ppo_authority.commit_run("+[duplicateFree.initial.runId,-1,null,JSON.stringify(duplicateFree.initial)+" ".repeat(131072)].map(literals).join(",")+");"
+  assert.equal(await sql(oversizedSql,"ppo_authority_writer"),"f")
+  const unsupported=await fixture("kynexa","RIC-157 shared authority synthetic: lone surrogate \ud800")
+  await assert.rejects(commit(writer,unsupported.initial))
+  assert.equal(await reader.readRun(unsupported.initial.runId),null)
   const outcomes=await Promise.all([commit(writer,a.first,a.initial),commit(authority(),a.first,a.initial)])
   assert.deepEqual(outcomes.sort(),[false,true])
   assert.equal(await writer.commitRecord(JSON.stringify(a.planned),1,"f".repeat(64)),false)
@@ -160,4 +211,18 @@ test("real PostgreSQL canonical authority: CAS, history, roles and serialized WI
   assert.deepEqual(await reader.readVersions(a.initial.runId),[a.initial,a.first,a.planned,a.implementing,a.progress,a.cancelled])
   // New sessions observe durable latest state. No retry after unknown commit.
   assert.deepEqual(await authority("ppo_authority_reader").readRun(a.initial.runId),a.cancelled)
+
+  // Distinct competing valid versions: same previous event, alternative actor.
+  // READ COMMITTED sees the new state; higher isolation must abort stale B.
+  for(const isolation of ["READ COMMITTED","REPEATABLE READ","SERIALIZABLE"]){
+    const r=await fixture("rivora")
+    assert.equal(await commit(writer,r.initial),true)
+    const alternative=contradict(r.first,"actor","alternative-agent")
+    await staleSnapshot(isolation,r.initial,alternative,async()=>{
+      assert.equal(await commit(writer,r.first,r.initial),true)
+    })
+    assert.deepEqual(await reader.readVersions(r.initial.runId),[r.initial,r.first])
+    for(const [next,prior] of [[r.planned,r.first],[r.implementing,r.planned],[r.progress,r.implementing],[r.cancelled,r.progress]])
+      assert.equal(await commit(writer,next,prior),true)
+  }
 })
