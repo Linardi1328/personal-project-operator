@@ -1,3 +1,4 @@
+import { runPostgresActionCases } from "./phase1gb2c-action-cases.mjs"
 import { runOwnershipRehearsalCases } from "./phase1gb2-ownership-cases.mjs"
 import { createPostgresTestSession } from "./postgres-test-session.mjs"
 import assert from "node:assert/strict"
@@ -26,7 +27,7 @@ if(process.env.CI!=="true"||!/^ppo-authority-ci-[0-9]+-[0-9]+$/u.test(container|
   throw Error("Dedicated disposable CI authority container required")
 }
 async function sql(input,role="postgres"){
-  if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci","ppo_authority_importer","ppo_rehearsal_controller","ppo_rehearsal_source","ppo_rehearsal_target"].includes(role))throw Error("invalid test role")
+  if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci","ppo_authority_importer","ppo_rehearsal_controller","ppo_rehearsal_source","ppo_rehearsal_target","ppo_action_admin","ppo_action_verifier","ppo_action_consumer"].includes(role))throw Error("invalid test role")
   const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
   const client=createPostgresTestSession(p,{timeoutMs:20000})
   try{return await client.send("SET statement_timeout='15s'; SET ROLE "+role+";\n"+input)}
@@ -129,7 +130,7 @@ async function installImportAuthority(){
 }
 async function dropImportAuthority(){
   // Disposable database fixture teardown only; never a reset endpoint.
-  await sql("DROP SCHEMA IF EXISTS ppo_authority CASCADE; DROP OWNED BY ppo_authority_owner; DROP ROLE IF EXISTS ppo_authority_importer,ppo_authority_reader,ppo_authority_writer,ppo_authority_owner,ppo_rehearsal_controller,ppo_rehearsal_source,ppo_rehearsal_target;")
+  await sql("DROP SCHEMA IF EXISTS ppo_authority CASCADE; DROP OWNED BY ppo_authority_owner; DROP ROLE IF EXISTS ppo_authority_importer,ppo_authority_reader,ppo_authority_writer,ppo_authority_owner,ppo_rehearsal_controller,ppo_rehearsal_source,ppo_rehearsal_target,ppo_action_admin,ppo_action_verifier,ppo_action_consumer;")
 }
 async function exactImported(snapshot,extra=[],querySql=sql){
   // Independent oracle: original bytea -> PostgreSQL JSONB, never through
@@ -179,6 +180,10 @@ async function exactImported(snapshot,extra=[],querySql=sql){
   const orderFiles=files=>[...files].sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0)
   assert.deepEqual(orderFiles(await importer.readArchive(snapshot.inventoryHash)),orderFiles(snapshot.files))
 }
+
+test("isolated PostgreSQL transactional action fencing",{timeout:300000},async t=>{
+  await runPostgresActionCases(t,{sql,session,blockedBy,literals,installImportAuthority,dropImportAuthority,container})
+})
 
 test("durable synthetic single-authority ownership and cutover rehearsal",{timeout:180000},async t=>{
   await runOwnershipRehearsalCases(t,{sql,session,blockedBy,literals,exactImported,installImportAuthority,dropImportAuthority,query,container})
