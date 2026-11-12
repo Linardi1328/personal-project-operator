@@ -112,6 +112,8 @@ test("scope, malformed UTF-8, unsupported encodings and unknown paths cannot be 
   assert.equal(result.unknown[0].sha256,digest(unknown.bytes))
   assert.equal(JSON.stringify(result).includes("private-name"),false)
   assert.equal(JSON.stringify(result).includes("PRIVATE_SYNTHETIC_BYTES"),false)
+  assert.equal(scan([]).readyForRehearsal,false)
+  assert.equal(scan([...f.entries,{relativePath:canonical(f.next.runId)+"\n",bytes:f.entries[0].bytes}]).unknown.length,1)
   assert.throws(()=>scan([{relativePath:"records/anything",bytes:Buffer.alloc(131073)}]))
   assert.throws(()=>rehearseSyntheticMigrationPreflight({mode:"production",entries:f.entries}))
 })
