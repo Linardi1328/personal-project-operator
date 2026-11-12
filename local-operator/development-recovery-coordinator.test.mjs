@@ -864,7 +864,7 @@ async function makeRecoveryMergeReadyFixture() {
       workflowName: "PPO PR validation",
       workflowRunId: 100,
       workflowConclusion: "success",
-      requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+      requiredSteps: 6,
       checkedAt: ENDED_AT
     }),
     makePhase6GRemoteReviewEvidence(run, pr)
@@ -1414,7 +1414,7 @@ test("Phase 6L maps real Phase 6G read-only delivery reconciliation states", asy
           workflowName: "PPO PR validation",
           workflowRunId: 100,
           workflowConclusion: "success",
-          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          requiredSteps: 6,
           checkedAt: ENDED_AT
         })
       ],
@@ -1445,7 +1445,7 @@ test("Phase 6L maps real Phase 6G read-only delivery reconciliation states", asy
           workflowName: "PPO PR validation",
           workflowRunId: 100,
           workflowConclusion: "success",
-          requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+          requiredSteps: 6,
           checkedAt: ENDED_AT
         }),
         makePhase6GRemoteReviewEvidence(run, pr)
@@ -1512,7 +1512,7 @@ test("Phase 6L real Phase 6G recovery ignores trusted historical delivery from p
       workflowName: "PPO PR validation",
       workflowRunId: 100,
       workflowConclusion: "success",
-      requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+      requiredSteps: 6,
       checkedAt: ENDED_AT
     })
   ]) {
@@ -1706,7 +1706,7 @@ test("Phase 6L real Phase 6G recovery observes merge-ready and remote-merged sta
       workflowName: "PPO PR validation",
       workflowRunId: 100,
       workflowConclusion: "success",
-      requiredSteps: REQUIRED_PPO_PR_VALIDATION_STEPS.length,
+      requiredSteps: 6,
       checkedAt: ENDED_AT
     }),
     makePhase6GRemoteReviewEvidence(run, pr)
