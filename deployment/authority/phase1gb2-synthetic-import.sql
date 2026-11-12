@@ -21,6 +21,8 @@ CREATE TABLE ppo_authority.synthetic_import_files (
   bytes bytea NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 131072),
   path_hash text NOT NULL CHECK (path_hash = encode(sha256(convert_to(path,'UTF8')),'hex')),
   content_hash text NOT NULL CHECK (content_hash = encode(sha256(bytes),'hex')),
+  normalized_record text NOT NULL CHECK (octet_length(normalized_record) BETWEEN 1 AND 131072),
+  CHECK (convert_from(bytes,'UTF8')::jsonb = normalized_record::jsonb),
   PRIMARY KEY (inventory_hash,path)
 );
 CREATE TRIGGER immutable_import_batch BEFORE UPDATE OR DELETE OR TRUNCATE
@@ -40,7 +42,10 @@ DECLARE
   item jsonb;
   p text;
   raw bytea;
+  normalized_raw bytea;
+  normalized_text text;
   total bigint := 0;
+  normalized_total bigint := 0;
   digest text;
   run_row record;
   marker_row record;
@@ -53,7 +58,7 @@ DECLARE
 BEGIN
   IF current_database() <> 'ppo_authority_ci' OR p_hash IS NULL OR
     length(p_hash)<>64 OR p_hash !~ '^[a-f0-9]{64}$' OR
-    p_payload IS NULL OR octet_length(p_payload)>48*1024*1024 THEN RETURN false; END IF;
+    p_payload IS NULL OR octet_length(p_payload)>96*1024*1024 THEN RETURN false; END IF;
   entries := p_payload::jsonb;
   IF jsonb_typeof(entries) IS DISTINCT FROM 'array' THEN RETURN false; END IF;
   IF jsonb_array_length(entries) NOT BETWEEN 1 AND 10100 THEN RETURN false; END IF;
@@ -70,11 +75,12 @@ BEGIN
     IF jsonb_typeof(item) IS DISTINCT FROM 'object' OR
        jsonb_typeof(item->'path') IS DISTINCT FROM 'string' OR
        jsonb_typeof(item->'bytesBase64') IS DISTINCT FROM 'string' OR
-       (item - 'path' - 'bytesBase64') <> '{}'::jsonb OR
+       jsonb_typeof(item->'normalizedBase64') IS DISTINCT FROM 'string' OR
+       (item - 'path' - 'bytesBase64' - 'normalizedBase64') <> '{}'::jsonb OR
        p IS NULL OR NOT (
          (length(p)=56 AND p ~ '^records/[A-Za-z0-9_-]{43}\.json$') OR
          (length(p)=64 AND p ~ '^versions/[A-Za-z0-9_-]{43}/[0-9]{6}\.json$')
-       ) OR length(item->>'bytesBase64')>174764 THEN
+       ) OR length(item->>'bytesBase64')>174764 OR length(item->>'normalizedBase64')>174764 THEN
       RAISE EXCEPTION 'invalid synthetic archive entry';
     END IF;
     raw := decode(item->>'bytesBase64','base64');
@@ -82,10 +88,25 @@ BEGIN
        OR octet_length(raw) NOT BETWEEN 1 AND 131072 THEN
       RAISE EXCEPTION 'invalid synthetic archive bytes';
     END IF;
+    normalized_raw := decode(item->>'normalizedBase64','base64');
+    IF replace(encode(normalized_raw,'base64'),chr(10),'') IS DISTINCT FROM item->>'normalizedBase64'
+       OR octet_length(normalized_raw) NOT BETWEEN 1 AND 131072 THEN
+      RAISE EXCEPTION 'invalid normalized record bytes';
+    END IF;
     total := total+octet_length(raw);
-    IF total>32*1024*1024 THEN RAISE EXCEPTION 'synthetic archive exceeds bound'; END IF;
+    normalized_total := normalized_total+octet_length(normalized_raw);
+    IF total>32*1024*1024 OR normalized_total>32*1024*1024 THEN
+      RAISE EXCEPTION 'synthetic archive exceeds bound';
+    END IF;
+    normalized_text := convert_from(normalized_raw,'UTF8');
+    -- Do not compare two JS-rounded values or raw JSONB against itself.
+    -- PostgreSQL compares its native exact decimal values. Out-of-range
+    -- raw numerics also fail atomically during the conversion.
+    IF convert_from(raw,'UTF8')::jsonb IS DISTINCT FROM normalized_text::jsonb THEN
+      RAISE EXCEPTION 'synthetic normalized numeric or value parity mismatch';
+    END IF;
     INSERT INTO ppo_authority.synthetic_import_files VALUES
-      (p_hash,p,raw,encode(sha256(convert_to(p,'UTF8')),'hex'),encode(sha256(raw),'hex'));
+      (p_hash,p,raw,encode(sha256(convert_to(p,'UTF8')),'hex'),encode(sha256(raw),'hex'),normalized_text);
   END LOOP;
   -- Exact compact JSON digest used by the source preflight, with fixed
   -- field order and ASCII hex/decimal values. Locale-independent ordering.
@@ -108,9 +129,9 @@ BEGIN
   -- final non-WIP runs first, then final WIP consumers. This is NOT a claim
   -- about actual cross-run historical ordering or prior admission validity.
   FOR run_row IN
-    SELECT substring(path from 9 for 43) AS id,convert_from(bytes,'UTF8')::jsonb AS final
+    SELECT substring(path from 9 for 43) AS id,normalized_record::jsonb AS final
     FROM ppo_authority.synthetic_import_files WHERE inventory_hash=p_hash AND path LIKE 'records/%'
-    ORDER BY CASE WHEN convert_from(bytes,'UTF8')::jsonb->>'status' IN
+    ORDER BY CASE WHEN normalized_record::jsonb->>'status' IN
       ('merged','deploy_in_progress','deploy_failed','deployed','verification_in_progress','verification_failed','rollback_in_progress','rollback_failed','rolled_back','verified','cancelled','failed')
       THEN 0 ELSE 1 END, path COLLATE "C"
   LOOP
@@ -118,13 +139,13 @@ BEGIN
     expected := -1;
     final_record := run_row.final;
     FOR marker_row IN
-      SELECT path,bytes FROM ppo_authority.synthetic_import_files
+      SELECT path,normalized_record FROM ppo_authority.synthetic_import_files
       WHERE inventory_hash=p_hash AND path LIKE 'versions/%' AND split_part(path,'/',2)=run_row.id
       ORDER BY path COLLATE "C"
     LOOP
       -- Avoid SQL LIKE wildcard interpretation of underscores in run IDs.
       IF split_part(marker_row.path,'/',2)<>run_row.id THEN CONTINUE; END IF;
-      source_text := convert_from(marker_row.bytes,'UTF8');
+      source_text := marker_row.normalized_record;
       current_record := source_text::jsonb;
       IF split_part(marker_row.path,'/',3)<>lpad((expected+1)::text,6,'0')||'.json'
          OR ppo_authority.commit_run(run_row.id,expected,prior_hash,source_text) IS DISTINCT FROM true THEN
@@ -148,7 +169,8 @@ BEGIN
          ON v.run_id=split_part(f.path,'/',2)
          AND lpad(v.version::text,6,'0')||'.json'=split_part(f.path,'/',3)
        WHERE f.inventory_hash=p_hash AND f.path LIKE 'versions/%'
-         AND v.record IS DISTINCT FROM convert_from(f.bytes,'UTF8')::jsonb
+         AND (v.record IS DISTINCT FROM f.normalized_record::jsonb
+           OR v.record IS DISTINCT FROM convert_from(f.bytes,'UTF8')::jsonb)
      ) THEN RAISE EXCEPTION 'synthetic version parity failed'; END IF;
   RETURN true;
 END

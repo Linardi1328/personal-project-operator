@@ -17,7 +17,11 @@ test("fixed synthetic capture and importer verify exact archive without retry or
     calls++
     if(statement.includes("import_synthetic_snapshot")){
       assert.equal(params[0],snapshot.inventoryHash)
-      assert.deepEqual(JSON.parse(params[1]),snapshot.files)
+      const wire=JSON.parse(params[1])
+      assert.deepEqual(wire.map(({path,bytesBase64})=>({path,bytesBase64})),snapshot.files)
+      for(const item of wire){
+        assert.deepEqual(JSON.parse(Buffer.from(item.normalizedBase64,"base64")),JSON.parse(Buffer.from(item.bytesBase64,"base64")))
+      }
       return {rows:[{accepted:true}]}
     }
     return {rows:[{archive:snapshot.files}]}

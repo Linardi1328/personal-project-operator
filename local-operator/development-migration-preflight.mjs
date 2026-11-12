@@ -119,10 +119,12 @@ export function rehearseSyntheticMigrationPreflight({mode,entries}={}) {
       group.markers.set(version,{...decoded,version,provenance:{...provenance,version}})
     }
   }
-  const order=(a,b)=>a.pathHash.localeCompare(b.pathHash)||a.sha256.localeCompare(b.sha256)||a.byteLength-b.byteLength
+  // Ordinal ASCII, identical to PostgreSQL COLLATE "C" for hex digests.
+  const ascii=(a,b)=>a<b?-1:a>b?1:0
+  const order=(a,b)=>ascii(a.pathHash,b.pathHash)||ascii(a.sha256,b.sha256)||a.byteLength-b.byteLength
   inventory.sort(order)
   unknown.sort(order)
-  const runs=[...groups.values()].map(classification).sort((a,b)=>a.runId.localeCompare(b.runId))
+  const runs=[...groups.values()].map(classification).sort((a,b)=>ascii(a.runId,b.runId))
   const active=runs.filter(r=>r.latest&&softwareFactoryRunConsumesWip(r.latest))
   const projects=[...new Set(active.map(r=>r.latest.projectId))].sort()
   const invalid=runs.filter(r=>r.code!=="canonical_current").length

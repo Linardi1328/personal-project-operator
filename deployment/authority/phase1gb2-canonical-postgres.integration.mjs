@@ -144,7 +144,8 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
   const snapshot=await captureSyntheticMigrationRehearsal({mode})
   const importer=createSyntheticMigrationImporter({mode,query:query("ppo_authority_importer")})
   const read=authority("ppo_authority_reader")
-  const importSql=(hash,files)=>"SELECT ppo_authority.import_synthetic_snapshot("+[hash,JSON.stringify(files)].map(literals).join(",")+");"
+  const wire=files=>files.map(file=>({...file,normalizedBase64:Buffer.from(JSON.stringify(JSON.parse(Buffer.from(file.bytesBase64,"base64")))).toString("base64")}))
+  const importSql=(hash,files)=>"SELECT ppo_authority.import_synthetic_snapshot("+[hash,JSON.stringify(wire(files))].map(literals).join(",")+");"
   const counts=()=>sql("SELECT (SELECT count(*) FROM ppo_authority.run_versions)||','||(SELECT count(*) FROM ppo_authority.synthetic_import_batch)||','||(SELECT count(*) FROM ppo_authority.synthetic_import_files)||','||(SELECT revision FROM ppo_authority.gate);")
   const empty=await counts()
   assert.equal(empty,"0,0,0,0")
@@ -156,6 +157,35 @@ test("synthetic capture and atomic PostgreSQL import preserve all original bytes
   // The database must roll back the complete batch, not just the bad run.
   const activeFile=snapshot.files.find(f=>f.path.startsWith("records/")&&JSON.parse(Buffer.from(f.bytesBase64,"base64")).status==="implementation_in_progress")
   const active=JSON.parse(Buffer.from(activeFile.bytesBase64,"base64"))
+  // Preserve the JS-parsed values and every original history hash, while
+  // changing exact decimal tokens in the active run's source and markers.
+  for(const [from,to] of [["1e+308","1.00000000000000001e308"],
+    ["9007199254740992","9007199254740993"],['"zero":0','"zero":1e-100000']]){
+    let changed=0
+    const files=snapshot.files.map(file=>{
+      if(file.path!==activeFile.path&&!file.path.startsWith("versions/"+active.runId+"/"))return file
+      const raw=Buffer.from(file.bytesBase64,"base64").toString("utf8")
+      const altered=raw.replaceAll(from,to)
+      if(altered!==raw)changed++
+      assert.deepEqual(JSON.parse(altered),JSON.parse(raw))
+      return {...file,bytesBase64:Buffer.from(altered).toString("base64")}
+    })
+    assert.ok(changed>=2)
+    const manifest=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:files.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
+    assert.equal(manifest.readyForRehearsal,true)
+    assert.notEqual(manifest.inventoryHash,snapshot.inventoryHash)
+    let calls=0,dbError
+    const checked=createSyntheticMigrationImporter({mode,query:async(statement,args)=>{
+      calls++
+      try{return await query("ppo_authority_importer")(statement,args)}
+      catch(error){dbError=error;throw error}
+    }})
+    await assert.rejects(checked.rehearse({...snapshot,files,inventoryHash:manifest.inventoryHash}),error=>error.code==="MIGRATION_COMMIT_UNKNOWN")
+    assert.equal(calls,1)
+    assert.match(dbError?.message||"",/normalized numeric or value parity mismatch|numeric field overflow|value overflows numeric format/)
+    assert.equal(await counts(),empty)
+    assert.equal(await importer.readArchive(manifest.inventoryHash),null)
+  }
   const incomplete=snapshot.files.filter(f=>f.path!=="versions/"+active.runId+"/000001.json")
   const invalid=rehearseSyntheticMigrationPreflight({mode:"synthetic-migration-preflight-only",entries:incomplete.map(f=>({relativePath:f.path,bytes:Buffer.from(f.bytesBase64,"base64")}))})
   assert.equal(invalid.readyForRehearsal,false)

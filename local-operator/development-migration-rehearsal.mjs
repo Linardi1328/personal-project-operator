@@ -1,5 +1,5 @@
 import { constants } from "node:fs"
-import { mkdtemp, lstat, open, readdir, realpath, rm } from "node:fs/promises"
+import { mkdtemp, lstat, open, opendir, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { isDeepStrictEqual } from "node:util"
@@ -30,12 +30,23 @@ async function directory(path){
   if(!info.isDirectory()||!owned(info)||await realpath(path)!==path)deny()
   return info
 }
+async function boundedNames(path,limit){
+  const names=[]
+  const handle=await opendir(path)
+  // for-await closes the directory even on a bound violation.
+  for await(const entry of handle){
+    if(names.length>=limit)deny()
+    names.push(entry.name)
+  }
+  return names.sort()
+}
 async function capture(root){
   const entries=[]
   let total=0
   async function walk(path,relative,depth){
     const before=await directory(path)
-    const names=(await readdir(path)).sort()
+    const limit=depth===0?2:depth===1?100:100
+    const names=await boundedNames(path,limit)
     for(const name of names){
       const full=join(path,name),rel=relative?relative+"/"+name:name
       if(depth===0){
@@ -69,7 +80,7 @@ async function capture(root){
         }finally{await handle.close()}
       }
     }
-    if(!same(before,await directory(path))||!isDeepStrictEqual(names,(await readdir(path)).sort()))deny()
+    if(!same(before,await directory(path))||!isDeepStrictEqual(names,await boundedNames(path,limit)))deny()
     if(depth===0&&!isDeepStrictEqual(names,["records","versions"]))deny()
     if(depth===2&&names.length===0)deny()
   }
@@ -82,13 +93,22 @@ function payload(entries){
   // Own source only. Every raw JSON value must survive normalization; the
   // earlier source preflight permits some benign extensions, this stricter
   // rehearsal refuses them rather than silently discarding any data.
-  for(const entry of entries){
+  let normalizedBytes=0
+  const normalized=entries.map(entry=>{
     const id=entry.relativePath.split("/").at(-1)
     const runId=entry.relativePath.startsWith("records/")?id.slice(0,-5):entry.relativePath.split("/")[1]
     const source=entry.bytes.toString("utf8")
-    if(!isDeepStrictEqual(JSON.parse(source),parseDevelopmentRunRecord(source,runId)))deny()
-  }
-  return entries.map(e=>({path:e.relativePath,bytesBase64:e.bytes.toString("base64")}))
+    const record=parseDevelopmentRunRecord(source,runId)
+    if(!isDeepStrictEqual(JSON.parse(source),record))deny()
+    const canonical=Buffer.from(JSON.stringify(record),"utf8")
+    normalizedBytes+=canonical.length
+    if(canonical.length>MAX_DEVELOPMENT_RUN_RECORD_BYTES||normalizedBytes>MAX_BYTES)deny()
+    // Both representations remain separate. SQL compares exact JSONB values
+    // before storing the normalized record via the ordinary canonical CAS.
+    return {path:entry.relativePath,bytesBase64:entry.bytes.toString("base64"),
+      normalizedBase64:canonical.toString("base64")}
+  })
+  return normalized
 }
 function decodeFiles(files){
   if(!Array.isArray(files)||files.length>MAX_FILES)deny()
@@ -115,7 +135,8 @@ function one(result,key){
 
 /**
  * Fixed synthetic source generator. No caller-supplied root, records, callback
- * or environment-derived write path. All filesystem mutations complete
+ * or production-store fallback. The temporary parent/process environment
+ * are trusted. All filesystem mutations complete
  * before capture; no capability to the scratch root escapes this function.
  * Same-user adversaries and privileged local processes are outside this lab.
  */
@@ -133,16 +154,16 @@ export async function captureSyntheticMigrationRehearsal({mode}={}){
         r=await transitionDevelopmentRun(r.runId,{expectedVersion:r.version,status,actor:"synthetic-import"},options)
       }
       r=await recordDevelopmentRunProgress(r.runId,{expectedVersion:r.version,status:r.status,actor:"synthetic-import",
-        evidence:[{kind:"implementation",sha:"b".repeat(40),source:"synthetic-import",summary:"Exact bytes 😀",metadata:{large:1e308}}]},options)
+        evidence:[{kind:"implementation",sha:"b".repeat(40),source:"synthetic-import",summary:"Exact bytes 😀",metadata:{large:1e308,integerBoundary:9007199254740992,zero:0}}]},options)
       if(index<2)await transitionDevelopmentRun(r.runId,{expectedVersion:r.version,status:"cancelled",actor:"synthetic-import"},options)
     }
     const root=join(scratch,DEVELOPMENT_RUN_STORE_DIR)
-    if(!isDeepStrictEqual(await readdir(scratch),[DEVELOPMENT_RUN_STORE_DIR]))deny()
+    if(!isDeepStrictEqual(await boundedNames(scratch,1),[DEVELOPMENT_RUN_STORE_DIR]))deny()
     const first=await capture(root),second=await capture(root)
     const manifest=preflight(first),repeat=preflight(second)
     if(!manifest.readyForRehearsal||!repeat.readyForRehearsal||
       manifest.inventoryHash!==repeat.inventoryHash||!isDeepStrictEqual(first,second))deny()
-    const files=payload(first)
+    const files=payload(first).map(({path,bytesBase64})=>({path,bytesBase64}))
     // No mutable buffers escape. Return only generated synthetic archive
     // strings and immutable manifest digest; raw archive lives in the DB.
     return Object.freeze({inventoryHash:manifest.inventoryHash,
@@ -184,7 +205,7 @@ export function createSyntheticMigrationImporter({mode,query}={}){
       if(typeof inventoryHash!=="string"||!/^[a-f0-9]{64}$/u.test(inventoryHash)||inventoryHash.length!==64)deny()
       const archive=one(await query(ARCHIVE,[inventoryHash]),"archive")
       if(archive===null)return null
-      return Object.freeze(verifiedArchive(archive,inventoryHash).files.map(Object.freeze))
+      return Object.freeze(verifiedArchive(archive,inventoryHash).files.map(({path,bytesBase64})=>Object.freeze({path,bytesBase64})))
     }
   })
 }
