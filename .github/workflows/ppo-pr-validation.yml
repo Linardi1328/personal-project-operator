@@ -37,6 +37,28 @@ jobs:
       - name: Phase 6Q integrated user acceptance
         run: node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
 
+      - name: PostgreSQL canonical authority integration (isolated)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PPO_AUTHORITY_TEST_CONTAINER="ppo-authority-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$PPO_AUTHORITY_TEST_CONTAINER" >/dev/null 2>&1 || true' EXIT
+          docker run -d --network none --name "$PPO_AUTHORITY_TEST_CONTAINER" \
+            -e POSTGRES_DB=ppo_authority_ci \
+            -e POSTGRES_PASSWORD=disposable-ci-only-not-a-secret \
+            postgres:16
+          ready=false
+          for attempt in $(seq 1 60); do
+            if docker exec "$PPO_AUTHORITY_TEST_CONTAINER" pg_isready -U postgres -d ppo_authority_ci >/dev/null 2>&1 &&
+               docker exec "$PPO_AUTHORITY_TEST_CONTAINER" psql -X -qAt -U postgres -d ppo_authority_ci -c "SELECT 1" >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          node --test deployment/authority/phase1gb2-canonical-postgres.integration.mjs
+
       - name: Diff whitespace checks
         run: |
           git diff --check
