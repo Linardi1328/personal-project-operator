@@ -2672,16 +2672,23 @@ async function readAuthorityRun(authority, runId) {
 async function persistAuthorityRun(authority, next, current = null) {
   const serialized = serializeRecord(assertSyntheticAuthorityRecord(next))
   parseRunRecord(serialized, next.runId)
+  const uncertain = () => {
+    const error = runStateError("AUTHORITY_COMMIT_UNKNOWN", "Canonical authority commit outcome is unknown; reload authoritative state before further action.")
+    // Creation has no prior run ID known to the caller. Retain only bounded
+    // synthetic identity and candidate hash for read-only reconciliation.
+    error.observation = Object.freeze({runId: next.runId, version: next.version, historyHash: next.historyHash})
+    return error
+  }
   let accepted
   try {
     accepted = await authority.commitRecord(serialized, current?.version ?? -1, current?.historyHash ?? null)
   } catch {
     // A transport exception does not establish rollback. Never retry or
     // switch stores; authoritative reconciliation is required.
-    throw runStateError("AUTHORITY_COMMIT_UNKNOWN", "Canonical authority commit outcome is unknown; reload authoritative state before further action.")
+    throw uncertain()
   }
   if (accepted === false) throw runStateError("AUTHORITY_COMMIT_REJECTED", "Canonical authority rejected the version or admission; reload before further action.")
-  if (accepted !== true) throw runStateError("AUTHORITY_COMMIT_UNKNOWN", "Canonical authority commit outcome is unknown; reload authoritative state before further action.")
+  if (accepted !== true) throw uncertain()
   return cloneJson(next)
 }
 
