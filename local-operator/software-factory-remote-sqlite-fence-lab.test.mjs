@@ -142,7 +142,7 @@ test("SQLite lab persists a nonce across independent connections and reopen",asy
   assert.equal(count(f),1)
 })
 
-test("two independent processes cannot both consume the same nonce",async t=>{
+test("two independent processes cannot both consume the same nonce",{timeout:20000},async t=>{
   const f=await fixture(t)
   const a=launch(t,f), b=launch(t,f)
   const results=await Promise.all([a.first,b.first])
@@ -155,7 +155,7 @@ test("two independent processes cannot both consume the same nonce",async t=>{
   await later.done
 })
 
-test("process killed before commit rolls back nonce; competing writer denied",async t=>{
+test("process killed before commit rolls back nonce; competing writer denied",{timeout:20000},async t=>{
   const f=await fixture(t)
   const holder=launch(t,f,true)
   assert.deepEqual(await holder.first,{kind:"pending"})
@@ -172,7 +172,7 @@ test("process killed before commit rolls back nonce; competing writer denied",as
   assert.equal(count(f),1)
 })
 
-test("committed nonce survives lost acknowledgment and later process",async t=>{
+test("committed nonce survives lost acknowledgment and later process",{timeout:20000},async t=>{
   const f=await fixture(t)
   const loseAck=adapter(async cb=>{
     assert.equal(await f.transact(cb),true)
