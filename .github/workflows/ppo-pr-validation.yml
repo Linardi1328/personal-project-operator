@@ -25,18 +25,6 @@ jobs:
       - name: Repository syntax checks
         run: node deployment/scripts/run-ppo-development-quality.mjs syntax
 
-      - name: Parallel regression suite
-        run: node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
-
-      - name: Full serial regression suite
-        run: node deployment/scripts/run-ppo-development-quality.mjs serial-regression
-
-      - name: Critical Phase 6 lifecycle stability
-        run: node deployment/scripts/run-ppo-development-quality.mjs critical-lifecycle
-
-      - name: Phase 6Q integrated user acceptance
-        run: node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
-
       - name: PostgreSQL canonical authority integration (isolated)
         shell: bash
         run: |
@@ -49,7 +37,7 @@ jobs:
             postgres:16
           ready=false
           for attempt in $(seq 1 60); do
-            if docker exec "$PPO_AUTHORITY_TEST_CONTAINER" pg_isready -U postgres -d ppo_authority_ci >/dev/null 2>&1 &&
+            if docker exec "$PPO_AUTHORITY_TEST_CONTAINER" pg_isready -h 127.0.0.1 -U postgres -d ppo_authority_ci >/dev/null 2>&1 &&
                docker exec "$PPO_AUTHORITY_TEST_CONTAINER" psql -X -qAt -U postgres -d ppo_authority_ci -c "SELECT 1" >/dev/null 2>&1; then
               ready=true
               break
@@ -58,6 +46,18 @@ jobs:
           done
           test "$ready" = true
           node --test deployment/authority/phase1gb2-canonical-postgres.integration.mjs
+
+      - name: Parallel regression suite
+        run: node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
+
+      - name: Full serial regression suite
+        run: node deployment/scripts/run-ppo-development-quality.mjs serial-regression
+
+      - name: Critical Phase 6 lifecycle stability
+        run: node deployment/scripts/run-ppo-development-quality.mjs critical-lifecycle
+
+      - name: Phase 6Q integrated user acceptance
+        run: node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
 
       - name: Diff whitespace checks
         run: |
