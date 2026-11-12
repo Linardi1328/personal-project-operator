@@ -2692,6 +2692,14 @@ async function persistAuthorityRun(authority, next, current = null) {
   return cloneJson(next)
 }
 
+// Lifecycle event timestamps are logical nondecreasing history timestamps,
+// not evidence of wall-clock freshness. The action fence must use a separate
+// trusted authority clock. Preserve legacy filesystem timestamp behavior.
+function mutationEventTime(options, authority, current) {
+  const now = nowDate(options)
+  return authority ? new Date(Math.max(now.getTime(), Date.parse(current.timestamps.updatedAt))) : now
+}
+
 async function readMutationRun(runId, options, authority) {
   return authority ? await readAuthorityRun(authority, runId) : await readDevelopmentRunInternal(runId, options)
 }
@@ -2851,12 +2859,13 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {},
     code: "INVALID_REASON",
     safeMessage: "Development run transition reason is invalid; no run-state write was attempted."
   })
-  const now = nowDate(options)
+  const authorityCurrent = authority ? await readMutationRun(normalizedRunId, options, authority) : null
+  const now = mutationEventTime(options, authority, authorityCurrent)
   const evidence = normalizeEvidenceList(transition?.evidence || [], {
     ...options,
     now: () => now
   })
-  const current = await readMutationRun(normalizedRunId, options, authority)
+  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority)
 
   if (current.version !== expectedVersion) {
     throw runStateError(
@@ -2892,13 +2901,14 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
     code: "INVALID_REASON",
     safeMessage: "Development run progress reason is invalid; no run-state write was attempted."
   })
-  const now = nowDate(options)
+  const authorityCurrent = authority ? await readMutationRun(normalizedRunId, options, authority) : null
+  const now = mutationEventTime(options, authority, authorityCurrent)
   const evidence = normalizeEvidenceList(progress?.evidence || [], {
     ...options,
     now: () => now
   })
   const incrementAttempt = progress?.incrementAttempt === true
-  const current = await readMutationRun(normalizedRunId, options, authority)
+  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority)
 
   if (current.version !== expectedVersion || (expectedStatus !== null && current.status !== expectedStatus)) {
     throw runStateError(
@@ -3057,7 +3067,7 @@ async function recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, rec
     confirmation
   })
 
-  const now = nowDate(options)
+  const now = mutationEventTime(options, authority, current)
   const evidence = normalizeEvidenceList([{
     kind: "review",
     sha: expectedHeadSha,
@@ -3113,7 +3123,7 @@ async function recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, o
     reviewAttempt,
     confirmation
   })
-  const now = nowDate(options)
+  const now = mutationEventTime(options, authority, current)
   const evidence = normalizeEvidenceList([{
     kind: "review",
     sha: expectedHeadSha,
