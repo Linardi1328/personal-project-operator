@@ -126,7 +126,12 @@ try {
 finally {
   clearTimeout(timer)
   if (childExit) {stop(); await childExit; await logWrites}
-  if (id) try {await writeFile(join(output, 'postgres.log'), await command('docker', ['logs', '--tail', '150', id], 1048576), {mode: 0o600})} catch {report.serverLogUnavailable = true}
+  if (id) try {
+    const server = await run('docker', ['logs', '--tail', '150', id], {cwd: root, timeout: 10000, maxBuffer: 1048576, encoding: 'utf8'})
+    const contents = server.stdout + server.stderr
+    report.serverLogBytes = Buffer.byteLength(contents)
+    await writeFile(join(output, 'postgres.log'), contents, {mode: 0o600})
+  } catch (error) {report.serverLogUnavailable = true; report.serverLogUnavailableReason = String(error.code || error.name).slice(0, 100)}
   if (id) try { await command('docker', ['rm', '-fv', id]) } catch {report.cleanupFailed = true; process.exitCode = 1}
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', {mode: 0o600})
   process.stdout.write(JSON.stringify({output, complete: report.measurementComplete === true}) + '\n')

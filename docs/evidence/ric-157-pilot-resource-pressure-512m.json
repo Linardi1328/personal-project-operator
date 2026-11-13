@@ -1,0 +1,84 @@
+{
+  "scope": "instrumented-synthetic-baseline-only",
+  "productionQualified": false,
+  "commit": "aa547c742a448823af59d43ff257ae4979b36b23",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "node": "v24.20.0",
+  "image": "[\"postgres@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b\"]",
+  "limits": {
+    "containerMemoryBytes": 536870912,
+    "cpus": 2,
+    "maxConnections": 16,
+    "statementMs": 15000,
+    "largeSnapshotStatementMs": 45000,
+    "profileWallMs": 1200000,
+    "sampleIntervalMs": 5000,
+    "maxSampleBytes": 2097152,
+    "maxLogBytes": 33554432
+  },
+  "gaps": [
+    "Instrumented suite is not an exhaustive worst-case retention/concurrency matrix.",
+    "Cgroup memory peak includes page cache and observer clients, not PostgreSQL process RSS.",
+    "Samples can miss short lock waits and transient disk use.",
+    "No production operating budget is established by this baseline."
+  ],
+  "containerId": "f533a8091287d19e7cf1cb822dd1da5fac0cd560ba07890a197bd866bc155d3a",
+  "postgres": "PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "testExit": {
+    "code": 1,
+    "signal": null
+  },
+  "wallMs": 99271,
+  "sampleCount": 20,
+  "observerErrors": 0,
+  "nodeProcesses": [
+    {
+      "pid": 51634,
+      "parentPid": 51604,
+      "peakRssKiB": 869968,
+      "finalMemoryBytes": {
+        "rss": 128303104,
+        "heapTotal": 151486464,
+        "heapUsed": 45736416,
+        "external": 5090132,
+        "arrayBuffers": 2215789
+      }
+    },
+    {
+      "pid": 51604,
+      "parentPid": 51227,
+      "peakRssKiB": 49008,
+      "finalMemoryBytes": {
+        "rss": 50249728,
+        "heapTotal": 9388032,
+        "heapUsed": 6541552,
+        "external": 2638022,
+        "arrayBuffers": 205567
+      }
+    }
+  ],
+  "nodeMaxRssKiB": 869968,
+  "sampledMaxima": {
+    "databaseBytes": 11099159,
+    "tempBytes": 1439399096,
+    "tempFiles": 67,
+    "walDirectoryBytes": 33554432,
+    "backends": 2,
+    "lockWaiters": 0,
+    "longestTransactionMs": 5033.918,
+    "cgroupPeakBytes": 536870912,
+    "walBytes": "16585313"
+  },
+  "memoryEventMaxima": {
+    "low": "0",
+    "high": "0",
+    "max": "2969",
+    "oom": "2",
+    "oom_kill": "2",
+    "oom_group_kill": "0",
+    "sock_throttled": "0"
+  },
+  "logBytes": 75350,
+  "measurementComplete": false
+}

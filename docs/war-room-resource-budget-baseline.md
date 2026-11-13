@@ -11,7 +11,25 @@ CI=true GITHUB_ACTIONS=true GITHUB_RUN_ID=15720261113 GITHUB_RUN_ATTEMPT=41 \
 
 The command prints a private temporary artifact directory containing the exact SHA/platform/image, unchanged suite output, per-Node-process peak RSS, PostgreSQL container cgroup memory peak, sampled database/temporary-file/WAL size, connections, lock waiters and oldest transaction age. Raw samples and output are bounded. A 20-minute whole-profile watchdog, 32 MiB log cap and 2 MiB sample cap terminate the owned attempt; no assertion or per-statement timeout is raised. Normal CI does not preload instrumentation. The container has explicit experimental 512 MiB/2 CPU, 16-connection, 32 MiB shared-buffer and 4 MiB work-memory settings. Those are **experiment inputs**, not recommended operating settings.
 
-`--baseline-2g` selects the only alternate experiment: a 2 GiB container with every other setting unchanged. This exists to compare against a retained 512 MiB pressure failure, not to hide it or assign a production budget. Unrecognized options, DSNs and container selection are rejected. Server logs are retained before owned-container teardown, including evidence of crash recovery.
+`--baseline-2g` selects the only alternate experiment: a 2 GiB container with every other setting unchanged. This exists to compare against a retained 512 MiB pressure failure, not to hide it or assign a production budget. Unrecognized options, DSNs and container selection are rejected. Bounded server-log capture is attempted before owned-container teardown; unavailable diagnostics are explicitly reported.
+
+## Retained first measurements
+
+Both experiments used macOS arm64 Node v24.20.0 and PostgreSQL 16.14, the same synthetic suite and unchanged statement/transport deadlines. Reports retain their actual source SHAs and image digest:
+
+| Observation | 512 MiB pressure experiment | 2 GiB comparison experiment |
+| --- | --- | --- |
+| Source | `aa547c742a448823af59d43ff257ae4979b36b23` | `37fc79a1c60e12690b8e48f6375735b1550d2c70` |
+| Tests | 9 passed / 57 failed after cluster recovery interrupted the near-limit case and fixture cleanup | 66 passed / zero failed or skipped |
+| Container memory high water | 536,870,912 bytes | 822,079,488 bytes sampled cgroup high water |
+| OOM kills | 2 recorded | 0 recorded |
+| Node process peak RSS | 869,968 KiB | 1,065,248 KiB |
+| Sampled temporary-byte counter maximum | 1,439,399,096 bytes | 4,873,935,582 bytes |
+| Wall time | 99.271 seconds (failed) | 383.712 seconds |
+
+Original [pressure report](evidence/ric-157-pilot-resource-pressure-512m.json) and [comparison report](evidence/ric-157-pilot-resource-baseline-2g.json) are retained unchanged. The pressure failure's first reported exception is fixture teardown encountering PostgreSQL recovery; subsequent role-exists failures are a cascade, not independent regressions. Cgroup OOM counters establish memory pressure and kills, but this run did not retain the killed backend PID. The comparison reports `serverLogUnavailable:true` without retaining its cause; it must not be represented as complete server diagnostics or diagnosed as a specific capture error. The final observer-only patch combines stdout/stderr and records an unavailable reason for future captures, with the same explicit bound; the retained measurements predate that patch.
+
+The 512 MiB limit is insufficient for this tested near-limit workload. The 2 GiB success does **not** establish a safe production allocation: Node is outside that container limit; its peak alone exceeded 1 GiB, and the PostgreSQL temporary-byte counter is cumulative generation rather than peak simultaneous disk. These measurements do not fill the worst-case/retention/plan/latency/queueing matrix below. Production M-03 remains blocked. No deadline was enlarged to turn the failed profile green.
 
 Peak RSS is per Node process, not aggregate simultaneous Node memory. Cgroup memory includes PostgreSQL, observer clients, page cache and kernel accounting; it is not pure PostgreSQL process RSS. Five-second samples can miss transient waits and temporary disk peaks. The suite deliberately kills/restarts its container, so observer gaps must be retained and reported. No missing sample is replaced by zero or interpreted as proof of no contention. Sample counts/error counts and incomplete Node-profile markers are retained. An incomplete or failed instrumented suite cannot qualify a resource budget.
 
