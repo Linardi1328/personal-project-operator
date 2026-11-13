@@ -274,3 +274,11 @@ export async function verifyOfflineHostActionFence(signedRequest, signedHostProo
     hostEpoch: p.hostEpoch, runId: p.runId, expectedVersion: p.expectedVersion,
     actionId: p.actionId, canExecute: false, releaseAuthorized: false })
 }
+
+/** Signature-only snapshot for the isolated B2c1 trusted verifier. No grant,
+ * host registration, freshness or mutable-authority claim is made here. */
+export function verifyOfflineHostActionSignature(signed, publicKey) {
+  const stable = snapshotSignedHostProof(signed)
+  verifiedHostProof(stable, publicKey)
+  return stable
+}
