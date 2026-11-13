@@ -30,8 +30,9 @@ if(process.env.CI!=="true"||!/^ppo-authority-ci-[0-9]+-[0-9]+$/u.test(container|
 async function sql(input,role="postgres",maxStdoutBytes=40*1024*1024){
   if(!["postgres","ppo_authority_writer","ppo_authority_reader","ppo_untrusted_ci","ppo_authority_importer","ppo_rehearsal_controller","ppo_rehearsal_source","ppo_rehearsal_target","ppo_action_admin","ppo_action_verifier","ppo_action_consumer","ppo_resource_verifier","ppo_resource_consumer","ppo_admission_verifier"].includes(role))throw Error("invalid test role")
   const p=spawn("docker",["exec","-i",container,"psql","-X","-qAt","-v","ON_ERROR_STOP=1","-U","postgres","-d","ppo_authority_ci"],{stdio:["pipe","pipe","pipe"]})
-  const client=createPostgresTestSession(p,{timeoutMs:20000,maxStdoutBytes})
-  try{return await client.send("SET statement_timeout='15s'; SET ROLE "+role+";\n"+input)}
+  const largeSnapshot=maxStdoutBytes>40*1024*1024
+  const client=createPostgresTestSession(p,{timeoutMs:largeSnapshot?60000:20000,maxStdoutBytes})
+  try{return await client.send("SET statement_timeout='"+(largeSnapshot?"45s":"15s")+"'; SET ROLE "+role+";\n"+input)}
   catch(error){throw Error("PostgreSQL CI statement failed: "+error.message.slice(0,1200))}
   finally{await client.close()}
 }
