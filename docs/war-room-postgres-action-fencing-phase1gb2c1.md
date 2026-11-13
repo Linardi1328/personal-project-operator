@@ -4,6 +4,10 @@ Base: PR #159 squash `af62b84bc8eb8f4b4b874dfbf8bdc48c2e9884bb`. Install the opt
 
 ## Consumption is not an executable grant
 
+The D2 campaign regression explicitly forces `SET CONSTRAINTS ALL IMMEDIATE` after consumption. A deferred constraint trigger can then have completed before subsequent expiry, trusted authority changes or COMMIT. It is not an unconditional durable-commit freshness boundary and must not be described as one. The official adapter still owns one dedicated transaction connection and performs explicit precommit and post-acknowledgment checks; those remain clock samples, not proof of the strict executable contract. Deliberately combining administrator and consumer powers in one test transaction demonstrates why service-role separation is a prerequisite, not a reason to grant execution. Exact committed tombstones/effects/receipts survive late or unknown acknowledgments; no retry is authorized.
+
+PostgreSQL's [SET CONSTRAINTS contract](https://www.postgresql.org/docs/16/sql-set-constraints.html) explicitly includes constraint-trigger timing and retroactive execution when switching to IMMEDIATE; D2 verifies that behavior dynamically.
+
 The fixed `consume_action(ticket, operation_id)` operation consumes a synthetic signed action exactly once under the existing canonical gate. It returns transaction-local diagnostic evidence, never execution permission. The injected adapter explicitly performs BEGIN, consume, a pre-COMMIT check, acknowledged COMMIT and an independent post-COMMIT check on one dedicated connection. Every result has `grant:false`, `canExecute:false` and `releaseAuthorized:false`, including fresh acknowledged consumption and later positive inspection. This is deliberately **not wired into Phase 1F's successful consume callback**: ordinary PostgreSQL cannot prove the strict 1G-A atomic wall-clock freshness contract through commit and acknowledgment. That grant contract remains blocked. No resource action, including read/write/test permits, is implemented; unsupported action types are rejected rather than interpreted as commands.
 
 ## Authentication and complete catalog validation
