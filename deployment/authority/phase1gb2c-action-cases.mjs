@@ -1,3 +1,4 @@
+import {runResourceCases} from './phase1gb2c2-resource-cases.mjs'
 import assert from "node:assert/strict"
 import {readFile,mkdtemp,open,rm} from "node:fs/promises"
 import {tmpdir} from "node:os"
@@ -10,7 +11,7 @@ import {signedActionFixture} from "./action-test-fixture.mjs"
 const mode="isolated-postgres-action-fencing-only"
 export async function runPostgresActionCases(t,h){
  const {sql,session,blockedBy,literals:L,installImportAuthority,dropImportAuthority,container}=h
- const bind=(s,a)=>s.replace(/\$([12])/gu,(_,i)=>L(a[Number(i)-1]))
+ const bind=(s,a)=>s.replace(/\$([1-3])/gu,(_,i)=>L(a[Number(i)-1]))
  const query=role=>async(s,a)=>({rows:[JSON.parse(await sql("SELECT row_to_json(q) FROM ("+bind(s,a)+") q;",role))]})
  const roles={[O.read]:"ppo_rehearsal_controller",[O.sourceRead]:"ppo_rehearsal_controller",[O.control]:"ppo_rehearsal_controller",[O.receipt]:"ppo_rehearsal_controller",[O.source]:"ppo_rehearsal_source",[O.target]:"ppo_rehearsal_target"}
  const ownQuery=(s,a)=>query(roles[s])(s,a)
@@ -29,7 +30,7 @@ export async function runPostgresActionCases(t,h){
  async function fixture(fn){
   await installImportAuthority()
   try{
-   for(const name of ["phase1gb2-canonical-catalog.sql","phase1gb2-ownership-rehearsal.sql","phase1gb2c-action-fencing.sql"])await sql(await readFile(new URL(name,import.meta.url),"utf8"))
+   for(const name of ["phase1gb2-canonical-catalog.sql","phase1gb2-ownership-rehearsal.sql","phase1gb2c-action-fencing.sql","phase1gb2c2-resource.sql"])await sql(await readFile(new URL(name,import.meta.url),"utf8"))
    const c=createSyntheticOwnershipRehearsal({mode:"synthetic-ownership-cutover-rehearsal-only",query:ownQuery})
    await c.seed();await c.freeze();await c.import();await c.activate()
    const o=await c.observe(),run=o.catalog.entries.filter(e=>e.path.startsWith("records/")).map(e=>JSON.parse(e.serialized)).find(r=>r.status==="implementation_in_progress")
@@ -284,4 +285,5 @@ export async function runPostgresActionCases(t,h){
   assert.equal(observed.status,"consumed");assert.equal(observed.grant,false)
   assert.equal(JSON.parse(await sql(rawConsume(registered.ticket),"ppo_action_consumer")).consumed,false)
  }))
+ await runResourceCases(t,{fixture,sql,session,blockedBy,L,query,host,verifier,consumer,rawConsume,count,container})
 }
