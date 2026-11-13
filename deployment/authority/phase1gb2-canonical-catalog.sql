@@ -23,9 +23,9 @@ BEGIN
   SELECT g.revision::text INTO revision FROM ppo_authority.gate g WHERE singleton;
   IF revision IS NULL THEN RAISE EXCEPTION 'authority gate missing'; END IF;
   -- Count only bounded prefixes; no unbounded aggregate of record bodies.
-  SELECT count(*) INTO runs FROM (SELECT 1 FROM ppo_authority.current_runs LIMIT 101) r;
-  SELECT count(*) INTO versions FROM (SELECT 1 FROM ppo_authority.run_versions LIMIT 10001) v;
-  IF runs>100 OR versions>10000 THEN
+  SELECT count(*) INTO runs FROM (SELECT 1 FROM ppo_authority.current_runs LIMIT 21) r;
+  SELECT count(*) INTO versions FROM (SELECT 1 FROM ppo_authority.run_versions LIMIT 2001) v;
+  IF runs>20 OR versions>2000 THEN
     RETURN jsonb_build_object('revision',revision,'code','catalog_truncated','entries','[]'::jsonb);
   END IF;
   SELECT coalesce(sum(octet_length(to_json(record::text)::text)+128),0) INTO physical_bytes FROM (

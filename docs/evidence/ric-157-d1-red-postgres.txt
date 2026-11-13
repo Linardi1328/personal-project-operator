@@ -1,0 +1,14 @@
+RED H-01: writer accepted run21; complete consumer catalog_truncated after valid 19->20 and cancellation
+▶ D1 admission integrity reproduction
+  ✔ H-01 RED writer/catalog capacity disagreement (4688.525125ms)
+RED H-02: complete catalog rejects unrelated history actor corruption; writer nevertheless accepted new valid run
+  ✔ H-02 RED unrelated historical corruption does not block writer (746.783ms)
+✔ D1 admission integrity reproduction (5438.562291ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5566.576708

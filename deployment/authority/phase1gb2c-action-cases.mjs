@@ -1,3 +1,5 @@
+import {admissionProfileSql} from './phase1gd1-profile.mjs'
+import {createCatalogCertifiedQuery,certifyCatalogMutation} from '../../local-operator/development-catalog-certified-query.mjs'
 import {runResourceCases} from './phase1gb2c2-resource-cases.mjs'
 import assert from "node:assert/strict"
 import {readFile,mkdtemp,open,rm} from "node:fs/promises"
@@ -14,7 +16,7 @@ export async function runPostgresActionCases(t,h){
  const bind=(s,a)=>s.replace(/\$([1-3])/gu,(_,i)=>L(a[Number(i)-1]))
  const query=role=>async(s,a)=>({rows:[JSON.parse(await sql("SELECT row_to_json(q) FROM ("+bind(s,a)+") q;",role))]})
  const roles={[O.read]:"ppo_rehearsal_controller",[O.sourceRead]:"ppo_rehearsal_controller",[O.control]:"ppo_rehearsal_controller",[O.receipt]:"ppo_rehearsal_controller",[O.source]:"ppo_rehearsal_source",[O.target]:"ppo_rehearsal_target"}
- const ownQuery=(s,a)=>query(roles[s])(s,a)
+ const ownQuery=(s,a)=>(h.admissionProfile?createCatalogCertifiedQuery({mode:'isolated-catalog-certified-authority',query:query(roles[s]),verifierQuery:query('ppo_admission_verifier')}):query(roles[s]))(s,a)
  const rawConsume=(ticket,op=randomUUID())=>"SELECT ppo_authority.consume_action("+L(ticket)+"::uuid,"+L(op)+"::uuid);"
  const count=()=>sql("SELECT count(*) FROM ppo_authority.action_tombstones;")
  const host=async(f,expected=0,policy=f.policy)=>sql("SELECT ppo_authority.configure_action_host("+L(f.proof.hostId)+","+expected+","+L(JSON.stringify(policy))+");","ppo_action_admin")
@@ -31,6 +33,7 @@ export async function runPostgresActionCases(t,h){
   await installImportAuthority()
   try{
    for(const name of ["phase1gb2-canonical-catalog.sql","phase1gb2-ownership-rehearsal.sql","phase1gb2c-action-fencing.sql","phase1gb2c2-resource.sql"])await sql(await readFile(new URL(name,import.meta.url),"utf8"))
+   if(h.admissionProfile)await sql(await admissionProfileSql({ownership:true}))
    const c=createSyntheticOwnershipRehearsal({mode:"synthetic-ownership-cutover-rehearsal-only",query:ownQuery})
    await c.seed();await c.freeze();await c.import();await c.activate()
    const o=await c.observe(),run=o.catalog.entries.filter(e=>e.path.startsWith("records/")).map(e=>JSON.parse(e.serialized)).find(r=>r.status==="implementation_in_progress")
@@ -116,8 +119,11 @@ export async function runPostgresActionCases(t,h){
    // Existing trusted target state machine supplies the valid CAS candidate;
    // hold its natural gate through an injected dedicated transaction transport.
    await a.send("BEGIN;")
-   const other=createSyntheticOwnershipRehearsal({mode:"synthetic-ownership-cutover-rehearsal-only",query:async(s,args)=>s===O.target?
-    {rows:[{evidence:JSON.parse(await a.send(bind(s,args)+";"))}]}:ownQuery(s,args)})
+   const other=createSyntheticOwnershipRehearsal({mode:"synthetic-ownership-cutover-rehearsal-only",query:async(s,args)=>{
+    if(s!==O.target)return ownQuery(s,args)
+    if(h.admissionProfile)assert.equal(await certifyCatalogMutation({query:query('ppo_rehearsal_target'),verifierQuery:query('ppo_admission_verifier'),kind:'target_commit',payload:JSON.parse(args[0])}),true)
+    return {rows:[{evidence:JSON.parse(await a.send(bind(s,args)+";"))}]}
+   }})
    await other.reconcile(c.operation())
    await other.target.progress(run.runId,{expectedVersion:run.version,status:run.status,actor:"action-test",reason:"canonical CAS race"})
    targetOperation=other.operation()

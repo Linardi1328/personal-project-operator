@@ -132,6 +132,11 @@ BEGIN
   SELECT count(DISTINCT project_id), count(*) INTO active_projects, active_count FROM active;
   IF active_projects > 2 OR active_count <> active_projects THEN RETURN false; END IF;
 
+  -- Shared readiness capacity counts existing current records, not only WIP.
+  IF p_expected=-1 AND (SELECT count(*) FROM ppo_authority.current_runs)>=20 THEN RETURN false; END IF;
+  IF (SELECT count(*) FROM ppo_authority.run_versions)>=2000 THEN RETURN false; END IF;
+  IF (SELECT coalesce(sum(octet_length(to_json(record::text)::text)+128),0) FROM ppo_authority.run_versions)+
+     (SELECT coalesce(sum(octet_length(to_json(record::text)::text)+128),0) FROM ppo_authority.current_runs WHERE run_id<>p_id)+2*(octet_length(to_json(p_record::text)::text)+128)>33554432 THEN RETURN false; END IF;
   INSERT INTO ppo_authority.run_versions VALUES (p_id,v,h,p_record);
   RETURN true;
 END
