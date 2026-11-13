@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url'
 
 // Opt-in baseline instrumentation of the SAME synthetic suite. It creates and
 // destroys its own network-none database, never accepts a DSN or container ID.
-if (process.argv.length !== 2 || process.env.CI !== 'true' || process.env.GITHUB_ACTIONS !== 'true' ||
+if ((process.argv.length !== 2 && !(process.argv.length === 3 && process.argv[2] === '--baseline-2g')) || process.env.CI !== 'true' || process.env.GITHUB_ACTIONS !== 'true' ||
     !/^[0-9]+$/.test(process.env.GITHUB_RUN_ID || '') || !/^[0-9]+$/.test(process.env.GITHUB_RUN_ATTEMPT || '')) {
   throw Error('Explicit disposable CI profile required')
 }
@@ -18,12 +18,13 @@ const command = async (cmd, args, maxBuffer = 65536) =>
 const output = await mkdtemp(join(tmpdir(), 'ppo-resource-profile-'))
 const peaks = join(output, 'node-peaks.jsonl'), samples = join(output, 'database-samples.jsonl')
 const log = join(output, 'integration.log')
+const memoryLimit = process.argv[2] === '--baseline-2g' ? 2147483648 : 536870912
 await Promise.all([peaks, samples, log].map(p => writeFile(p, '', {mode: 0o600})))
 const name = `ppo-authority-ci-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`
 const report = {scope: 'instrumented-synthetic-baseline-only', productionQualified: false,
   commit: await command('git', ['rev-parse', 'HEAD']), platform: platform(), architecture: arch(),
   node: process.version, image: await command('docker', ['image', 'inspect', 'postgres:16', '--format', '{{json .RepoDigests}}']),
-  limits: {containerMemoryBytes: 536870912, cpus: 2, maxConnections: 16,
+  limits: {containerMemoryBytes: memoryLimit, cpus: 2, maxConnections: 16,
     statementMs: 15000, largeSnapshotStatementMs: 45000, profileWallMs: 1200000,
     sampleIntervalMs: 5000, maxSampleBytes: 2097152, maxLogBytes: 33554432},
   gaps: ['Instrumented suite is not an exhaustive worst-case retention/concurrency matrix.',
@@ -55,7 +56,7 @@ process.once('SIGTERM', () => stop('SIGTERM'))
 process.once('SIGINT', () => stop('SIGINT'))
 try {
   id = await command('docker', ['run', '-d', '--network', 'none', '--name', name,
-    '--memory', '512m', '--cpus', '2', '-e', 'POSTGRES_DB=ppo_authority_ci',
+    '--memory', String(memoryLimit), '--cpus', '2', '-e', 'POSTGRES_DB=ppo_authority_ci',
     '-e', 'POSTGRES_PASSWORD=disposable-ci-only-not-a-secret', 'postgres:16',
     '-c', 'max_connections=16', '-c', 'shared_buffers=32MB', '-c', 'work_mem=4MB',
     '-c', 'maintenance_work_mem=32MB', '-c', 'track_io_timing=on'])
@@ -125,6 +126,7 @@ try {
 finally {
   clearTimeout(timer)
   if (childExit) {stop(); await childExit; await logWrites}
+  if (id) try {await writeFile(join(output, 'postgres.log'), await command('docker', ['logs', '--tail', '150', id], 1048576), {mode: 0o600})} catch {report.serverLogUnavailable = true}
   if (id) try { await command('docker', ['rm', '-fv', id]) } catch {report.cleanupFailed = true; process.exitCode = 1}
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', {mode: 0o600})
   process.stdout.write(JSON.stringify({output, complete: report.measurementComplete === true}) + '\n')
