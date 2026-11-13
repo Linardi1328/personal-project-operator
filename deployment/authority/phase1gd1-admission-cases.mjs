@@ -3,7 +3,7 @@ import {createSyntheticOwnershipRehearsal} from '../../local-operator/developmen
 import {createSyntheticMigrationImporter,captureSyntheticMigrationRehearsal} from '../../local-operator/development-migration-rehearsal.mjs'
 import {rehearseSyntheticMigrationPreflight} from '../../local-operator/development-migration-preflight.mjs'
 import {randomUUID} from 'node:crypto'
-import {readdir,readFile,mkdtemp,rm} from 'node:fs/promises'
+import {cp,readdir,readFile,mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {createDevelopmentRun,transitionDevelopmentRun,recordDevelopmentRunProgress} from '../../local-operator/development-run-state.mjs'
@@ -83,7 +83,7 @@ export async function runAdmissionCases(t,h){
   await sql("BEGIN; SET LOCAL ROLE ppo_authority_owner; SELECT ppo_authority.require_admission('direct',"+L(JSON.stringify(payload(r)))+"); ROLLBACK;")
   const size=await sql("SELECT ppo_authority.admission_pack(jsonb_build_array(jsonb_build_object('path','records/x.json','serialized',repeat('x',33554432))))->>'code';")
   assert.equal(size,'catalog_truncated')
-  assert.equal(await sql("SELECT ppo_authority.admission_pack((SELECT jsonb_agg(jsonb_build_object('path','versions/x/'||i,'serialized','{}')) FROM generate_series(1,2001) i))->>'code';"),'catalog_truncated')
+  for(const [count,expected] of [[2000,'ok'],[2001,'catalog_truncated']])assert.equal(await sql("SELECT ppo_authority.admission_pack((SELECT jsonb_agg(jsonb_build_object('path','versions/'||repeat('A',39)||lpad((i/100)::text,4,'0')||'/'||lpad((i%100)::text,6,'0')||'.json','serialized','{}')) FROM generate_series(0,"+(count-1)+") i))->>'code';"),expected)
   assert.equal(await sql('SELECT count(*) FROM ppo_authority.run_versions;'),'0')
  }))
 
@@ -152,6 +152,59 @@ export async function runAdmissionCases(t,h){
    assert.equal(archive.length,files.length)
    for(const f of archive)assert.equal(f.bytesBase64,files.find(x=>x.path===f.path).bytesBase64)
   }finally{await rm(dir,{recursive:true,force:true})}
+ }))
+
+ await t.test('actual otherwise-valid append crossing aggregate byte capacity preserves history and archive',()=>fixture(async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'ppo-admission-byte-corpus-')),positiveDir=dir+'-positive'
+  let clock=Date.parse('2026-01-01T00:00:00.000Z')
+  const options={writeDataDir:dir,now:()=>new Date(clock+=1000)}
+  const large=Array.from({length:8},(_,i)=>({kind:'implementation',sha:'b'.repeat(40),source:'admission-test',summary:'Finite native expansion '+i,metadata:Object.fromEntries(Array.from({length:16},(_,j)=>['n'+j,Array(16).fill(1e308)]))}))
+  const filler=structuredClone(large);for(const e of filler)e.metadata.n15[15]=0
+  async function prefix(project){
+   let r=await createDevelopmentRun({projectId:project,task:'RIC-157 shared authority synthetic: exact native byte budget',baseSha:'a'.repeat(40),headSha:'b'.repeat(40),branch:'feature/admission'},options)
+   for(const status of ['planning_in_progress','planned','implementation_in_progress'])r=await transitionDevelopmentRun(r.runId,{expectedVersion:r.version,status},options)
+   return r
+  }
+  try{
+   for(let i=0;i<9;i++){
+    let r=await prefix('rivora');r=await recordDevelopmentRunProgress(r.runId,{expectedVersion:r.version,status:r.status,evidence:filler},options)
+    if(i<8)await transitionDevelopmentRun(r.runId,{expectedVersion:r.version,status:'cancelled'},options)
+   }
+   const target=await prefix('kynexa'),entries=[]
+   for(const id of await readdir(join(dir,'development-runs','versions')))for(const name of await readdir(join(dir,'development-runs','versions',id)))entries.push({relativePath:'versions/'+id+'/'+name,bytes:await readFile(join(dir,'development-runs','versions',id,name))})
+   for(const name of await readdir(join(dir,'development-runs','records')))entries.push({relativePath:'records/'+name,bytes:await readFile(join(dir,'development-runs','records',name))})
+   const manifest=rehearseSyntheticMigrationPreflight({mode:'synthetic-migration-preflight-only',entries});assert.equal(manifest.readyForRehearsal,true)
+   const files=entries.map(e=>({path:e.relativePath,bytesBase64:e.bytes.toString('base64'),normalizedBase64:e.bytes.toString('base64')}))
+   const diagnostic=(await q('ppo_authority_importer')(ADMISSION_SQL.prepare,['import',JSON.stringify({inventoryHash:manifest.inventoryHash,files})])).rows[0].preparation
+   const estimated=await sql("SELECT sum(octet_length(to_json((convert_from(decode(x->>'normalizedBase64','base64'),'UTF8')::jsonb)::text)::text)+128) FROM jsonb_array_elements("+L(JSON.stringify(files))+"::jsonb) x;")
+   console.log('Byte fixture diagnostic: code='+diagnostic.after.code+' native='+estimated)
+   const result=await certified('ppo_authority_importer')('SELECT ppo_authority.import_synthetic_snapshot($1::text,$2::text) AS accepted',[manifest.inventoryHash,JSON.stringify(files)])
+   assert.equal(result.rows[0].accepted,true,'valid near-capacity corpus must import')
+   assert.equal((await createPostgresCanonicalCatalog({mode:'isolated-postgres-canonical-catalog',query:query('ppo_authority_reader')}).list()).ok,true)
+   const nativeBytes=Number(await sql("SELECT sum(octet_length(to_json(record::text)::text)+128) FROM (SELECT record FROM ppo_authority.current_runs UNION ALL SELECT record FROM ppo_authority.run_versions) x;"))
+   assert.ok(nativeBytes>30*1024*1024&&nativeBytes<32*1024*1024,'near-capacity positive corpus bytes='+nativeBytes)
+   // Candidate generation uses only cloned synthetic scratch state, never a
+   // live authority or real record. Both candidates are valid state-machine appends.
+   await cp(dir,positiveDir,{recursive:true})
+   const small=await recordDevelopmentRunProgress(target.runId,{expectedVersion:target.version,status:target.status,reason:'valid small append'}, {...options,writeDataDir:positiveDir})
+   const big=await recordDevelopmentRunProgress(target.runId,{expectedVersion:target.version,status:target.status,evidence:large},options)
+   const args=r=>[r.runId,target.version,target.historyHash,JSON.stringify(r)]
+   const prospective=r=>({serialized:JSON.stringify(r),expectedVersion:target.version,expectedHash:target.historyHash})
+   const fingerprint=()=>sql("SELECT jsonb_build_object('versions',(SELECT encode(sha256(convert_to(jsonb_agg(record ORDER BY run_id,version)::text,'UTF8')),'hex') FROM ppo_authority.run_versions),'archive',(SELECT encode(sha256(convert_to(jsonb_agg(jsonb_build_array(path,encode(bytes,'base64')) ORDER BY path)::text,'UTF8')),'hex') FROM ppo_authority.synthetic_import_files),'count',(SELECT count(*) FROM ppo_authority.run_versions));")
+   const before=await fingerprint()
+   assert.equal(await certifyCatalogMutation({query:q('ppo_authority_writer'),verifierQuery:q('ppo_admission_verifier'),kind:'direct',payload:prospective(small)}),true)
+   assert.equal(await sql('BEGIN; SELECT ppo_authority.commit_run('+args(small).map(L).join(',')+'); ROLLBACK;','ppo_authority_writer'),'t')
+   assert.equal(await fingerprint(),before)
+   const p=(await q('ppo_authority_writer')(ADMISSION_SQL.prepare,['direct',JSON.stringify(prospective(big))])).rows[0].preparation
+   assert.equal(p.before.code,'ok');assert.equal(p.after.code,'catalog_truncated');assert.deepEqual(p.after.entries,[])
+   assert.equal(await certifyCatalogMutation({query:q('ppo_authority_writer'),verifierQuery:q('ppo_admission_verifier'),kind:'direct',payload:prospective(big)}),false)
+   // Even an intentionally over-trusting test verifier cannot bypass the
+   // independent SQL prospective byte guard at the actual public mutation.
+   await q('ppo_admission_verifier')(ADMISSION_SQL.certify,[p.token])
+   assert.equal(await sql('SELECT ppo_authority.commit_run('+args(big).map(L).join(',')+');','ppo_authority_writer'),'f')
+   assert.equal(await fingerprint(),before)
+   console.log('GREEN native byte boundary: existing='+nativeBytes+'; valid small append rolls back; oversized valid append denied with exact native history/raw archive hashes unchanged')
+  }finally{await rm(dir,{recursive:true,force:true});await rm(positiveDir,{recursive:true,force:true})}
  }))
 
 }

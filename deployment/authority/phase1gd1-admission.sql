@@ -27,13 +27,13 @@ BEGIN
  END IF; RETURN e;
 END $b$;
 CREATE FUNCTION ppo_authority.admission_pack(e jsonb) RETURNS jsonb LANGUAGE sql STABLE SET search_path=pg_catalog,pg_temp AS $b$
- SELECT jsonb_build_object('revision','0','code',CASE WHEN
- e IS NULL OR (SELECT count(*) FROM jsonb_array_elements(e) x WHERE x->>'path' LIKE 'records/%')>20 OR
+ WITH bound AS (SELECT (e IS NULL OR (SELECT count(*) FROM jsonb_array_elements(e) x WHERE x->>'path' LIKE 'records/%')>20 OR
  (SELECT count(*) FROM jsonb_array_elements(e) x WHERE x->>'path' LIKE 'versions/%')>2000 OR
  EXISTS(SELECT 1 FROM jsonb_array_elements(e) x WHERE x->>'path' LIKE 'versions/%' AND
  CASE WHEN split_part(x->>'path','/',3) ~ '^[0-9]{6}\.json$' THEN split_part(split_part(x->>'path','/',3),'.',1)::integer>99 ELSE true END) OR
  octet_length(e::text)+256>33554432 OR (SELECT coalesce(sum(octet_length(x->>'serialized')),0) FROM jsonb_array_elements(e) x)>33554432
- THEN 'catalog_truncated' ELSE 'ok' END,'entries',coalesce(e,'[]'))
+) AS exhausted)
+ SELECT jsonb_build_object('revision','0','code',CASE WHEN exhausted THEN 'catalog_truncated' ELSE 'ok' END,'entries',CASE WHEN exhausted THEN '[]'::jsonb ELSE e END) FROM bound
 $b$;
 CREATE FUNCTION ppo_authority.prepare_admission(p_kind text,p_payload text) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
 DECLARE r jsonb;c jsonb;prior jsonb;before_entries jsonb;after_entries jsonb;owner_binding jsonb;source boolean; id text;v integer;expected integer;h text; token text; native_revision text; item jsonb; norm text; n bigint:=0;
