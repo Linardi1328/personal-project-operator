@@ -227,6 +227,25 @@ export async function runPostgresActionCases(t,h){
   }
   assert.equal(await count(),"0")
  }))
+ await t.test("D2 early deferred action check can precede expiry and a later raw COMMIT",async()=>fixture(async({run,f})=>{
+  const n=signedActionFixture(run,{keys:f.keys,epoch:2,lifetime:5000});await host(n,1);const registered=await verifier(n).register(n.input),operation={ticket:registered.ticket,operationId:randomUUID()}
+  const unchanged=()=>sql("SELECT jsonb_build_object('canonical',(SELECT jsonb_agg(record ORDER BY run_id,version) FROM ppo_authority.run_versions),'archive',(SELECT md5(string_agg(encode(bytes,'hex'),'' ORDER BY path)) FROM ppo_authority.synthetic_import_files),'resources',(SELECT count(*) FROM ppo_authority.resource_versions),'receipts',(SELECT count(*) FROM ppo_authority.resource_receipts));")
+  const before=await unchanged(),c=session("action-d2-early-expiry","ppo_action_consumer")
+  const check="SELECT ppo_authority.check_action("+L(operation.ticket)+"::uuid,"+L(operation.operationId)+"::uuid,false);"
+  try{
+   await c.ready();assert.equal(JSON.parse(await c.send("BEGIN;"+rawConsume(operation.ticket,operation.operationId))).consumed,true)
+   await c.send("SET CONSTRAINTS ALL IMMEDIATE;");assert.equal(JSON.parse(await c.send(check)).fresh,true)
+   await c.send("SELECT pg_sleep(greatest(0,extract(epoch FROM ("+L(n.claim.leaseExpiresAt)+"::timestamptz-clock_timestamp())))+0.02);")
+   assert.equal(JSON.parse(await c.send(check)).fresh,false);await c.send("COMMIT;")
+  }finally{await c.close()}
+  assert.equal(await count(),"1");assert.equal(await unchanged(),before)
+  const evidence=await inspectIsolatedActionConsumption({mode,operation,query:query("ppo_action_consumer")})
+  assert.equal(evidence.status,"consumed");assert.equal(evidence.evidence.fresh,false)
+  for(const flag of ["grant","canExecute","releaseAuthorized"])assert.equal(evidence[flag],false)
+  const tombstone=await sql("SELECT to_jsonb(t) FROM ppo_authority.action_tombstones t;")
+  assert.equal(JSON.parse(await sql(rawConsume(operation.ticket),"ppo_action_consumer")).consumed,false)
+  assert.equal(await sql("SELECT to_jsonb(t) FROM ppo_authority.action_tombstones t;"),tombstone)
+ }))
  await t.test("late acknowledged commit denies diagnostic freshness while committed tombstone persists",async()=>fixture(async({run,f})=>{
   const n=signedActionFixture(run,{keys:f.keys,epoch:2,lifetime:3500,changeProof:p=>{p.expiresAt=new Date(Date.now()+50000).toISOString()}});await host(n,1);const r=await verifier(n).register(n.input)
   const c=await consumer("action-ack-late",async(s,execute)=>{
