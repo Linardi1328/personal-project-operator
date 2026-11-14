@@ -71,7 +71,7 @@ export function createDevelopmentRunRetirementSession(dependencies = {}) {
       if (!result.ok) return result
       const issuedAt = now()
       if (issuedAt < Date.parse(result.record.timestamps.updatedAt)) return blocked("retirement_clock_invalid")
-      const requestId = randomBytes(32).toString("base64url")
+      const requestId = randomBytes(32).toString("hex")
       const challenge = `RETIRE ${runId} VERSION ${result.record.version} REQUEST ${requestId}`
       requests.set(requestId, Object.freeze({ runId, stateOptions, issuedAt,
         expiresAt: issuedAt + RETIREMENT_TTL_MS, recordDigest: digest(result.record), challenge }))
