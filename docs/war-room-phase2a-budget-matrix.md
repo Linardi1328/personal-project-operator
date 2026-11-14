@@ -296,3 +296,34 @@ Successful gate summaries remain in `/tmp/ric157-matrix-gates.json`,
 `/tmp/ric157-matrix-official-serial.json`; the latter also records the pinned
 runtime path and hash. Failed attempts remain visible alongside successful
 reruns. These are local checks, not a claim of hosted CI completion.
+
+
+## Post-measurement runner corrections
+
+CodeRabbit reviewed exact `4788cfb1157a3394eaaa65f9ed957494bd683c2d`
+and found two valid lifecycle defects. A startup signal could set `stopping`
+while no child existed, then still allow a scenario launch. The readiness
+probe could also accept the official image's temporary socket-only server.
+The corrected runner checks interruption during readiness, immediately
+before scenario spawn and before success, retaining failing status and
+exact owned-container cleanup. Readiness now uses authenticated TCP to
+container loopback; it preserves the bounded startup retries. The workload
+has no mutation retry or deadline change.
+
+Three fake-Docker lifecycle regressions reproduce both startup-signal
+windows and a temporary socket server that is ready before the final TCP
+server. All three failed against the old runner and pass after correction.
+They assert no scenario launch after interruption, failing status, exact
+owned-ID cleanup, authenticated TCP selection and a failed first final-server
+probe followed by success. The deliberately failing fake workload is not
+PostgreSQL or measurement evidence. The first fixture construction attempt
+had a generated JavaScript newline error; its output is separately retained
+rather than counted as the intended RED reproduction.
+
+The original five-case raw artifact and source hashes above remain unchanged.
+These runner-only corrections postdate those measurements; they do not
+remeasure or relabel them. Focused lifecycle tests and a fresh disposable
+real `operations` case validate the corrected runner separately; exact-head
+results are recorded in the PR. New full seven-gate CI is required for the
+corrected head. No capacity, workload, authority, payload, timeout or grant
+semantics changed.
