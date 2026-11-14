@@ -20,6 +20,16 @@ export const POSTGRES_ACTION_SQL=Object.freeze({
  precommit:"SELECT ppo_authority.check_action($1::uuid,$2::uuid,true) AS evidence",
  observe:"SELECT ppo_authority.check_action($1::uuid,$2::uuid,false) AS evidence"
 })
+// Pure cross-payload consistency for already shape-validated messages. No
+// current-clock freshness: historical diagnostics remain valid observations.
+export function validIsolatedActionBindings(request,claim,p,requestHash,claimHash){
+ return !(claim.kind!=="worker-claim"||claim.requestId!==request.requestId||claim.requestHash!==requestHash||p.requestHash!==requestHash||p.claimHash!==claimHash||
+   p.runId!==request.runId||claim.runId!==request.runId||p.expectedVersion!==request.expectedVersion||claim.expectedVersion!==request.expectedVersion||
+   p.workerId!==request.workerId||claim.workerId!==request.workerId||claim.hostId!==p.hostId||!p.hostId.startsWith("lab-")||p.hostEpoch>1000000000||
+   Date.parse(p.issuedAt)<Date.parse(request.issuedAt)||Date.parse(p.expiresAt)>Date.parse(request.expiresAt)||
+   Date.parse(claim.claimedAt)<Date.parse(request.issuedAt)||Date.parse(claim.leaseExpiresAt)>Date.parse(request.expiresAt)||
+   p.actionPath.split("/").includes(".")||!request.scope.permits.includes(p.actionType)||!request.scope.allowedPaths.some(path=>p.actionPath===path||p.actionPath.startsWith(path.replace(/\/$/u,"")+"/")))
+}
 // Trusted server verifier only: actual signed Phase1B/1F formats and complete
 // existing semantic/history validator. Authenticated transport/key custody is
 // absent. The consumer role cannot manufacture these immutable attestations.
@@ -33,12 +43,7 @@ export function createIsolatedPostgresActionVerifier({mode,query,coordinatorPubl
   const claim=verifyRemoteEnvelope(signedClaim,request.workerId,workerPublicKey)
   const proof=verifyOfflineHostActionSignature(signedProof,hostPublicKey)
   const p=proof.payload,requestHash=remotePayloadDigest(request),claimHash=remotePayloadDigest(claim)
-  if(claim.kind!=="worker-claim"||claim.requestId!==request.requestId||claim.requestHash!==requestHash||p.requestHash!==requestHash||p.claimHash!==claimHash||
-   p.runId!==request.runId||claim.runId!==request.runId||p.expectedVersion!==request.expectedVersion||claim.expectedVersion!==request.expectedVersion||
-   p.workerId!==request.workerId||claim.workerId!==request.workerId||claim.hostId!==p.hostId||!p.hostId.startsWith("lab-")||p.hostEpoch>1000000000||
-   Date.parse(p.issuedAt)<Date.parse(request.issuedAt)||Date.parse(p.expiresAt)>Date.parse(request.expiresAt)||
-   Date.parse(claim.claimedAt)<Date.parse(request.issuedAt)||Date.parse(claim.leaseExpiresAt)>Date.parse(request.expiresAt)||
-   p.actionPath.split("/").includes(".")||!request.scope.permits.includes(p.actionType)||!request.scope.allowedPaths.some(path=>p.actionPath===path||p.actionPath.startsWith(path.replace(/\/$/u,"")+"/")))fail()
+  if(!validIsolatedActionBindings(request,claim,p,requestHash,claimHash))fail()
   const s=one(await query(POSTGRES_ACTION_SQL.snapshot,[]),"snapshot")
   if(!s||Buffer.byteLength(JSON.stringify(s))>70*1024*1024||s.phase!=="target"||!uuid(s.targetId)||!uuid(s.sourceId)||s.targetId===s.sourceId||
    typeof s.generation!=="string"||!/^[1-9][0-9]{0,9}$/u.test(s.generation)||BigInt(s.generation)>1000000000n||

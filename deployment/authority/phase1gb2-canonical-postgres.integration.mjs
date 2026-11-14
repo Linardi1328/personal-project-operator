@@ -1,3 +1,4 @@
+import {runPinnedServiceTransportCases} from './pinned-service-transport-cases.mjs'
 import {runAdmissionCases} from './phase1gd1-admission-cases.mjs'
 import { runPostgresActionCases } from "./phase1gb2c-action-cases.mjs"
 import { runOwnershipRehearsalCases } from "./phase1gb2-ownership-cases.mjs"
@@ -182,6 +183,10 @@ async function exactImported(snapshot,extra=[],querySql=sql){
   const orderFiles=files=>[...files].sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0)
   assert.deepEqual(orderFiles(await importer.readArchive(snapshot.inventoryHash)),orderFiles(snapshot.files))
 }
+
+test("isolated pinned mutual-TLS service boundaries",{timeout:120000},async t=>{
+ await runPinnedServiceTransportCases(t,{sql,container,literals,installImportAuthority,dropImportAuthority})
+})
 
 test("D1 admission integrity reproduction",{timeout:180000},async t=>{
  await runAdmissionCases(t,{sql,installImportAuthority,dropImportAuthority,authority,query,session,blockedBy,literals,readFile,catalogSql:await readFile(new URL('./phase1gb2-canonical-catalog.sql',import.meta.url),'utf8')})
