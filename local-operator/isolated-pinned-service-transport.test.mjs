@@ -5,6 +5,7 @@ import {randomUUID,createHash} from 'node:crypto'
 import {signedActionFixture} from '../deployment/authority/action-test-fixture.mjs'
 import {serviceTlsFixture,finishServiceTestFixture} from '../deployment/authority/service-transport-test-fixture.mjs'
 import {createIsolatedPinnedService,createIsolatedPinnedClient,createIsolatedPinRegistry,PINNED_SERVICE_LIMITS,SERVICE_ROLE_PROBE,SERVICE_ADMIN_SQL,serviceLogin} from './isolated-pinned-service-transport.mjs'
+import {remotePayloadDigest} from './software-factory-remote-contract.mjs'
 import {POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
 const test=(name,fn)=>nativeTest(name,{timeout:15000},fn)
 const mode='isolated-pinned-service-transport-only',flags={grant:false,canExecute:false,releaseAuthorized:false}
@@ -205,4 +206,103 @@ test('fixture cleanup attempts every resource and preserves the primary failure'
  assert.deepEqual(attempted,['server','session','role','schema'])
  await assert.rejects(finishServiceTestFixture([async()=>{}],primary),error=>error===primary)
  await finishServiceTestFixture([async()=>{}])
+})
+
+
+const nativeHash=value=>createHash('sha256').update(value).digest('hex')
+function diagnosticSnapshot(){
+ const f=signedActionFixture({runId:'A'.repeat(43),version:1,project:{id:'synthetic'},branch:'feature/synthetic',baseSha:'a'.repeat(40),headSha:'b'.repeat(40)}, {now:Date.parse('2026-01-01T00:00:00.000Z')})
+ return {contextHash:'a'.repeat(64),context:{targetId:randomUUID(),sourceId:randomUUID(),generation:'3',catalogDigest:'b'.repeat(64),coordinatorFingerprint:f.policy.coordinatorFingerprint,workerFingerprint:f.policy.workerFingerprint,hostFingerprint:f.policy.keyFingerprint,request:f.request,claim:f.claim,proof:f.proof,requestHash:f.requestHash,claimHash:f.claimHash,proofHash:'c'.repeat(64)},resource:{resource_id:randomUUID(),version:0,project:'synthetic',path:'src/synthetic.mjs',value:'',ref:nativeHash('')}}
+}
+function refreshDiagnosticDigests(s){
+ const c=s.context
+ c.requestHash=remotePayloadDigest(c.request);c.claim.requestHash=c.requestHash
+ c.claimHash=remotePayloadDigest(c.claim);c.proof.requestHash=c.requestHash;c.proof.claimHash=c.claimHash
+}
+// Every case traverses authenticated, pinned mutual TLS. A control response
+// proves the same route works, and peer counts rule out pre-dispatch failures.
+async function diagnosticPeer(service,fn){
+ let response,requests=0
+ const peer=https.createServer({...fixture.certs[service].tls,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3',maxVersion:'TLSv1.3'},(req,res)=>{
+  assert.equal(req.socket.authorized,true);requests++;req.resume();res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(response))
+ });await new Promise(r=>peer.listen(0,'127.0.0.1',r))
+ const x={port:peer.address().port,service,pins:fixture.registry()}
+ async function check(path,body,reply,expected,label){
+  response=reply;const api=client(x),before=requests
+  const result=await api.send(path,body)
+  assert.equal(requests,before+1,label+' reached peer')
+  await assert.rejects(api.send(path,body));assert.equal(requests,before+1,label+' single attempt')
+  assert.deepEqual(result,expected==='unknown'?{...flags,status:'unknown'}:reply,label)
+ }
+ try{await fn(check)}finally{await new Promise(r=>peer.close(r))}
+}
+
+nativeTest('P2-1 diagnostic cross-payload consistency over pinned mutual TLS',async t=>{
+ const baseline=diagnosticSnapshot(),body={ticket:randomUUID()},iso=n=>new Date(n).toISOString(),start=Date.parse(baseline.context.request.issuedAt),end=Date.parse(baseline.context.request.expiresAt)
+ const variants=[
+  ['proof issued before request',s=>{s.context.proof.issuedAt=iso(start-1);s.context.proof.expiresAt=iso(start+1000)}],
+  ['proof expires after request',s=>{s.context.proof.issuedAt=iso(end-1000);s.context.proof.expiresAt=iso(end+1)}],
+  ['claim issued before request',s=>{s.context.claim.claimedAt=iso(start-1)}],
+  ['claim lease expires after request',s=>{s.context.claim.leaseExpiresAt=iso(end+1)}],
+  ['proof action absent from permits',s=>{s.context.request.scope.permits=['workspace.read']}],
+  ['proof outside allowed path',s=>{s.context.proof.actionPath='other/synthetic.mjs'}],
+  ['proof path prefix is not containment',s=>{s.context.proof.actionPath='src-evil/synthetic.mjs'}],
+  ['standalone terminal dot segment',s=>{s.context.proof.actionPath='src/.'}]
+ ]
+ await diagnosticPeer('verifier',async check=>{
+  await check('/v1/resource/context',body,{...flags,status:'context',context:baseline},'context','historical expired control')
+  for(const[name,mutate]of variants)await t.test(name,async()=>{
+   const s=structuredClone(baseline);mutate(s);refreshDiagnosticDigests(s)
+   await check('/v1/resource/context',body,{...flags,status:'context',context:s},'unknown',name)
+  })
+ })
+})
+
+const invalidNativeStrings=[['NUL','a\0b'],['unpaired high surrogate','a\ud800b'],['unpaired low surrogate','a\udc00b']]
+nativeTest('P2-2 native context strings over pinned mutual TLS',async t=>{
+ const baseline=diagnosticSnapshot(),body={ticket:randomUUID()}
+ await diagnosticPeer('verifier',async check=>{
+  for(const[name,value]of invalidNativeStrings)await t.test(name,async()=>{
+   const s=structuredClone(baseline);s.resource.value=value;s.resource.ref=nativeHash(value)
+   await check('/v1/resource/context',body,{...flags,status:'context',context:s},'unknown',name)
+  })
+  for(const[name,value]of [['supplementary Unicode','😀'.repeat(1024)],['legal controls','\u0001'.repeat(4096)],['4096 ASCII bytes','x'.repeat(4096)]])await t.test(name,async()=>{
+   const s=structuredClone(baseline);s.resource.version=999;s.resource.value=value;s.resource.ref=nativeHash(value)
+   await check('/v1/resource/context',body,{...flags,status:'context',context:s},'context',name)
+  })
+ })
+})
+
+nativeTest('P2-3 complete receipt states over pinned mutual TLS',async t=>{
+ const body={...operation(),descriptorHash:'a'.repeat(64)},state=diagnosticSnapshot().resource
+ const receipt={operation_id:body.operationId,ticket:body.ticket,descriptor_hash:body.descriptorHash,before_state:state,after_state:{...state,version:1,value:'next',ref:nativeHash('next')}}
+ const evidence={consumed:true,ticket:body.ticket,operationId:body.operationId,targetId:randomUUID(),generation:'3',contextHash:'b'.repeat(64),observedMicros:'1000000',fresh:true}
+ const variants=[]
+ for(const side of ['before_state','after_state']){
+  for(const field of Object.keys(state))variants.push([`${side} missing ${field}`,r=>{delete r[side][field]}])
+  variants.push([`${side} extra field`,r=>{r[side].extra=true}])
+  for(const version of [-1,1000,0.5,'0',null])variants.push([`${side} invalid version ${JSON.stringify(version)}`,r=>{r[side].version=version;if(side==='before_state')r.after_state.version=Number(version)+1;else r.before_state.version=Number(version)-1}])
+  for(const[name,value]of invalidNativeStrings)variants.push([`${side} ${name}`,r=>{r[side].value=value;r[side].ref=nativeHash(value)}])
+  variants.push([`${side} mismatched value hash`,r=>{r[side].ref='f'.repeat(64)}])
+  variants.push([`${side} oversized value`,r=>{r[side].value='x'.repeat(4097);r[side].ref=nativeHash(r[side].value)}])
+  variants.push([`${side} malformed resource id`,r=>{r[side].resource_id='invalid'}])
+  variants.push([`${side} invalid project`,r=>{r[side].project='INVALID'}])
+  variants.push([`${side} changed project`,r=>{r[side].project='other'}])
+  variants.push([`${side} changed path`,r=>{r[side].path='src/other.mjs'}])
+ }
+ variants.push(['resource identity discontinuity',r=>{r.after_state.resource_id=randomUUID()}],['version gap',r=>{r.after_state.version=2}],['version reversal',r=>{r.after_state.version=0}])
+ await diagnosticPeer('consumer',async check=>{
+  for(const status of ['consumed-diagnostic','expired-or-stale','committed-synthetic-effect']){
+   const path=status==='committed-synthetic-effect'?'/v1/resource/inspect':'/v1/resource/apply'
+   const reply=r=>({...flags,status,operation:body,...(status==='committed-synthetic-effect'?{}:{evidence:{...evidence,fresh:status==='consumed-diagnostic'}}),receipt:r})
+   await check(path,body,reply(receipt),status,status+' control')
+   for(const[name,mutate]of variants)await t.test(status+' '+name,async()=>{
+    const r=structuredClone(receipt);mutate(r);await check(path,body,reply(r),'unknown',name)
+   })
+   for(const[name,before,after]of [['supplementary Unicode','😀'.repeat(1024),'𐀀'.repeat(1024)],['maximum escaped receipt','\u0001'.repeat(4096),'\u0002'.repeat(4096)],['terminal version','','final']])await t.test(status+' '+name,async()=>{
+    const r=structuredClone(receipt);Object.assign(r.before_state,{version:998,value:before,ref:nativeHash(before)});Object.assign(r.after_state,{version:999,value:after,ref:nativeHash(after)})
+    await check(path,body,reply(r),status,name)
+   })
+  }
+ })
 })

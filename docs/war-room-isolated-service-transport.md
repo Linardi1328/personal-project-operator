@@ -57,3 +57,30 @@ The dedicated PostgreSQL integration cases install D1, create separate nonprivil
 This is not whole-Batch-2B completion: production database authentication and process/account separation, durable authenticated pin lifecycle and external restore/incarnation anchoring, protected source/resource gateways for every relevant writer, measured operational budgets and key custody remain unproved. Existing raw laboratory SQL/adapters are not globally routed through this listener. Enabling those raw capabilities outside a protected service can bypass transport and must remain prohibited in any pilot configuration. Combining separately tested components without exact integration proof is not readiness evidence.
 
 No real credentials, host enrollment, Mac/VPS connectivity, dispatch, filesystem/Git effect, generic command runner, production routing/migration/deployment, retirement, hold release or factory cycle is introduced. Any approved resource authorization proposal still requires separately reviewed implementation, all dependency proofs and distinct final pilot authorization.
+
+
+## PR #165 diagnostic validation correction
+
+The independent review at `3654d3f765df46a3913bf92df8448cb7b5ee3945`
+identified three additional P2s. Diagnostic context now reuses the action
+verifier's extracted pure cross-payload checks: proof and claim intervals
+must fit the request, proof actions must be permitted, and paths must be
+contained without standalone dot segments. The signed verifier uses the same
+unchanged predicate; no current-clock freshness enters historical reads.
+
+One complete native resource-state validator now checks both receipt states
+and diagnostic context. NUL and unpaired UTF-16 surrogates deny before hashing;
+valid supplementary Unicode, legal controls and 4096-byte values remain valid.
+Receipts require complete states, both value/ref hashes, identical resource
+identity/project/path, integer versions within 0–999 and an exact increment.
+These are diagnostic integrity checks; expired context and terminal version
+999 do not need to satisfy registration eligibility.
+
+[Actual local RED/GREEN and PostgreSQL output](evidence/pr165-corrective-validation.txt)
+records 89 malformed cases accepted at the starting head, all 191 corrected
+transport/adapter tests passing, and all six targeted actual PostgreSQL tests
+passing in a disposable network-disabled PostgreSQL 16.14 container. The
+native resource mutation now explicitly round-trips a 4096-byte supplementary
+Unicode payload. The two maximum escaped payload receipts remain covered.
+New exact-head PR/push workflows and independent security review are required
+before any merge; this implementation record does not clear that review gate.

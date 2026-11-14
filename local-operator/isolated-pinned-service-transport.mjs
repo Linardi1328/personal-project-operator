@@ -3,7 +3,7 @@ import {checkServerIdentity} from 'node:tls'
 import {createHash,X509Certificate} from 'node:crypto'
 import {parseUniqueJson} from './unique-json.mjs'
 import {remotePayloadDigest} from './software-factory-remote-contract.mjs'
-import {createIsolatedPostgresActionVerifier,createIsolatedPostgresActionFence,inspectIsolatedActionConsumption,POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
+import {validIsolatedActionBindings,createIsolatedPostgresActionVerifier,createIsolatedPostgresActionFence,inspectIsolatedActionConsumption,POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
 import {createSyntheticResourceVerifier,createSyntheticResourceFence,inspectSyntheticResourceReceipt,RESOURCE_SQL as R} from './software-factory-postgres-resource-fence.mjs'
 
 const MODE='isolated-pinned-service-transport-only',AM='isolated-postgres-action-fencing-only',RM='isolated-postgres-resource-fencing-only'
@@ -126,6 +126,16 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
  }})
 }
 
+// PostgreSQL UTF8 text cannot represent NUL or lone UTF-16 surrogates.
+// Unicode-mode matching preserves paired surrogates (supplementary scalars).
+function validNativeResourceState(r){
+ return exact(r,['resource_id','version','project','path','ref','value'])&&uuid(r.resource_id)&&
+  Number.isSafeInteger(r.version)&&r.version>=0&&r.version<=999&&
+  typeof r.project==='string'&&/^[a-z][a-z0-9-]{0,63}$/u.test(r.project)&&r.path==='src/synthetic.mjs'&&
+  typeof r.value==='string'&&!/[\u0000\uD800-\uDFFF]/u.test(r.value)&&Buffer.byteLength(r.value)<=4096&&
+  hash(r.ref)&&r.ref===createHash('sha256').update(r.value).digest('hex')
+}
+
 // A pinned peer authenticates transport, not the shape or authority of a
 // resource-context acknowledgment. Validate the complete diagnostic snapshot
 // before any caller can construct a descriptor from it.
@@ -147,12 +157,8 @@ function validResourceContext(snapshot){
     typeof p.actionPath!=='string'||!/^(?!\/)(?!.*\.\.)(?!.*\/\/)(?!\.)(?!.*\/\.\/)[A-Za-z0-9._/-]{1,120}$/u.test(p.actionPath))return false
  const canonicalTime=v=>typeof v==='string'&&Number.isFinite(Date.parse(v))&&new Date(Date.parse(v)).toISOString()===v
  if(!canonicalTime(p.issuedAt)||!canonicalTime(p.expiresAt)||Date.parse(p.expiresAt)<=Date.parse(p.issuedAt)||Date.parse(p.expiresAt)-Date.parse(p.issuedAt)>60000||
-    l.requestId!==a.requestId||l.requestHash!==c.requestHash||p.requestHash!==c.requestHash||p.claimHash!==c.claimHash||
-    p.hostId!==l.hostId||p.workerId!==a.workerId||l.workerId!==a.workerId||p.runId!==a.runId||l.runId!==a.runId||
-    p.expectedVersion!==a.expectedVersion||l.expectedVersion!==a.expectedVersion)return false
- return exact(r,['resource_id','version','project','path','ref','value'])&&uuid(r.resource_id)&&Number.isSafeInteger(r.version)&&r.version>=0&&r.version<=999&&
-    typeof r.project==='string'&&/^[a-z][a-z0-9-]{0,63}$/u.test(r.project)&&r.path==='src/synthetic.mjs'&&
-    typeof r.value==='string'&&Buffer.byteLength(r.value)<=4096&&hash(r.ref)&&r.ref===createHash('sha256').update(r.value).digest('hex')
+    !validIsolatedActionBindings(a,l,p,c.requestHash,c.claimHash))return false
+ return validNativeResourceState(r)
 }
 
 function boundResponse(path,body,r){
@@ -170,7 +176,12 @@ function boundResponse(path,body,r){
   if(r.status!=='committed-synthetic-effect'){
    const e=r.evidence;if(!e||e.consumed!==true||e.ticket!==body.ticket||e.operationId!==body.operationId||!uuid(e.targetId)||!hash(e.contextHash)||typeof e.generation!=='string'||!/^[1-9][0-9]{0,9}$/u.test(e.generation)||BigInt(e.generation)>1000000000n||typeof e.observedMicros!=='string'||!/^[1-9][0-9]{0,18}$/u.test(e.observedMicros)||typeof e.fresh!=='boolean'||r.status==='consumed-diagnostic'&&e.fresh!==true||r.status==='expired-or-stale'&&e.fresh!==false)fail()
   }
-  if(path.startsWith('/v1/resource/')){const p=r.receipt,b=p?.before_state,a=p?.after_state;if(p?.operation_id!==body.operationId||p.ticket!==body.ticket||p.descriptor_hash!==body.descriptorHash||!uuid(a?.resource_id)||a.resource_id!==b?.resource_id||!Number.isSafeInteger(b.version)||a.version!==b.version+1||typeof a.value!=='string'||Buffer.byteLength(a.value)>4096||a.ref!==createHash('sha256').update(a.value).digest('hex'))fail()}
+  if(path.startsWith('/v1/resource/')){
+   const p=r.receipt,b=p?.before_state,a=p?.after_state
+   if(p?.operation_id!==body.operationId||p.ticket!==body.ticket||p.descriptor_hash!==body.descriptorHash||
+      !validNativeResourceState(b)||!validNativeResourceState(a)||a.resource_id!==b.resource_id||
+      a.project!==b.project||a.path!==b.path||a.version!==b.version+1)fail()
+  }
  }
  if(r.status==='context'&&!validResourceContext(r.context))fail()
  if(r.status==='updated'&&path==='/v1/host/configure'&&r.epoch!==String(body.expectedEpoch+1))fail()
