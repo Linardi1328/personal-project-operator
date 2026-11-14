@@ -2,6 +2,8 @@
 
 This opt-in instrument runs the unchanged synthetic authority suite in its own network-none PostgreSQL container. It is preparatory evidence for original M-03, **not completion of M-03 or a production budget**. No host, DSN, existing container, record path or credentials can be selected. A collision with another container name fails rather than adopting or deleting it.
 
+Creation and startup are separate steps. A private cidfile and random operation label preserve ownership if creation/start acknowledgment fails or times out. Recovery removes only the cidfile's full container ID after validating its exact operation label; it never adopts a name collision. If creation is uncertain and no matching evidence is available, the report records uncertainty and failed cleanup for operator reconciliation; absence is not interpreted as noncreation and creation is not retried. The operator must retain the report's name/operation identity when the Docker daemon itself is unavailable.
+
 Run explicitly from a verified checkout:
 
 ```sh
@@ -32,6 +34,8 @@ Original [pressure report](evidence/ric-157-pilot-resource-pressure-512m.json) a
 The 512 MiB limit is insufficient for this tested near-limit workload. The 2 GiB success does **not** establish a safe production allocation: Node is outside that container limit; its peak alone exceeded 1 GiB, and the PostgreSQL temporary-byte counter is cumulative generation rather than peak simultaneous disk. These measurements do not fill the worst-case/retention/plan/latency/queueing matrix below. Production M-03 remains blocked. No deadline was enlarged to turn the failed profile green.
 
 The subsequent lifecycle correction moves image inspection after owned container startup, covers startup/readiness/version with the whole-profile watchdog, and rejects suite startup once cancellation has begun. Three deterministic fake-Docker tests establish cold-image cleanup, cancellation during version discovery and deadline during startup without creating real containers. The retained measured source revisions predate this correction; their wall-time fields cover the suite rather than the newer whole-profile interval. Those source/evidence differences remain explicit.
+
+Independent review additionally reproduced a startup-failure ownership leak: the previous combined `docker run` could create a container and then reject before the ID assignment. Four further fake-Docker regressions now cover failed start, failed creation acknowledgment, command timeout after creation and collision without adopting/removing another container. All seven lifecycle cases retain output reports and require no suite startup after stop/failure. These are lifecycle tests, not additional PostgreSQL resource measurements.
 
 Peak RSS is per Node process, not aggregate simultaneous Node memory. Cgroup memory includes PostgreSQL, observer clients, page cache and kernel accounting; it is not pure PostgreSQL process RSS. Five-second samples can miss transient waits and temporary disk peaks. The suite deliberately kills/restarts its container, so observer gaps must be retained and reported. No missing sample is replaced by zero or interpreted as proof of no contention. Sample counts/error counts and incomplete Node-profile markers are retained. An incomplete or failed instrumented suite cannot qualify a resource budget.
 

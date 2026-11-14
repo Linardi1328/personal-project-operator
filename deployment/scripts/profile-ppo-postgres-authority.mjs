@@ -4,6 +4,7 @@ import {mkdtemp, writeFile, readFile, appendFile, stat} from 'node:fs/promises'
 import {tmpdir, arch, platform} from 'node:os'
 import {join} from 'node:path'
 import {fileURLToPath} from 'node:url'
+import {randomUUID} from 'node:crypto'
 
 // Opt-in baseline instrumentation of the SAME synthetic suite. It creates and
 // destroys its own network-none database, never accepts a DSN or container ID.
@@ -21,7 +22,9 @@ const log = join(output, 'integration.log')
 const memoryLimit = process.argv[2] === '--baseline-2g' ? 2147483648 : 536870912
 await Promise.all([peaks, samples, log].map(p => writeFile(p, '', {mode: 0o600})))
 const name = `ppo-authority-ci-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`
+const operationId = randomUUID(), cidfile = join(output, 'container.id'), ownershipLabel = 'ppo.resource-profile.operation'
 const report = {scope: 'instrumented-synthetic-baseline-only', productionQualified: false,
+  operationId, containerName: name,
   commit: await command('git', ['rev-parse', 'HEAD']), platform: platform(), architecture: arch(),
   node: process.version,
   limits: {containerMemoryBytes: memoryLimit, cpus: 2, maxConnections: 16,
@@ -41,7 +44,7 @@ SELECT json_build_object('at',clock_timestamp(),'databaseBytes',pg_database_size
 'backends',(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()),
 'lockWaiters',(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'),
 'longestTransactionMs',(SELECT coalesce(max(extract(epoch FROM clock_timestamp()-xact_start)*1000),0) FROM pg_stat_activity WHERE datname=current_database()));`
-let id, child, childExit, timer, stopping = false, sampleBytes = 0, logBytes = 0, logWrites = Promise.resolve()
+let id, creationAttempted = false, child, childExit, timer, stopping = false, sampleBytes = 0, logBytes = 0, logWrites = Promise.resolve()
 let sampleCount = 0, observerErrors = 0
 function stop(reason) {
   stopping = true
@@ -57,12 +60,16 @@ process.once('SIGINT', () => stop('SIGINT'))
 const start = performance.now()
 timer = setTimeout(() => stop('Whole profile deadline'), report.limits.profileWallMs)
 try {
-  id = await command('docker', ['run', '-d', '--network', 'none', '--name', name,
+  creationAttempted = true
+  id = await command('docker', ['create', '--cidfile', cidfile, '--label', ownershipLabel + '=' + operationId, '--network', 'none', '--name', name,
     '--memory', String(memoryLimit), '--cpus', '2', '-e', 'POSTGRES_DB=ppo_authority_ci',
     '-e', 'POSTGRES_PASSWORD=disposable-ci-only-not-a-secret', 'postgres:16',
     '-c', 'max_connections=16', '-c', 'shared_buffers=32MB', '-c', 'work_mem=4MB',
     '-c', 'maintenance_work_mem=32MB', '-c', 'track_io_timing=on'])
+  if (!/^[a-f0-9]{64}$/.test(id)) {id = undefined; throw Error('Unknown owned container creation acknowledgment')}
   report.containerId = id
+  if (stopping) throw Error('Profile stopped during container startup')
+  await command('docker', ['start', id])
   if (stopping) throw Error('Profile stopped during container startup')
   report.image = await command('docker', ['image', 'inspect', 'postgres:16', '--format', '{{json .RepoDigests}}'])
   let ready = false
@@ -128,8 +135,17 @@ try {
 } catch (error) {report.error = error.message.slice(0, 300); process.exitCode = 1; stop()}
 finally {
   clearTimeout(timer)
-  report.wallMs = Math.round(performance.now() - start)
   if (childExit) {stop(); await childExit; await logWrites}
+  // A failed create/start acknowledgment does not prove noncreation. Recover
+  // only a private cidfile ID with our independent operation label; never
+  // adopt or delete a container solely because its name matches.
+  if (!id && creationAttempted) try {
+    const candidate = (await readFile(cidfile, 'utf8')).trim()
+    if (!/^[a-f0-9]{64}$/.test(candidate)) throw Error('Invalid private container ID')
+    const labels = JSON.parse(await command('docker', ['inspect', '--type', 'container', '--format', '{{json .Config.Labels}}', candidate]))
+    if (labels?.[ownershipLabel] !== operationId) throw Error('Container ownership mismatch')
+    id = candidate; report.containerId = id; report.ownershipRecovered = true
+  } catch {report.containerCreationUncertain = true; report.cleanupFailed = true; process.exitCode = 1}
   if (id) try {
     const server = await run('docker', ['logs', '--tail', '150', id], {cwd: root, timeout: 10000, maxBuffer: 1048576, encoding: 'utf8'})
     const contents = server.stdout + server.stderr
@@ -137,6 +153,7 @@ finally {
     await writeFile(join(output, 'postgres.log'), contents, {mode: 0o600})
   } catch (error) {report.serverLogUnavailable = true; report.serverLogUnavailableReason = String(error.code || error.name).slice(0, 100)}
   if (id) try { await command('docker', ['rm', '-fv', id]) } catch {report.cleanupFailed = true; process.exitCode = 1}
+  report.wallMs = Math.round(performance.now() - start)
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', {mode: 0o600})
   process.stdout.write(JSON.stringify({output, complete: report.measurementComplete === true}) + '\n')
 }

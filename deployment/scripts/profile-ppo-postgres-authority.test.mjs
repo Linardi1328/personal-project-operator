@@ -9,15 +9,24 @@ import {fileURLToPath} from 'node:url'
 const script=fileURLToPath(new URL('./profile-ppo-postgres-authority.mjs',import.meta.url))
 // Lifecycle/cleanup regression uses a fake Docker executable, never a real
 // daemon/container. Real resource measurements remain separate PG evidence.
-for(const mode of ['cold-image','cancel-during-version','startup-deadline'])test('profiler lifecycle: '+mode,{timeout:10000},async()=>{
+for(const mode of ['cold-image','cancel-during-version','startup-deadline','failed-start','failed-create-ack','timeout-after-create','collision'])test('profiler lifecycle: '+mode,{timeout:10000},async()=>{
  const root=await mkdtemp(join(tmpdir(),'ppo-profile-lifecycle-'))
  const docker=join(root,'docker'),preload=join(root,'fast-deadline.mjs')
  await writeFile(docker,`#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),a=process.argv.slice(2),root=process.env.PPO_FAKE_PROFILE_ROOT,mode=process.env.PPO_FAKE_PROFILE_MODE
-const mark=n=>fs.writeFileSync(path.join(root,n),'yes')
+const mark=n=>fs.writeFileSync(path.join(root,n),'yes'),id='f'.repeat(64)
 if(process.env.PPO_LAB_NODE_PROFILE){mark('suite-started');process.exit(1)}
-if(a[0]==='image'){if(mode==='cold-image'&&!fs.existsSync(path.join(root,'run-started')))process.exit(1);console.log('["synthetic-image"]')}
-else if(a[0]==='run'){mark('run-started');setTimeout(()=>console.log('f'.repeat(64)),mode==='startup-deadline'?200:1)}
+if(a[0]==='image'){if(mode==='cold-image'&&!fs.existsSync(path.join(root,'created-owned')))process.exit(1);console.log('["synthetic-image"]')}
+else if(a[0]==='create'){
+ if(mode==='collision')process.exit(125)
+ mark('created-owned');fs.writeFileSync(a[a.indexOf('--cidfile')+1],id)
+ const label=a[a.indexOf('--label')+1],split=label.indexOf('=');fs.writeFileSync(path.join(root,'labels.json'),JSON.stringify({[label.slice(0,split)]:label.slice(split+1)}))
+ if(mode==='failed-create-ack'){console.log(id);process.exit(125)}
+ else if(mode==='timeout-after-create')setInterval(()=>{},1000)
+ else setTimeout(()=>console.log(id),mode==='startup-deadline'?200:1)
+}
+else if(a[0]==='start'){if(mode==='failed-start')process.exit(125);console.log(id)}
+else if(a[0]==='inspect')console.log(fs.readFileSync(path.join(root,'labels.json'),'utf8'))
 else if(a[0]==='logs')console.log('synthetic server diagnostic')
 else if(a[0]==='rm')mark('removed-owned-id')
 else if(a[0]==='exec'){
@@ -28,11 +37,14 @@ else if(a[0]==='exec'){
  else console.log('{}')
 }else process.exit(1)
 `,{mode:0o700})
- await writeFile(preload,"const original=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>original(fn,ms===1200000?1:ms,...args)\n")
+ await writeFile(preload,mode==='timeout-after-create'?`import cp from 'node:child_process';import {promisify} from 'node:util';import {syncBuiltinESMExports} from 'node:module';
+const original=cp.execFile;cp.execFile=(cmd,args,options,callback)=>original(cmd,args,cmd==='docker'&&args[0]==='create'?{...options,timeout:1000}:options,callback);
+cp.execFile[promisify.custom]=(cmd,args,options)=>new Promise((resolve,reject)=>cp.execFile(cmd,args,options,(error,stdout,stderr)=>{if(error){error.stdout=stdout;error.stderr=stderr;reject(error)}else resolve({stdout,stderr})}));syncBuiltinESMExports();
+`:"const original=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>original(fn,ms===1200000?1:ms,...args)\n")
  let child,timer,watch,output=''
  try{
   const env={...process.env,PATH:root+delimiter+process.env.PATH,CI:'true',GITHUB_ACTIONS:'true',GITHUB_RUN_ID:'15742',GITHUB_RUN_ATTEMPT:'1',PPO_FAKE_PROFILE_ROOT:root,PPO_FAKE_PROFILE_MODE:mode};delete env.NODE_TEST_CONTEXT
-  child=spawn(process.execPath,[...(mode==='startup-deadline'?['--import',preload]:[]),script],{env,stdio:['ignore','pipe','pipe']})
+  child=spawn(process.execPath,[...(['startup-deadline','timeout-after-create'].includes(mode)?['--import',preload]:[]),script],{env,stdio:['ignore','pipe','pipe']})
   child.stdout.on('data',c=>{output+=c;if(output.length>65536)child.kill('SIGKILL')});child.stderr.resume()
   timer=setTimeout(()=>child.kill('SIGKILL'),8000)
   // Before the correction, a cancellation can wrongly start a suite. Stop
@@ -42,11 +54,14 @@ else if(a[0]==='exec'){
   clearInterval(watch);clearTimeout(timer)
   assert.equal(exit.signal,null);assert.equal(exit.code,1)
   const {output:artifacts}=JSON.parse(output.trim()),report=JSON.parse(await readFile(join(artifacts,'report.json'),'utf8'))
-  assert.equal(report.productionQualified,false);assert.equal(report.containerId,'f'.repeat(64));assert.equal((await readdir(root)).includes('removed-owned-id'),true)
+  assert.equal(report.productionQualified,false)
+  if(mode==='collision'){assert.equal(report.containerId,undefined);assert.equal(report.containerCreationUncertain,true);assert.equal(report.cleanupFailed,true);assert.equal((await readdir(root)).includes('removed-owned-id'),false)}
+  else{assert.equal(report.containerId,'f'.repeat(64));assert.equal((await readdir(root)).includes('removed-owned-id'),true)}
+  if(['failed-create-ack','timeout-after-create'].includes(mode))assert.equal(report.ownershipRecovered,true)
   assert.equal(Object.hasOwn(report,'testExit'),false)
   assert.equal((await readdir(root)).includes('suite-started'),false)
   if(mode==='startup-deadline'){assert.equal(report.stopReason,'Whole profile deadline');assert.equal((await readdir(root)).includes('version'),false);assert.ok(report.wallMs>=200)}
-  else assert.equal(report.stopReason,'SIGTERM')
+  else if(['cold-image','cancel-during-version'].includes(mode))assert.equal(report.stopReason,'SIGTERM')
   await rm(artifacts,{recursive:true})
  }finally{clearTimeout(timer);clearInterval(watch);if(child?.exitCode===null)child.kill('SIGKILL');await rm(root,{recursive:true})}
 })
