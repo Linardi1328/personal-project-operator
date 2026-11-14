@@ -45,7 +45,8 @@ SELECT json_build_object('at',clock_timestamp(),'databaseBytes',pg_database_size
 'lockWaiters',(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'),
 'longestTransactionMs',(SELECT coalesce(max(extract(epoch FROM clock_timestamp()-xact_start)*1000),0) FROM pg_stat_activity WHERE datname=current_database()));`
 let id, creationAttempted = false, child, childExit, timer, stopping = false, sampleBytes = 0, logBytes = 0, logWrites = Promise.resolve()
-let sampleCount = 0, observerErrors = 0
+const databaseKeys = ['databaseBytes', 'tempBytes', 'tempFiles', 'walDirectoryBytes', 'backends', 'lockWaiters', 'longestTransactionMs']
+let observerErrors = 0
 function stop(reason) {
   stopping = true
   if (reason && !report.stopReason) report.stopReason = String(reason).slice(0, 200)
@@ -97,39 +98,59 @@ try {
   })
   while (child.exitCode === null && child.signalCode === null && !stopping) {
     try {
-      const [database, memory, memoryEvents] = await Promise.all([
-        command('docker', ['exec', id, 'psql', '-XqAt', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'ppo_authority_ci', '-c', sampleSql]),
-        command('docker', ['exec', id, 'sh', '-c', 'cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes']),
-        command('docker', ['exec', id, 'cat', '/sys/fs/cgroup/memory.events'])])
-      const memoryBytes = Number(memory)
-      if (!Number.isSafeInteger(memoryBytes) || memoryBytes <= 0) throw Error('Invalid cgroup memory sample')
-      const events = Object.fromEntries(memoryEvents.split('\n').map(line => {
-        const [key, count] = line.split(' ')
-        if (!/^[a-z_]+$/.test(key) || !/^[0-9]+$/.test(count)) throw Error('Invalid memory event sample')
-        return [key, count]
-      }))
-      const row = JSON.stringify({database: JSON.parse(database), cgroupPeakBytes: memoryBytes, memoryEvents: events}) + '\n'
-      sampleBytes += Buffer.byteLength(row)
-      if (sampleBytes > report.limits.maxSampleBytes) {stop('Sample output bound'); throw Error('Sample output bound')}
-      await appendFile(samples, row); sampleCount++
+      const row = {observedAt: new Date().toISOString()}
+      const results = await Promise.allSettled([
+        command('docker', ['exec', id, 'psql', '-XqAt', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'ppo_authority_ci', '-c', sampleSql]).then(value => {
+          const database = JSON.parse(value)
+          if (!database || !databaseKeys.every(key => typeof database[key] === 'number' && Number.isFinite(database[key]) && database[key] >= 0) ||
+              typeof database.walBytes !== 'string' || !/^[0-9]+$/.test(database.walBytes)) throw Error('Invalid database sample')
+          row.database = database
+        }),
+        command('docker', ['exec', id, 'sh', '-c', 'cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes']).then(value => {
+          const memoryBytes = Number(value)
+          if (!Number.isSafeInteger(memoryBytes) || memoryBytes <= 0) throw Error('Invalid cgroup memory sample')
+          row.cgroupPeakBytes = memoryBytes
+        }),
+        command('docker', ['exec', id, 'cat', '/sys/fs/cgroup/memory.events']).then(value => {
+          const events = Object.fromEntries(value.split('\n').map(line => {
+            const [key, count, ...extra] = line.split(' ')
+            if (!/^[a-z_]+$/.test(key) || !/^[0-9]+$/.test(count) || extra.length) throw Error('Invalid memory event sample')
+            return [key, count]
+          }))
+          row.memoryEvents = events
+        })])
+      if (Object.keys(row).length > 1) {
+        const serialized = JSON.stringify(row) + '\n'
+        sampleBytes += Buffer.byteLength(serialized)
+        if (sampleBytes > report.limits.maxSampleBytes) {stop('Sample output bound'); throw Error('Sample output bound')}
+        await appendFile(samples, serialized)
+      }
+      if (results.some(result => result.status === 'rejected')) observerErrors++
     } catch { observerErrors++ }
     await Promise.race([exited, new Promise(r => setTimeout(r, report.limits.sampleIntervalMs))])
   }
   report.testExit = await exited
   await logWrites
   report.wallMs = Math.round(performance.now() - start)
-  report.sampleCount = sampleCount; report.observerErrors = observerErrors
+  report.observerErrors = observerErrors
   report.nodeProcesses = (await readFile(peaks, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)
   report.nodeMaxRssKiB = Math.max(0, ...report.nodeProcesses.map(p => p.peakRssKiB))
   const observed = (await readFile(samples, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)
-  report.sampledMaxima = Object.fromEntries(['databaseBytes', 'tempBytes', 'tempFiles', 'walDirectoryBytes', 'backends', 'lockWaiters', 'longestTransactionMs']
-    .map(key => [key, Math.max(0, ...observed.map(row => Number(row.database[key])))]))
-  report.sampledMaxima.cgroupPeakBytes = Math.max(0, ...observed.map(row => row.cgroupPeakBytes))
-  report.sampledMaxima.walBytes = observed.reduce((max, row) => BigInt(row.database.walBytes) > BigInt(max) ? row.database.walBytes : max, '0')
-  report.memoryEventMaxima = Object.fromEntries([...new Set(observed.flatMap(row => Object.keys(row.memoryEvents)))].map(key =>
-    [key, observed.reduce((max, row) => BigInt(row.memoryEvents[key] || 0) > BigInt(max) ? row.memoryEvents[key] : max, '0')]))
+  const databaseRows = observed.filter(row => row.database)
+  const peakRows = observed.filter(row => Object.hasOwn(row, 'cgroupPeakBytes'))
+  const eventRows = observed.filter(row => row.memoryEvents)
+  report.sampleCount = databaseRows.length
+  report.cgroupPeakSampleCount = peakRows.length
+  report.memoryEventSampleCount = eventRows.length
+  const maximum = values => values.length ? Math.max(...values) : null
+  const maxCounter = values => values.reduce((max, value) => max === null || BigInt(value) > BigInt(max) ? value : max, null)
+  report.sampledMaxima = Object.fromEntries(databaseKeys.map(key => [key, maximum(databaseRows.map(row => row.database[key]))]))
+  report.sampledMaxima.cgroupPeakBytes = maximum(peakRows.map(row => row.cgroupPeakBytes))
+  report.sampledMaxima.walBytes = maxCounter(databaseRows.map(row => row.database.walBytes))
+  report.memoryEventMaxima = Object.fromEntries([...new Set(eventRows.flatMap(row => Object.keys(row.memoryEvents)))].map(key =>
+    [key, maxCounter(eventRows.filter(row => Object.hasOwn(row.memoryEvents, key)).map(row => row.memoryEvents[key]))]))
   report.logBytes = (await stat(log)).size
-  report.measurementComplete = report.testExit.code === 0 && !stopping && sampleCount > 0 &&
+  report.measurementComplete = report.testExit.code === 0 && !stopping && report.sampleCount > 0 && report.cgroupPeakSampleCount > 0 && report.memoryEventSampleCount > 0 &&
     report.nodeProcesses.length > 0 && !(await readFile(log, 'utf8')).includes('NODE_RESOURCE_PROFILE_INCOMPLETE')
   if (!report.measurementComplete) process.exitCode = 1
 } catch (error) {report.error = error.message.slice(0, 300); process.exitCode = 1; stop()}
