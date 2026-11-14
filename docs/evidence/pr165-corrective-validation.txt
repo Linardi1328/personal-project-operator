@@ -1,0 +1,463 @@
+PR #165 corrective validation — 2026-11-15 Asia/Kuala_Lumpur
+Starting branch: feature/ric-157-pilot-isolated-service-transport
+Starting head: 3654d3f765df46a3913bf92df8448cb7b5ee3945
+Verified main: cd427f74ac09a92edb57dd6bc77eea81cd227abb
+Local Node: v24.22.3; actual disposable PostgreSQL: 16.14 aarch64.
+
+RED: new regressions with both runtime modules restored byte-for-byte from
+3654d3f (git show), before restoring corrected modules. Command exited 1:
+node --test --test-name-pattern='P2-[123]' local-operator/isolated-pinned-service-transport.test.mjs
+89 malformed leaf cases accepted (8 cross-payload, 3 native context strings,
+78 receipt cases); 3 failed parent tests produce reported fail count 92.
+69 passed include already-denied variants and compatibility controls.
+Every assertion of response status runs after checking actual peer receipt
+count increments by one, checking second client send rejects and checking
+no second request reached the peer. Digests are refreshed for payload
+mutations and refs for malformed strings so unrelated hash mismatch cannot
+explain rejection. First test report follows (expanded assertion diffs omitted):
+
+▶ P2-1 diagnostic cross-payload consistency over pinned mutual TLS
+  ✖ proof issued before request (3.937625ms)
+  ✖ proof expires after request (5.071792ms)
+  ✖ claim issued before request (3.122ms)
+  ✖ claim lease expires after request (3.291708ms)
+  ✖ proof action absent from permits (3.244958ms)
+  ✖ proof outside allowed path (2.679583ms)
+  ✖ proof path prefix is not containment (2.562708ms)
+  ✖ standalone terminal dot segment (2.662459ms)
+✖ P2-1 diagnostic cross-payload consistency over pinned mutual TLS (582.605875ms)
+▶ P2-2 native context strings over pinned mutual TLS
+  ✖ NUL (2.8575ms)
+  ✖ unpaired high surrogate (2.723625ms)
+  ✖ unpaired low surrogate (2.735208ms)
+  ✔ supplementary Unicode (2.286458ms)
+  ✔ legal controls (2.677334ms)
+  ✔ 4096 ASCII bytes (2.321416ms)
+✖ P2-2 native context strings over pinned mutual TLS (16.705458ms)
+▶ P2-3 complete receipt states over pinned mutual TLS
+  ✔ consumed-diagnostic before_state missing resource_id (2.059458ms)
+  ✔ consumed-diagnostic before_state missing version (2.039334ms)
+  ✖ consumed-diagnostic before_state missing project (2.123417ms)
+  ✖ consumed-diagnostic before_state missing path (2.244458ms)
+  ✖ consumed-diagnostic before_state missing value (2.728667ms)
+  ✖ consumed-diagnostic before_state missing ref (2.117083ms)
+  ✖ consumed-diagnostic before_state extra field (2.146625ms)
+  ✖ consumed-diagnostic before_state invalid version -1 (2.222042ms)
+  ✖ consumed-diagnostic before_state invalid version 1000 (2.089333ms)
+  ✔ consumed-diagnostic before_state invalid version 0.5 (2.027417ms)
+  ✔ consumed-diagnostic before_state invalid version "0" (1.932291ms)
+  ✔ consumed-diagnostic before_state invalid version null (2.057666ms)
+  ✖ consumed-diagnostic before_state NUL (2.065833ms)
+  ✖ consumed-diagnostic before_state unpaired high surrogate (2.152667ms)
+  ✖ consumed-diagnostic before_state unpaired low surrogate (2.1815ms)
+  ✖ consumed-diagnostic before_state mismatched value hash (5.800958ms)
+  ✖ consumed-diagnostic before_state oversized value (2.325708ms)
+  ✔ consumed-diagnostic before_state malformed resource id (2.128666ms)
+  ✖ consumed-diagnostic before_state invalid project (2.041792ms)
+  ✖ consumed-diagnostic before_state changed project (2.136875ms)
+  ✖ consumed-diagnostic before_state changed path (2.199375ms)
+  ✔ consumed-diagnostic after_state missing resource_id (2.081416ms)
+  ✔ consumed-diagnostic after_state missing version (1.9105ms)
+  ✖ consumed-diagnostic after_state missing project (2.002417ms)
+  ✖ consumed-diagnostic after_state missing path (2.039541ms)
+  ✔ consumed-diagnostic after_state missing value (2.11525ms)
+  ✔ consumed-diagnostic after_state missing ref (1.965625ms)
+  ✖ consumed-diagnostic after_state extra field (1.967334ms)
+  ✖ consumed-diagnostic after_state invalid version -1 (2.416541ms)
+  ✖ consumed-diagnostic after_state invalid version 1000 (2.000416ms)
+  ✔ consumed-diagnostic after_state invalid version 0.5 (2.006084ms)
+  ✔ consumed-diagnostic after_state invalid version "0" (2.104333ms)
+  ✔ consumed-diagnostic after_state invalid version null (1.999ms)
+  ✖ consumed-diagnostic after_state NUL (2.09625ms)
+  ✖ consumed-diagnostic after_state unpaired high surrogate (2.079208ms)
+  ✖ consumed-diagnostic after_state unpaired low surrogate (2.068375ms)
+  ✔ consumed-diagnostic after_state mismatched value hash (2.023375ms)
+  ✔ consumed-diagnostic after_state oversized value (1.990125ms)
+  ✔ consumed-diagnostic after_state malformed resource id (1.922208ms)
+  ✖ consumed-diagnostic after_state invalid project (1.971209ms)
+  ✖ consumed-diagnostic after_state changed project (2.486958ms)
+  ✖ consumed-diagnostic after_state changed path (2.090709ms)
+  ✔ consumed-diagnostic resource identity discontinuity (2.073209ms)
+  ✔ consumed-diagnostic version gap (1.911709ms)
+  ✔ consumed-diagnostic version reversal (1.905542ms)
+  ✔ consumed-diagnostic supplementary Unicode (2.069959ms)
+  ✔ consumed-diagnostic maximum escaped receipt (2.062ms)
+  ✔ consumed-diagnostic terminal version (2.002958ms)
+  ✔ expired-or-stale before_state missing resource_id (1.954ms)
+  ✔ expired-or-stale before_state missing version (2.001167ms)
+  ✖ expired-or-stale before_state missing project (2.067166ms)
+  ✖ expired-or-stale before_state missing path (2.056625ms)
+  ✖ expired-or-stale before_state missing value (2.474791ms)
+  ✖ expired-or-stale before_state missing ref (2.028875ms)
+  ✖ expired-or-stale before_state extra field (2.01475ms)
+  ✖ expired-or-stale before_state invalid version -1 (2.017ms)
+  ✖ expired-or-stale before_state invalid version 1000 (2.048125ms)
+  ✔ expired-or-stale before_state invalid version 0.5 (2.018166ms)
+  ✔ expired-or-stale before_state invalid version "0" (1.933541ms)
+  ✔ expired-or-stale before_state invalid version null (1.857667ms)
+  ✖ expired-or-stale before_state NUL (1.922583ms)
+  ✖ expired-or-stale before_state unpaired high surrogate (1.978875ms)
+  ✖ expired-or-stale before_state unpaired low surrogate (2.171167ms)
+  ✖ expired-or-stale before_state mismatched value hash (2.492291ms)
+  ✖ expired-or-stale before_state oversized value (2.150125ms)
+  ✔ expired-or-stale before_state malformed resource id (2.002209ms)
+  ✖ expired-or-stale before_state invalid project (1.962833ms)
+  ✖ expired-or-stale before_state changed project (2.06125ms)
+  ✖ expired-or-stale before_state changed path (2.062792ms)
+  ✔ expired-or-stale after_state missing resource_id (2.006334ms)
+  ✔ expired-or-stale after_state missing version (1.902084ms)
+  ✖ expired-or-stale after_state missing project (2.062667ms)
+  ✖ expired-or-stale after_state missing path (2.241541ms)
+  ✔ expired-or-stale after_state missing value (2.271ms)
+  ✔ expired-or-stale after_state missing ref (3.739541ms)
+  ✖ expired-or-stale after_state extra field (2.335375ms)
+  ✖ expired-or-stale after_state invalid version -1 (2.113417ms)
+  ✖ expired-or-stale after_state invalid version 1000 (2.029166ms)
+  ✔ expired-or-stale after_state invalid version 0.5 (1.968667ms)
+  ✔ expired-or-stale after_state invalid version "0" (1.93125ms)
+  ✔ expired-or-stale after_state invalid version null (1.890125ms)
+  ✖ expired-or-stale after_state NUL (1.981167ms)
+  ✖ expired-or-stale after_state unpaired high surrogate (2.036083ms)
+  ✖ expired-or-stale after_state unpaired low surrogate (2.092459ms)
+  ✔ expired-or-stale after_state mismatched value hash (2.033ms)
+  ✔ expired-or-stale after_state oversized value (2.067292ms)
+  ✔ expired-or-stale after_state malformed resource id (1.987583ms)
+  ✖ expired-or-stale after_state invalid project (2.057958ms)
+  ✖ expired-or-stale after_state changed project (2.086916ms)
+  ✖ expired-or-stale after_state changed path (2.057458ms)
+  ✔ expired-or-stale resource identity discontinuity (2.010083ms)
+  ✔ expired-or-stale version gap (2.004875ms)
+  ✔ expired-or-stale version reversal (1.955166ms)
+  ✔ expired-or-stale supplementary Unicode (2.057416ms)
+  ✔ expired-or-stale maximum escaped receipt (2.260333ms)
+  ✔ expired-or-stale terminal version (1.958541ms)
+  ✔ committed-synthetic-effect before_state missing resource_id (1.947833ms)
+  ✔ committed-synthetic-effect before_state missing version (1.936542ms)
+  ✖ committed-synthetic-effect before_state missing project (2.046375ms)
+  ✖ committed-synthetic-effect before_state missing path (2.005625ms)
+  ✖ committed-synthetic-effect before_state missing value (2.021542ms)
+  ✖ committed-synthetic-effect before_state missing ref (2.468916ms)
+  ✖ committed-synthetic-effect before_state extra field (2.260708ms)
+  ✖ committed-synthetic-effect before_state invalid version -1 (2.0995ms)
+  ✖ committed-synthetic-effect before_state invalid version 1000 (1.969625ms)
+  ✔ committed-synthetic-effect before_state invalid version 0.5 (1.86975ms)
+  ✔ committed-synthetic-effect before_state invalid version "0" (1.946084ms)
+  ✔ committed-synthetic-effect before_state invalid version null (1.915333ms)
+  ✖ committed-synthetic-effect before_state NUL (1.968458ms)
+  ✖ committed-synthetic-effect before_state unpaired high surrogate (1.953542ms)
+  ✖ committed-synthetic-effect before_state unpaired low surrogate (1.941958ms)
+  ✖ committed-synthetic-effect before_state mismatched value hash (1.939625ms)
+  ✖ committed-synthetic-effect before_state oversized value (1.959209ms)
+  ✔ committed-synthetic-effect before_state malformed resource id (1.928875ms)
+  ✖ committed-synthetic-effect before_state invalid project (2.045541ms)
+  ✖ committed-synthetic-effect before_state changed project (2.135666ms)
+  ✖ committed-synthetic-effect before_state changed path (2.120542ms)
+  ✔ committed-synthetic-effect after_state missing resource_id (2.03875ms)
+  ✔ committed-synthetic-effect after_state missing version (2.104916ms)
+  ✖ committed-synthetic-effect after_state missing project (2.366959ms)
+  ✖ committed-synthetic-effect after_state missing path (2.280459ms)
+  ✔ committed-synthetic-effect after_state missing value (2.206708ms)
+  ✔ committed-synthetic-effect after_state missing ref (2.025958ms)
+  ✖ committed-synthetic-effect after_state extra field (2.07225ms)
+  ✖ committed-synthetic-effect after_state invalid version -1 (2.89725ms)
+  ✖ committed-synthetic-effect after_state invalid version 1000 (2.329416ms)
+  ✔ committed-synthetic-effect after_state invalid version 0.5 (2.220125ms)
+  ✔ committed-synthetic-effect after_state invalid version "0" (2.045625ms)
+  ✔ committed-synthetic-effect after_state invalid version null (1.992625ms)
+  ✖ committed-synthetic-effect after_state NUL (2.008ms)
+  ✖ committed-synthetic-effect after_state unpaired high surrogate (2.041542ms)
+  ✖ committed-synthetic-effect after_state unpaired low surrogate (2.26ms)
+  ✔ committed-synthetic-effect after_state mismatched value hash (2.258417ms)
+  ✔ committed-synthetic-effect after_state oversized value (2.056ms)
+  ✔ committed-synthetic-effect after_state malformed resource id (2.256792ms)
+  ✖ committed-synthetic-effect after_state invalid project (2.165333ms)
+  ✖ committed-synthetic-effect after_state changed project (2.093208ms)
+  ✖ committed-synthetic-effect after_state changed path (2.087875ms)
+  ✔ committed-synthetic-effect resource identity discontinuity (1.9975ms)
+  ✔ committed-synthetic-effect version gap (1.934583ms)
+  ✔ committed-synthetic-effect version reversal (2.044458ms)
+  ✔ committed-synthetic-effect supplementary Unicode (3.814416ms)
+  ✔ committed-synthetic-effect maximum escaped receipt (3.305583ms)
+  ✔ committed-synthetic-effect terminal version (2.392333ms)
+✖ P2-3 complete receipt states over pinned mutual TLS (319.71775ms)
+ℹ tests 161
+ℹ suites 0
+ℹ pass 69
+ℹ fail 92
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 981.004208
+
+GREEN: corrected runtime; command exited 0:
+node --test local-operator/isolated-pinned-service-transport.test.mjs local-operator/software-factory-remote-postgres-action-fence.test.mjs local-operator/software-factory-postgres-resource-fence.test.mjs
+
+✔ explicit isolated mode, fixed service capabilities and initial pin ownership are required (482.988417ms)
+✔ actual mTLS pinned diagnostic consumption owns and disposes one dedicated connection (15.470167ms)
+✔ unregistered and wrong-kind certificates cannot cross verifier/consumer/administrator boundaries (8.749291ms)
+✔ server key pin mismatch denies even a CA-valid service certificate (2.78075ms)
+✔ role/SQL/attestation injection, duplicate decoded keys, malformed and oversized bodies deny before DB dispatch (14.62025ms)
+✔ privileged login, wrong current role or expanded membership rejects the connection before mutation (11.339541ms)
+✔ rotation/revocation rechecks existing attempt, disposes uncertainty and never retries a transaction (8.892334ms)
+✔ lost COMMIT acknowledgment and oversized output return unknown and dispose without another COMMIT (5.13625ms)
+✔ fixed administrator functions remain separate and validate exact acknowledgment types (4.850708ms)
+✔ server-key rotation denies the old service and requires independently pinned replacement credentials (4.872208ms)
+✔ concurrent connection budget denies excess work without opening another DB connection (10.384791ms)
+✔ cancelled opening factories retain capacity until every late connection is disposed (12.089375ms)
+✔ cancelled in-flight connections retain capacity and shutdown waits for actual disposal (37.739375ms)
+✔ failed disposal quarantines capacity and shutdown reports uncertainty (13.239917ms)
+✔ client binds acknowledgments to its immutable serialized request despite caller mutation (5.573542ms)
+✔ malformed, overlarge or grant-bearing responses from a pinned TLS peer remain unknown (17.107667ms)
+✔ pinned verifier resource-context acknowledgments require complete typed and consistent diagnostic snapshots (41.129208ms)
+✔ fixture cleanup attempts every resource and preserves the primary failure (0.2495ms)
+▶ P2-1 diagnostic cross-payload consistency over pinned mutual TLS
+  ✔ proof issued before request (3.484458ms)
+  ✔ proof expires after request (3.788333ms)
+  ✔ claim issued before request (5.594417ms)
+  ✔ claim lease expires after request (3.856958ms)
+  ✔ proof action absent from permits (4.714625ms)
+  ✔ proof outside allowed path (4.881375ms)
+  ✔ proof path prefix is not containment (6.145708ms)
+  ✔ standalone terminal dot segment (4.331375ms)
+✔ P2-1 diagnostic cross-payload consistency over pinned mutual TLS (41.028375ms)
+▶ P2-2 native context strings over pinned mutual TLS
+  ✔ NUL (2.995625ms)
+  ✔ unpaired high surrogate (2.747917ms)
+  ✔ unpaired low surrogate (3.358125ms)
+  ✔ supplementary Unicode (6.370083ms)
+  ✔ legal controls (4.538125ms)
+  ✔ 4096 ASCII bytes (6.340958ms)
+✔ P2-2 native context strings over pinned mutual TLS (28.625542ms)
+▶ P2-3 complete receipt states over pinned mutual TLS
+  ✔ consumed-diagnostic before_state missing resource_id (2.284833ms)
+  ✔ consumed-diagnostic before_state missing version (2.172542ms)
+  ✔ consumed-diagnostic before_state missing project (2.469166ms)
+  ✔ consumed-diagnostic before_state missing path (2.141667ms)
+  ✔ consumed-diagnostic before_state missing value (2.102042ms)
+  ✔ consumed-diagnostic before_state missing ref (2.238375ms)
+  ✔ consumed-diagnostic before_state extra field (2.408916ms)
+  ✔ consumed-diagnostic before_state invalid version -1 (2.094917ms)
+  ✔ consumed-diagnostic before_state invalid version 1000 (2.515625ms)
+  ✔ consumed-diagnostic before_state invalid version 0.5 (2.035666ms)
+  ✔ consumed-diagnostic before_state invalid version "0" (2.231042ms)
+  ✔ consumed-diagnostic before_state invalid version null (2.116334ms)
+  ✔ consumed-diagnostic before_state NUL (2.293209ms)
+  ✔ consumed-diagnostic before_state unpaired high surrogate (2.645333ms)
+  ✔ consumed-diagnostic before_state unpaired low surrogate (2.17725ms)
+  ✔ consumed-diagnostic before_state mismatched value hash (2.013209ms)
+  ✔ consumed-diagnostic before_state oversized value (2.166083ms)
+  ✔ consumed-diagnostic before_state malformed resource id (2.115833ms)
+  ✔ consumed-diagnostic before_state invalid project (2.026167ms)
+  ✔ consumed-diagnostic before_state changed project (2.015833ms)
+  ✔ consumed-diagnostic before_state changed path (2.304166ms)
+  ✔ consumed-diagnostic after_state missing resource_id (2.178917ms)
+  ✔ consumed-diagnostic after_state missing version (1.999ms)
+  ✔ consumed-diagnostic after_state missing project (2.393667ms)
+  ✔ consumed-diagnostic after_state missing path (2.162792ms)
+  ✔ consumed-diagnostic after_state missing value (2.204666ms)
+  ✔ consumed-diagnostic after_state missing ref (1.971083ms)
+  ✔ consumed-diagnostic after_state extra field (1.983417ms)
+  ✔ consumed-diagnostic after_state invalid version -1 (2.184542ms)
+  ✔ consumed-diagnostic after_state invalid version 1000 (1.959125ms)
+  ✔ consumed-diagnostic after_state invalid version 0.5 (1.932625ms)
+  ✔ consumed-diagnostic after_state invalid version "0" (2.16175ms)
+  ✔ consumed-diagnostic after_state invalid version null (2.333125ms)
+  ✔ consumed-diagnostic after_state NUL (2.099208ms)
+  ✔ consumed-diagnostic after_state unpaired high surrogate (1.958334ms)
+  ✔ consumed-diagnostic after_state unpaired low surrogate (2.022333ms)
+  ✔ consumed-diagnostic after_state mismatched value hash (2.210709ms)
+  ✔ consumed-diagnostic after_state oversized value (2.127167ms)
+  ✔ consumed-diagnostic after_state malformed resource id (2.639291ms)
+  ✔ consumed-diagnostic after_state invalid project (2.01ms)
+  ✔ consumed-diagnostic after_state changed project (2.383584ms)
+  ✔ consumed-diagnostic after_state changed path (2.167208ms)
+  ✔ consumed-diagnostic resource identity discontinuity (2.097625ms)
+  ✔ consumed-diagnostic version gap (2.320625ms)
+  ✔ consumed-diagnostic version reversal (2.339458ms)
+  ✔ consumed-diagnostic supplementary Unicode (2.205291ms)
+  ✔ consumed-diagnostic maximum escaped receipt (2.29ms)
+  ✔ consumed-diagnostic terminal version (2.004333ms)
+  ✔ expired-or-stale before_state missing resource_id (1.863833ms)
+  ✔ expired-or-stale before_state missing version (1.890167ms)
+  ✔ expired-or-stale before_state missing project (2.172667ms)
+  ✔ expired-or-stale before_state missing path (2.151917ms)
+  ✔ expired-or-stale before_state missing value (2.000459ms)
+  ✔ expired-or-stale before_state missing ref (2.090791ms)
+  ✔ expired-or-stale before_state extra field (1.920791ms)
+  ✔ expired-or-stale before_state invalid version -1 (1.96025ms)
+  ✔ expired-or-stale before_state invalid version 1000 (1.984167ms)
+  ✔ expired-or-stale before_state invalid version 0.5 (1.904875ms)
+  ✔ expired-or-stale before_state invalid version "0" (2.220041ms)
+  ✔ expired-or-stale before_state invalid version null (2.196667ms)
+  ✔ expired-or-stale before_state NUL (1.99675ms)
+  ✔ expired-or-stale before_state unpaired high surrogate (1.943042ms)
+  ✔ expired-or-stale before_state unpaired low surrogate (2.143ms)
+  ✔ expired-or-stale before_state mismatched value hash (1.946292ms)
+  ✔ expired-or-stale before_state oversized value (1.96225ms)
+  ✔ expired-or-stale before_state malformed resource id (1.9505ms)
+  ✔ expired-or-stale before_state invalid project (2.13025ms)
+  ✔ expired-or-stale before_state changed project (2.343042ms)
+  ✔ expired-or-stale before_state changed path (2.078708ms)
+  ✔ expired-or-stale after_state missing resource_id (1.948917ms)
+  ✔ expired-or-stale after_state missing version (3.000917ms)
+  ✔ expired-or-stale after_state missing project (2.055ms)
+  ✔ expired-or-stale after_state missing path (1.995416ms)
+  ✔ expired-or-stale after_state missing value (1.954541ms)
+  ✔ expired-or-stale after_state missing ref (2.079875ms)
+  ✔ expired-or-stale after_state extra field (1.90575ms)
+  ✔ expired-or-stale after_state invalid version -1 (1.87425ms)
+  ✔ expired-or-stale after_state invalid version 1000 (1.996125ms)
+  ✔ expired-or-stale after_state invalid version 0.5 (1.929458ms)
+  ✔ expired-or-stale after_state invalid version "0" (1.88225ms)
+  ✔ expired-or-stale after_state invalid version null (1.87675ms)
+  ✔ expired-or-stale after_state NUL (1.8765ms)
+  ✔ expired-or-stale after_state unpaired high surrogate (2.350708ms)
+  ✔ expired-or-stale after_state unpaired low surrogate (2.098209ms)
+  ✔ expired-or-stale after_state mismatched value hash (2.0085ms)
+  ✔ expired-or-stale after_state oversized value (1.948125ms)
+  ✔ expired-or-stale after_state malformed resource id (2.030333ms)
+  ✔ expired-or-stale after_state invalid project (2.030666ms)
+  ✔ expired-or-stale after_state changed project (1.970833ms)
+  ✔ expired-or-stale after_state changed path (1.962417ms)
+  ✔ expired-or-stale resource identity discontinuity (2.023542ms)
+  ✔ expired-or-stale version gap (1.915208ms)
+  ✔ expired-or-stale version reversal (1.890083ms)
+  ✔ expired-or-stale supplementary Unicode (2.007833ms)
+  ✔ expired-or-stale maximum escaped receipt (2.431834ms)
+  ✔ expired-or-stale terminal version (1.928333ms)
+  ✔ committed-synthetic-effect before_state missing resource_id (2.954292ms)
+  ✔ committed-synthetic-effect before_state missing version (2.058125ms)
+  ✔ committed-synthetic-effect before_state missing project (1.866166ms)
+  ✔ committed-synthetic-effect before_state missing path (1.873167ms)
+  ✔ committed-synthetic-effect before_state missing value (1.8325ms)
+  ✔ committed-synthetic-effect before_state missing ref (1.8705ms)
+  ✔ committed-synthetic-effect before_state extra field (1.885667ms)
+  ✔ committed-synthetic-effect before_state invalid version -1 (1.87925ms)
+  ✔ committed-synthetic-effect before_state invalid version 1000 (1.810667ms)
+  ✔ committed-synthetic-effect before_state invalid version 0.5 (1.946625ms)
+  ✔ committed-synthetic-effect before_state invalid version "0" (1.902708ms)
+  ✔ committed-synthetic-effect before_state invalid version null (1.916458ms)
+  ✔ committed-synthetic-effect before_state NUL (1.937959ms)
+  ✔ committed-synthetic-effect before_state unpaired high surrogate (1.885333ms)
+  ✔ committed-synthetic-effect before_state unpaired low surrogate (1.806417ms)
+  ✔ committed-synthetic-effect before_state mismatched value hash (1.925375ms)
+  ✔ committed-synthetic-effect before_state oversized value (1.910792ms)
+  ✔ committed-synthetic-effect before_state malformed resource id (1.876708ms)
+  ✔ committed-synthetic-effect before_state invalid project (1.960625ms)
+  ✔ committed-synthetic-effect before_state changed project (1.948667ms)
+  ✔ committed-synthetic-effect before_state changed path (1.887333ms)
+  ✔ committed-synthetic-effect after_state missing resource_id (1.887209ms)
+  ✔ committed-synthetic-effect after_state missing version (1.925333ms)
+  ✔ committed-synthetic-effect after_state missing project (1.843958ms)
+  ✔ committed-synthetic-effect after_state missing path (1.866542ms)
+  ✔ committed-synthetic-effect after_state missing value (1.83825ms)
+  ✔ committed-synthetic-effect after_state missing ref (1.853709ms)
+  ✔ committed-synthetic-effect after_state extra field (1.996459ms)
+  ✔ committed-synthetic-effect after_state invalid version -1 (1.896458ms)
+  ✔ committed-synthetic-effect after_state invalid version 1000 (2.031208ms)
+  ✔ committed-synthetic-effect after_state invalid version 0.5 (1.903834ms)
+  ✔ committed-synthetic-effect after_state invalid version "0" (1.853084ms)
+  ✔ committed-synthetic-effect after_state invalid version null (1.821167ms)
+  ✔ committed-synthetic-effect after_state NUL (1.869084ms)
+  ✔ committed-synthetic-effect after_state unpaired high surrogate (1.951958ms)
+  ✔ committed-synthetic-effect after_state unpaired low surrogate (1.902917ms)
+  ✔ committed-synthetic-effect after_state mismatched value hash (1.860917ms)
+  ✔ committed-synthetic-effect after_state oversized value (2.625625ms)
+  ✔ committed-synthetic-effect after_state malformed resource id (1.8335ms)
+  ✔ committed-synthetic-effect after_state invalid project (1.893084ms)
+  ✔ committed-synthetic-effect after_state changed project (1.797375ms)
+  ✔ committed-synthetic-effect after_state changed path (1.837333ms)
+  ✔ committed-synthetic-effect resource identity discontinuity (1.868333ms)
+  ✔ committed-synthetic-effect version gap (1.855541ms)
+  ✔ committed-synthetic-effect version reversal (1.953291ms)
+  ✔ committed-synthetic-effect supplementary Unicode (2.036417ms)
+  ✔ committed-synthetic-effect maximum escaped receipt (2.173334ms)
+  ✔ committed-synthetic-effect terminal version (1.947958ms)
+✔ P2-3 complete receipt states over pinned mutual TLS (308.785417ms)
+✔ resource seam requires explicit isolation and pinned signing keys (0.359833ms)
+✔ malformed or unsupported descriptors cannot be signed (0.376625ms)
+✔ absent exact resource receipt is unknown and never authorizes retry (0.298417ms)
+✔ unknown transaction cannot be retried by the resource adapter (0.246542ms)
+✔ explicit isolation and pinned Ed25519 verifier keys required (0.380708ms)
+✔ signed request/claim/proof rejection precedes all SQL (5.646875ms)
+✔ independently signed inconsistent identities, scope and time are denied (4.090542ms)
+✔ invalid and truncated complete catalogs never receive verifier attestations (2.036542ms)
+✔ acknowledged diagnostic never grants execution or strict freshness authorization (0.205541ms)
+✔ expiry before commit rolls back; expiry after acknowledgment preserves diagnostic consumption (0.08475ms)
+✔ unknown responses latch the client, never retry and never infer noncommit (0.182208ms)
+✔ post-commit evidence cannot be rebound to a different identity or operation (0.149208ms)
+ℹ tests 191
+ℹ suites 0
+ℹ pass 191
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1135.000667
+
+ACTUAL POSTGRESQL: command exited 0:
+docker run -d --network none --name ppo-authority-ci-1656884549188-1 -e POSTGRES_DB=ppo_authority_ci -e POSTGRES_PASSWORD=disposable-ci-only-not-a-secret postgres:16
+CI=true PPO_AUTHORITY_TEST_CONTAINER=ppo-authority-ci-1656884549188-1 node --test --test-name-pattern='isolated pinned mutual-TLS service boundaries' deployment/authority/phase1gb2-canonical-postgres.integration.mjs
+Fresh private container, no published ports or host/production database DSN.
+Container removed with docker rm -fv after test completion.
+Full canonical integration and seven new PR/push gates are separate CI checks;
+this local invocation selects only the pinned service parent and its 5 subcases.
+
+▶ isolated pinned mutual-TLS service boundaries
+  ✔ real mutual TLS delegates fixed action verification and consumption through dedicated least-privilege LOGIN roles (2229.371917ms)
+  ✔ real TLS supplementary Unicode resource and exact receipt preserve atomic nonce/version/receipt parity (2031.324167ms)
+  ✔ actual committed lost acknowledgment is unknown; exact fresh TLS inspection never permits retry (1895.350333ms)
+  ✔ maximum legal escaped payloads retain exact positive TLS receipts and reconciliation (2258.437958ms)
+  ✔ HTTP disconnect disposes the actual in-flight DB session and rolls back uncommitted consumption (1837.170042ms)
+✔ isolated pinned mutual-TLS service boundaries (10783.74425ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10842.212375
+
+SYNTAX: command exited 0:
+node deployment/scripts/run-ppo-development-quality.mjs syntax
+
+{"projectId":"personal-project-operator","id":"schema","outcome":"PASS"}
+{"projectId":"personal-project-operator","id":"repository","outcome":"PASS"}
+{"projectId":"personal-project-operator","id":"runtime","outcome":"PASS"}
+{"projectId":"personal-project-operator","id":"quality-gates","outcome":"PASS"}
+{"projectId":"personal-project-operator","id":"runner-gates","outcome":"PASS"}
+{"projectId":"personal-project-operator","id":"github-workflow","outcome":"PASS"}
+{"projectId":"personal-project-operator","id":"deployment-boundary","outcome":"PASS"}
+{"id":"ordinary-policy-catalog","outcome":"PASS"}
+{"projectId":"khlim-assist","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"ledgerpilot-ai","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"spy-market-agent","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"portfolio","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"rbl-content-engine","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"khlim-digital-ecosystem","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"kynexa","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"rivora","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+{"projectId":"axiom-quantum","id":"remote-and-host-acceptance","outcome":"SKIP","reason":"not-verified-by-local-policy-parity"}
+
+DIFF: git diff --check and git diff --check origin/main...HEAD exited 0.
+
+Limitations: synthetic component validation, no production authentication,
+key custody, persisted pin lifecycle, every-writer enforcement or qualified
+operational budgets. No signature verification or native contextHash
+recomputation added to diagnostic reads. Registration/CAS remain separate.
+Historical expired observations and version 999 are diagnostic data only.
+Grant/canExecute/releaseAuthorized remain false; RIC-157 In Progress;
+RIC-59/RIC-61 held. No deployment, pilot, hold release, merge or PR #166 work.
+Fresh independent security review must clear all three P2s at the pushed
+exact head; implementation self-verification does not provide that clearance.
+
+Local broader regression environment finding (not a corrective regression):
+The initial full parallel gate exited 1 at the macOS default TMPDIR. Exactly
+two tests failed: private backup permissions and canonical private executable.
+Both fail identically at untouched 3654d3f. The private macOS temporary parent
+(mode 0700) legitimately satisfies the backup policy; /var versus /private/var
+also fails the executable canonical-path assertion. Rerunning those two
+baseline tests with TMPDIR=/private/tmp exits 0 (2 passed). No runtime or test
+expectations changed. Full gate rerun uses TMPDIR=/private/tmp; remote Linux CI
+provides the seven authoritative workflow results at the pushed head.
