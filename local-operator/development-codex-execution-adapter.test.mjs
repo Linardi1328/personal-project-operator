@@ -181,6 +181,16 @@ async function makeSourceRepo(options = {}) {
   }
 }
 
+let fixtureRunCounter = 0n
+// Positive fixtures stay in the permitted sandbox path domain. These are
+// 32 ASCII bytes, not hex-decoded bytes; the base64url IDs remain canonical.
+function fixtureRunBytes(size) {
+  assert.equal(size, 32)
+  const hex = (++fixtureRunCounter).toString(16).padStart(32, "0")
+  assert.equal(hex.length, 32)
+  return Buffer.from(hex, "ascii")
+}
+
 async function makePlannedRun(fixture, options = {}) {
   const now = options.now || makeClock()
   const created = await createDevelopmentRun({
@@ -192,7 +202,8 @@ async function makePlannedRun(fixture, options = {}) {
     actor: "test-planner"
   }, {
     writeDataDir: fixture.writeDataDir,
-    now
+    now,
+    randomBytesImpl: options.randomBytesImpl || fixtureRunBytes
   })
   const planning = await transitionDevelopmentRun(created.runId, {
     expectedVersion: created.version,
@@ -411,6 +422,55 @@ function makeCommitRunner(calls, options = {}) {
       stderr: options.stderr || "raw stderr ignored"
     }
   }
+}
+
+test("positive Codex fixtures have unique 32-byte IDs in the compatible path domain", async () => {
+  const first = await makeImplementationFixture()
+  const second = await makeImplementationFixture()
+  assert.notEqual(first.run.runId, second.run.runId)
+  for (const fixture of [first, second]) {
+    assert.match(fixture.run.runId, /^[A-Za-z0-9]{43}$/u)
+    const bytes = Buffer.from(fixture.run.runId, "base64url")
+    assert.equal(bytes.length, 32)
+    assert.match(bytes.toString("ascii"), /^[0-9a-f]{32}$/u)
+    assert.equal(bytes.toString("base64url"), fixture.run.runId)
+  }
+})
+
+for (const runId of ["sk-" + "A".repeat(40), "ghp_" + "A".repeat(39)]) {
+  test(`sensitive run-ID workspace paths deny before implementation runner or effect: ${runId.slice(0, 4)}`, async () => {
+    const fixture = await makeImplementationFixture({ randomBytesImpl: size => {
+      assert.equal(size, 32)
+      return Buffer.from(runId, "base64url")
+    } })
+    assert.equal(fixture.run.runId, runId)
+    const before = await readDevelopmentRun(runId, { writeDataDir: fixture.writeDataDir })
+    const workspaceHead = await git(["rev-parse", "HEAD"], fixture.location.workspacePath)
+    const sourceHead = await git(["rev-parse", "HEAD"], fixture.sourceRepoPath)
+    const effectPath = join(fixture.location.workspacePath, "unexpected-effect.txt")
+    const sandboxCalls = []
+    let runnerCalls = 0
+    await assertRejectsCode(executeCodexImplementation(runId, {
+      expectedVersion: fixture.run.version, writeDataDir: fixture.writeDataDir,
+      workspaceRegistry: fixture.registry, codexConfig: trustedNativeDarwinCodexConfig(),
+      ...sandboxedCodexRunner(async () => {
+        runnerCalls++
+        await writeFile(effectPath, "unexpected\n", "utf8")
+        return { exitCode: 0 }
+      }, { sandboxCalls }), now: fixture.now
+    }), "CODEX_SANDBOX_REQUIRED")
+    assert.equal(runnerCalls, 0)
+    assert.deepEqual(sandboxCalls.map(call => [call.kind, call.probe]), [
+      ["sandbox-probe", "local-workspace-git"],
+      ["sandbox-probe", "direct-network"],
+      ["sandbox-probe", "direct-ssh-transport"]
+    ])
+    assert.deepEqual(await readDevelopmentRun(runId, { writeDataDir: fixture.writeDataDir }), before)
+    assert.equal(await git(["rev-parse", "HEAD"], fixture.location.workspacePath), workspaceHead)
+    assert.equal(await git(["rev-parse", "HEAD"], fixture.sourceRepoPath), sourceHead)
+    assert.equal(await git(["status", "--porcelain=v1"], fixture.location.workspacePath), "")
+    await assert.rejects(stat(effectPath), { code: "ENOENT" })
+  })
 }
 
 test("Phase 6D uses the fixed six-project allowlist through Phase 6A/6C state", () => {
