@@ -120,3 +120,12 @@ test('bounded immutable history exhausts without deleting earlier reservations',
  await assert.rejects(witness.reserve({binding:binding(active),operation:operation()}),/denied|quarantined/)
  assert.deepEqual(await readdir(join(path,'records')),before)
 })
+
+test('close serializes before later reservations and concurrent closes are idempotent',async t=>{
+ const {witness,path,config}=await fixture(t),active=await activate(witness)
+ const closing=witness.close(),reservation=witness.reserve({binding:binding(active),operation:operation()}),again=witness.close()
+ await Promise.all([closing,again,assert.rejects(reservation,/denied|quarantined/)])
+ const reopened=await openExternalIncarnationAnchor(config)
+ try{const state=await reopened.inspect();assert.equal(state.status,'quarantined');assert.equal(state.operations.length,0)}finally{await reopened.close()}
+ assert.ok((await readdir(join(path,'records'))).length>0)
+})

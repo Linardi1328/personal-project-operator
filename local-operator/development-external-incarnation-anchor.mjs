@@ -139,12 +139,15 @@ export async function openExternalIncarnationAnchor({mode,path,pinnedIdentity,in
    await append('committed',{...state,checkpoint,lastReceiptHash:receiptHash,pending:null,status:'quarantined'});return evidence()
   }),
   quarantine:()=>run(async()=>{await append('quarantine',{...state,status:'quarantined'});return evidence()}),
-  close:()=>queue.then(async()=>{
-   if(closed)return
-   // A pending/uncertain owner deliberately leaves its persistent lock in place.
-   if(!broken&&state.pending===null){await append('quarantine',{...state,status:'quarantined'});await checkPaths();await rmdir(lockPath);await syncDirectory(path)}
-   closed=true
-  })
+  close:()=>{
+   const result=queue.then(async()=>{
+    if(closed)return
+    // A pending/uncertain owner deliberately leaves its persistent lock in place.
+    if(!broken&&state.pending===null){await append('quarantine',{...state,status:'quarantined'});await checkPaths();await rmdir(lockPath);await syncDirectory(path)}
+    closed=true
+   })
+   queue=result.catch(()=>{});return result
+  }
  })
 }
 

@@ -14,6 +14,8 @@ The component denies partial records, sequence gaps, malformed transitions, alte
 
 The persistent lock survives process death. There is no timeout, stale-lock deletion, reset, takeover or replacement-owner endpoint. A crash or uncertain storage write can therefore make this witness permanently unavailable through the current API. That is deliberate quarantine, not a recovery implementation. Enabling recovery requires an independently proven fence against the old owner and a separately reviewed protocol. Directory checks and hashes alone cannot prove that an unreachable old owner stopped.
 
+Graceful close is serialized through the same queue as inspection and mutation. A close-first reservation denies as closed, and concurrent closes are idempotent; shutdown cannot race a second append to the same journal sequence. A close ordered after a pending reservation still retains the persistent lock.
+
 ## State and operation ordering
 
 Initialization and every clean reopen begin quarantined. Explicit activation requires the current complete database checkpoint and exact current witness record hash; it advances the external incarnation and creates a fresh instance UUID. The fixed pinned owner cannot change. An old incarnation or instance, another authority/owner, a stale checkpoint or a reused operation/subject denies. Initial enrollment is trusted local test administration, not untrusted self-enrollment.
