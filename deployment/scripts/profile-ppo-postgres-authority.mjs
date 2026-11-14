@@ -23,7 +23,7 @@ await Promise.all([peaks, samples, log].map(p => writeFile(p, '', {mode: 0o600})
 const name = `ppo-authority-ci-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`
 const report = {scope: 'instrumented-synthetic-baseline-only', productionQualified: false,
   commit: await command('git', ['rev-parse', 'HEAD']), platform: platform(), architecture: arch(),
-  node: process.version, image: await command('docker', ['image', 'inspect', 'postgres:16', '--format', '{{json .RepoDigests}}']),
+  node: process.version,
   limits: {containerMemoryBytes: memoryLimit, cpus: 2, maxConnections: 16,
     statementMs: 15000, largeSnapshotStatementMs: 45000, profileWallMs: 1200000,
     sampleIntervalMs: 5000, maxSampleBytes: 2097152, maxLogBytes: 33554432},
@@ -54,6 +54,8 @@ function stop(reason) {
 }
 process.once('SIGTERM', () => stop('SIGTERM'))
 process.once('SIGINT', () => stop('SIGINT'))
+const start = performance.now()
+timer = setTimeout(() => stop('Whole profile deadline'), report.limits.profileWallMs)
 try {
   id = await command('docker', ['run', '-d', '--network', 'none', '--name', name,
     '--memory', String(memoryLimit), '--cpus', '2', '-e', 'POSTGRES_DB=ppo_authority_ci',
@@ -61,6 +63,8 @@ try {
     '-c', 'max_connections=16', '-c', 'shared_buffers=32MB', '-c', 'work_mem=4MB',
     '-c', 'maintenance_work_mem=32MB', '-c', 'track_io_timing=on'])
   report.containerId = id
+  if (stopping) throw Error('Profile stopped during container startup')
+  report.image = await command('docker', ['image', 'inspect', 'postgres:16', '--format', '{{json .RepoDigests}}'])
   let ready = false
   for (let i = 0; i < 60 && !stopping; i++) {
     try { ready = await command('docker', ['exec', id, 'psql', '-XqAt', '-U', 'postgres', '-d', 'ppo_authority_ci', '-c', 'SELECT 1']) === '1' } catch {}
@@ -69,7 +73,7 @@ try {
   }
   if (!ready) throw Error('Owned disposable database unavailable')
   report.postgres = await command('docker', ['exec', id, 'psql', '-XqAt', '-U', 'postgres', '-d', 'ppo_authority_ci', '-c', 'SELECT version()'])
-  const start = performance.now()
+  if (stopping) throw Error('Profile stopped before suite startup')
   child = spawn(process.execPath, ['--require', fileURLToPath(new URL('../authority/resource-profile-preload.cjs', import.meta.url)),
     '--test', 'deployment/authority/phase1gb2-canonical-postgres.integration.mjs'],
     {cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: {...process.env,
@@ -84,7 +88,6 @@ try {
     if (logBytes > report.limits.maxLogBytes) {stop('Integration log bound'); return}
     logWrites = logWrites.then(() => appendFile(log, chunk)).catch(error => stop('Integration log write: ' + error.code))
   })
-  timer = setTimeout(() => stop('Whole profile deadline'), report.limits.profileWallMs)
   while (child.exitCode === null && child.signalCode === null && !stopping) {
     try {
       const [database, memory, memoryEvents] = await Promise.all([
@@ -125,6 +128,7 @@ try {
 } catch (error) {report.error = error.message.slice(0, 300); process.exitCode = 1; stop()}
 finally {
   clearTimeout(timer)
+  report.wallMs = Math.round(performance.now() - start)
   if (childExit) {stop(); await childExit; await logWrites}
   if (id) try {
     const server = await run('docker', ['logs', '--tail', '150', id], {cwd: root, timeout: 10000, maxBuffer: 1048576, encoding: 'utf8'})
