@@ -1,7 +1,8 @@
 import nativeTest,{before,after} from 'node:test'
 import assert from 'node:assert/strict'
 import https from 'node:https'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,createHash} from 'node:crypto'
+import {signedActionFixture} from '../deployment/authority/action-test-fixture.mjs'
 import {serviceTlsFixture,finishServiceTestFixture} from '../deployment/authority/service-transport-test-fixture.mjs'
 import {createIsolatedPinnedService,createIsolatedPinnedClient,createIsolatedPinRegistry,PINNED_SERVICE_LIMITS,SERVICE_ROLE_PROBE,SERVICE_ADMIN_SQL,serviceLogin} from './isolated-pinned-service-transport.mjs'
 import {POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
@@ -146,6 +147,55 @@ test('malformed, overlarge or grant-bearing responses from a pinned TLS peer rem
   const s=https.createServer({...fixture.certs.consumer.tls,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{req.resume();res.writeHead(200,{'content-type':'application/json'});res.end(text)});await new Promise(r=>s.listen(0,'127.0.0.1',r))
   try{const x={port:s.address().port,service:'consumer',pins:fixture.registry()};assert.equal((await client(x).send('/v1/action/consume',operation())).status,'unknown')}finally{await new Promise(r=>s.close(r))}
  }
+})
+
+test('pinned verifier resource-context acknowledgments require complete typed and consistent diagnostic snapshots',async()=>{
+ const ticket=randomUUID(),resourceId=randomUUID()
+ const f=signedActionFixture({runId:'A'.repeat(43),version:1,project:{id:'synthetic'},branch:'feature/synthetic',baseSha:'a'.repeat(40),headSha:'b'.repeat(40)})
+ const snapshot={contextHash:'a'.repeat(64),context:{targetId:randomUUID(),sourceId:randomUUID(),generation:'3',catalogDigest:'b'.repeat(64),
+  coordinatorFingerprint:f.policy.coordinatorFingerprint,workerFingerprint:f.policy.workerFingerprint,hostFingerprint:f.policy.keyFingerprint,
+  request:f.request,claim:f.claim,proof:f.proof,requestHash:f.requestHash,claimHash:f.claimHash,proofHash:'c'.repeat(64)},
+  resource:{resource_id:resourceId,version:0,project:'synthetic',path:'src/synthetic.mjs',value:'',ref:createHash('sha256').update('').digest('hex')}}
+ const variants=[
+  ['truthy primitive context',s=>{s.context=true}],
+  ['missing proof',s=>{delete s.context.proof}],
+  ['missing hostId',s=>{delete s.context.proof.hostId}],
+  ['non-string hostId',s=>{s.context.proof.hostId={}}],
+  ['wrong host binding',s=>{s.context.proof.hostId='lab-other-host'}],
+  ['missing request',s=>{delete s.context.request}],
+  ['malformed request',s=>{s.context.request.expectedVersion='1'}],
+  ['missing claim',s=>{delete s.context.claim}],
+  ['wrong digest',s=>{s.context.requestHash='0'.repeat(64)}],
+  ['malformed generation',s=>{s.context.generation='0'}],
+  ['missing resource version',s=>{delete s.resource.version}],
+  ['malformed resource version',s=>{s.resource.version='0'}],
+  ['resource value/ref mismatch',s=>{s.resource.value='different'}],
+  ['noncanonical resource path',s=>{s.resource.path='src/other.mjs'}]
+ ]
+ let response=snapshot,requests=0
+ const peer=https.createServer({...fixture.certs.verifier.tls,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{
+  requests++;req.resume();res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({...flags,status:'context',context:response}))
+ })
+ await new Promise(r=>peer.listen(0,'127.0.0.1',r))
+ try{
+  const x={port:peer.address().port,service:'verifier',pins:fixture.registry()}
+  for(const [name,mutate] of variants){
+   response=structuredClone(snapshot);mutate(response)
+   const api=client(x),before=requests
+   const result=await api.send('/v1/resource/context',{ticket})
+   assert.deepEqual(result,{...flags,status:'unknown'},name)
+   assert.equal(requests,before+1,name)
+   await assert.rejects(api.send('/v1/resource/context',{ticket}))
+   assert.equal(requests,before+1,name)
+  }
+  response=snapshot
+  const result=await client(x).send('/v1/resource/context',{ticket})
+  assert.deepEqual(result,{...flags,status:'context',context:snapshot})
+  // Read-only observations at the terminal version are still valid diagnostic
+  // context; descriptor registration independently denies an exhausted resource.
+  response=structuredClone(snapshot);response.resource.version=999
+  assert.deepEqual(await client(x).send('/v1/resource/context',{ticket}),{...flags,status:'context',context:response})
+ }finally{await new Promise(r=>peer.close(r))}
 })
 
 test('fixture cleanup attempts every resource and preserves the primary failure',async()=>{

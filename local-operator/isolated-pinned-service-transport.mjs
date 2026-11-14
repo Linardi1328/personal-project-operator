@@ -2,6 +2,7 @@ import https from 'node:https'
 import {checkServerIdentity} from 'node:tls'
 import {createHash,X509Certificate} from 'node:crypto'
 import {parseUniqueJson} from './unique-json.mjs'
+import {remotePayloadDigest} from './software-factory-remote-contract.mjs'
 import {createIsolatedPostgresActionVerifier,createIsolatedPostgresActionFence,inspectIsolatedActionConsumption,POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
 import {createSyntheticResourceVerifier,createSyntheticResourceFence,inspectSyntheticResourceReceipt,RESOURCE_SQL as R} from './software-factory-postgres-resource-fence.mjs'
 
@@ -125,6 +126,35 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
  }})
 }
 
+// A pinned peer authenticates transport, not the shape or authority of a
+// resource-context acknowledgment. Validate the complete diagnostic snapshot
+// before any caller can construct a descriptor from it.
+function validResourceContext(snapshot){
+ if(!exact(snapshot,['context','contextHash','resource'])||!hash(snapshot.contextHash))return false
+ const c=snapshot.context,r=snapshot.resource
+ if(!exact(c,['targetId','sourceId','generation','catalogDigest','coordinatorFingerprint','workerFingerprint','hostFingerprint','request','claim','proof','requestHash','claimHash','proofHash'])||
+    !uuid(c.targetId)||!uuid(c.sourceId)||c.targetId===c.sourceId||
+    typeof c.generation!=='string'||!/^[1-9][0-9]{0,9}$/u.test(c.generation)||BigInt(c.generation)>1000000000n||
+    !['catalogDigest','coordinatorFingerprint','workerFingerprint','hostFingerprint','requestHash','claimHash','proofHash'].every(k=>hash(c[k])))return false
+ const a=c.request,l=c.claim,p=c.proof
+ // Reuse the signed-message payload contract, including canonical digests.
+ if(a?.kind!=='dispatch-request'||l?.kind!=='worker-claim'||remotePayloadDigest(a)!==c.requestHash||remotePayloadDigest(l)!==c.claimHash)return false
+ if(!exact(p,['version','hostId','hostEpoch','workerId','requestHash','claimHash','runId','expectedVersion','actionId','actionType','actionPath','issuedAt','expiresAt'])||
+    p.version!==1||typeof p.hostId!=='string'||!/^lab-[a-z0-9-]{1,59}$/u.test(p.hostId)||
+    !Number.isSafeInteger(p.hostEpoch)||p.hostEpoch<1||p.hostEpoch>1000000000||
+    typeof p.actionId!=='string'||!/^[a-f0-9]{32}$/u.test(p.actionId)||
+    !['workspace.read','workspace.write','tests.local'].includes(p.actionType)||
+    typeof p.actionPath!=='string'||!/^(?!\/)(?!.*\.\.)(?!.*\/\/)(?!\.)(?!.*\/\.\/)[A-Za-z0-9._/-]{1,120}$/u.test(p.actionPath))return false
+ const canonicalTime=v=>typeof v==='string'&&Number.isFinite(Date.parse(v))&&new Date(Date.parse(v)).toISOString()===v
+ if(!canonicalTime(p.issuedAt)||!canonicalTime(p.expiresAt)||Date.parse(p.expiresAt)<=Date.parse(p.issuedAt)||Date.parse(p.expiresAt)-Date.parse(p.issuedAt)>60000||
+    l.requestId!==a.requestId||l.requestHash!==c.requestHash||p.requestHash!==c.requestHash||p.claimHash!==c.claimHash||
+    p.hostId!==l.hostId||p.workerId!==a.workerId||l.workerId!==a.workerId||p.runId!==a.runId||l.runId!==a.runId||
+    p.expectedVersion!==a.expectedVersion||l.expectedVersion!==a.expectedVersion)return false
+ return exact(r,['resource_id','version','project','path','ref','value'])&&uuid(r.resource_id)&&Number.isSafeInteger(r.version)&&r.version>=0&&r.version<=999&&
+    typeof r.project==='string'&&/^[a-z][a-z0-9-]{0,63}$/u.test(r.project)&&r.path==='src/synthetic.mjs'&&
+    typeof r.value==='string'&&Buffer.byteLength(r.value)<=4096&&hash(r.ref)&&r.ref===createHash('sha256').update(r.value).digest('hex')
+}
+
 function boundResponse(path,body,r){
  const positive={"/v1/action/register":['registered'],"/v1/resource/register":['registered'],"/v1/resource/context":['context'],"/v1/action/consume":['consumed-diagnostic','expired-or-stale'],"/v1/action/inspect":['consumed'],"/v1/resource/apply":['consumed-diagnostic','expired-or-stale'],"/v1/resource/inspect":['committed-synthetic-effect'],"/v1/host/configure":['updated'],"/v1/context/revoke":['updated']}
  if(!r||Object.getPrototypeOf(r)!==Object.prototype||r.grant!==false||r.canExecute!==false||r.releaseAuthorized!==false||!statuses.has(r.status))fail()
@@ -142,7 +172,7 @@ function boundResponse(path,body,r){
   }
   if(path.startsWith('/v1/resource/')){const p=r.receipt,b=p?.before_state,a=p?.after_state;if(p?.operation_id!==body.operationId||p.ticket!==body.ticket||p.descriptor_hash!==body.descriptorHash||!uuid(a?.resource_id)||a.resource_id!==b?.resource_id||!Number.isSafeInteger(b.version)||a.version!==b.version+1||typeof a.value!=='string'||Buffer.byteLength(a.value)>4096||a.ref!==createHash('sha256').update(a.value).digest('hex'))fail()}
  }
- if(r.status==='context'&&(!r.context||!hash(r.context.contextHash)||!r.context.context||!uuid(r.context.resource?.resource_id)))fail()
+ if(r.status==='context'&&!validResourceContext(r.context))fail()
  if(r.status==='updated'&&path==='/v1/host/configure'&&r.epoch!==String(body.expectedEpoch+1))fail()
 }
 
