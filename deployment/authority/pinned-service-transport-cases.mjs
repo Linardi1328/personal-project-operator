@@ -3,7 +3,7 @@ import https from 'node:https'
 import {spawn} from 'node:child_process'
 import {randomUUID,createHash} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
-import {serviceTlsFixture} from './service-transport-test-fixture.mjs'
+import {serviceTlsFixture,finishServiceTestFixture} from './service-transport-test-fixture.mjs'
 import {createPostgresTestSession} from './postgres-test-session.mjs'
 import {signedActionFixture} from './action-test-fixture.mjs'
 import {admissionProfileSql} from './phase1gd1-profile.mjs'
@@ -23,7 +23,7 @@ export async function runPinnedServiceTransportCases(t,h){
  const ownQuery=(s,a)=>createCatalogCertifiedQuery({mode:'isolated-catalog-certified-authority',query:query(ownRoles[s]),verifierQuery:query('ppo_admission_verifier')})(s,a)
  const tls=await serviceTlsFixture()
  async function fixture(fn){
-  const servers=[],sessions=new Set();let hook=async(_role,_statement,execute)=>execute()
+  const servers=[],sessions=new Set();let primary,hook=async(_role,_statement,execute)=>execute()
   const counts={opened:0,disposed:0,commits:0},pins=tls.registry()
   await installImportAuthority()
   try{
@@ -54,10 +54,14 @@ export async function runPinnedServiceTransportCases(t,h){
    const drain=async()=>{for(let i=0;i<100&&sessions.size;i++)await new Promise(r=>setTimeout(r,10));assert.equal(sessions.size,0)}
    await fn({f,run,registered,client,call,addresses,open,counts,pins,drain,setHook:fn=>{hook=fn},tls})
    await drain();assert.equal(counts.opened,counts.disposed)
-  }finally{
-   for(const s of servers)await s.close();for(const s of sessions)await s.dispose()
-   for(const role of Object.values(roleMap))await sql('DROP ROLE IF EXISTS '+serviceLogin(role)+';')
-   await dropImportAuthority()
+  }catch(error){primary=error}finally{
+   await finishServiceTestFixture([
+    ...servers.map(s=>()=>s.close()),
+    // Snapshot sessions after server shutdown, which may dispose them itself.
+    async()=>finishServiceTestFixture([...sessions].map(s=>()=>s.dispose())),
+    ...Object.values(roleMap).map(role=>()=>sql('DROP ROLE IF EXISTS '+serviceLogin(role)+';')),
+    ()=>dropImportAuthority()
+   ],primary)
   }
  }
  try{
@@ -111,7 +115,12 @@ export async function runPinnedServiceTransportCases(t,h){
    let entered,release;const ready=new Promise(r=>entered=r),held=new Promise(r=>release=r),op={ticket:registered.ticket,operationId:randomUUID()}
    setHook(async(_role,s,execute)=>{const r=await execute();if(s===A.consume){entered();await held}return r})
    const text=JSON.stringify(op),req=https.request({host:'127.0.0.1',servername:'localhost',port:addresses.consumer.port,path:'/v1/action/consume',method:'POST',...tls.certs.coordinator.tls,agent:false,headers:{'content-type':'application/json','content-length':Buffer.byteLength(text)}});req.on('error',()=>{});req.end(text)
-   try{await ready;req.destroy();await drain();release();assert.equal(counts.commits,0);assert.equal(await sql('SELECT count(*) FROM ppo_authority.action_tombstones;'),'0');assert.equal(await sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='ppo-pinned-service-ci';"),'0')}finally{release();req.destroy()}
+   try{await ready;req.destroy();await drain();release();assert.equal(counts.commits,0);assert.equal(await sql('SELECT count(*) FROM ppo_authority.action_tombstones;'),'0')
+    // docker-exec exit is not evidence that the PostgreSQL backend exited.
+    const deadline=performance.now()+2000
+    let remaining
+    do{remaining=await sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='ppo-pinned-service-ci';");if(remaining==='0')break;await new Promise(r=>setTimeout(r,10))}while(performance.now()<deadline)
+    assert.equal(remaining,'0')}finally{release();req.destroy()}
   }))
  }finally{await tls.close()}
 }

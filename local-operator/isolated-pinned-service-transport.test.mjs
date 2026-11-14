@@ -2,7 +2,7 @@ import nativeTest,{before,after} from 'node:test'
 import assert from 'node:assert/strict'
 import https from 'node:https'
 import {randomUUID} from 'node:crypto'
-import {serviceTlsFixture} from '../deployment/authority/service-transport-test-fixture.mjs'
+import {serviceTlsFixture,finishServiceTestFixture} from '../deployment/authority/service-transport-test-fixture.mjs'
 import {createIsolatedPinnedService,createIsolatedPinnedClient,createIsolatedPinRegistry,PINNED_SERVICE_LIMITS,SERVICE_ROLE_PROBE,SERVICE_ADMIN_SQL,serviceLogin} from './isolated-pinned-service-transport.mjs'
 import {POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
 const test=(name,fn)=>nativeTest(name,{timeout:15000},fn)
@@ -146,4 +146,13 @@ test('malformed, overlarge or grant-bearing responses from a pinned TLS peer rem
   const s=https.createServer({...fixture.certs.consumer.tls,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{req.resume();res.writeHead(200,{'content-type':'application/json'});res.end(text)});await new Promise(r=>s.listen(0,'127.0.0.1',r))
   try{const x={port:s.address().port,service:'consumer',pins:fixture.registry()};assert.equal((await client(x).send('/v1/action/consume',operation())).status,'unknown')}finally{await new Promise(r=>s.close(r))}
  }
+})
+
+test('fixture cleanup attempts every resource and preserves the primary failure',async()=>{
+ const primary=Error('original test failure'),cleanup=Error('server close failed'),attempted=[]
+ const steps=[async()=>{attempted.push('server');throw cleanup},async()=>{attempted.push('session')},async()=>{attempted.push('role');throw Error('role drop failed')},async()=>{attempted.push('schema')}]
+ await assert.rejects(finishServiceTestFixture(steps,primary),error=>{assert.equal(error.cause,primary);assert.deepEqual(error.errors.slice(0,2),[primary,cleanup]);assert.equal(error.errors.length,3);return true})
+ assert.deepEqual(attempted,['server','session','role','schema'])
+ await assert.rejects(finishServiceTestFixture([async()=>{}],primary),error=>error===primary)
+ await finishServiceTestFixture([async()=>{}])
 })

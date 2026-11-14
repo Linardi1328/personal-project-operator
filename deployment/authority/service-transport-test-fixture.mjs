@@ -23,3 +23,11 @@ export async function serviceTlsFixture(){
   return {certs,registry,close:()=>rm(root,{recursive:true})}
  }catch(e){await rm(root,{recursive:true});throw e}
 }
+
+// Test-only teardown: one failed cleanup must not strand later owned resources.
+export async function finishServiceTestFixture(steps,primary){
+ const errors=[]
+ for(const step of steps)try{await step()}catch(error){errors.push(error)}
+ if(errors.length)throw new AggregateError(primary?[primary,...errors]:errors,'service fixture cleanup failed',primary?{cause:primary}:undefined)
+ if(primary)throw primary
+}
