@@ -106,6 +106,31 @@ test('cancelled opening factories retain capacity until every late connection is
   assert.equal((await client(x,{peer:'coordinatorNew'}).send('/v1/action/consume',operation())).status,'consumed-diagnostic')
  }finally{release();await x.s.close()}
 })
+test('cancelled in-flight connections retain capacity and shutdown waits for actual disposal',async()=>{
+ let entered=0,ready,releaseQuery,releaseDispose;const allEntered=new Promise(r=>ready=r),queryHeld=new Promise(r=>releaseQuery=r),disposeHeld=new Promise(r=>releaseDispose=r)
+ const c=connections(async(s,a)=>{if(s===A.consume){if(++entered===PINNED_SERVICE_LIMITS.concurrent)ready();await queryHeld}return actionRows(s,a)}),open=c.consumer.actionConsumer
+ c.consumer.actionConsumer=async()=>{const s=await open(),close=s.dispose;return {...s,async dispose(){await disposeHeld;await close()}}}
+ const x=await server(c)
+ try{
+  const pending=Array.from({length:PINNED_SERVICE_LIMITS.concurrent},()=>client(x).send('/v1/action/consume',operation()));await allEntered
+  x.pins.rotate('lab-coordinator',1,fixture.certs.coordinatorNew.fingerprint)
+  for(const r of await Promise.all(pending))assert.equal(r.status,'unknown')
+  assert.equal((await client(x,{peer:'coordinatorNew'}).send('/v1/action/consume',operation())).status,'unavailable')
+  assert.equal(c.state.opened,PINNED_SERVICE_LIMITS.concurrent);assert.equal(c.state.disposed,0)
+  const closing=x.s.close();assert.equal(await Promise.race([closing.then(()=> 'closed'),new Promise(r=>setTimeout(()=>r('held'),25))]),'held')
+  releaseDispose();releaseQuery();await closing;assert.equal(c.state.disposed,PINNED_SERVICE_LIMITS.concurrent)
+ }finally{releaseDispose();releaseQuery();await x.s.close()}
+})
+test('failed disposal quarantines capacity and shutdown reports uncertainty',async()=>{
+ const c=connections(actionRows),open=c.consumer.actionConsumer
+ c.consumer.actionConsumer=async()=>({...await open(),async dispose(){throw Error('session termination uncertain')}})
+ const x=await server(c)
+ try{
+  for(let i=0;i<PINNED_SERVICE_LIMITS.concurrent;i++)assert.equal((await client(x).send('/v1/action/consume',operation())).status,'consumed-diagnostic')
+  assert.equal((await client(x).send('/v1/action/consume',operation())).status,'unavailable');assert.equal(c.state.opened,PINNED_SERVICE_LIMITS.concurrent)
+  await assert.rejects(x.s.close(),/denied|unavailable/)
+ }finally{await x.s.close().catch(()=>{})}
+})
 test('client binds acknowledgments to its immutable serialized request despite caller mutation',async()=>{
  for(const rebound of [false,true]){
   const original=operation(),expected={...original},replacement=operation()

@@ -71,7 +71,7 @@ function route(service,path,body,keys){
 export function createIsolatedPinnedService({mode,service,identity,tls,pins,connections,verifierKeys}={}){
  if(mode!==MODE||!exact(tls,['key','cert','ca'])||!Object.hasOwn(services,service)||!pins?.read||!pins?.lookup||!pins?.subscribe||!exact(connections,services[service])||services[service].some(k=>typeof connections[k]!=='function'))fail()
  const own=pins.read(identity);if(!own?.active||own.kind!==service+'-service'||own.fingerprint!==tlsKeyFingerprint(tls?.cert))fail()
- const sockets=new Set(),active=new Set(),usedSessions=new WeakSet();let started=false,closing=false
+ const sockets=new Set(),active=new Set(),usedSessions=new WeakSet();let started=false,closing=false,closingTask
  const selfCurrent=()=>{const p=pins.read(identity);return p?.active&&p.fingerprint===own.fingerprint&&p.epoch===own.epoch}
  const server=https.createServer({...tls,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3',maxVersion:'TLSv1.3',handshakeTimeout:PINNED_SERVICE_LIMITS.bodyMs,connectionsCheckingInterval:500},async(req,res)=>{
   const peer=req.socket.authorized&&pins.lookup(tlsKeyFingerprint(req.socket.getPeerCertificate().raw))
@@ -79,10 +79,11 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
   const send=(status,result)=>{if(res.destroyed||res.writableEnded)return;const text=boundedJson(result,PINNED_SERVICE_LIMITS.responseBytes);res.writeHead(status,{'content-type':'application/json','content-length':Buffer.byteLength(text),'connection':'close'});res.end(text)}
   if(closing||!peer||peer.kind!==(service==='administrator'?'administrator':'coordinator')||!validPeer()){send(403,denied('denied'));req.resume();return}
   if(active.size>=PINNED_SERVICE_LIMITS.concurrent){send(503,denied('unavailable'));req.resume();return}
-  let connection,opening,disposed=false,cancelled=false,dispatched=false,rejectAbort
+  let connection,opening,disposal,disposalFailed=false,cancelled=false,dispatched=false,rejectAbort,finishAttempt
+  const finished=new Promise(resolve=>{finishAttempt=resolve})
   const abort=new Promise((_,reject)=>{rejectAbort=reject});abort.catch(()=>{})
-  const dispose=async()=>{if(connection&&!disposed){disposed=true;try{await connection.dispose()}catch{}}}
-  const attempt={peer:peer.identity,epoch:peer.epoch,fingerprint:peer.fingerprint,cancel(){if(cancelled)return;cancelled=true;rejectAbort(Error('Service attempt interrupted.'));void dispose()}}
+  const dispose=()=>{if(!connection)return Promise.resolve();if(!disposal)disposal=Promise.resolve().then(()=>connection.dispose()).catch(()=>{disposalFailed=true});return disposal}
+  const attempt={peer:peer.identity,epoch:peer.epoch,fingerprint:peer.fingerprint,finished,cancel(){if(cancelled)return;cancelled=true;rejectAbort(Error('Service attempt interrupted.'));void dispose()}}
   active.add(attempt)
   const timer=setTimeout(()=>attempt.cancel(),PINNED_SERVICE_LIMITS.operationMs)
   res.once('close',()=>{if(!res.writableFinished)attempt.cancel()})
@@ -103,13 +104,22 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
    if(cancelled||!validPeer()||result?.grant!==false||result.canExecute!==false||result.releaseAuthorized!==false)fail()
    send(200,result)
   }catch{try{send(cancelled||dispatched?503:400,denied(cancelled||dispatched?'unknown':'denied'))}catch{res.destroy()}}
-  finally{clearTimeout(timer);if(opening)await opening.catch(()=>{});await dispose();active.delete(attempt)}
+  finally{clearTimeout(timer);if(opening)await opening.catch(()=>{});await dispose();if(!disposalFailed)active.delete(attempt);finishAttempt(!disposalFailed)}
  })
  server.maxHeadersCount=16;server.headersTimeout=2000;server.requestTimeout=2000;server.keepAliveTimeout=1;server.maxRequestsPerSocket=1
  server.on('connection',s=>{if(sockets.size>=PINNED_SERVICE_LIMITS.sockets){s.destroy();return}sockets.add(s);s.once('close',()=>sockets.delete(s))})
  server.on('tlsClientError',()=>{})
  const unsubscribe=pins.subscribe(()=>{for(const attempt of active){const p=pins.read(attempt.peer);if(!selfCurrent()||!p?.active||p.epoch!==attempt.epoch||p.fingerprint!==attempt.fingerprint)attempt.cancel()}})
- return Object.freeze({async listen(){if(started||closing)fail();started=true;await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});return Object.freeze({port:server.address().port,identity,service})},async close(){if(closing)return;closing=true;unsubscribe();for(const a of active)a.cancel();for(const s of sockets)s.destroy();if(started)await new Promise(resolve=>server.close(resolve))}})
+ return Object.freeze({async listen(){if(started||closing)fail();started=true;await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});return Object.freeze({port:server.address().port,identity,service})},async close(){
+  if(closingTask)return closingTask
+  closing=true;unsubscribe();const pending=[...active];for(const a of pending)a.cancel();for(const s of sockets)s.destroy()
+  closingTask=(async()=>{
+   if(started)await new Promise(resolve=>server.close(resolve))
+   let deadline
+   try{const result=await Promise.race([Promise.all(pending.map(a=>a.finished)),new Promise(resolve=>{deadline=setTimeout(()=>resolve(null),PINNED_SERVICE_LIMITS.operationMs)})]);if(!result||result.some(ok=>!ok))fail()}finally{clearTimeout(deadline)}
+  })()
+  return closingTask
+ }})
 }
 
 function boundResponse(path,body,r){
