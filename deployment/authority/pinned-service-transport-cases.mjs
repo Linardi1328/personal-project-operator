@@ -9,9 +9,10 @@ import {signedActionFixture} from './action-test-fixture.mjs'
 import {admissionProfileSql} from './phase1gd1-profile.mjs'
 import {createCatalogCertifiedQuery} from '../../local-operator/development-catalog-certified-query.mjs'
 import {createSyntheticOwnershipRehearsal,OWNERSHIP_REHEARSAL_SQL as O} from '../../local-operator/development-ownership-rehearsal.mjs'
-import {createIsolatedPinnedService,createIsolatedPinnedClient,serviceLogin} from '../../local-operator/isolated-pinned-service-transport.mjs'
+import {createIsolatedPinnedService,createIsolatedPinnedClient,serviceLogin,PINNED_SERVICE_LIMITS} from '../../local-operator/isolated-pinned-service-transport.mjs'
 import {POSTGRES_ACTION_SQL as A} from '../../local-operator/software-factory-remote-postgres-action-fence.mjs'
 import {signSyntheticResourceDescriptor} from '../../local-operator/software-factory-postgres-resource-fence.mjs'
+import {signOfflineHostActionProof} from '../../local-operator/software-factory-remote-host-fence.mjs'
 const mode='isolated-pinned-service-transport-only',sha=s=>createHash('sha256').update(s).digest('hex')
 const roleMap={actionVerifier:'ppo_action_verifier',resourceVerifier:'ppo_resource_verifier',actionConsumer:'ppo_action_consumer',resourceConsumer:'ppo_resource_consumer',admin:'ppo_action_admin'}
 export async function runPinnedServiceTransportCases(t,h){
@@ -88,6 +89,23 @@ export async function runPinnedServiceTransportCases(t,h){
    const op={ticket:registered.ticket,operationId:randomUUID()};setHook(async(_role,s,execute)=>{const r=await execute();if(s==='COMMIT')throw Error('synthetic lost PostgreSQL acknowledgment');return r})
    const api=client('consumer');assert.equal((await api.send('/v1/action/consume',op)).status,'unknown');await assert.rejects(api.send('/v1/action/consume',op));setHook(async(_role,_s,execute)=>execute());await drain();assert.equal(counts.commits,1)
    assert.equal((await call('consumer','/v1/action/inspect',op)).status,'consumed');assert.equal((await call('consumer','/v1/action/consume',op)).status,'denied');assert.equal(await sql('SELECT count(*) FROM ppo_authority.action_tombstones;'),'1')
+  }))
+  await t.test('maximum legal escaped payloads retain exact positive TLS receipts and reconciliation',()=>fixture(async({f,registered,call})=>{
+   await sql('SELECT ppo_authority.initialize_resource();','ppo_action_admin')
+   let current=registered
+   for(const code of [1,2]){
+    if(code===2){const signedProof=signOfflineHostActionProof({...f.proof,actionId:randomUUID().replaceAll('-','')},f.keys.host.privateKey);current=(await call('verifier','/v1/action/register',{...f.input,signedProof,ticket:randomUUID()})).registration}
+    const snapshot=(await call('verifier','/v1/resource/context',{ticket:current.ticket})).context,c=snapshot.context,r=snapshot.resource,p=c.proof,a=c.request,payload=String.fromCharCode(code).repeat(4096)
+    const d={version:1,operationId:randomUUID(),ticket:current.ticket,ticketHash:sha(current.ticket),contextHash:snapshot.contextHash,sourceId:c.sourceId,targetId:c.targetId,generation:c.generation,hostId:p.hostId,hostFingerprint:c.hostFingerprint,hostEpoch:p.hostEpoch,workerId:a.workerId,capability:a.capability,requestHash:c.requestHash,claimHash:c.claimHash,proofHash:c.proofHash,runId:a.runId,runVersion:a.expectedVersion,status:'implementation_in_progress',branch:a.branch,baseSha:a.baseSha,headSha:a.headSha,resourceId:r.resource_id,expectedVersion:r.version,expectedRef:r.ref,action:p.actionType,path:p.actionPath,payloadHash:sha(payload)}
+    const operation=(await call('verifier','/v1/resource/register',{signed:signSyntheticResourceDescriptor(JSON.stringify(d),f.keys.coordinator.privateKey),payload})).registration
+    assert.ok(operation)
+    const applied=await call('consumer','/v1/resource/apply',operation),inspected=await call('consumer','/v1/resource/inspect',operation)
+    assert.equal(await sql('SELECT count(*) FROM ppo_authority.resource_receipts;'),String(code))
+    assert.equal(applied.status,'consumed-diagnostic');assert.equal(inspected.status,'committed-synthetic-effect');assert.equal(inspected.receipt.after_state.value,payload)
+    assert.equal(inspected.receipt.before_state.value,code===1?'':String.fromCharCode(1).repeat(4096))
+    for(const result of [applied,inspected]){const bytes=Buffer.byteLength(JSON.stringify(result));assert.ok(bytes>16384);assert.ok(bytes<=PINNED_SERVICE_LIMITS.responseBytes)}
+    assert.deepEqual(inspected.receipt,applied.receipt);assert.equal(inspected.grant,false);assert.equal(inspected.canExecute,false);assert.equal(inspected.releaseAuthorized,false)
+   }
   }))
   await t.test('HTTP disconnect disposes the actual in-flight DB session and rolls back uncommitted consumption',()=>fixture(async({registered,addresses,setHook,tls,drain,counts})=>{
    let entered,release;const ready=new Promise(r=>entered=r),held=new Promise(r=>release=r),op={ticket:registered.ticket,operationId:randomUUID()}

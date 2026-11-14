@@ -13,7 +13,10 @@ const HASH=/^[a-f0-9]{64}$/u,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]
 const uuid=v=>typeof v==='string'&&UUID.test(v),hash=v=>typeof v==='string'&&HASH.test(v)
 const kinds=new Set(['coordinator','administrator','verifier-service','consumer-service','administrator-service'])
 const roles={actionVerifier:'ppo_action_verifier',resourceVerifier:'ppo_resource_verifier',actionConsumer:'ppo_action_consumer',resourceConsumer:'ppo_resource_consumer',admin:'ppo_action_admin'}
-export const PINNED_SERVICE_LIMITS=Object.freeze({requestBytes:65536,responseBytes:16384,concurrent:4,sockets:16,operationMs:10000,bodyMs:2000,clientMs:12000})
+// Two legal 4096-byte values can each expand sixfold when JSON escapes are
+// serialized in a receipt. 64 KiB also covers the bounded 32 KiB action
+// context plus one escaped current resource and fixed metadata.
+export const PINNED_SERVICE_LIMITS=Object.freeze({requestBytes:65536,responseBytes:65536,concurrent:4,sockets:16,operationMs:10000,bodyMs:2000,clientMs:12000})
 export const SERVICE_ROLE_PROBE="SELECT current_user AS role,session_user AS login,(SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls FROM pg_roles WHERE rolname=current_user) AS privileged,(SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls FROM pg_roles WHERE rolname=session_user) AS login_privileged,(SELECT coalesce(json_agg(p.rolname ORDER BY p.rolname),'[]'::json) FROM pg_roles p WHERE p.rolname<>session_user AND pg_has_role(session_user,p.oid,'MEMBER')) AS memberships"
 export const SERVICE_ADMIN_SQL=Object.freeze({configure:'SELECT ppo_authority.configure_action_host($1::text,$2::bigint,$3::text) AS epoch',revoke:'SELECT ppo_authority.revoke_action_context($1::text,$2::text) AS revoked'})
 export function serviceLogin(role){const key=Object.entries(roles).find(([,v])=>v===role)?.[0];if(!key)fail();return 'ppo_transport_'+key.replace(/[A-Z]/gu,c=>'_'+c.toLowerCase())}
