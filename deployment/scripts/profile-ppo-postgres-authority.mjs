@@ -112,11 +112,16 @@ try {
           row.cgroupPeakBytes = memoryBytes
         }),
         command('docker', ['exec', id, 'cat', '/sys/fs/cgroup/memory.events']).then(value => {
-          const events = Object.fromEntries(value.split('\n').map(line => {
+          const entries = new Map()
+          for (const line of value.split('\n')) {
             const [key, count, ...extra] = line.split(' ')
-            if (!/^[a-z_]+$/.test(key) || !/^[0-9]+$/.test(count) || extra.length) throw Error('Invalid memory event sample')
-            return [key, count]
-          }))
+            if (!/^[a-z_]+$/.test(key) || !/^[0-9]+$/.test(count) || extra.length || entries.has(key)) throw Error('Invalid memory event sample')
+            entries.set(key, count)
+          }
+          // Require both essential OOM counters; newer kernel counters may be
+          // present, but missing or duplicate keys cannot qualify as evidence.
+          if (!entries.has('oom') || !entries.has('oom_kill')) throw Error('Missing OOM counters')
+          const events = Object.fromEntries(entries)
           row.memoryEvents = events
         })])
       if (Object.keys(row).length > 1) {
@@ -134,7 +139,7 @@ try {
   report.wallMs = Math.round(performance.now() - start)
   report.observerErrors = observerErrors
   report.nodeProcesses = (await readFile(peaks, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)
-  report.nodeMaxRssKiB = Math.max(0, ...report.nodeProcesses.map(p => p.peakRssKiB))
+  report.nodeMaxRssKiB = report.nodeProcesses.length ? Math.max(...report.nodeProcesses.map(p => p.peakRssKiB)) : null
   const observed = (await readFile(samples, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)
   const databaseRows = observed.filter(row => row.database)
   const peakRows = observed.filter(row => Object.hasOwn(row, 'cgroupPeakBytes'))
@@ -176,5 +181,5 @@ finally {
   if (id) try { await command('docker', ['rm', '-fv', id]) } catch {report.cleanupFailed = true; process.exitCode = 1}
   report.wallMs = Math.round(performance.now() - start)
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', {mode: 0o600})
-  process.stdout.write(JSON.stringify({output, complete: report.measurementComplete === true}) + '\n')
+  process.stdout.write(JSON.stringify({output, complete: report.measurementComplete === true && !report.cleanupFailed && !process.exitCode}) + '\n')
 }
