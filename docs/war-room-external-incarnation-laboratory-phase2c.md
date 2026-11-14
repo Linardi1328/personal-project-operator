@@ -34,6 +34,8 @@ Unit tests use real local disk and a killed child process. They cover durable re
 
 The separate `phase2c-external-incarnation.integration.mjs` suite installs the existing D1-certified ownership/action/resource fixture in a network-none disposable PostgreSQL container. It uses actual `pg_dump`/restore and a separate cloned database to test:
 
+The explicit CI driver runs this self-cleaning suite before the legacy canonical suite. The legacy suite intentionally retains its last fixture until container teardown; appending another fresh installer afterward caused the retained first full-CI `role already exists` failure. Running the self-cleaning suite first preserves both suites and requires no reset of a predecessor's fixture.
+
 - A restored snapshot loses consumed nonce and host revocation in PostgreSQL; the unchanged external checkpoint/reservations reject the old action without a new mutation. A raw SQL rollback control demonstrates the remaining bypass honestly.
 - A clone has copied database identity/data but no separately enrolled external owner; it cannot use or reinitialize the existing witness. Protection against copying privileged service identity is not established.
 - A committed action with a lost response remains pending until exact positive tombstone reconciliation, with no effect replay.
