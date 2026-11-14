@@ -1,4 +1,5 @@
 import fs from "node:fs/promises"
+import crypto from "node:crypto"
 import { syncBuiltinESMExports } from "node:module"
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from "node:fs/promises"
@@ -177,6 +178,54 @@ test("concurrent confirmation is single use and restart cannot replay", async t 
   assert.equal((await session().confirm(staged.requestId)).code, "retirement_request_unavailable")
   const results = await Promise.all([api.confirm(staged.requestId), api.confirm(staged.requestId)])
   assert.deepEqual(results.map(r => r.code).sort(), ["retired", "retirement_request_unavailable"].sort())
+})
+
+for (const base64url of ["A".repeat(43), "sk-" + "A".repeat(40), "ghp_" + "A".repeat(39)]) {
+  test(`retirement request bytes encode safely through stage and concurrent confirmation: ${base64url.slice(0, 4)}`, async t => {
+    const f = await fixture(t)
+    const bytes = Buffer.from(base64url, "base64url")
+    assert.equal(bytes.length, 32)
+    assert.equal(bytes.toString("base64url"), base64url)
+    let released = 0
+    const api = session({ acquireQuiescenceGuard: async () => guard({ release: async () => { released++ } }) })
+    let staged
+    // Mock the builtin only while staging. No random-source override is added
+    // to the retirement runtime's trusted integration boundary.
+    const original = crypto.randomBytes
+    try {
+      crypto.randomBytes = size => { assert.equal(size, 32); return Buffer.from(bytes) }
+      syncBuiltinESMExports()
+      staged = await api.stage(RUN_A, f.options)
+    } finally {
+      crypto.randomBytes = original
+      syncBuiltinESMExports()
+    }
+    assert.equal(staged.ok, true)
+    assert.equal((await session().confirm(staged.requestId)).code, "retirement_request_unavailable")
+    const results = await Promise.all([api.confirm(staged.requestId), api.confirm(staged.requestId)])
+    assert.deepEqual(results.map(result => result.code), ["retired", "retirement_request_unavailable"])
+    assert.equal(released, 1)
+    assert.match(staged.requestId, /^[a-f0-9]{64}$/u)
+    assert.equal(staged.requestId, bytes.toString("hex"))
+    assert.ok(staged.challenge.endsWith("REQUEST " + staged.requestId))
+    const after = await inspectDevelopmentRunReadOnly(RUN_A, f.options)
+    assert.equal(after.ok, true)
+    assert.equal(after.record.version, f.record.version + 1)
+    assert.deepEqual(after.record.history.slice(0, -1), f.record.history)
+    assert.ok(after.record.history.at(-1).reason.includes("approval " + staged.requestId + ";"))
+  })
+}
+
+test("retirement encoding leaves sensitive transition reasons rejected without writes", async t => {
+  const f = await fixture(t)
+  const before = await bytesUnder(f.writeDataDir)
+  for (const token of ["sk-" + "A".repeat(40), "ghp_" + "A".repeat(39)]) {
+    await assert.rejects(transitionDevelopmentRun(RUN_A, {
+      expectedVersion: f.record.version, status: "cancelled", actor: RETIREMENT_ACTOR,
+      reason: "RIC-59 owner-approved abandoned-run retirement; approval " + token
+    }, f.options), error => error.code === "INVALID_REASON")
+    assert.deepEqual(await bytesUnder(f.writeDataDir), before)
+  }
 })
 
 test("approval for a second run cannot be reused for the first", async t => {
