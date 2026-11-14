@@ -121,6 +121,10 @@ COMMIT and requires exact durable receipt reconciliation, no adapter replay,
 and no duplicate effect. It fills all 12 connections, requires the thirteenth
 to deny, disposes them, and checks a new connection succeeds. Revocation
 timing is a measured synthetic gate delay, not a global worst-case bound.
+Connections use the existing privileged psql transport and then `SET ROLE`;
+the 12-backend server ceiling does not establish capacity for 12 ordinary
+authenticated service logins or account for their reserved-slot constraints.
+Node's old-space limit is 2048 MiB; it is not a hard bound on total Node RSS.
 
 ## Retention and admission policy candidate
 
@@ -158,5 +162,137 @@ removed, test skipped, or timeout widened:
 The third run already validated a 20-run, 1180-version cohort (59 versions
 each): native bound 31,621,040 bytes, transport 31,580,124 bytes, Node peak
 902,480 KiB. Its later EXPLAIN failure means it is partial evidence only.
-Complete exact-head results and remaining coverage gaps must accompany this
-candidate before treating any row as verified.
+This partial run is superseded by the complete measured run below.
+
+## Exact implementation evidence
+
+All five independent cases passed on implementation head
+`e0c9129493297c9a5d9e007f497ef451a176ac75`, from
+`2026-11-14T08:05:51Z` to `08:11:47Z`. Node was `v24.20.0`; PostgreSQL was
+`16.14 (Debian 16.14-1.pgdg13+1)`, arm64, local image ID
+`sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b`.
+All five workloads exited zero; all cgroups reported zero OOM/kill events,
+and all containers were removed by exact owned ID.
+
+An exact repository-reviewable copy is retained as
+[raw matrix evidence](evidence/ric-157-phase2a-budget-matrix.json), including
+all five per-case JSON objects. Original files remain in
+`/var/folders/4x/g6s09jds5hq19dzprk3pvy780000gn/T/ppo-budget-matrix-kzMCSo`.
+The `matrix.json` SHA-256 is
+`c22c97f3e8bf16a5c51d911456d05fb52284d6ba4a855e92561eb01fcecd5c05`.
+It embeds all per-case evidence, sampling, settings, plans, failure status,
+cleanup, and these measured source hashes:
+
+| Source | SHA-256 |
+| --- | --- |
+| `measure-ppo-authority-matrix.mjs` | `1763d20bd8cfd6fdea9c97a0227a2db39691916031f2c1fa31e497cae75f0470` |
+| `phase2a-budget-matrix.mjs` | `b57913d0da13fa54748d0eb385868cd319ba4c10a5b211829c4e33a85026b34e` |
+
+| Case | Observed result | Node peak KiB | PG cgroup peak bytes | Temp-counter increase bytes |
+| --- | --- | ---: | ---: | ---: |
+| catalog20 | 20 runs, 1180 versions valid; genuine append reaches 1181 | 1,106,496 | 801,013,760 | 1,685,955,631 |
+| history100 | active 99→100 versions commits; next progress denies | 415,616 | 188,006,400 | 17,433,748 |
+| catalog2000 | complete individual histories/native parity; aggregate byte-denied | 737,008 | 185,044,992 | 13,270,062 |
+| operations | contention, recovery, cancellation and connection checks pass | 83,392 | 125,091,840 | 0 |
+| retention | all stated storage counts, same-input controls and exhaustion checks pass | 83,760 | 119,656,448 | 0 cumulative |
+
+The accepted 1180-version catalog measured 31,621,104 native bound bytes and
+31,580,188 transport bytes. A 21st run projects to 31,625,116 native bytes,
+below the byte cap, and introduces only a second active project: its refusal
+isolates the run-count ceiling. The actual 2000-version corpus measures
+87,567,180 native bound bytes and returns only a 61-byte truncated envelope;
+its denied mutation does not isolate the count ceiling. These measurements
+describe this corpus, not a mathematical minimum over every valid history.
+
+The near-cap catalog's three native EXPLAIN execution times were
+515.972 / 604.938 / 530.092 ms (first-after-load / warm / warm); corresponding
+Docker/psql wall times were 588.529 / 684.157 / 597.097 ms. Complete semantic
+validation wall times were 6.435 / 8.166 / 8.734 seconds. The genuine positive
+append measured admission preparation transport 12.335 seconds, certificate
+transport 101.129 ms, the dedicated native transaction through durable COMMIT
+2.875 seconds, and whole state-API operation 23.027 seconds. Those are
+different intervals. The 2.875-second uncontended observation does not prove
+a five-second worst-case critical-section budget. The JSON metadata field
+`limits.applicationMs:20000` names the 20-second **individual client-session
+lifetime**, not a whole multi-session operation deadline; the explicit
+application-cancellation test uses 100 ms. No overall 20-second progress
+completion guarantee is claimed.
+
+Near-cap post-load workload WAL increased by 103,968 bytes; its fresh-case
+cumulative `pg_stat_wal.wal_bytes` reached 15,618,993. Retention cumulative
+WAL reached 20,796,029 bytes. Allocated WAL at the last samples was 16,392 KiB
+for catalog20 and 32,776 KiB for retention. The valid catalog's filesystem
+fixture ended at 28,240 KiB allocated, with 26,389,724 live logical bytes and
+51,107,184 logical record bytes written cumulatively. Atomic-write transient
+disk peaks are not captured by that end-of-generation allocation.
+
+Observed revocation gate wait was 69.134 ms under one deliberately held
+gate. Signed resource registration measured 74.332 ms; the dedicated signed
+apply with injected lost acknowledgment measured 20.854 ms and reconciled
+one durable effect. At retention, signed final-version registration measured
+74.778 ms and actual 998→999 native apply 91.573 ms. Native retained receipt
+reads measured 0.865 / 1.010 / 0.901 ms, and context reads 1.976 / 1.658 /
+2.209 ms. These are limited synthetic observations, not percentile or tail
+latency guarantees.
+
+Retention ended at 10,000 certificates; 1000 contexts, tombstones,
+operations, and resource versions; 999 receipts; and 2000 revocations. Both
+signed effects used 4096-byte payloads. Storage replicas used repetitive
+payloads: maximum field length and count coverage does not establish
+incompressible distinct-payload disk/WAL worst cases. The matrix also does
+not establish simultaneous unused-context/tombstone maxima, isolate the
+native expectedVersion-999 guard, expose every nested SQL plan, or measure
+all possible shared-gate queue disciplines. Timeout and cancellation denial
+checks passed; the helper records timings only for successful measured
+calls, so failed timeout probes have passing SQLSTATE checks rather than
+elapsed-time samples. These gaps keep full M-03 open.
+
+## Local standard gates and preserved environment failures
+
+All seven standard gates have successful local results against implementation
+head `e0c9129493297c9a5d9e007f497ef451a176ac75`. The evidence follow-up changes
+only this document and the exact raw JSON copy; measured executable sources
+remain unchanged. Hosted CI is separate and must run on the published head.
+
+| Gate | Successful local result | Environment |
+| --- | --- | --- |
+| syntax | exit 0, 12.439 s | original Node 24.20.0 |
+| PostgreSQL canonical | 66 pass, 0 fail/skip/cancel, 381.734 s | disposable network-none PG 16.14 |
+| parallel regression | exit 0, 109.948 s | original Node 24.20.0, child-only `TMPDIR=/private/tmp` |
+| serial regression | exit 0, 325.639 s | official task-local Node 24.20.0, child-only `TMPDIR=/private/tmp` |
+| critical lifecycle | exit 0, 221.654 s | original Node 24.20.0 |
+| integrated acceptance | exit 0, 231.360 s | original Node 24.20.0 |
+| whitespace | exit 0 | base-to-head and final working diff checks |
+
+The first parallel/serial runs each failed two existing tests:
+`requires private backup permissions and explicit bounded requests` and
+`canonical private executable candidate is accepted`. macOS supplied
+`/var/folders/.../T`, whose realpath is `/private/var/folders/.../T` and whose
+mode is 0700. One fixture requires a canonical executable path; the other
+requires a nonprivate parent so chmod 0755 actually removes the private
+backup guarantee. Using canonical public `/private/tmp` (1777) only for the
+child test environment resolved both assumptions; a focused 69-test run
+passed first. No source, assertion, file permission policy, or timeout was
+changed. Initial failures remain in
+`/tmp/ric157-matrix-gate-parallel-regression.log` and
+`/tmp/ric157-matrix-gate-serial-regression.log`.
+
+During the canonical-temp serial rerun, an external Homebrew runtime upgrade
+removed the original Node 24.20.0 path. Many subsequent test workers failed
+to start. That failure remains in
+`/tmp/ric157-matrix-canonical-temp-serial-regression.log`; a subsequent direct
+launch returned exit 127, retained in `/tmp/ric157-matrix-homebrew-drift.log`.
+The final full serial gate passed using the task-local official runtime at
+`/private/tmp/ric157-node-runtime/node-v24.20.0-darwin-arm64/bin/node`.
+The official archive SHA-256
+`40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8`
+matches the downloaded Node SHASUMS manifest; the executable SHA-256 is
+`9d050fd455b56426e25d4d603c7c501cbb2630348e836cf221dcce748e90588a`.
+No system libraries or global installations were modified for recovery.
+Runtime drift occurred after all matrix measurements had finished.
+
+Successful gate summaries remain in `/tmp/ric157-matrix-gates.json`,
+`/tmp/ric157-matrix-gates-canonical-temp.json`, and
+`/tmp/ric157-matrix-official-serial.json`; the latter also records the pinned
+runtime path and hash. Failed attempts remain visible alongside successful
+reruns. These are local checks, not a claim of hosted CI completion.
