@@ -22,3 +22,4 @@ for attempt in $(seq 1 60); do
 done
 test "$ready" = true
 node --test deployment/authority/phase1gb2-canonical-postgres.integration.mjs
+node --test deployment/authority/phase2c-external-incarnation.integration.mjs
