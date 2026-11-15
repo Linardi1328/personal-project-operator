@@ -164,6 +164,7 @@ function makeClient(config = {}) {
   assert.match(result.output, /^Project Status\nSource: GitHub read-only/)
 
   const projectNameOrder = allowedProjects.map((project) => result.output.indexOf(project.displayName))
+  assert.ok(projectNameOrder.every(position => position >= 0), "every configured project appears")
   assert.deepEqual(
     projectNameOrder,
     [...projectNameOrder].sort((left, right) => left - right),
@@ -255,7 +256,8 @@ function makeClient(config = {}) {
 
   assert.equal(result.ok, true)
   assert.match(result.output, /KHLIM Assist/)
-  assert.match(result.output, /LedgerPilot AI\n- Status unavailable: Safe auth message\./)
+  assert.match(result.output, /LedgerPilot AI\n- Repo: Linardi1328\/ledgerpilot-ai \(configured; metadata unavailable\)\n- Default: unavailable \(Safe auth message\.\)/)
+  assert.match(result.output, /LedgerPilot AI[\s\S]*- Latest: led1234 Update ledgerpilot-ai/)
   assert.match(result.output, /SPY Market Agent/)
   assert.match(result.output, /Portfolio Website/)
   assert.doesNotMatch(result.output, /SENSITIVE_TEST_SENTINEL|raw stderr|GITHUB_CLI_UNAUTHENTICATED/)
@@ -273,7 +275,8 @@ function makeClient(config = {}) {
   const result = await githubPpoStatus.handleGitHubPpoStatus({ client })
 
   assert.equal(result.ok, true)
-  assert.match(result.output, /SPY Market Agent\n- Status unavailable: unexpected local failure\./)
+  assert.match(result.output, /SPY Market Agent[\s\S]*- Open PRs: unavailable \(unexpected local failure\.\)/)
+  assert.match(result.output, /SPY Market Agent[\s\S]*- Latest: spy1234 Update spy-market-agent/)
   assert.match(result.output, /Portfolio Website/)
   assert.doesNotMatch(result.output, /SENSITIVE_TEST_SENTINEL|unexpected failure/)
 }

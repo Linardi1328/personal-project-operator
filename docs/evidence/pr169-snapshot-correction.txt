@@ -1,0 +1,241 @@
+PR #169 — P2-03 targeted terminal snapshot correction
+Reviewed parent: 91b5da97214bc338940e0a726bd5b23588ecc894
+Branch: codex/read-only-project-reporting
+
+Scope: only terminal snapshot assembly changes. Existing getProjectSnapshot,
+provider normalization and planning/readiness consumers are unchanged.
+The CLI uses resolveProject plus the existing four bounded GET methods:
+getRepoMetadata, getRecentCommits, getOpenPullRequestsPage, getOpenIssuesPage.
+Existing shared rendering preserves provenance, valid rows and page completeness.
+
+Causal fixture uses the existing fake-gh infrastructure and actual Node CLI:
+metadata lacks full_name, retains main and updated_at; valid recent commit;
+PRs [valid #7, null]; issues [valid #8, null, PR marker, 42, {}].
+No provider normalization or pre-normalized client is substituted.
+
+RED command, before any runtime change (exit 1):
+node --test --test-name-pattern='P2-03' local-operator/github-reporting-corrections.test.mjs
+The malformed-page case exits 1 with MALFORMED_GITHUB_RESPONSE and empty stdout;
+the ordinary complete snapshot control passes. A preliminary fixture-routing
+mistake was corrected before recording this causal run.
+
+
+Actual RED
+✖ P2-03 actual CLI snapshot retains independent observations from malformed pages (642.09475ms)
+✔ P2-03 actual CLI complete snapshots retain compatible metadata, counts and ordering (787.389333ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1474.269208
+
+✖ failing tests:
+
+test at local-operator/github-reporting-corrections.test.mjs:137:1
+✖ P2-03 actual CLI snapshot retains independent observations from malformed pages (642.09475ms)
+  AssertionError [ERR_ASSERTION]: {"stdout":"","stderr":"PPO GitHub read-only error [MALFORMED_GITHUB_RESPONSE]: GitHub returned structurally invalid list rows; a complete list is unavailable.\n"}
+
+  1 !== 0
+
+      at cli (file:///private/tmp/ppo-read-only-reporting/local-operator/github-reporting-corrections.test.mjs:93:9)
+      at async TestContext.<anonymous> (file:///private/tmp/ppo-read-only-reporting/local-operator/github-reporting-corrections.test.mjs:138:15)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+Same cases GREEN, exit 0
+✔ P2-03 actual CLI snapshot retains independent observations from malformed pages (357.827125ms)
+✔ P2-03 actual CLI complete snapshots retain compatible metadata, counts and ordering (726.40425ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1123.888
+
+Actual corrected CLI stdout, same fixture
+Exit: 0
+Project: KHLIM Assist (khlim-assist)
+Source: GitHub read-only
+Retrieved: 2026-11-15T16:39:35.760Z
+Repo: Linardi1328/khlim-assist (configured; identity unavailable)
+Default: main
+Visibility: n/a
+Description: n/a
+Updated: 2026-11-16T00:00:00Z
+Pushed: n/a
+
+Recent commits:
+- aaaaaaa Independent snapshot commit (Test author, 2026-11-16T00:00:00Z)
+
+Open PRs: 1+ (incomplete; 1 invalid row)
+- #7 Valid snapshot PR [n/a -> n/a, not draft] updated n/a
+
+Open issues: 2+ (incomplete; 2 invalid rows; page limit hit)
+- #8 Valid snapshot issue (open, updated n/a)
+- number unavailable n/a (n/a, updated n/a)
+
+Existing strict legacy regression, separately executed (exit 0)
+✔ P2-02 legacy array/snapshot consumers cannot silently lose malformed-row completeness (1.048667ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 40.361833
+
+Focused reporting/CLI regression (exit 0)
+Codex prompt generator tests passed: deterministic text prompts, safe inputs, size estimates, and terminal-only boundaries.
+✔ local-operator/codex-prompt-generator.test.mjs (58.021916ms)
+GitHub PPO command tests passed: repo/pr formatting, safe errors, allowlist rejection, and no write handlers.
+✔ local-operator/github-ppo-commands.test.mjs (48.616542ms)
+GitHub PPO status tests passed: live status formatting, bounded reads, failure isolation, and safe errors.
+✔ local-operator/github-ppo-status.test.mjs (47.484542ms)
+GitHub read-only tests passed: allowlist, GET-only transport, normalization, errors, and safety boundaries.
+✔ local-operator/github-readonly.test.mjs (53.760625ms)
+✔ P2-01 provider identity missing is configured, while independent metadata remains available (2.038084ms)
+✔ P2-01 provider identity null is configured, while independent metadata remains available (0.678833ms)
+✔ P2-01 confirmed identities remain confirmed and mismatches still reject (0.496833ms)
+✔ P2-02 actual PR provider normalization: null (0.673292ms)
+✔ P2-02 actual PR provider normalization: primitives (0.593958ms)
+✔ P2-02 actual PR provider normalization: mixed (0.763ms)
+✔ P2-02 actual PR provider normalization: incomplete object (0.411292ms)
+✔ P2-02 actual PR provider normalization: empty (0.411084ms)
+✔ P2-02 actual issue provider normalization: entirely invalid (0.625417ms)
+✔ P2-02 actual issue provider normalization: mixed unsaturated (0.633583ms)
+✔ P2-02 actual issue provider normalization: saturated mixed (0.352833ms)
+✔ P2-02 actual issue provider normalization: confirmed empty (0.356625ms)
+✔ P2-02 legacy array/snapshot consumers cannot silently lose malformed-row completeness (0.178958ms)
+✔ P3-01 real CLI shares deterministic PR lines, including absent number and confirmed non-draft (695.264041ms)
+✔ page-aware prompt reporting preserves partial counts and configured identity (1.140375ms)
+✔ page APIs retain valid incomplete records and raw saturation before filtering (0.075875ms)
+✔ CLI keeps malformed pages unavailable and distinguishes missing provider identity (985.614208ms)
+✔ P2-03 actual CLI snapshot retains independent observations from malformed pages (283.067208ms)
+✔ P2-03 actual CLI complete snapshots retain compatible metadata, counts and ordering (547.015125ms)
+✔ one unavailable GitHub source preserves independent project facts and registry ordering (2.244209ms)
+✔ metadata failure preserves list observations and identifies the configured repo (0.715417ms)
+✔ unavailable or malformed reporting lists are distinct from confirmed empty results (0.121ms)
+✔ all-source failure reports safe unavailability without inventing zero counts (0.323167ms)
+✔ PR reporting preserves unknown draft metadata and bounds counts without implying readiness (0.304791ms)
+✔ PR presentation uses deterministic issue-number order without mutating the supplied rows (0.128125ms)
+✔ Linear previews retain confirmed task states and label missing or blank state metadata unknown (0.941458ms)
+✔ partial failures still perform each existing bounded read once per project (0.432375ms)
+✔ PR ordering stays deterministic for incomplete metadata and display ties (0.070416ms)
+✔ malformed Linear status values remain unavailable rather than becoming a confirmed task state (0.295041ms)
+✔ P3-02 independent report facts survive failures: getRepoMetadata (0.240833ms)
+✔ P3-02 independent report facts survive failures: getRecentCommits (0.140459ms)
+✔ P3-02 independent report facts survive failures: getOpenPullRequests (0.129042ms)
+✔ P3-02 independent report facts survive failures: getOpenIssuesPage (0.094458ms)
+✔ P3-02 independent report facts survive failures: getRepoMetadata, getRecentCommits (0.160584ms)
+✔ P3-02 independent report facts survive failures: getOpenPullRequests, getOpenIssuesPage (0.118167ms)
+✔ P3-02 independent report facts survive failures: getRepoMetadata, getOpenPullRequests, getOpenIssuesPage (0.392875ms)
+✔ P3-02 independent report facts survive failures: getRecentCommits, getOpenPullRequests, getOpenIssuesPage (0.249458ms)
+✔ the OpenClaw bridge accepts only one canonical RBL Linear issue identifier (0.8945ms)
+✔ the OpenClaw tool forwards a read-only issue route without execution arguments (0.211625ms)
+✔ the terminal command refuses to call Linear when dedicated credential is absent (49.635084ms)
+✔ the terminal command rejects input that adds scope, shell syntax or other commands (184.663083ms)
+✔ strict phone/CLI parsing accepts one RIC identifier only (0.764042ms)
+✔ valid read-only query sends fixed endpoint, bounded GraphQL variables and no mutations (0.739541ms)
+✔ missing dedicated read-only credential never contacts provider (0.104208ms)
+✔ invalid identifiers fail before credential or network handling (0.054625ms)
+✔ provider errors, partial GraphQL errors, auth and rate limits fail closed with safe codes (0.269625ms)
+✔ wrong issue identity and untrusted external source URL are rejected (0.386292ms)
+✔ provider-controlled content is bounded, removes controls and redacts token forms (0.1115ms)
+✔ oversized announced and streamed responses cannot allocate unbounded data (1.584ms)
+✔ malformed JSON and wrong root object never produce authority-bearing preview (0.2335ms)
+✔ null/empty Linear description renders a safe readable preview (0.137208ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 55
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2576.687875
+
+Focused command:
+node --test local-operator/github-reporting-corrections.test.mjs local-operator/read-only-reporting-regression.test.mjs local-operator/github-readonly.test.mjs local-operator/github-ppo-status.test.mjs local-operator/github-ppo-commands.test.mjs local-operator/codex-prompt-generator.test.mjs local-operator/war-room-linear-issue-preview.test.mjs local-operator/war-room-linear-issue-preview-integration.test.mjs
+
+Separate legacy command:
+node --test --test-name-pattern='legacy array/snapshot' local-operator/github-reporting-corrections.test.mjs
+
+Compatibility and limits:
+Valid complete snapshot display remains compatible, including deterministic PR
+ordering. The terminal command no longer calls the strict legacy snapshot API;
+that API and all other consumers retain rejection of malformed rows. Counts
+remain bounded observations. This correction handles malformed individual page
+rows; whole-source failures still exit with the existing safe error behavior.
+Live provider access is not exercised by the fake-gh regression. RIC-177 remains
+on hold. No merge, provider endpoint, auth or execution changes.
+
+Local provider module Git blob ID, unchanged from reviewed parent:
+fe574bb64dc198713090097da84cd08e84442677
+
+Actual disposable PostgreSQL (both exit 0):
+docker run -d --network none --name ppo-authority-ci-20261116-169-snapshot -e POSTGRES_DB=ppo_authority_ci -e POSTGRES_PASSWORD=disposable-ci-only-not-a-secret postgres:16
+The first integration invocation rejected the non-numeric name suffix before
+any test ran. The same owned disposable container was renamed to the required
+ppo-authority-ci-20261116-169 format; no guard or test was modified.
+docker rename ppo-authority-ci-20261116-169-snapshot ppo-authority-ci-20261116-169
+CI=true PPO_AUTHORITY_TEST_CONTAINER=ppo-authority-ci-20261116-169 TMPDIR=/private/tmp node --test deployment/authority/phase2c-external-incarnation.integration.mjs
+CI=true PPO_AUTHORITY_TEST_CONTAINER=ppo-authority-ci-20261116-169 TMPDIR=/private/tmp node --test deployment/authority/phase1gb2-canonical-postgres.integration.mjs
+Container network mode verified as none; owned container removed after tests.
+
+postgres-witness.txt
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32963.820583
+
+postgres-canonical.txt
+ℹ tests 88
+ℹ suites 0
+ℹ pass 88
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 345213.946958
+
+All seven local quality gates completed successfully (exit 0):
+1. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs syntax
+2. Actual PostgreSQL commands above: 5 witness + 88 canonical = 93 passed, no failures/skips.
+3. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
+4. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs serial-regression
+5. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs critical-lifecycle
+6. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
+7. git diff --check; git diff --check origin/main...HEAD; staged whitespace check.
+Runtime/test bytes were unchanged through the full gate run. Only documentation
+and this evidence record were edited while tests ran.
+
+Fresh hosted exact-head CI, included-allowance CodeRabbit review and independent
+corrective review request will be linked from PR #169 after this commit is pushed.
+Local self-verification does not assert independent review clearance.
+
+Hosted implementation-head validation:
+Runtime correction commit: 278e1ee9d40e06eaf893935bc6eaa08e2c3a1fd4
+https://github.com/Linardi1328/personal-project-operator/actions/runs/43738047863
+All seven hosted gates passed. Downloaded log confirms 5 witness + 88 canonical
+PostgreSQL tests passed, zero failures/skips. CodeRabbit's later full review at
+this head raised one minor documentation link issue: the 55-test command linked
+only to the earlier 53-test evidence. A follow-up documentation-only commit links
+both records with their distinct test counts. Runtime and test files are unchanged.
+Fresh hosted CI and renewed included-allowance review for the final documentation
+head will be recorded on PR #169. Independent corrective review remains pending.

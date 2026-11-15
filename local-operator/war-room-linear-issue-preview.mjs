@@ -146,14 +146,14 @@ export async function fetchWarRoomLinearIssuePreview(issueId, options = {}) {
     if (issue === null) fail("LINEAR_ISSUE_NOT_FOUND")
     if (!issue || typeof issue !== "object" || Array.isArray(issue) ||
         issue.identifier !== issueId || typeof issue.title !== "string" || !issue.title.trim() ||
-        (issue.description !== null && typeof issue.description !== "string") ||
+        (issue.description != null && typeof issue.description !== "string") ||
         (issue.state !== null && issue.state !== undefined &&
-          (typeof issue.state !== "object" || Array.isArray(issue.state) || typeof issue.state.name !== "string"))) {
+          (typeof issue.state !== "object" || Array.isArray(issue.state) || (issue.state.name != null && typeof issue.state.name !== "string")))) {
       fail("LINEAR_RESPONSE_INVALID")
     }
     const title = sanitizeWarRoomIssueText(issue.title, MAX_TITLE_CHARS)
-    const summary = issue.description === null || !issue.description.trim() ? "(no description)" : sanitizeWarRoomIssueText(issue.description, MAX_DESCRIPTION_CHARS)
-    const state = issue.state?.name ? sanitizeWarRoomIssueText(issue.state.name, MAX_STATUS_CHARS) : "unknown"
+    const summary = issue.description === undefined ? "(description unavailable)" : issue.description === null || !issue.description.trim() ? "(no description)" : sanitizeWarRoomIssueText(issue.description, MAX_DESCRIPTION_CHARS)
+    const state = (issue.state?.name ? sanitizeWarRoomIssueText(issue.state.name, MAX_STATUS_CHARS) : "") || "unknown"
     if (!title || !summary) fail("LINEAR_RESPONSE_INVALID")
     const url = safeLinearIssueUrl(issue.url, issueId)
     return Object.freeze({ identifier: issueId, title, state, summary, url })

@@ -1,3 +1,4 @@
+import {repositoryIdentityLabel,openItemCountLabel,pullRequestLines} from './github-reporting-format.mjs'
 import {
   GITHUB_READONLY_SOURCE,
   GitHubReadOnlyError,
@@ -21,14 +22,6 @@ function commitLine(commit) {
   return `- ${ref} ${message} (${author}, ${timestamp})`
 }
 
-function pullRequestLine(pullRequest) {
-  const draftLabel = pullRequest.draft ? "draft" : "ready"
-  const headRef = valueOrFallback(pullRequest.headRef)
-  const baseRef = valueOrFallback(pullRequest.baseRef)
-
-  return `- #${pullRequest.number} ${valueOrFallback(pullRequest.title)} [${headRef} -> ${baseRef}, ${draftLabel}] updated ${valueOrFallback(pullRequest.updatedAt)}`
-}
-
 export function formatGitHubPpoError(error) {
   if (error instanceof GitHubReadOnlyError) {
     return `PPO GitHub read-only error [${error.code}]: ${error.safeMessage}`
@@ -41,7 +34,7 @@ export function formatRepoSummary(project, repository, recentCommits) {
   const lines = [
     `Repo Summary: ${project.displayName}`,
     `Source: ${GITHUB_READONLY_SOURCE}`,
-    `Repo: ${repository.fullName || project.fullName}`,
+    `Repo: ${repositoryIdentityLabel(project, repository)}`,
     `Default branch: ${valueOrFallback(repository.defaultBranch)}`,
     `Visibility: ${valueOrFallback(repository.visibility)}`,
     `Description: ${repository.description || "none"}`,
@@ -63,13 +56,11 @@ export function formatPrSummary(project, repository, openPullRequests) {
   const lines = [
     `PR Summary: ${project.displayName}`,
     `Source: ${GITHUB_READONLY_SOURCE}`,
-    `Repo: ${repository.fullName || project.fullName}`,
-    `Open PRs: ${openPullRequests.length === 0 ? "none" : openPullRequests.length}`
+    `Repo: ${repositoryIdentityLabel(project, repository)}`,
+    `Open PRs: ${openItemCountLabel(openPullRequests, "pullRequests", PR_LIMIT)}`
   ]
 
-  if (openPullRequests.length > 0) {
-    lines.push(...openPullRequests.map(pullRequestLine))
-  }
+  lines.push(...pullRequestLines(openPullRequests))
 
   return lines.join("\n")
 }
@@ -94,7 +85,9 @@ export async function handleGitHubPpoCommand(command, projectId, options = {}) {
     if (command === "pr") {
       const [repository, openPullRequests] = await Promise.all([
         client.getRepoMetadata(project.id),
-        client.getOpenPullRequests(project.id, PR_LIMIT)
+        typeof client.getOpenPullRequestsPage === "function"
+          ? client.getOpenPullRequestsPage(project.id, PR_LIMIT)
+          : client.getOpenPullRequests(project.id, PR_LIMIT)
       ])
 
       return {

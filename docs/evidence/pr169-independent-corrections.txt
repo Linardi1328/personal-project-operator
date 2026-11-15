@@ -1,0 +1,206 @@
+PR #169 independent review correction — local evidence
+Reviewed head: d2899e242cb4dd0ac8f048610f6fdf49f40f926d
+Base/main: 998a640d34a7a973d5fc46be76ee1793f45d78c3
+Branch: codex/read-only-project-reporting
+
+Causal RED command (exit 1):
+node --test --test-name-pattern='P2-0' local-operator/github-reporting-corrections.test.mjs
+
+The new regression file used actual createGitHubReadOnlyClient instances with
+fake GET runners. Before correction, five runtime modules were restored byte
+for byte from the reviewed head using git show, then restored to corrected
+bytes in a Python finally block. No pre-normalized client substitutes were
+used for the P2 cases. The same test file and cases ran GREEN afterward.
+The report below includes controls for new provenance/completeness fields:
+not every failed assertion represents a distinct malformed-row defect.
+
+✖ P2-01 provider identity missing is configured, while independent metadata remains available (2.2835ms)
+✖ P2-01 provider identity null is configured, while independent metadata remains available (0.336792ms)
+✖ P2-01 confirmed identities remain confirmed and mismatches still reject (0.184458ms)
+✖ P2-02 actual PR provider normalization: null (0.251792ms)
+✖ P2-02 actual PR provider normalization: primitives (0.241375ms)
+✖ P2-02 actual PR provider normalization: mixed (0.20325ms)
+✔ P2-02 actual PR provider normalization: incomplete object (0.177375ms)
+✔ P2-02 actual PR provider normalization: empty (0.154958ms)
+✖ P2-02 actual issue provider normalization: entirely invalid (0.341791ms)
+✖ P2-02 actual issue provider normalization: mixed unsaturated (0.706333ms)
+✖ P2-02 actual issue provider normalization: saturated mixed (0.215709ms)
+✖ P2-02 actual issue provider normalization: confirmed empty (0.172458ms)
+✖ P2-02 legacy array/snapshot consumers cannot silently lose malformed-row completeness (0.110917ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 2
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 49.75875
+
+✖ P2-01 provider identity missing is configured, while independent metadata remains available (2.2835ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Repo: Linardi1328\/khlim-assist \(configured; identity unavailable\)/. Input:
+
+  'KHLIM Assist\n' +
+    '- Repo: Linardi1328/khlim-assist\n' +
+    '- Default: main\n' +
+    '- Latest: aaaaaaa Independent commit\n' +
+    '- Open PRs: none\n' +
+    '- Open issues: none\n' +
+    '- Updated: 2026-11-15T00:00:00Z'
+
+
+
+✖ P2-02 actual PR provider normalization: null (0.251792ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unavailable.*incomplete/. Input:
+
+  'KHLIM Assist\n' +
+    '- Repo: Linardi1328/khlim-assist\n' +
+    '- Default: main\n' +
+    '- Latest: aaaaaaa Independent commit\n' +
+    '- Open PRs: 1\n' +
+    '- Open issues: none\n' +
+    '- Updated: 2026-11-15T00:00:00Z'
+
+
+Corrected focused command (exit 0):
+node --test local-operator/github-reporting-corrections.test.mjs local-operator/read-only-reporting-regression.test.mjs local-operator/github-readonly.test.mjs local-operator/github-ppo-status.test.mjs local-operator/github-ppo-commands.test.mjs local-operator/codex-prompt-generator.test.mjs local-operator/war-room-linear-issue-preview.test.mjs local-operator/war-room-linear-issue-preview-integration.test.mjs
+
+Codex prompt generator tests passed: deterministic text prompts, safe inputs, size estimates, and terminal-only boundaries.
+✔ local-operator/codex-prompt-generator.test.mjs (60.667333ms)
+GitHub PPO command tests passed: repo/pr formatting, safe errors, allowlist rejection, and no write handlers.
+✔ local-operator/github-ppo-commands.test.mjs (54.362292ms)
+GitHub PPO status tests passed: live status formatting, bounded reads, failure isolation, and safe errors.
+✔ local-operator/github-ppo-status.test.mjs (45.640209ms)
+GitHub read-only tests passed: allowlist, GET-only transport, normalization, errors, and safety boundaries.
+✔ local-operator/github-readonly.test.mjs (60.959875ms)
+✔ P2-01 provider identity missing is configured, while independent metadata remains available (4.858ms)
+✔ P2-01 provider identity null is configured, while independent metadata remains available (0.380542ms)
+✔ P2-01 confirmed identities remain confirmed and mismatches still reject (0.258292ms)
+✔ P2-02 actual PR provider normalization: null (0.268584ms)
+✔ P2-02 actual PR provider normalization: primitives (0.228167ms)
+✔ P2-02 actual PR provider normalization: mixed (0.356ms)
+✔ P2-02 actual PR provider normalization: incomplete object (0.175459ms)
+✔ P2-02 actual PR provider normalization: empty (0.301917ms)
+✔ P2-02 actual issue provider normalization: entirely invalid (0.30675ms)
+✔ P2-02 actual issue provider normalization: mixed unsaturated (0.766ms)
+✔ P2-02 actual issue provider normalization: saturated mixed (0.200416ms)
+✔ P2-02 actual issue provider normalization: confirmed empty (0.15675ms)
+✔ P2-02 legacy array/snapshot consumers cannot silently lose malformed-row completeness (0.188417ms)
+✔ P3-01 real CLI shares deterministic PR lines, including absent number and confirmed non-draft (857.181375ms)
+✔ page-aware prompt reporting preserves partial counts and configured identity (1.04325ms)
+✔ page APIs retain valid incomplete records and raw saturation before filtering (0.071ms)
+✔ CLI keeps malformed pages unavailable and distinguishes missing provider identity (902.95025ms)
+✔ one unavailable GitHub source preserves independent project facts and registry ordering (2.398125ms)
+✔ metadata failure preserves list observations and identifies the configured repo (1.470959ms)
+✔ unavailable or malformed reporting lists are distinct from confirmed empty results (0.208584ms)
+✔ all-source failure reports safe unavailability without inventing zero counts (0.755167ms)
+✔ PR reporting preserves unknown draft metadata and bounds counts without implying readiness (0.648708ms)
+✔ PR presentation uses deterministic issue-number order without mutating the supplied rows (0.231375ms)
+✔ Linear previews retain confirmed task states and label missing or blank state metadata unknown (1.579833ms)
+✔ partial failures still perform each existing bounded read once per project (0.282292ms)
+✔ PR ordering stays deterministic for incomplete metadata and display ties (0.070167ms)
+✔ malformed Linear status values remain unavailable rather than becoming a confirmed task state (0.273542ms)
+✔ P3-02 independent report facts survive failures: getRepoMetadata (0.2545ms)
+✔ P3-02 independent report facts survive failures: getRecentCommits (0.136875ms)
+✔ P3-02 independent report facts survive failures: getOpenPullRequests (0.147209ms)
+✔ P3-02 independent report facts survive failures: getOpenIssuesPage (0.1055ms)
+✔ P3-02 independent report facts survive failures: getRepoMetadata, getRecentCommits (0.161666ms)
+✔ P3-02 independent report facts survive failures: getOpenPullRequests, getOpenIssuesPage (0.132292ms)
+✔ P3-02 independent report facts survive failures: getRepoMetadata, getOpenPullRequests, getOpenIssuesPage (0.238125ms)
+✔ P3-02 independent report facts survive failures: getRecentCommits, getOpenPullRequests, getOpenIssuesPage (0.179292ms)
+✔ the OpenClaw bridge accepts only one canonical RBL Linear issue identifier (0.903083ms)
+✔ the OpenClaw tool forwards a read-only issue route without execution arguments (0.211375ms)
+✔ the terminal command refuses to call Linear when dedicated credential is absent (52.746958ms)
+✔ the terminal command rejects input that adds scope, shell syntax or other commands (207.430708ms)
+✔ strict phone/CLI parsing accepts one RIC identifier only (0.989292ms)
+✔ valid read-only query sends fixed endpoint, bounded GraphQL variables and no mutations (0.786ms)
+✔ missing dedicated read-only credential never contacts provider (0.108333ms)
+✔ invalid identifiers fail before credential or network handling (0.090125ms)
+✔ provider errors, partial GraphQL errors, auth and rate limits fail closed with safe codes (0.27225ms)
+✔ wrong issue identity and untrusted external source URL are rejected (0.358875ms)
+✔ provider-controlled content is bounded, removes controls and redacts token forms (0.113375ms)
+✔ oversized announced and streamed responses cannot allocate unbounded data (1.488334ms)
+✔ malformed JSON and wrong root object never produce authority-bearing preview (0.206584ms)
+✔ null/empty Linear description renders a safe readable preview (0.123209ms)
+ℹ tests 53
+ℹ suites 0
+ℹ pass 53
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1838.198667
+
+P3 evidence:
+- Actual CLI child processes use a fake gh executable and the actual GET
+  runner/client. Shuffled PR inputs produce identical terminal output and
+  exactly the same PR lines as the phone formatter. Missing numbers,
+  confirmed non-draft, unknown draft state, malformed PR/issue lists and
+  missing provider identity are asserted on the rendered output.
+- Eight report scenarios cover each of four independent source failures,
+  two pairs and two triples. All surviving/unavailable fields and safe errors
+  are asserted. Every project must exist before its ordering is checked.
+- Prompt generation uses actual provider normalization and preserves partial
+  list counts and configured identity.
+
+Actual disposable PostgreSQL commands (both exit 0):
+docker run -d --network none --name ppo-authority-ci-20261115-169 -e POSTGRES_DB=ppo_authority_ci -e POSTGRES_PASSWORD=disposable-ci-only-not-a-secret postgres:16
+CI=true PPO_AUTHORITY_TEST_CONTAINER=ppo-authority-ci-20261115-169 TMPDIR=/private/tmp node --test deployment/authority/phase2c-external-incarnation.integration.mjs
+CI=true PPO_AUTHORITY_TEST_CONTAINER=ppo-authority-ci-20261115-169 TMPDIR=/private/tmp node --test deployment/authority/phase1gb2-canonical-postgres.integration.mjs
+The owned network-disabled container was removed after completion.
+
+postgres-witness.txt
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32835.287834
+
+postgres-canonical.txt
+ℹ tests 88
+ℹ suites 0
+ℹ pass 88
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 376472.578542
+
+Compatibility and limits:
+Configured fullName aliases remain available; identityConfirmed distinguishes
+provider confirmation. Valid legacy array contracts are unchanged. Malformed
+rows now raise MALFORMED_GITHUB_RESPONSE in array/snapshot APIs, because those
+callers cannot safely accept a filtered complete-looking result. Page APIs
+retain valid rows, invalidRowCount, rawReturnedCount and limitHit. Snapshots add
+the page envelopes; the updated status/repo/PR/CLI/text-prompt reports use completeness-aware labels.
+Planning/readiness consumers were inspected and remain unchanged. Their existing
+compatibility-name comparisons are not a new provider-provenance guarantee;
+consumers that need that guarantee must check identityConfirmed. The original
+repo identity validation, endpoints, credentials and GET bounds are unchanged.
+An object with incomplete fields is a record with unknown metadata; null,
+primitive and array rows are invalid. Counts remain bounded observations, not
+an exhaustive cross-provider task inventory. Live Linear was not tested.
+RIC-177 stays on hold. No merge or policy/authority/dispatch/retirement changes.
+
+Tested runtime SHA-256:
+e72c2293f438522ee4025673a4cf14691befac663a4cfe3d5f1d93f3dfc9c16b  local-operator/github-readonly.mjs
+8687558e68ab05e543fc19286e6177e4045a33beab5d144b28be0fe907baa62e  local-operator/github-reporting-format.mjs
+dd5f5c0c4f5db37d4435084e292ca7159d3b9b22e52388f320d69da5d5f20b08  local-operator/github-ppo-status.mjs
+008f341859b388820b4d3d63c35d3ecb64f8319bfdcbc6c90ab3a3f7ab814291  local-operator/github-ppo-commands.mjs
+f3d2f1d352ff34faf549706c03916d4122e7476eaa8c1828bf99d62fb789da18  local-operator/github-readonly-cli.mjs
+17a4feec5c86a1bdab7a5785d5fcca91b394f85ea1d63ecdaa166bd466b8a292  local-operator/codex-prompt-generator.mjs
+
+All seven local quality gates completed successfully (exit 0):
+1. node deployment/scripts/run-ppo-development-quality.mjs syntax
+2. Actual PostgreSQL commands above: 5 + 88 = 93 passed; no failures/skips.
+3. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs parallel-regression
+4. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs serial-regression
+5. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs critical-lifecycle
+6. TMPDIR=/private/tmp node deployment/scripts/run-ppo-development-quality.mjs integrated-acceptance
+7. git diff --check; git diff --check origin/main...HEAD; staged whitespace check.
+
+Hosted exact-head CI, renewed CodeRabbit and separate independent corrective
+review evidence will be recorded in PR #169. These local results do not assert
+independent review clearance. PR remains open and must not be merged here.
