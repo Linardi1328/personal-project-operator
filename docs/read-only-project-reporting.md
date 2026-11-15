@@ -119,7 +119,9 @@ Corrective focused command (55 tests):
 node --test local-operator/github-reporting-corrections.test.mjs local-operator/read-only-reporting-regression.test.mjs local-operator/github-readonly.test.mjs local-operator/github-ppo-status.test.mjs local-operator/github-ppo-commands.test.mjs local-operator/codex-prompt-generator.test.mjs local-operator/war-room-linear-issue-preview.test.mjs local-operator/war-room-linear-issue-preview-integration.test.mjs
 ```
 
-[Corrective validation evidence](evidence/pr169-independent-corrections.txt) records
-causal RED/GREEN at the reviewed head and actual final validation. Fresh hosted CI
-and independent exact-head review remain separate from implementation self-checks.
+[Snapshot correction evidence](evidence/pr169-snapshot-correction.txt) records
+the P2-03 CLI RED/GREEN and the 55-test validation above.
+[Earlier correction evidence](evidence/pr169-independent-corrections.txt) records
+the preceding P2/P3 corrections and their 53-test run. Fresh hosted CI and
+independent exact-head review remain separate from implementation self-checks.
 The PR stays open; no merge or authority-gateway work is authorized by these changes.
