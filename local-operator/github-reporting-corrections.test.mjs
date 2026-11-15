@@ -85,11 +85,12 @@ async function cli(t,command,records){
  const gh=join(dir,'gh')
  await writeFile(gh,`#!/usr/bin/env node
 if(process.argv[2]!=='api'||process.argv[3]!=='--method'||process.argv[4]!=='GET')process.exit(2)
-const path=process.argv[5],data=JSON.parse(process.env.PPO_REPORT_TEST_DATA)
-console.log(JSON.stringify((path.includes('/pulls')||path.includes('/issues'))?data: {default_branch:'main'}))
+const path=process.argv[5].split('?')[0],data=JSON.parse(process.env.PPO_REPORT_TEST_DATA)
+const kind=path.endsWith('/pulls')?'prs':path.endsWith('/issues')?'issues':path.endsWith('/commits')?'commits':'repository'
+console.log(JSON.stringify(Array.isArray(data)?((kind==='prs'||kind==='issues')?data:{default_branch:'main'}):data[kind]))
 `);await chmod(gh,0o700)
  const r=spawnSync(process.execPath,['local-operator/github-readonly-cli.mjs',command,project.id],{cwd:new URL('..',import.meta.url),env:{...process.env,PATH:dir+':'+process.env.PATH,PPO_REPORT_TEST_DATA:JSON.stringify(records)},encoding:'utf8',timeout:10000})
- assert.equal(r.status,0,r.stderr);return r.stdout
+ assert.equal(r.status,0,JSON.stringify({stdout:r.stdout,stderr:r.stderr}));return r.stdout
 }
 test('P3-01 real CLI shares deterministic PR lines, including absent number and confirmed non-draft',async t=>{
  const records=[{number:9,title:'Nine',draft:true},{title:'Unknown'},{number:2,title:'Two',draft:false}]
@@ -122,4 +123,47 @@ test('CLI keeps malformed pages unavailable and distinguishes missing provider i
  const output=await cli(t,'prs',[null,42]);assert.match(output,/Open PRs: unavailable.*incomplete/);assert.doesNotMatch(output,/none open|#null/)
  const repo=await cli(t,'repo',[]);assert.match(repo,/configured; identity unavailable/);assert.match(repo,/Default: main/)
  const issues=await cli(t,'issues',[{number:7},{},null]);assert.match(issues,/Open issues: 2\+.*incomplete/);assert.match(issues,/#7/);assert.match(issues,/number unavailable/);assert.doesNotMatch(issues,/#null/)
+})
+
+function snapshotFixture(){
+ return {
+  repository:{default_branch:'main',updated_at:'2026-11-16T00:00:00Z'},
+  commits:[{sha:'a'.repeat(40),commit:{message:'Independent snapshot commit',author:{name:'Test author',date:'2026-11-16T00:00:00Z'}}}],
+  prs:[{number:7,title:'Valid snapshot PR',draft:false},null],
+  issues:[{number:8,title:'Valid snapshot issue',state:'open'},null,{number:9,pull_request:{}},42,{}]
+ }
+}
+
+test('P2-03 actual CLI snapshot retains independent observations from malformed pages',async t=>{
+ const output=await cli(t,'snapshot',snapshotFixture())
+ assert.match(output,/Repo: Linardi1328\/khlim-assist \(configured; identity unavailable\)/)
+ assert.match(output,/Default: main/)
+ assert.match(output,/Updated: 2026-11-16T00:00:00Z/)
+ assert.match(output,/- aaaaaaa Independent snapshot commit \(Test author, 2026-11-16T00:00:00Z\)/)
+ assert.match(output,/#7 Valid snapshot PR.*not draft/)
+ assert.match(output,/#8 Valid snapshot issue \(open,/)
+ assert.match(output,/number unavailable n\/a/)
+ assert.match(output,/Open PRs: 1\+ \(incomplete; 1 invalid row\)/)
+ assert.match(output,/Open issues: 2\+ \(incomplete; 2 invalid rows; page limit hit\)/)
+ assert.doesNotMatch(output,/#null|#undefined|MALFORMED_GITHUB_RESPONSE/)
+})
+
+test('P2-03 actual CLI complete snapshots retain compatible metadata, counts and ordering',async t=>{
+ const data=snapshotFixture()
+ data.repository.full_name=project.fullName
+ data.prs=[{number:9,title:'Nine',draft:true},{number:7,title:'Seven',draft:false}]
+ data.issues=[{number:8,title:'Eight',state:'open'}]
+ const output=await cli(t,'snapshot',data)
+ assert.match(output,/Project: KHLIM Assist \(khlim-assist\)/)
+ assert.match(output,/Source: GitHub read-only/)
+ assert.match(output,/Retrieved: \d{4}-\d{2}-\d{2}T/)
+ assert.match(output,/Repo: Linardi1328\/khlim-assist\n/)
+ assert.match(output,/Default: main/);assert.match(output,/Updated: 2026-11-16T00:00:00Z/)
+ assert.match(output,/aaaaaaa Independent snapshot commit/)
+ assert.match(output,/Open PRs: 2\n/);assert.match(output,/Open issues: 1\n/)
+ assert.ok(output.indexOf('#7 Seven')<output.indexOf('#9 Nine'))
+ assert.match(output,/#8 Eight/);assert.doesNotMatch(output,/incomplete|identity unavailable/)
+ data.prs.reverse()
+ const shuffled=await cli(t,'snapshot',data)
+ assert.equal(output.replace(/^Retrieved:.*$/m,''),shuffled.replace(/^Retrieved:.*$/m,''))
 })

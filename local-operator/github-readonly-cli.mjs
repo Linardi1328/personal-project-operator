@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   GitHubReadOnlyError,
+  GITHUB_READONLY_SOURCE,
   createGitHubReadOnlyClient,
   listAllowedProjects
 } from "./github-readonly.mjs"
@@ -120,7 +121,23 @@ async function main() {
     return
   }
 
-  printSnapshot(await client.getProjectSnapshot(projectId))
+  // Terminal reports retain partial pages; legacy snapshot consumers stay strict.
+  const project = client.resolveProject(projectId)
+  const [repository, recentCommits, openPullRequestsPage, openIssuesPage] = await Promise.all([
+    client.getRepoMetadata(project.id),
+    client.getRecentCommits(project.id),
+    client.getOpenPullRequestsPage(project.id),
+    client.getOpenIssuesPage(project.id)
+  ])
+  printSnapshot({
+    project,
+    repository,
+    recentCommits,
+    openPullRequestsPage,
+    openIssuesPage,
+    retrievedAt: new Date().toISOString(),
+    source: GITHUB_READONLY_SOURCE
+  })
 }
 
 main().catch((error) => {

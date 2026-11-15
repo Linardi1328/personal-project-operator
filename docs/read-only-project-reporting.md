@@ -101,6 +101,10 @@ metadata must not receive a silently filtered, complete-looking array. Snapshots
 also include the two page envelopes for bounded-result provenance. Existing
 planning/readiness consumers were inspected and remain unchanged; they use the
 legacy compatibility fields and valid arrays, and fail safely on malformed lists.
+The terminal `snapshot` command instead assembles its display from the existing
+repository, commit and completeness-aware page methods, retaining valid observations
+when individual PR/issue rows are malformed. It uses the same four bounded GETs;
+`getProjectSnapshot` and all other legacy consumers stay strict.
 
 Small shared display helpers keep terminal and phone PR lines, ordering, counts
 and identity provenance consistent. No second reporting system or provider endpoint
@@ -109,7 +113,7 @@ empty results, incomplete records, all four independent source failures, pairs a
 triples of failures, CLI ordering and unknown fields are covered by the corrective
 tests. Project-order tests verify presence before ordering.
 
-Corrective focused command (53 tests):
+Corrective focused command (55 tests):
 
 ```sh
 node --test local-operator/github-reporting-corrections.test.mjs local-operator/read-only-reporting-regression.test.mjs local-operator/github-readonly.test.mjs local-operator/github-ppo-status.test.mjs local-operator/github-ppo-commands.test.mjs local-operator/codex-prompt-generator.test.mjs local-operator/war-room-linear-issue-preview.test.mjs local-operator/war-room-linear-issue-preview-integration.test.mjs
