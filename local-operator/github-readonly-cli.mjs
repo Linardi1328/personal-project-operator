@@ -62,7 +62,7 @@ function printPullRequests(pullRequests) {
   }
 
   for (const pullRequest of pullRequests) {
-    const draftLabel = pullRequest.draft ? " draft" : ""
+    const draftLabel = pullRequest.draft === true ? " draft" : pullRequest.draft === false ? "" : " draft status unavailable"
     console.log(`- #${pullRequest.number} ${formatValue(pullRequest.title)} [${formatValue(pullRequest.headRef)} -> ${formatValue(pullRequest.baseRef)}${draftLabel}] updated ${formatValue(pullRequest.updatedAt)}`)
   }
 }

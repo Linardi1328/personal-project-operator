@@ -462,7 +462,7 @@ export function normalizePullRequest(payload) {
     title: sanitizedStringOrNull(payload?.title),
     headRef: sanitizedStringOrNull(payload?.head?.ref),
     baseRef: sanitizedStringOrNull(payload?.base?.ref),
-    draft: Boolean(payload?.draft),
+    draft: typeof payload?.draft === "boolean" ? payload.draft : null,
     updatedAt: sanitizedStringOrNull(payload?.updated_at),
     url: sanitizedStringOrNull(payload?.html_url)
   }

@@ -22,11 +22,12 @@ function commitLine(commit) {
 }
 
 function pullRequestLine(pullRequest) {
-  const draftLabel = pullRequest.draft ? "draft" : "ready"
+  const draftLabel = pullRequest.draft === true ? "draft" : pullRequest.draft === false ? "not draft" : "draft status unavailable"
   const headRef = valueOrFallback(pullRequest.headRef)
   const baseRef = valueOrFallback(pullRequest.baseRef)
 
-  return `- #${pullRequest.number} ${valueOrFallback(pullRequest.title)} [${headRef} -> ${baseRef}, ${draftLabel}] updated ${valueOrFallback(pullRequest.updatedAt)}`
+  const number = Number.isSafeInteger(pullRequest.number) && pullRequest.number > 0 ? `#${pullRequest.number}` : "number unavailable"
+  return `- ${number} ${valueOrFallback(pullRequest.title)} [${headRef} -> ${baseRef}, ${draftLabel}] updated ${valueOrFallback(pullRequest.updatedAt)}`
 }
 
 export function formatGitHubPpoError(error) {
@@ -64,11 +65,18 @@ export function formatPrSummary(project, repository, openPullRequests) {
     `PR Summary: ${project.displayName}`,
     `Source: ${GITHUB_READONLY_SOURCE}`,
     `Repo: ${repository.fullName || project.fullName}`,
-    `Open PRs: ${openPullRequests.length === 0 ? "none" : openPullRequests.length}`
+    `Open PRs: ${openPullRequests.length === 0 ? "none" : openPullRequests.length >= PR_LIMIT ? `${openPullRequests.length}+` : openPullRequests.length}`
   ]
 
   if (openPullRequests.length > 0) {
-    lines.push(...openPullRequests.map(pullRequestLine))
+    const ordered = [...openPullRequests].sort((left, right) => {
+      const number = pr => Number.isSafeInteger(pr.number) && pr.number > 0 ? pr.number : Infinity
+      const byNumber = number(left) - number(right)
+      if (byNumber) return byNumber
+      const a = pullRequestLine(left), b = pullRequestLine(right)
+      return a < b ? -1 : a > b ? 1 : 0
+    })
+    lines.push(...ordered.map(pullRequestLine))
   }
 
   return lines.join("\n")

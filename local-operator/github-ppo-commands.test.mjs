@@ -126,7 +126,7 @@ function makeClient(overrides = {}) {
   assert.match(result.output, /Repo: Linardi1328\/khlim-assist/)
   assert.match(result.output, /Open PRs: 2/)
   assert.match(result.output, /- #7 Prepare read-only state \[feature\/read-state -> main, draft\] updated 2026-08-16T14:00:00Z/)
-  assert.match(result.output, /- #8 Polish formatter \[formatter-polish -> main, ready\] updated 2026-08-16T15:00:00Z/)
+  assert.match(result.output, /- #8 Polish formatter \[formatter-polish -> main, not draft\] updated 2026-08-16T15:00:00Z/)
   assert.deepEqual(client.calls, [
     ["getRepoMetadata", "khlim-assist"],
     ["getOpenPullRequests", "khlim-assist", 5]
