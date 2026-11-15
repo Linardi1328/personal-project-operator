@@ -25,7 +25,7 @@ test('one unavailable GitHub source preserves independent project facts and regi
  assert.match(first,/- Open PRs: unavailable/)
  assert.match(first,/- Open issues: none/)
  assert.doesNotMatch(output,/SENSITIVE_TEST_SENTINEL/)
- const order=listAllowedProjects().map(p=>output.indexOf(p.displayName));assert.deepEqual(order,[...order].sort((a,b)=>a-b))
+ const order=listAllowedProjects().map(p=>output.indexOf(p.displayName));assert.ok(order.every(position=>position>=0),'every configured project is present');assert.deepEqual(order,[...order].sort((a,b)=>a-b))
 })
 
 test('metadata failure preserves list observations and identifies the configured repo',async()=>{
@@ -100,4 +100,25 @@ test('PR ordering stays deterministic for incomplete metadata and display ties',
 
 test('malformed Linear status values remain unavailable rather than becoming a confirmed task state',async()=>{
  for(const state of [true,[],{name:12}])await assert.rejects(preview({state}),e=>e.code==='LINEAR_RESPONSE_INVALID')
+})
+
+for(const failed of [
+ ['getRepoMetadata'],['getRecentCommits'],['getOpenPullRequests'],['getOpenIssuesPage'],
+ ['getRepoMetadata','getRecentCommits'],['getOpenPullRequests','getOpenIssuesPage'],
+ ['getRepoMetadata','getOpenPullRequests','getOpenIssuesPage'],
+ ['getRecentCommits','getOpenPullRequests','getOpenIssuesPage']
+])test('P3-02 independent report facts survive failures: '+failed.join(', '),async()=>{
+ const overrides=Object.fromEntries(failed.map(key=>[key,async()=>{throw Error('SENSITIVE_TEST_SENTINEL')}]))
+ const {output}=await handleGitHubPpoStatus({client:client(overrides)}),report=firstProject(output)
+ const missing=key=>failed.includes(key)
+ assert.match(report,missing('getRepoMetadata')?/Repo: .*\(configured; metadata unavailable\)/:/Repo: Linardi1328\/khlim-assist(?:\n|$)/)
+ assert.match(report,missing('getRepoMetadata')?/- Default: unavailable/ : /- Default: main/)
+ assert.match(report,missing('getRepoMetadata')?/- Updated: unavailable/ : /- Updated: 2026-11-15T00:00:00Z/)
+ assert.match(report,missing('getRecentCommits')?/- Latest: unavailable/ : /- Latest: abcdef1 Known update/)
+ assert.match(report,missing('getOpenPullRequests')?/- Open PRs: unavailable/ : /- Open PRs: none/)
+ assert.match(report,missing('getOpenIssuesPage')?/- Open issues: unavailable/ : /- Open issues: none/)
+ assert.doesNotMatch(output,/SENSITIVE_TEST_SENTINEL/)
+ const positions=listAllowedProjects().map(p=>output.indexOf(p.displayName))
+ assert.ok(positions.every(position=>position>=0),'every configured project is present')
+ assert.deepEqual(positions,[...positions].sort((a,b)=>a-b))
 })

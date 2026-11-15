@@ -201,6 +201,7 @@ for (const input of rejectedProjectInputs) {
 
   assert.deepEqual(metadata, {
     fullName: "Linardi1328/khlim-assist",
+    identityConfirmed: true,
     defaultBranch: "main",
     visibility: "private",
     private: true,

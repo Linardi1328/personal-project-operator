@@ -1,3 +1,4 @@
+import {repositoryIdentityLabel,openItemCountLabel} from './github-reporting-format.mjs'
 import { readFile } from "node:fs/promises"
 import {
   GITHUB_READONLY_SOURCE,
@@ -159,31 +160,6 @@ export function extractProjectDocContext(markdown) {
   return bullets.length > 0 ? bullets.slice(0, 7) : fallbackDocExcerpt(markdown)
 }
 
-function countLabel(items, limit) {
-  if (items.length === 0) {
-    return "none"
-  }
-
-  if (items.length >= limit) {
-    return `${limit}+`
-  }
-
-  return String(items.length)
-}
-
-function issueCountLabel(openIssuesPage) {
-  const issues = Array.isArray(openIssuesPage)
-    ? openIssuesPage
-    : openIssuesPage?.issues || []
-  const limitHit = !Array.isArray(openIssuesPage) && Boolean(openIssuesPage?.limitHit)
-
-  if (limitHit) {
-    return issues.length === 0 ? "unknown (page limit hit)" : `${issues.length}+`
-  }
-
-  return countLabel(issues, PROMPT_ISSUE_LIMIT)
-}
-
 function latestCommitLabel(recentCommits) {
   const latestCommit = recentCommits[0]
 
@@ -201,11 +177,11 @@ function liveRepoContextLines(project, liveContext) {
   const repository = liveContext.repository || {}
 
   return [
-    `Repo: ${clipText(repository.fullName || project.fullName)}`,
+    `Repo: ${clipText(repositoryIdentityLabel(project, repository))}`,
     `Default branch: ${clipText(valueOrFallback(repository.defaultBranch))}`,
     `Latest commit: ${latestCommitLabel(liveContext.recentCommits || [])}`,
-    `Open PRs: ${countLabel(liveContext.openPullRequests || [], PROMPT_PR_LIMIT)}`,
-    `Open issues: ${issueCountLabel(liveContext.openIssuesPage)}`,
+    `Open PRs: ${openItemCountLabel(liveContext.openPullRequests, "pullRequests", PROMPT_PR_LIMIT)}`,
+    `Open issues: ${openItemCountLabel(liveContext.openIssuesPage, "issues", PROMPT_ISSUE_LIMIT)}`,
     `Updated: ${clipText(valueOrFallback(repository.updatedAt))}`
   ]
 }
@@ -320,7 +296,9 @@ async function readLiveRepoContext(client, project) {
   const [repository, recentCommits, openPullRequests, openIssuesPage] = await Promise.all([
     client.getRepoMetadata(project.id),
     client.getRecentCommits(project.id, PROMPT_COMMIT_LIMIT),
-    client.getOpenPullRequests(project.id, PROMPT_PR_LIMIT),
+    typeof client.getOpenPullRequestsPage === "function"
+      ? client.getOpenPullRequestsPage(project.id, PROMPT_PR_LIMIT)
+      : client.getOpenPullRequests(project.id, PROMPT_PR_LIMIT),
     client.getOpenIssuesPage(project.id, PROMPT_ISSUE_LIMIT)
   ])
 

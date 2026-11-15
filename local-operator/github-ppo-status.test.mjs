@@ -164,6 +164,7 @@ function makeClient(config = {}) {
   assert.match(result.output, /^Project Status\nSource: GitHub read-only/)
 
   const projectNameOrder = allowedProjects.map((project) => result.output.indexOf(project.displayName))
+  assert.ok(projectNameOrder.every(position => position >= 0), "every configured project appears")
   assert.deepEqual(
     projectNameOrder,
     [...projectNameOrder].sort((left, right) => left - right),

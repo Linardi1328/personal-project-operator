@@ -1,3 +1,4 @@
+import {repositoryIdentityLabel,openItemCountLabel} from './github-reporting-format.mjs'
 import {
   GITHUB_READONLY_SOURCE,
   GitHubReadOnlyError,
@@ -10,38 +11,6 @@ const unexpectedStatusFailure = "unexpected local failure."
 
 function valueOrFallback(value) {
   return typeof value === "string" && value.trim() ? value : "unavailable"
-}
-
-function countLabel(items) {
-  if (!Array.isArray(items)) return "unavailable"
-  if (items.length === 0) {
-    return "none"
-  }
-
-  if (items.length >= STATUS_READ_LIMIT) {
-    return `${STATUS_READ_LIMIT}+`
-  }
-
-  return String(items.length)
-}
-
-function issueCountLabel(openIssuesPage) {
-  if (!Array.isArray(openIssuesPage) && (!openIssuesPage ||
-      !Array.isArray(openIssuesPage.issues) || typeof openIssuesPage.limitHit !== "boolean")) {
-    return "unavailable"
-  }
-  const issues = Array.isArray(openIssuesPage) ? openIssuesPage : openIssuesPage.issues
-  const limitHit = !Array.isArray(openIssuesPage) && openIssuesPage.limitHit
-
-  if (limitHit) {
-    if (issues.length === 0) {
-      return "unknown (page limit hit)"
-    }
-
-    return `${issues.length}+`
-  }
-
-  return countLabel(issues)
 }
 
 function latestCommitLabel(recentCommits) {
@@ -71,11 +40,11 @@ export function formatProjectStatus(project, repository, recentCommits, openPull
   const report = (label, value) => failures[label] ? `unavailable (${safeStatusMessage(failures[label])})` : value
   return [
     project.displayName,
-    `- Repo: ${repository?.fullName || `${project.fullName} (configured; metadata unavailable)`}`,
+    `- Repo: ${repositoryIdentityLabel(project, repository)}`,
     `- Default: ${report("repository", valueOrFallback(repository?.defaultBranch))}`,
     `- Latest: ${report("commits", latestCommitLabel(recentCommits))}`,
-    `- Open PRs: ${report("pullRequests", countLabel(openPullRequests))}`,
-    `- Open issues: ${report("issues", issueCountLabel(openIssuesPage))}`,
+    `- Open PRs: ${report("pullRequests", openItemCountLabel(openPullRequests, "pullRequests", STATUS_READ_LIMIT))}`,
+    `- Open issues: ${report("issues", openItemCountLabel(openIssuesPage, "issues", STATUS_READ_LIMIT))}`,
     `- Updated: ${report("repository", valueOrFallback(repository?.updatedAt))}`
   ].join("\n")
 }
@@ -94,7 +63,7 @@ async function readProjectStatus(client, project) {
   for (const [key, method, args] of [
     ["repository", "getRepoMetadata", [project.id]],
     ["commits", "getRecentCommits", [project.id, STATUS_READ_LIMIT]],
-    ["pullRequests", "getOpenPullRequests", [project.id, STATUS_READ_LIMIT]],
+    ["pullRequests", typeof client.getOpenPullRequestsPage === "function" ? "getOpenPullRequestsPage" : "getOpenPullRequests", [project.id, STATUS_READ_LIMIT]],
     ["issues", "getOpenIssuesPage", [project.id, STATUS_READ_LIMIT]]
   ]) {
     try { values[key] = await client[method](...args) }

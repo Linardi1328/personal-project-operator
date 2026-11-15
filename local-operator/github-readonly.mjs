@@ -385,6 +385,17 @@ function ensureArray(payload, endpoint) {
   return payload
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function requireValidRows(page) {
+  if (page.invalidRowCount > 0) {
+    throw new GitHubReadOnlyError("MALFORMED_GITHUB_RESPONSE",
+      "GitHub returned structurally invalid list rows; a complete list is unavailable.")
+  }
+}
+
 function ensureObject(payload, endpoint) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new GitHubReadOnlyError(
@@ -432,6 +443,7 @@ export function normalizeRepoMetadata(payload, project) {
 
   return {
     fullName: sanitizedStringOrNull(payload?.full_name) || project.fullName,
+    identityConfirmed: payload?.full_name === project.fullName,
     defaultBranch: sanitizedStringOrNull(payload?.default_branch),
     visibility: sanitizedStringOrNull(payload?.visibility) || (privateState === null ? null : privateState ? "private" : "public"),
     private: privateState,
@@ -457,6 +469,7 @@ export function normalizeCommit(payload) {
 }
 
 export function normalizePullRequest(payload) {
+  if (!isRecord(payload)) throw new GitHubReadOnlyError("MALFORMED_GITHUB_RESPONSE", "GitHub returned a structurally invalid pull request row.")
   return {
     number: typeof payload?.number === "number" ? payload.number : null,
     title: sanitizedStringOrNull(payload?.title),
@@ -469,6 +482,7 @@ export function normalizePullRequest(payload) {
 }
 
 export function normalizeIssue(payload) {
+  if (!isRecord(payload)) throw new GitHubReadOnlyError("MALFORMED_GITHUB_RESPONSE", "GitHub returned a structurally invalid issue row.")
   const labels = Array.isArray(payload?.labels)
     ? payload.labels
       .map((label) => (typeof label === "string" ? sanitizedStringOrNull(label) : sanitizedStringOrNull(label?.name)))
@@ -512,17 +526,30 @@ function createFixedGitHubReadOnlyClient({
     },
 
     async getOpenPullRequests(projectId, limit = DEFAULT_ITEM_LIMIT) {
+      const page = await this.getOpenPullRequestsPage(projectId, limit)
+      requireValidRows(page)
+      return page.pullRequests
+    },
+
+    async getOpenPullRequestsPage(projectId, limit = DEFAULT_ITEM_LIMIT) {
       const project = projectResolver(projectId)
       const perPage = normalizeLimit(limit)
       const endpoint = `${repoEndpoint(project)}/pulls`
       const payload = ensureArray(await requestJson(runner, endpoint, { state: "open", per_page: perPage }), endpoint)
 
-      return payload.map(normalizePullRequest)
+      const rows = payload.filter(isRecord)
+      return {
+        pullRequests: rows.map(normalizePullRequest),
+        pageLimit: perPage,
+        rawReturnedCount: payload.length,
+        limitHit: payload.length >= perPage,
+        invalidRowCount: payload.length - rows.length
+      }
     },
 
     async getOpenIssues(projectId, limit = DEFAULT_ITEM_LIMIT) {
       const page = await this.getOpenIssuesPage(projectId, limit)
-
+      requireValidRows(page)
       return page.issues
     },
 
@@ -531,26 +558,31 @@ function createFixedGitHubReadOnlyClient({
       const perPage = normalizeLimit(limit)
       const endpoint = `${repoEndpoint(project)}/issues`
       const payload = ensureArray(await requestJson(runner, endpoint, { state: "open", per_page: perPage }), endpoint)
-      const issues = payload
-        .filter((issue) => !issue?.pull_request)
-        .map(normalizeIssue)
+      const rows = payload.filter(row => isRecord(row) &&
+        (!Object.hasOwn(row, "pull_request") || isRecord(row.pull_request)))
+      const issues = rows.filter(row => !Object.hasOwn(row, "pull_request")).map(normalizeIssue)
 
       return {
         issues,
         pageLimit: perPage,
         rawReturnedCount: payload.length,
-        limitHit: payload.length >= perPage
+        limitHit: payload.length >= perPage,
+        invalidRowCount: payload.length - rows.length
       }
     },
 
     async getProjectSnapshot(projectId) {
       const project = projectResolver(projectId)
-      const [repository, recentCommits, openPullRequests, openIssues] = await Promise.all([
+      const [repository, recentCommits, openPullRequestsPage, openIssuesPage] = await Promise.all([
         this.getRepoMetadata(project.id),
         this.getRecentCommits(project.id),
-        this.getOpenPullRequests(project.id),
-        this.getOpenIssues(project.id)
+        this.getOpenPullRequestsPage(project.id),
+        this.getOpenIssuesPage(project.id)
       ])
+      // Legacy snapshot consumers need arrays. Never hand them filtered rows
+      // which look complete after a malformed provider response.
+      requireValidRows(openPullRequestsPage)
+      requireValidRows(openIssuesPage)
       const retrievalTime = now()
 
       return {
@@ -561,8 +593,10 @@ function createFixedGitHubReadOnlyClient({
         },
         repository,
         recentCommits,
-        openPullRequests,
-        openIssues,
+        openPullRequests: openPullRequestsPage.pullRequests,
+        openIssues: openIssuesPage.issues,
+        openPullRequestsPage,
+        openIssuesPage,
         retrievedAt: retrievalTime instanceof Date ? retrievalTime.toISOString() : new Date(retrievalTime).toISOString(),
         source: GITHUB_READONLY_SOURCE
       }
@@ -599,6 +633,10 @@ export async function getRecentCommits(projectId, limit = DEFAULT_ITEM_LIMIT, op
 
 export async function getOpenPullRequests(projectId, limit = DEFAULT_ITEM_LIMIT, options = {}) {
   return createGitHubReadOnlyClient(options).getOpenPullRequests(projectId, limit)
+}
+
+export async function getOpenPullRequestsPage(projectId, limit = DEFAULT_ITEM_LIMIT, options = {}) {
+  return createGitHubReadOnlyClient(options).getOpenPullRequestsPage(projectId, limit)
 }
 
 export async function getOpenIssues(projectId, limit = DEFAULT_ITEM_LIMIT, options = {}) {

@@ -5,6 +5,8 @@ import {
   listAllowedProjects
 } from "./github-readonly.mjs"
 
+import {repositoryIdentityLabel,openItemCountLabel,pullRequestLines,openItems} from './github-reporting-format.mjs'
+
 const commands = new Set(["repo", "commits", "prs", "issues", "snapshot"])
 
 function usage() {
@@ -31,7 +33,7 @@ function formatValue(value) {
 }
 
 function printRepo(metadata) {
-  console.log(`Repo: ${metadata.fullName}`)
+  console.log(`Repo: ${repositoryIdentityLabel({fullName: metadata.fullName}, metadata)}`)
   console.log(`Default: ${formatValue(metadata.defaultBranch)}`)
   console.log(`Visibility: ${formatValue(metadata.visibility)}`)
   console.log(`Description: ${formatValue(metadata.description)}`)
@@ -54,29 +56,23 @@ function printCommits(commits) {
   }
 }
 
-function printPullRequests(pullRequests) {
-  console.log("Open PRs:")
-  if (pullRequests.length === 0) {
-    console.log("- none open")
-    return
-  }
-
-  for (const pullRequest of pullRequests) {
-    const draftLabel = pullRequest.draft === true ? " draft" : pullRequest.draft === false ? "" : " draft status unavailable"
-    console.log(`- #${pullRequest.number} ${formatValue(pullRequest.title)} [${formatValue(pullRequest.headRef)} -> ${formatValue(pullRequest.baseRef)}${draftLabel}] updated ${formatValue(pullRequest.updatedAt)}`)
-  }
+function printPullRequests(page) {
+  console.log(`Open PRs: ${openItemCountLabel(page, "pullRequests")}`)
+  console.log(pullRequestLines(page).join("\n") || "- none returned")
 }
 
-function printIssues(issues) {
-  console.log("Open issues:")
+function printIssues(page) {
+  const issues = openItems(page, "issues")
+  console.log(`Open issues: ${openItemCountLabel(page, "issues")}`)
   if (issues.length === 0) {
-    console.log("- none open")
+    console.log("- none returned")
     return
   }
 
   for (const issue of issues) {
     const labels = issue.labels.length > 0 ? ` labels: ${issue.labels.join(", ")}` : ""
-    console.log(`- #${issue.number} ${formatValue(issue.title)} (${formatValue(issue.state)}, updated ${formatValue(issue.updatedAt)})${labels}`)
+    const number = Number.isSafeInteger(issue.number) && issue.number > 0 ? `#${issue.number}` : "number unavailable"
+    console.log(`- ${number} ${formatValue(issue.title)} (${formatValue(issue.state)}, updated ${formatValue(issue.updatedAt)})${labels}`)
   }
 }
 
@@ -88,9 +84,9 @@ function printSnapshot(snapshot) {
   console.log("")
   printCommits(snapshot.recentCommits)
   console.log("")
-  printPullRequests(snapshot.openPullRequests)
+  printPullRequests(snapshot.openPullRequestsPage)
   console.log("")
-  printIssues(snapshot.openIssues)
+  printIssues(snapshot.openIssuesPage)
 }
 
 async function main() {
@@ -115,12 +111,12 @@ async function main() {
   }
 
   if (command === "prs") {
-    printPullRequests(await client.getOpenPullRequests(projectId, limit))
+    printPullRequests(await client.getOpenPullRequestsPage(projectId, limit))
     return
   }
 
   if (command === "issues") {
-    printIssues(await client.getOpenIssues(projectId, limit))
+    printIssues(await client.getOpenIssuesPage(projectId, limit))
     return
   }
 
