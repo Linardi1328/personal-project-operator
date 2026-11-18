@@ -825,3 +825,117 @@ test("every rejected message is preserved as a failed attempt without its conten
   assert.deepEqual(added.map((event) => Object.keys(event.data)), [["code"], ["code"]])
   assert.equal(verifyCollaborationEventChain(h.coordinator.events()), true)
 })
+
+test("workspace contention checkpoints initial assignment and preserves retry after release", () => {
+  const guard = createCollaborationWorkspaceGuard()
+  const first = harness({ guard })
+  const second = harness({ guard })
+  const held = first.coordinator.start()
+  const refused = second.coordinator.start()
+  assert.equal(refused.status, "checkpoint")
+  assert.equal(refused.checkpoint.reasonCode, "WORKSPACE_BUSY")
+  assert.equal(second.coordinator.snapshot().status, "planned")
+  assert.equal(second.coordinator.snapshot().expected, null)
+  assert.equal(second.coordinator.resume().checkpoint.reasonCode, "WORKSPACE_BUSY")
+  const initial = first.adapters.execute(held.assignment, first.coordinator.snapshot())
+  first.coordinator.accept(initial.envelope, { providerId: held.assignment.providerId })
+  const retried = second.coordinator.resume()
+  assert.equal(retried.status, "assigned")
+  assert.equal(retried.assignment.attemptNumber, 1)
+  assert.equal(second.coordinator.snapshot().checkpoint, null)
+})
+
+test("quarantined shared workspace needs owner, never a blind retry", () => {
+  const guard = createCollaborationWorkspaceGuard()
+  const first = harness({ guard })
+  const second = harness({ guard })
+  first.coordinator.start()
+  first.coordinator.recordAdapterOutcome({ providerId: "codex", outcome: "timeout" })
+  const blocked = second.coordinator.start()
+  assert.equal(blocked.status, "checkpoint")
+  assert.equal(blocked.checkpoint.reasonCode, "WORKSPACE_QUARANTINED")
+  expectCode(() => second.coordinator.resume(), "COLLAB_RESUME_REFUSED")
+})
+
+test("a task_blocked timeout quarantines even when workspace inspection looks clean", () => {
+  const h = harness()
+  const step = h.coordinator.start()
+  const contract = h.adapters.execute(step.assignment, h.coordinator.snapshot())
+  const blocked = forge(h, contract.envelope, {
+    messageType: "task_blocked", requestedAction: "reroute_or_checkpoint", reasonCode: "timeout",
+    candidateSha: null, contractDigest: null, evidence: []
+  })
+  assert.equal(h.coordinator.accept(blocked, { providerId: step.assignment.providerId }).next.status, "checkpoint")
+  assert.equal(h.coordinator.snapshot().workspace.state, "quarantined")
+  expectCode(() => h.coordinator.resume(), "COLLAB_RESUME_REFUSED")
+})
+
+test("test evidence identifiers use the full candidate SHA before changing state", () => {
+  const h = harness()
+  const tests = atTests(h)
+  h.coordinator.recordTestEvidence(h.adapters.testRunner(tests.candidateSha, 0))
+  assert.ok(h.coordinator.ledger().some((entry) => entry.kind === "test" && entry.ref === `test-${tests.candidateSha}`))
+})
+
+test("mixed valid and conflicting evidence refuses the whole handoff without partial records", () => {
+  const h = harness()
+  const frontend = atFrontend(h)
+  const existing = h.coordinator.ledger().find((entry) => entry.kind === "contract")
+  const impl = h.adapters.execute(frontend.assignment, h.coordinator.snapshot())
+  const forged = forge(h, impl.envelope, {
+    evidence: [
+      impl.envelope.evidence[0],
+      { kind: "contract", ref: existing.ref, digest: "e".repeat(64), sizeBytes: 40, candidateSha: impl.envelope.candidateSha }
+    ]
+  })
+  const before = h.coordinator.ledger()
+  expectCode(() => h.coordinator.accept(forged, { providerId: frontend.assignment.providerId }), "COLLAB_EVIDENCE_CONFLICT")
+  assert.deepEqual(h.coordinator.ledger(), before)
+  assert.equal(h.coordinator.snapshot().expected.role, "frontend_implementer")
+})
+
+test("attempt ceiling prevents an eleventh provider assignment", () => {
+  const exhausted = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`backend:${index + 1}`, "quota_exhausted"]))
+  const h = harness({ script: { adapterBehavior: exhausted } })
+  let step = h.coordinator.start()
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    assert.equal(step.status, "assigned")
+    assert.equal(step.assignment.attemptNumber, attempt)
+    const response = h.adapters.execute(step.assignment, h.coordinator.snapshot())
+    const result = h.coordinator.accept(response.envelope, { providerId: step.assignment.providerId })
+    if (attempt === 10) {
+      assert.equal(result.next.status, "checkpoint")
+      assert.equal(result.next.checkpoint.reasonCode, "ATTEMPT_LIMIT_EXHAUSTED")
+      assert.equal(h.coordinator.snapshot().expected, null)
+      break
+    }
+    assert.equal(result.next.status, "checkpoint")
+    h.coordinator.observeProviderState("codex", { integration: "configured", capacity: "available", billingPath: "included" })
+    step = h.coordinator.resume()
+  }
+})
+
+test("reconciliation requires an explicit owner decision and routes pending frontend findings", async () => {
+  const mixed = [
+    { code: "api_status_change", severity: "P1", area: "backend", summary: "Backend returns the wrong status." },
+    { code: "missing_label", severity: "P1", area: "frontend", summary: "Frontend label is missing." }
+  ]
+  const script = {
+    id: "reconcile-pending-frontend", claudeTrialRoles: ["independent_reviewer"],
+    providerStates: syntheticProviderStates(), contractVersionByAttempt: { 2: 2 },
+    reviews: [{ decision: "changes_requested", findings: mixed }, { decision: "approved" }]
+  }
+  const pending = await runCollaborationSimulation(script)
+  assert.equal(pending.snapshot.checkpoint.reasonCode, "CONTRACT_CHANGED")
+  expectCode(() => pending.model.reconcileContract({ ownerId: "owner", newContractDigest: syntheticContractDigest(2) }), "COLLAB_RECONCILIATION_INVALID")
+  expectCode(() => pending.model.reconcileContract({ ownerId: "owner", decision: "maybe", newContractDigest: syntheticContractDigest(2) }), "COLLAB_RECONCILIATION_INVALID")
+  assert.equal(pending.model.snapshot().checkpoint.reasonCode, "CONTRACT_CHANGED")
+  const next = pending.model.reconcileContract({ ownerId: "owner", decision: "approve", newContractDigest: syntheticContractDigest(2) })
+  assert.equal(next.status, "assigned")
+  const correction = pending.model.outbox().at(-1).envelope
+  assert.equal(correction.messageType, "correction_requested")
+  assert.equal(correction.recipient.role, "frontend_implementer")
+  assert.deepEqual(correction.findings.map((finding) => finding.code), ["missing_label"])
+  assert.equal(correction.contractDigest, syntheticContractDigest(2))
+  assert.ok(correction.evidence.some((entry) => entry.kind === "contract"))
+})

@@ -13,6 +13,7 @@ import {
   collaborationStableStringify,
   createCollaborationWorkspaceGuard,
   SoftwareFactoryCollaborationError,
+  SOFTWARE_FACTORY_COLLABORATION_MAX_ATTEMPT,
   validateCollaborationEnvelope
 } from "./software-factory-collaboration-contract.mjs"
 import { routeCollaborationStep } from "./software-factory-collaboration-routing.mjs"
@@ -204,6 +205,15 @@ export function createSimulationRunModel(options = {}) {
 
   // -- evidence ledger ----------------------------------------------------
 
+  function assertEvidenceReferencesAvailable(entries) {
+    for (const entry of entries) {
+      const existing = evidenceLedger.get(entry.ref)
+      if (existing && (existing.digest !== entry.digest || existing.kind !== entry.kind || existing.candidateSha !== entry.candidateSha)) {
+        throw collaborationError("COLLAB_EVIDENCE_CONFLICT", "Evidence reference was already recorded with different content.")
+      }
+    }
+  }
+
   function registerEvidence(entry, source) {
     const existing = evidenceLedger.get(entry.ref)
     if (existing) {
@@ -362,6 +372,13 @@ export function createSimulationRunModel(options = {}) {
   }
 
   function tryAssign(spec) {
+    const stepId = stepByRole[spec.role]
+    // Attempt limits precede all workspace leases, outbound messages and state changes.
+    if (attempts[stepId] >= SOFTWARE_FACTORY_COLLABORATION_MAX_ATTEMPT) {
+      enterCheckpoint("owner_action_required", "ATTEMPT_LIMIT_EXHAUSTED", { stepId, attempts: attempts[stepId] })
+      escalateToOwner("scope_exception", "The collaboration attempt limit is exhausted; owner action is required.")
+      return { status: "checkpoint", checkpoint }
+    }
     const decision = routeDecision(spec.role, spec.preferProviderId)
     if (decision.outcome !== "ready") {
       const reviewMissing = spec.role === "independent_reviewer"
@@ -376,15 +393,27 @@ export function createSimulationRunModel(options = {}) {
 
     const providerId = decision.providerId
     const holder = `${providerId}:${stepByRole[spec.role]}`
-    if (spec.role === "independent_reviewer") {
-      guard.assertReadable(workspaceId, holder)
-    } else {
-      guard.acquireWriter(workspaceId, holder)
+    try {
+      if (spec.role === "independent_reviewer") {
+        guard.assertReadable(workspaceId, holder)
+      } else {
+        guard.acquireWriter(workspaceId, holder)
+      }
+    } catch (error) {
+      if (error?.code === "COLLAB_WORKSPACE_WRITER_CONFLICT" || error?.code === "COLLAB_WORKSPACE_WRITER_ACTIVE") {
+        enterCheckpoint("blocked_external", "WORKSPACE_BUSY", { role: spec.role, workspaceId }, spec)
+        return { status: "checkpoint", checkpoint }
+      }
+      if (error?.code === "COLLAB_WORKSPACE_QUARANTINED") {
+        enterCheckpoint("owner_action_required", "WORKSPACE_QUARANTINED", { role: spec.role, workspaceId })
+        escalateToOwner("ambiguous_outcome", "Workspace remains quarantined; owner resolution is required.")
+        return { status: "checkpoint", checkpoint }
+      }
+      throw error
     }
 
     if (spec.onAssigned) spec.onAssigned(providerId)
     currentSpec = spec
-    const stepId = stepByRole[spec.role]
     attempts[stepId] += 1
     lastProviderByRole[spec.role] = providerId
     checkpoint = null
@@ -453,7 +482,10 @@ export function createSimulationRunModel(options = {}) {
         stepId: stepByRole[role],
         attemptNumber: attempt,
         candidateSha,
-        evidence: [provenanceEvidenceEntry(evidenceRef)],
+        contractDigest: area === "frontend" ? contract.digest : null,
+        evidence: area === "frontend"
+          ? [provenanceEvidenceEntry(evidenceRef), evidenceEntry(contract.evidenceRef)]
+          : [provenanceEvidenceEntry(evidenceRef)],
         findings,
         requestedAction: "apply_correction",
         summary: "Apply the listed findings and return a new candidate."
@@ -556,6 +588,8 @@ export function createSimulationRunModel(options = {}) {
   }
 
   function recordAgentEvidence(envelope) {
+    // Reject all conflicts before appending any of a handoff's evidence.
+    assertEvidenceReferencesAvailable(envelope.evidence)
     for (const entry of envelope.evidence) registerEvidence(entry, envelope.sender.providerId)
   }
 
@@ -657,7 +691,14 @@ export function createSimulationRunModel(options = {}) {
     const spec = expected
     const wasWriter = spec.role !== "independent_reviewer"
     const lastGood = candidateSha ?? baseSha
-    if (wasWriter) releaseOrQuarantine(spec.holder, lastGood)
+    if (wasWriter) {
+      if (envelope.messageType === "task_blocked" && ["timeout", "ambiguous_outcome"].includes(envelope.reasonCode)) {
+        guard.quarantine(workspaceId, spec.holder)
+        note("workspace_quarantined", { workspaceId })
+      } else {
+        releaseOrQuarantine(spec.holder, lastGood)
+      }
+    }
 
     if (envelope.messageType === "task_blocked") {
       enterCheckpoint("owner_action_required", "TASK_BLOCKED", { reasonCode: envelope.reasonCode, stepId: envelope.stepId })
@@ -706,8 +747,11 @@ export function createSimulationRunModel(options = {}) {
     if (typeof result.passed !== "boolean" || !digestPattern.test(result.digest ?? "")) {
       throw collaborationError("COLLAB_EVIDENCE_INVALID", "Test evidence is invalid.")
     }
+    const ref = `test-${candidateSha}`
+    if (evidenceLedger.has(ref)) {
+      throw collaborationError("COLLAB_EVIDENCE_CONFLICT", "Test evidence already exists for this candidate.")
+    }
     transition("tests_in_progress")
-    const ref = `test-${candidateSha.slice(0, 12)}`
     registerEvidence({ kind: "test", ref, digest: result.digest, sizeBytes: 1024, candidateSha }, "ppo-test-runner")
     tests = Object.freeze({ candidateSha, passed: result.passed, ref, digest: result.digest })
 
@@ -792,7 +836,8 @@ export function createSimulationRunModel(options = {}) {
     if (!checkpoint || checkpoint.reasonCode !== "CONTRACT_CHANGED" || !pendingContract) {
       throw collaborationError("COLLAB_OUT_OF_ORDER", "No contract change is awaiting reconciliation.")
     }
-    if (!decision || decision.ownerId !== "owner" || decision.newContractDigest !== pendingContract.digest) {
+    if (!decision || decision.ownerId !== "owner" || decision.newContractDigest !== pendingContract.digest ||
+        !["approve", "reject"].includes(decision.decision)) {
       throw collaborationError("COLLAB_RECONCILIATION_INVALID", "Reconciliation is not bound to the proposed contract digest.")
     }
     if (decision.decision === "reject") {
@@ -808,7 +853,10 @@ export function createSimulationRunModel(options = {}) {
     checkpoint = null
     review = null
     tests = null
-    return tryAssign(frontendSpec())
+    const pendingFrontend = openFindingsForArea(findingLedger, "frontend")
+    return pendingFrontend.length
+      ? issueCorrection("frontend", pendingFrontend, lastReviewRef)
+      : tryAssign(frontendSpec())
   }
 
   function resume() {

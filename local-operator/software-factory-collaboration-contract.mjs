@@ -19,6 +19,9 @@ export const SOFTWARE_FACTORY_COLLABORATION_MAX_EVIDENCE_REFS = 8
 export const SOFTWARE_FACTORY_COLLABORATION_MAX_EVIDENCE_REF_BYTES = 64 * 1024
 export const SOFTWARE_FACTORY_COLLABORATION_MAX_EVIDENCE_TOTAL_BYTES = 256 * 1024
 export const SOFTWARE_FACTORY_COLLABORATION_MAX_FINDINGS = 5
+// At most three correction rounds plus the initial review can each introduce five
+// distinct findings. Resolution must be able to close the entire accumulated ledger.
+export const SOFTWARE_FACTORY_COLLABORATION_MAX_RESOLVED_FINDINGS = 20
 export const SOFTWARE_FACTORY_COLLABORATION_MAX_SUMMARY_CHARS = 200
 export const SOFTWARE_FACTORY_COLLABORATION_MAX_ATTEMPT = 10
 
@@ -498,6 +501,11 @@ function normalizeEvidence(list, messageType, candidateSha) {
     throw collaborationError("COLLAB_EVIDENCE_OVERSIZED", "Evidence references exceed the bounded total size.")
   }
 
+  if (messageType === "review_finding" &&
+      !normalized.some((entry) => entry.kind === "review" && entry.candidateSha === candidateSha)) {
+    throw collaborationError("COLLAB_EVIDENCE_STALE", "Review evidence must be bound to the reviewed candidate SHA.")
+  }
+
   for (const kind of requiredEvidenceByType[messageType]) {
     if (!normalized.some((entry) => entry.kind === kind)) {
       throw collaborationError("COLLAB_EVIDENCE_MISSING", `Message type ${messageType} requires ${kind} evidence.`)
@@ -554,9 +562,6 @@ function normalizeFindings(list, messageType, reviewDecision, recipientRole) {
     if (reviewDecision === "approved" && blocking) {
       throw collaborationError("COLLAB_FINDINGS_INVALID", "An approving review cannot carry P0 or P1 findings.")
     }
-    if (reviewDecision === "changes_requested" && normalized.length < 1) {
-      throw collaborationError("COLLAB_FINDINGS_INVALID", "A change request must carry at least one finding.")
-    }
   }
 
   return normalized
@@ -566,7 +571,7 @@ function normalizeFindings(list, messageType, reviewDecision, recipientRole) {
 // claim: the run model decides whether each code is eligible to be resolved
 // (it must exist and a correction for its area must have been accepted).
 function normalizeResolvedFindings(list, messageType, findings) {
-  if (!Array.isArray(list) || list.length > SOFTWARE_FACTORY_COLLABORATION_MAX_FINDINGS) {
+  if (!Array.isArray(list) || list.length > SOFTWARE_FACTORY_COLLABORATION_MAX_RESOLVED_FINDINGS) {
     throw collaborationError("COLLAB_FINDINGS_INVALID", "Resolved findings list is invalid.")
   }
   if (messageType !== "review_finding" && list.length > 0) {

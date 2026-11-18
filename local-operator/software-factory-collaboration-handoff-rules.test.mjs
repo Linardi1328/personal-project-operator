@@ -290,3 +290,15 @@ test("P2-03: the original rejection, mixed-area and unresolved-completion rules 
   throwsCode(() => applyCollaborationReview(ledger, realReview("approved", { resolvedFindings: ["fe_issue"], candidateSha: SHA_C, attemptNumber: 2 }), 2), "COLLAB_FINDING_NOT_ADDRESSED")
   throwsCode(() => applyCollaborationReview(ledger, realReview("approved", { resolvedFindings: ["be_issue"], candidateSha: SHA_C, attemptNumber: 2 }), 2), "COLLAB_FINDINGS_UNRESOLVED")
 })
+
+test("review with no newly raised findings reopens previously addressed, unresolved issues", () => {
+  const issue = { code: "existing_issue", severity: "P1", area: "frontend", summary: "Existing finding persists." }
+  const raised = applyCollaborationReview(createFindingLedger(), { reviewDecision: "changes_requested", findings: [issue], resolvedFindings: [], candidateSha: SHA_B }, 1)
+  const addressed = markFindingAreaAddressed(raised, "frontend", SHA_B)
+  const reopened = applyCollaborationReview(addressed, { reviewDecision: "changes_requested", findings: [], resolvedFindings: [], candidateSha: SHA_C }, 2)
+  assert.equal(reopened[0].status, "open")
+  assert.equal(reopened[0].reopenedCount, 1)
+  assert.equal(reopened[0].history[0].status, "addressed")
+  assert.deepEqual(openFindingAreas(reopened), ["frontend"])
+  assert.deepEqual(addressed[0].status, "addressed")
+})

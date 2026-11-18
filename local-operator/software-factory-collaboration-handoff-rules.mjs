@@ -179,6 +179,18 @@ export function applyCollaborationReview(ledger, envelope, reviewNumber) {
   }
 
   const approving = envelope.reviewDecision === "approved"
+  // No newly raised findings means previously addressed but unresolved
+  // findings are still disputed; reopen them for another bounded correction.
+  if (!approving && envelope.findings.length === 0) {
+    for (const [code, entry] of next) {
+      if (entry.status !== "addressed") continue
+      next.set(code, Object.freeze({
+        ...entry, status: "open", reopenedCount: entry.reopenedCount + 1,
+        addressedAt: null, resolvedAt: null,
+        history: Object.freeze([...entry.history, dispositionSnapshot(entry)])
+      }))
+    }
+  }
   for (const finding of envelope.findings) {
     const existing = byCode.get(finding.code)
     if (approving) {

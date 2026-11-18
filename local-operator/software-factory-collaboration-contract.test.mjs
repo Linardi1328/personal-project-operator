@@ -343,7 +343,7 @@ test("reason codes, review decisions, and findings follow strict per-type rules"
     evidence: [{ kind: "review", ref: "r1", digest: DIGEST_3, sizeBytes: 5, candidateSha: SHA_B }]
   }
   rejects({ ...reviewer, reviewDecision: null }, "COLLAB_REVIEW_DECISION_INVALID")
-  rejects({ ...reviewer, reviewDecision: "changes_requested", findings: [] }, "COLLAB_FINDINGS_INVALID")
+  assert.equal(build({ ...reviewer, reviewDecision: "changes_requested", findings: [] }).envelope.findings.length, 0)
   rejects({ ...reviewer, reviewDecision: "approved", findings: [{ code: "blocker", severity: "P1", area: "backend", summary: "Blocking issue." }] }, "COLLAB_FINDINGS_INVALID")
   rejects({ findings: [{ code: "note", severity: "P3", area: "backend", summary: "Not allowed here." }] }, "COLLAB_FINDINGS_INVALID")
   rejects({ ...reviewer, reviewDecision: "changes_requested", findings: [{ code: "dup", severity: "P2", area: "backend", summary: "One." }, { code: "dup", severity: "P2", area: "backend", summary: "Two." }] }, "COLLAB_FINDINGS_INVALID")
@@ -371,7 +371,8 @@ test("resolved findings are a review-only, bounded, disjoint list of finding cod
   assert.deepEqual(build({ ...reviewer, resolvedFindings: ["wrong_status", "bad_label"] }).envelope.resolvedFindings, ["wrong_status", "bad_label"])
   rejects({ ...reviewer, resolvedFindings: ["Bad Code"] }, "COLLAB_FINDINGS_INVALID")
   rejects({ ...reviewer, resolvedFindings: ["a", "a"] }, "COLLAB_FINDINGS_INVALID")
-  rejects({ ...reviewer, resolvedFindings: ["a", "b", "c", "d", "e", "f"] }, "COLLAB_FINDINGS_INVALID")
+  assert.equal(build({ ...reviewer, resolvedFindings: ["a", "b", "c", "d", "e", "f"] }).envelope.resolvedFindings.length, 6)
+  rejects({ ...reviewer, resolvedFindings: Array.from({ length: 21 }, (_, i) => `code_${i}`) }, "COLLAB_FINDINGS_INVALID")
   rejects({ ...reviewer, resolvedFindings: [42] }, "COLLAB_FINDINGS_INVALID")
   rejects({ ...reviewer, resolvedFindings: "wrong_status" }, "COLLAB_FINDINGS_INVALID")
   // A code cannot be raised and resolved by the same review.
@@ -507,4 +508,33 @@ test("error formatting exposes only the fixed safe message", () => {
   const error = new SoftwareFactoryCollaborationError("COLLAB_TEST", "Safe text.")
   assert.equal(formatSoftwareFactoryCollaborationError(error), "PPO software factory collaboration error [COLLAB_TEST]: Safe text.")
   assert.equal(formatSoftwareFactoryCollaborationError(new Error("secret = leaked")), "PPO software factory collaboration error: unexpected local failure.")
+})
+
+test("review approval needs candidate-bound evidence; correction provenance may remain unbound", () => {
+  const reviewer = {
+    messageType: "review_finding", stepId: "review", sender: { role: "independent_reviewer", providerId: "codex" },
+    requestedAction: "evaluate_review", contractDigest: null, reviewDecision: "approved",
+    evidence: [{ kind: "review", ref: "unbound-review", digest: DIGEST_3, sizeBytes: 50, candidateSha: null }]
+  }
+  rejects(reviewer, "COLLAB_EVIDENCE_STALE")
+  assert.equal(build({ ...reviewer, evidence: [{ ...reviewer.evidence[0], candidateSha: SHA_B }] }).envelope.reviewDecision, "approved")
+  const correction = {
+    messageType: "correction_requested", stepId: "frontend", recipient: { role: "frontend_implementer", providerId: "antigravity" },
+    sender: { role: "coordinator", providerId: "ppo" }, requestedAction: "apply_correction", contractDigest: null,
+    evidence: [{ kind: "review", ref: "prior-review", digest: DIGEST_3, sizeBytes: 50, candidateSha: null }],
+    findings: [{ code: "previous_finding", severity: "P2", area: "frontend", summary: "Needs correction." }]
+  }
+  assert.equal(build(correction).envelope.evidence[0].candidateSha, null)
+})
+
+test("accumulated findings can all resolve within the fixed bound", () => {
+  const reviewer = {
+    messageType: "review_finding", stepId: "review", sender: { role: "independent_reviewer", providerId: "codex" },
+    requestedAction: "evaluate_review", contractDigest: null, reviewDecision: "approved",
+    evidence: [{ kind: "review", ref: "all-resolved", digest: DIGEST_3, sizeBytes: 50, candidateSha: SHA_B }]
+  }
+  assert.equal(build({ ...reviewer, resolvedFindings: Array.from({ length: 20 }, (_, i) => `finding_${i}`) }).envelope.resolvedFindings.length, 20)
+  const five = Array.from({ length: 5 }, (_, i) => ({ code: `new_${i}`, severity: "P2", area: "frontend", summary: "Open finding." }))
+  assert.equal(build({ ...reviewer, reviewDecision: "changes_requested", findings: five }).envelope.findings.length, 5)
+  rejects({ ...reviewer, reviewDecision: "changes_requested", findings: [...five, { ...five[0], code: "sixth" }] }, "COLLAB_FINDINGS_INVALID")
 })
