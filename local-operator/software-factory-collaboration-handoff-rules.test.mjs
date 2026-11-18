@@ -302,3 +302,9 @@ test("review with no newly raised findings reopens previously addressed, unresol
   assert.deepEqual(openFindingAreas(reopened), ["frontend"])
   assert.deepEqual(addressed[0].status, "addressed")
 })
+
+test("an empty change request is refused if no previous finding needs correction", () => {
+  assert.throws(() => applyCollaborationReview(createFindingLedger(), {
+    reviewDecision: "changes_requested", findings: [], resolvedFindings: [], candidateSha: SHA_B
+  }, 1), { code: "COLLAB_FINDINGS_INVALID" })
+})

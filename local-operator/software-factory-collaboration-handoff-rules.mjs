@@ -182,6 +182,9 @@ export function applyCollaborationReview(ledger, envelope, reviewNumber) {
   // No newly raised findings means previously addressed but unresolved
   // findings are still disputed; reopen them for another bounded correction.
   if (!approving && envelope.findings.length === 0) {
+    if (![...next.values()].some((entry) => entry.status === "addressed")) {
+      throw collaborationError("COLLAB_FINDINGS_INVALID", "A change request without new findings needs an unresolved addressed finding.")
+    }
     for (const [code, entry] of next) {
       if (entry.status !== "addressed") continue
       next.set(code, Object.freeze({
