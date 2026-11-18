@@ -1004,3 +1004,24 @@ test("a frontend correction after a frontend head change cites the approved cont
   assert.ok(correction.envelope.contractDigest)
   assert.ok(result.model.ledger().find((entry) => entry.kind === "contract").candidateSha)
 })
+
+test("release summary cites the review evidence bound to the exact reviewed candidate", () => {
+  const h = harness()
+  const tests = atTests(h)
+  h.coordinator.recordTestEvidence(h.adapters.testRunner(tests.candidateSha, 0))
+  const assignment = h.coordinator.snapshot().expected
+  const { envelope } = h.adapters.execute(assignment, h.coordinator.snapshot())
+  const bound = envelope.evidence.find((entry) => entry.kind === "review" && entry.candidateSha === tests.candidateSha)
+  assert.ok(bound)
+  // An unbound review reference listed before the candidate-bound one still passes envelope validation.
+  const unbound = { kind: "review", ref: "review-unbound-provenance", digest: "5".repeat(64), sizeBytes: 64, candidateSha: null }
+  const reordered = forge(h, envelope, { evidence: [unbound, ...envelope.evidence] })
+  assert.equal(reordered.evidence[0].candidateSha, null)
+  h.coordinator.accept(reordered, { providerId: assignment.providerId })
+  const pkg = h.coordinator.prepareRelease()
+  assert.equal(pkg.review.ref, bound.ref)
+  assert.notEqual(pkg.review.ref, unbound.ref)
+  const release = h.coordinator.outbox().find((m) => m.envelope.messageType === "release_package_ready")
+  assert.ok(release.envelope.evidence.some((entry) => entry.ref === bound.ref && entry.candidateSha === tests.candidateSha))
+  assert.ok(!release.envelope.evidence.some((entry) => entry.ref === unbound.ref))
+})

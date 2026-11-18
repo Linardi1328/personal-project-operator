@@ -669,7 +669,9 @@ export function createSimulationRunModel(options = {}) {
     recordAgentEvidence(envelope)
     findingLedger = nextLedger
     reviewCount += 1
-    const reviewEvidence = envelope.evidence.find((entry) => entry.kind === "review")
+    // Envelope validation guarantees a review entry bound to this candidate. Cite that
+    // one, not an earlier unbound provenance entry, so the release names the reviewed head.
+    const reviewEvidence = envelope.evidence.find((entry) => entry.kind === "review" && entry.candidateSha === candidateSha)
     lastReviewRef = reviewEvidence.ref
     review = Object.freeze({ candidateSha, decision: envelope.reviewDecision, ref: reviewEvidence.ref, findings: envelope.findings, reviewer: envelope.sender.providerId })
     expected = null
