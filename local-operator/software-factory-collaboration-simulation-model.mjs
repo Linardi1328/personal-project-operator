@@ -484,7 +484,7 @@ export function createSimulationRunModel(options = {}) {
         candidateSha,
         contractDigest: area === "frontend" ? contract.digest : null,
         evidence: area === "frontend"
-          ? [provenanceEvidenceEntry(evidenceRef), evidenceEntry(contract.evidenceRef)]
+          ? [provenanceEvidenceEntry(evidenceRef), provenanceEvidenceEntry(contract.evidenceRef)]
           : [provenanceEvidenceEntry(evidenceRef)],
         findings,
         requestedAction: "apply_correction",
@@ -589,6 +589,11 @@ export function createSimulationRunModel(options = {}) {
 
   function recordAgentEvidence(envelope) {
     // Reject all conflicts before appending any of a handoff's evidence.
+    // The test-<sha> namespace belongs to the trusted test runner. Agents cannot
+    // pre-register it, or the runner's own result would collide later.
+    if (envelope.evidence.some((entry) => /^test-[a-f0-9]{40}$/u.test(entry.ref))) {
+      throw collaborationError("COLLAB_EVIDENCE_CONFLICT", "Evidence references named test-<sha> are reserved for the trusted test runner.")
+    }
     assertEvidenceReferencesAvailable(envelope.evidence)
     for (const entry of envelope.evidence) registerEvidence(entry, envelope.sender.providerId)
   }

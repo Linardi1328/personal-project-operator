@@ -308,3 +308,18 @@ test("an empty change request is refused if no previous finding needs correction
     reviewDecision: "changes_requested", findings: [], resolvedFindings: [], candidateSha: SHA_B
   }, 1), { code: "COLLAB_FINDINGS_INVALID" })
 })
+
+test("a finding-free change request cannot reopen more findings than one correction can carry", () => {
+  const raise = (codes) => review("changes_requested", codes.map((code) => finding(code, "backend")))
+  let ledger = applyCollaborationReview(createFindingLedger(), raise(["b1", "b2", "b3", "b4", "b5"]), 1)
+  ledger = markFindingAreaAddressed(ledger, "backend", SHA_B)
+  // Five addressed findings can still be reopened as one correction batch.
+  const five = applyCollaborationReview(ledger, review("changes_requested"), 2)
+  assert.equal(five.filter((entry) => entry.status === "open").length, 5)
+  // A sixth raised alongside leaves six addressed after its own correction.
+  let six = applyCollaborationReview(ledger, raise(["b6"]), 2)
+  six = markFindingAreaAddressed(six, "backend", SHA_C)
+  assert.equal(six.filter((entry) => entry.status === "addressed").length, 6)
+  throwsCode(() => applyCollaborationReview(six, review("changes_requested"), 3), "COLLAB_FINDINGS_INVALID")
+  assert.equal(six.filter((entry) => entry.status === "addressed").length, 6)
+})

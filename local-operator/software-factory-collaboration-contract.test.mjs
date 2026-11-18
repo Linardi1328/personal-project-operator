@@ -462,6 +462,8 @@ test("workspace guard keeps one writer per workspace and quarantines ambiguity",
   assert.throws(() => guard.releaseWriter("ws", "antigravity:frontend"), { code: "COLLAB_WORKSPACE_RELEASE_REFUSED" })
   guard.quarantine("ws", "codex:backend")
   assert.equal(guard.state("ws").state, "quarantined")
+  // A reviewer must not see quarantine as resumable writer contention.
+  assert.throws(() => guard.assertReadable("ws", "claude:review"), { code: "COLLAB_WORKSPACE_QUARANTINED" })
   assert.throws(() => guard.acquireWriter("ws", "antigravity:frontend"), { code: "COLLAB_WORKSPACE_QUARANTINED" })
   assert.throws(() => guard.releaseWriter("ws", "codex:backend"), { code: "COLLAB_WORKSPACE_RELEASE_REFUSED" })
   // Other workspaces are independent.

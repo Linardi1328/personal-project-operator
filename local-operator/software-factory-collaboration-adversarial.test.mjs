@@ -226,9 +226,13 @@ test("a conflicting workspace writer blocks assignment without issuing a task", 
   const guard = createCollaborationWorkspaceGuard()
   guard.acquireWriter(SYNTHETIC_WORKSPACE_ID, "rogue:writer")
   const h = harness({ guard })
-  expectCode(() => h.coordinator.start(), "COLLAB_WORKSPACE_WRITER_CONFLICT")
+  // Contention is a resumable checkpoint, not a thrown error and not an issued task.
+  const refused = h.coordinator.start()
+  assert.equal(refused.status, "checkpoint")
+  assert.equal(refused.checkpoint.reasonCode, "WORKSPACE_BUSY")
   assert.equal(h.coordinator.snapshot().expected, null)
   assert.equal(h.adapters.calls().length, 0)
+  assert.equal(guard.state(SYNTHETIC_WORKSPACE_ID).holder, "rogue:writer")
   assert.ok(guard.history().some((entry) => entry.event === "writer_conflict_refused"))
 })
 
@@ -838,7 +842,14 @@ test("workspace contention checkpoints initial assignment and preserves retry af
   assert.equal(second.coordinator.snapshot().expected, null)
   assert.equal(second.coordinator.resume().checkpoint.reasonCode, "WORKSPACE_BUSY")
   const initial = first.adapters.execute(held.assignment, first.coordinator.snapshot())
-  first.coordinator.accept(initial.envelope, { providerId: held.assignment.providerId })
+  const accepted = first.coordinator.accept(initial.envelope, { providerId: held.assignment.providerId })
+  // Accepting the backend contract hands the workspace to the first run's frontend writer.
+  // The second run stays blocked until that frontend handoff releases the workspace.
+  assert.equal(accepted.next.status, "assigned")
+  assert.equal(second.coordinator.resume().checkpoint.reasonCode, "WORKSPACE_BUSY")
+  const frontend = first.adapters.execute(accepted.next.assignment, first.coordinator.snapshot())
+  first.coordinator.accept(frontend.envelope, { providerId: accepted.next.assignment.providerId })
+  assert.equal(guard.state(SYNTHETIC_WORKSPACE_ID).state, "free")
   const retried = second.coordinator.resume()
   assert.equal(retried.status, "assigned")
   assert.equal(retried.assignment.attemptNumber, 1)
@@ -860,8 +871,16 @@ test("quarantined shared workspace needs owner, never a blind retry", () => {
 test("a task_blocked timeout quarantines even when workspace inspection looks clean", () => {
   const h = harness()
   const step = h.coordinator.start()
-  const contract = h.adapters.execute(step.assignment, h.coordinator.snapshot())
-  const blocked = forge(h, contract.envelope, {
+  // Build the timeout from the assignment without executing the backend, so the
+  // workspace stays at the base head and only the timeout reason forces quarantine.
+  const base = h.workspace.inspect()
+  assert.equal(base.clean, true)
+  assert.equal(base.head, SYNTHETIC_BASE_SHA)
+  // A donor run supplies a well-formed envelope shape; this run's adapters never execute.
+  const donor = harness()
+  const donorStep = donor.coordinator.start()
+  const template = donor.adapters.execute(donorStep.assignment, donor.coordinator.snapshot()).envelope
+  const blocked = forge(h, template, {
     messageType: "task_blocked", requestedAction: "reroute_or_checkpoint", reasonCode: "timeout",
     candidateSha: null, contractDigest: null, evidence: []
   })
@@ -938,4 +957,50 @@ test("reconciliation requires an explicit owner decision and routes pending fron
   assert.deepEqual(correction.findings.map((finding) => finding.code), ["missing_label"])
   assert.equal(correction.contractDigest, syntheticContractDigest(2))
   assert.ok(correction.evidence.some((entry) => entry.kind === "contract"))
+})
+
+test("agents cannot pre-register the trusted test runner's evidence reference", () => {
+  const h = harness()
+  const frontend = atFrontend(h)
+  const impl = h.adapters.execute(frontend.assignment, h.coordinator.snapshot())
+  const sha = impl.envelope.candidateSha
+  const forged = forge(h, impl.envelope, {
+    evidence: [...impl.envelope.evidence, { kind: "test", ref: `test-${sha}`, digest: "7".repeat(64), sizeBytes: 40, candidateSha: sha }]
+  })
+  const before = h.coordinator.ledger()
+  expectCode(() => h.coordinator.accept(forged, { providerId: frontend.assignment.providerId }), "COLLAB_EVIDENCE_CONFLICT")
+  assert.deepEqual(h.coordinator.ledger(), before)
+  assert.equal(h.coordinator.snapshot().expected.role, "frontend_implementer")
+  // The honest handoff is still accepted and the runner's own result is recorded.
+  const accepted = h.coordinator.accept(impl.envelope, { providerId: frontend.assignment.providerId })
+  assert.equal(accepted.next.status, "awaiting_test_evidence")
+  h.coordinator.recordTestEvidence(h.adapters.testRunner(sha, 0))
+  assert.ok(h.coordinator.ledger().some((entry) => entry.kind === "test" && entry.ref === `test-${sha}`))
+})
+
+test("a reviewer blocked by a quarantined workspace needs the owner, never a blind retry", () => {
+  const guard = createCollaborationWorkspaceGuard()
+  const first = harness({ guard })
+  const second = harness({ guard })
+  const tests = atTests(first)
+  second.coordinator.start()
+  second.coordinator.recordAdapterOutcome({ providerId: "codex", outcome: "timeout" })
+  assert.equal(guard.state(SYNTHETIC_WORKSPACE_ID).state, "quarantined")
+  const blocked = first.coordinator.recordTestEvidence(first.adapters.testRunner(tests.candidateSha, 0))
+  assert.equal(blocked.status, "checkpoint")
+  assert.equal(blocked.checkpoint.reasonCode, "WORKSPACE_QUARANTINED")
+  expectCode(() => first.coordinator.resume(), "COLLAB_RESUME_REFUSED")
+})
+
+test("a frontend correction after a frontend head change cites the approved contract unbound", async () => {
+  const result = await runCollaborationSimulation({
+    id: "frontend-correction", claudeTrialRoles: ["independent_reviewer"], providerStates: syntheticProviderStates(),
+    reviews: [{ decision: "changes_requested", findings: [{ code: "bad_label", severity: "P1", area: "frontend", summary: "Label is wrong." }] }, { decision: "approved" }]
+  })
+  const correction = result.model.outbox().find((m) => m.envelope.messageType === "correction_requested")
+  assert.ok(correction)
+  const contractRef = correction.envelope.evidence.find((entry) => entry.kind === "contract")
+  assert.equal(contractRef.candidateSha, null)
+  assert.ok(correction.envelope.contractDigest)
+  assert.ok(result.model.ledger().find((entry) => entry.kind === "contract").candidateSha)
 })

@@ -1,4 +1,4 @@
-import { collaborationDeepFreeze, collaborationError } from "./software-factory-collaboration-contract.mjs"
+import { SOFTWARE_FACTORY_COLLABORATION_MAX_FINDINGS, collaborationDeepFreeze, collaborationError } from "./software-factory-collaboration-contract.mjs"
 
 // RIC-181 reusable handoff rules. Pure functions only.
 //
@@ -184,6 +184,14 @@ export function applyCollaborationReview(ledger, envelope, reviewNumber) {
   if (!approving && envelope.findings.length === 0) {
     if (![...next.values()].some((entry) => entry.status === "addressed")) {
       throw collaborationError("COLLAB_FINDINGS_INVALID", "A change request without new findings needs an unresolved addressed finding.")
+    }
+    // A correction request carries at most MAX_FINDINGS findings for one area, so
+    // reject an oversized reopen before the review is recorded.
+    for (const area of ["backend", "frontend"]) {
+      const count = [...next.values()].filter((entry) => entry.area === area && entry.status === "addressed").length
+      if (count > SOFTWARE_FACTORY_COLLABORATION_MAX_FINDINGS) {
+        throw collaborationError("COLLAB_FINDINGS_INVALID", `Reopening would send ${count} ${area} findings; a correction carries at most ${SOFTWARE_FACTORY_COLLABORATION_MAX_FINDINGS}.`)
+      }
     }
     for (const [code, entry] of next) {
       if (entry.status !== "addressed") continue

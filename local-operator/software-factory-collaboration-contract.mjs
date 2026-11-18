@@ -821,6 +821,9 @@ export function createCollaborationWorkspaceGuard() {
       const current = holders.get(workspaceId)
       if (current) {
         record("reader_refused", workspaceId, holder)
+        if (current.state === "quarantined") {
+          throw collaborationError("COLLAB_WORKSPACE_QUARANTINED", "Workspace is quarantined after an ambiguous outcome and needs owner resolution.")
+        }
         throw collaborationError("COLLAB_WORKSPACE_WRITER_ACTIVE", "A reviewer needs a workspace with no active writer.")
       }
     },
