@@ -75,7 +75,7 @@ function dropAll(){
 
 // Trusted bootstrap before sealing: ownership/catalog import, host epoch 1
 // and N registered diagnostic contexts. All of it is unreachable after seal.
-async function fixture(t,{seal=true,actions=2,lifetime}={}){
+async function fixture(t,{seal=true,actions=2,lifetime,beforeSeal}={}){
  const cleanup=[],sessions=new Set(),counts={opened:0,disposed:0,commits:0,statements:[]}
  let hook=async(_s,execute)=>execute()
  t.after(()=>finishServiceTestFixture([...cleanup.reverse(),async()=>finishServiceTestFixture([...sessions].map(s=>()=>s.dispose())),()=>dropAll()]))
@@ -96,6 +96,7 @@ async function fixture(t,{seal=true,actions=2,lifetime}={}){
  const identity={anchorId:randomUUID(),authorityId:observed.owner.target_id,ownerId:randomUUID()},preSeal=inventory()
  const x={f,run,tickets,identity,counts,sessions,preSeal,cleanup,setHook:fn=>{hook=fn},preSealDump:dump()}
  if(!seal)return x
+ if(beforeSeal)await beforeSeal(x)
  x.attestation=sql('SELECT ppo_authority.seal_authority_gateway('+[identity.anchorId,identity.authorityId,identity.ownerId].map(v=>L(v)+'::uuid').join(',')+');')
  assert.match(x.attestation,/^[a-f0-9]{64}$/u)
  const initial=checkpoint();assert.equal(sql('SELECT ppo_authority.gateway_checkpoint();'),initial)
@@ -537,8 +538,13 @@ test('RIC-177 restoring a pre-seal image cannot revive the raw bypass; a denied 
 test('RIC-177 witness journal capacity is reserved for revocation and closure: deny before exhaustion, never prune or reset',{timeout:150000},async t=>{
  const x=await fixture(t),gw=await x.start();await gw.activate()
  const limit=EXTERNAL_INCARNATION_LAB_LIMITS.records
- while((await x.witness.inspect()).sequence<limit-8){await x.witness.quarantine();await gw.activate()}
+ // Trusted-administrator prefill directly on the witness (native state is
+ // unchanged, so its own checkpoint is current): fast, keeping the signed
+ // action inside its lifetime for the consumption control below.
+ while((await x.witness.inspect()).sequence<limit-8){await x.witness.quarantine();const q=await x.witness.inspect();await x.witness.activate({checkpoint:q.checkpoint,expectedRecordHash:q.recordHash})}
  assert.equal((await x.witness.inspect()).sequence,limit-8)
+ const lifetime=Math.min(Date.parse(x.f.request.expiresAt),Date.parse(x.f.claim.leaseExpiresAt),Date.parse(x.f.proof.expiresAt))-Date.now()
+ assert.ok(lifetime>5000,'capacity control must run inside the action lifetime ('+lifetime+' ms left)')
  const ok=await gw.consume(x.tickets[0]);assert.equal(ok.result.status,'gateway-consumed') // reserve + committed
  await gw.activate()
  let e=await x.witness.inspect(),before=checkpoint()
@@ -564,4 +570,37 @@ test('RIC-177 witness journal capacity is reserved for revocation and closure: d
  assert.equal((await readdir(join(x.witnessPath,'records'))).length,limit) // nothing pruned or reset
  await assert.rejects(readdir(join(x.witnessPath,'service.lock')),/ENOENT/u) // clean close released the lock
  assert.equal(x.counts.commits,2);await x.drain()
+})
+
+test('RIC-177 seal refuses ACL-bypassing roles, removes delegated membership chains and terminates sessions selected before the seal',{timeout:120000},async t=>{
+ let retained
+ const x=await fixture(t,{beforeSeal:async x=>{
+  const seal=()=>docker(['psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U','postgres','-d',db],'SELECT ppo_authority.seal_authority_gateway('+[x.identity.anchorId,x.identity.authorityId,x.identity.ownerId].map(v=>L(v)+'::uuid').join(',')+');',false)
+  // Negative controls: a non-superuser holding pg_read_all_data or pg_write_all_data blocks the seal; nothing changes.
+  for(const role of ['pg_read_all_data','pg_write_all_data']){
+   sql('GRANT '+role+' TO ppo_login_authority_reader;')
+   const r=seal();assert.notEqual(r.status,0);assert.match(r.stderr,/ACL-bypassing predefined role/u)
+   sql('REVOKE '+role+' FROM ppo_login_authority_reader;')
+   assert.equal(count('gateway_profile'),0);assert.equal(sql("SELECT count(*) FROM pg_auth_members WHERE member='ppo_login_authority_reader'::regrole;"),'1')
+  }
+  // Delegated ADMIN OPTION chain of depth 2 (postgres -> writer -> importer -> reader).
+  sql('GRANT ppo_rehearsal_target TO ppo_login_authority_writer WITH ADMIN OPTION;')
+  for(const [from,to,admin] of [['ppo_login_authority_writer','ppo_login_authority_importer',' WITH ADMIN OPTION'],['ppo_login_authority_importer','ppo_login_authority_reader','']]){
+   const r=asLogin(from,'GRANT ppo_rehearsal_target TO '+to+admin+';');assert.equal(r.status,0,r.stderr)
+  }
+  assert.equal(sql("SELECT count(*) FROM pg_auth_members WHERE roleid='ppo_rehearsal_target'::regrole;"),'4')
+  // An ordinary LOGIN session that selected an ordinary role before the seal.
+  retained=createPostgresTestSession(spawn('docker',['exec','-i',container,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',serviceLogin('ppo_action_admin'),'-d',db],{stdio:['pipe','pipe','pipe']}))
+  x.cleanup.push(()=>retained.close())
+  await retained.send("SET application_name='ppo-ric177-retained';SET ROLE ppo_action_admin;")
+  assert.equal(await retained.send('SELECT current_user;'),'ppo_action_admin')
+ }})
+ assert.equal(sql("SELECT count(*) FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid WHERE g.rolname LIKE 'ppo\\_%' AND g.rolname NOT IN ('ppo_authority_owner','ppo_authority_gateway');"),'0')
+ assert.equal(sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='ppo-ric177-retained';"),'0')
+ // Even after a pre-seal image restore re-grants the ordinary ACLs, the
+ // retained session is gone and no new session can select the role.
+ restore(x.preSealDump);const before=checkpoint()
+ await assert.rejects(retained.send(rawConfigure(x.f,1,'revoked')))
+ denied42501(asLogin(serviceLogin('ppo_action_admin'),'SET ROLE ppo_action_admin;'+rawConfigure(x.f,1,'revoked')),'new admin session after pre-seal restore')
+ assert.equal(checkpoint(),before);assert.equal(sql("SELECT epoch||':'||(policy->>'status') FROM ppo_authority.action_hosts;"),'1:active')
 })

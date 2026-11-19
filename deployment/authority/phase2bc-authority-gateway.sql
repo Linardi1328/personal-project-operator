@@ -216,7 +216,7 @@ END $b$;
 -- every schema function, relation and the schema itself, then grant only the
 -- four gateway entrypoints to the single gateway role. Not granted to anyone.
 CREATE FUNCTION ppo_authority.seal_authority_gateway(p_anchor uuid,p_authority uuid,p_owner uuid) RETURNS text LANGUAGE plpgsql VOLATILE SET search_path=pg_catalog,pg_temp AS $b$
-DECLARE r record; ns oid:='ppo_authority'::regnamespace; owner oid:='ppo_authority_owner'::regrole; gw oid:='ppo_authority_gateway'::regrole; login oid; a text;
+DECLARE r record; i integer; ns oid:='ppo_authority'::regnamespace; owner oid:='ppo_authority_owner'::regrole; gw oid:='ppo_authority_gateway'::regrole; login oid; a text;
  entry text[]:=ARRAY['ppo_authority.gateway_state()','ppo_authority.gateway_consume_action(uuid,uuid,text)','ppo_authority.gateway_revoke_host(uuid,text,bigint,text)','ppo_authority.gateway_receipt(uuid)'];
 BEGIN
  IF current_database()<>'ppo_authority_ci' OR NOT (SELECT rolsuper FROM pg_roles WHERE rolname=current_user) THEN RAISE EXCEPTION 'trusted disposable bootstrap administrator required'; END IF;
@@ -233,17 +233,19 @@ BEGIN
  -- ppo_* role, so even restoring a pre-seal schema image re-grants ACLs only
  -- to roles nobody can assume. Gateway and owner roles are checked above.
  -- Plain role names (not regrole text, which is already quoted) for %I.
- -- Grants made by a member that itself holds ADMIN OPTION are revoked first.
- FOR r IN SELECT g.rolname::text AS role,mm.rolname::text AS member,gg.rolname::text AS grantor FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid
-  JOIN pg_roles mm ON mm.oid=m.member JOIN pg_roles gg ON gg.oid=m.grantor
-  WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw)
-  ORDER BY (m.grantor=ANY(SELECT a.member FROM pg_auth_members a WHERE a.roleid=m.roleid AND a.admin_option)) DESC LOOP
-  EXECUTE format('REVOKE %I FROM %I GRANTED BY %I',r.role,r.member,r.grantor);
+ -- One grant at a time with CASCADE and a fresh query each round, so
+ -- delegated ADMIN OPTION chains of any depth are removed in dependency order.
+ FOR i IN 1..10000 LOOP
+  SELECT g.rolname::text AS role,mm.rolname::text AS member,gg.rolname::text AS grantor INTO r FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid
+   JOIN pg_roles mm ON mm.oid=m.member JOIN pg_roles gg ON gg.oid=m.grantor
+   WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw) ORDER BY 1,2,3 LIMIT 1;
+  EXIT WHEN NOT FOUND;
+  EXECUTE format('REVOKE %I FROM %I GRANTED BY %I CASCADE',r.role,r.member,r.grantor);
  END LOOP;
  IF EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw))
  THEN RAISE EXCEPTION 'ordinary role memberships remain'; END IF;
  -- Predefined roles bypass schema/table ACLs; only superusers may hold them.
- IF EXISTS(SELECT 1 FROM pg_roles pr WHERE NOT pr.rolsuper AND pr.rolname NOT LIKE 'pg\_%' AND pg_has_role(pr.oid,'pg_write_all_data','MEMBER'))
+ IF EXISTS(SELECT 1 FROM pg_roles pr WHERE NOT pr.rolsuper AND pr.rolname NOT LIKE 'pg\_%' AND (pg_has_role(pr.oid,'pg_write_all_data','MEMBER') OR pg_has_role(pr.oid,'pg_read_all_data','MEMBER')))
  THEN RAISE EXCEPTION 'ACL-bypassing predefined role membership present'; END IF;
  FOR r IN SELECT p.oid::regprocedure::text AS obj,x.grantee FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) x WHERE p.pronamespace=ns AND x.grantee<>p.proowner LOOP
   EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %s',r.obj,CASE WHEN r.grantee=0 THEN 'PUBLIC' ELSE quote_ident(r.grantee::regrole::text) END);
@@ -263,6 +265,14 @@ BEGIN
  OR EXISTS(SELECT 1 FROM pg_class c CROSS JOIN LATERAL aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) x WHERE c.relnamespace=ns AND x.grantee<>c.relowner)
  OR EXISTS(SELECT 1 FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) x WHERE n.oid=ns AND x.grantee<>n.nspowner AND NOT (x.grantee=gw AND x.privilege_type='USAGE'))
  THEN RAISE EXCEPTION 'authority gateway seal verification failed'; END IF;
+ -- Enforced session lifecycle: PostgreSQL does not re-validate a role
+ -- already selected by SET ROLE after its membership is revoked, so every
+ -- other non-superuser session in the cluster is terminated at seal.
+ PERFORM pg_terminate_backend(a.pid,5000) FROM pg_stat_activity a JOIN pg_roles l ON l.rolname=a.usename
+  WHERE a.pid<>pg_backend_pid() AND a.backend_type='client backend' AND NOT l.rolsuper;
+ PERFORM pg_stat_clear_snapshot(); -- read the live activity, not this transaction's cached view
+ IF EXISTS(SELECT 1 FROM pg_stat_activity a JOIN pg_roles l ON l.rolname=a.usename WHERE a.pid<>pg_backend_pid() AND a.backend_type='client backend' AND NOT l.rolsuper)
+ THEN RAISE EXCEPTION 'non-superuser sessions survived the seal'; END IF;
  a:=ppo_authority.gateway_attestation();
  INSERT INTO ppo_authority.gateway_profile VALUES(true,'ric177-disposable-authority-gateway-v1',p_anchor,p_authority,p_owner,'ppo_transport_gateway',a,0,NULL);
  RETURN a;

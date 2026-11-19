@@ -26,7 +26,9 @@ Before the seal, trusted fixture bootstrap runs: ownership import, host epoch 1 
 - **Is not granted to anyone.** It requires a superuser in the CI database and the active target authority.
 - **Checks the gateway login.** The single `ppo_transport_gateway` LOGIN must be unprivileged, hold exactly one membership (`ppo_authority_gateway`), and the owner role must have no members.
 - **Closes ordinary memberships cluster-wide.** It revokes every membership in every ordinary `ppo_*` role (all but the owner and gateway roles) and reads the result back. Role memberships are cluster-global, so restoring a pre-seal or pre-install schema image re-grants ACLs only to roles no LOGIN can assume.
-- **Refuses ACL-bypassing predefined roles.** It refuses to seal if any non-superuser role holds `pg_write_all_data`.
+- **Refuses ACL-bypassing predefined roles.** It refuses to seal if any non-superuser role holds `pg_write_all_data` or `pg_read_all_data`.
+- **Removes delegated chains.** Memberships are revoked one at a time with `CASCADE` and re-queried each round, so delegated ADMIN OPTION chains of any depth are removed.
+- **Terminates pre-seal sessions.** PostgreSQL does not re-check a role already selected with `SET ROLE` after its membership is revoked, so the seal terminates every other non-superuser session in the cluster and refuses to complete if one survives.
 - **Revokes every non-owner privilege.** This covers every function, relation and the schema, read back from the actual ACLs, including PUBLIC defaults.
 - **Grants exactly four entrypoints to `ppo_authority_gateway`:** `gateway_state`, `gateway_consume_action`, `gateway_revoke_host` and `gateway_receipt`, plus schema `USAGE`.
 - **Rereads the effective ACLs** and refuses to seal on any residue.
@@ -120,7 +122,7 @@ Every ordinary role had schema `USAGE`. No ordinary role held direct table privi
 **After the seal:**
 
 - **Every ordinary `ppo_*` role, and every test LOGIN** (one per role, plus a four-membership mixed login): zero `EXECUTE`, zero table read/write, no schema `USAGE`, no `CREATE` here or on `public`. The LOGINs hold no ordinary membership at all.
-- **Cluster-wide:** no non-superuser LOGIN of any name can read or write any schema relation or execute any schema function, and no non-superuser, non-predefined role holds `pg_write_all_data` or `pg_read_all_data`.
+- **Cluster-wide:** as itself, no non-superuser LOGIN of any name can read or write any schema relation or execute any schema function, and no non-superuser, non-predefined role holds `pg_write_all_data` or `pg_read_all_data`. The one exception is the supported path: `ppo_transport_gateway` can execute the four gateway entrypoints after `SET ROLE ppo_authority_gateway`.
 - **`ppo_authority_gateway`:** exactly the four entrypoints plus `USAGE`, with no table privileges and no memberships.
 - **`ppo_transport_gateway`** (NOINHERIT): exactly one membership, `ppo_authority_gateway`.
 - **`ppo_authority_owner`:** owns the objects and has no members. It is trusted database administration, not a runtime credential.
@@ -133,13 +135,13 @@ The full `ppo_*` per-role inventory before and after the seal is printed in the 
 
 ## Tested guarantees versus remaining assumptions
 
-All tests below use actual disposable PostgreSQL 16, actual NOINHERIT LOGIN sessions, actual `pg_dump`/restore/`CREATE DATABASE` clone, real loopback TLS 1.3 mutual authentication with disposable certificates, and the real on-disk witness. The integration suite has 14 cases.
+All tests below use actual disposable PostgreSQL 16, actual NOINHERIT LOGIN sessions, actual `pg_dump`/restore/`CREATE DATABASE` clone, real loopback TLS 1.3 mutual authentication with disposable certificates, and the real on-disk witness. The integration suite has 15 cases.
 
 | Area | Tested |
 | --- | --- |
 | Causal control and seal | Unsealed bypass reproduction; sealed inventory and 175 direct denials |
 | Exactly-once operation | Peer separation, replay, same/new operation ID and restart replay |
-| Restore and clone | Stale restore, pre-seal image restore, clone, foreign owner |
+| Restore and clone | Stale restore, pre-seal image restore, a session selected before the seal and kept across a pre-seal restore, clone, foreign owner |
 | Pins and revocation | Rotated and revoked pins, durable quarantine; stale-epoch revocation denial followed by a successful real revocation |
 | Concurrency | Concurrent requests; two copied-identity owners both observed waiting at the actual gate (exactly one effect, the loser latched `unknown`); a concurrent raw writer |
 | Expiry and delay | Post-reservation expiry; delayed older-incarnation requests |
