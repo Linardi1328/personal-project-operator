@@ -127,3 +127,10 @@ test('activation keeps its closure reserve and never reopens after detach',async
  const activation=g2.activate(async()=>{await held;return dbState()});await new Promise(r=>setImmediate(r));g2.detach();release()
  assert.equal((await activation).status,'denied');assert.ok(!w.calls.includes('activate'))
 })
+
+test('shutdown during the final witness reread never reopens the witness',async()=>{
+ const w=fakeWitness({status:'quarantined'}),g=make(w);let reads=0,release,entered;const held=new Promise(r=>release=r),inFlight=new Promise(r=>entered=r)
+ const inspect=w.inspect;w.inspect=async()=>{const r=await inspect();if(++reads===2){entered();await held}return r}
+ const activation=g.activate(async()=>dbState());await inFlight;g.detach();release()
+ assert.equal((await activation).status,'denied');assert.ok(!w.calls.includes('activate'))
+})

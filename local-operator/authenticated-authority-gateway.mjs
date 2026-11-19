@@ -195,8 +195,11 @@ export function createAuthenticatedAuthorityGateway({mode,witness,pinnedIdentity
     const e=await witness.inspect()
     if(e.status!=='quarantined'||e.pending!==null||!sameIdentity(e)||EXTERNAL_INCARNATION_LAB_LIMITS.records-e.sequence<3)return result('denied')
     const s=one(await query(G.state,[]),'state')
-    // Shutdown may have begun while the read was in flight: never reopen then.
-    if(detached||!dbState(s)||s.checkpoint!==e.checkpoint||(await witness.inspect()).recordHash!==e.recordHash)return result('denied')
+    // Both the database read and this witness reread are asynchronous, and
+    // shutdown may begin during either: observe first, then check detached
+    // synchronously immediately before the reopen so it can never follow detach.
+    const again=await witness.inspect()
+    if(detached||!dbState(s)||s.checkpoint!==e.checkpoint||again.recordHash!==e.recordHash)return result('denied')
     const a=await witness.activate({checkpoint:s.checkpoint,expectedRecordHash:e.recordHash})
     return result('activated',{binding:{...identity,incarnation:a.incarnation,instanceId:a.instanceId,checkpoint:a.checkpoint}})
    })
