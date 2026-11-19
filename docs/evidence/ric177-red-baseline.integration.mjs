@@ -8,10 +8,11 @@ import {spawnSync} from 'node:child_process'
 import {mkdtemp,chmod,rm,readFile,realpath} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
+import {pathToFileURL} from 'node:url'
 import {createHash,randomUUID} from 'node:crypto'
 const root=process.env.PPO_RED_CHECKOUT
 if(!root?.startsWith('/'))throw Error('PPO_RED_CHECKOUT required')
-const m=p=>import('file://'+join(root,p))
+const m=p=>import(pathToFileURL(join(root,p)).href)
 const {openExternalIncarnationAnchor}=await m('local-operator/development-external-incarnation-anchor.mjs')
 const {createSyntheticOwnershipRehearsal,OWNERSHIP_REHEARSAL_SQL:O}=await m('local-operator/development-ownership-rehearsal.mjs')
 const {createCatalogCertifiedQuery}=await m('local-operator/development-catalog-certified-query.mjs')

@@ -4,7 +4,7 @@
 import test,{before,after} from 'node:test'
 import assert from 'node:assert/strict'
 import {spawn,spawnSync} from 'node:child_process'
-import {mkdtemp,chmod,rm,readFile,realpath} from 'node:fs/promises'
+import {mkdtemp,chmod,rm,readFile,realpath,readdir} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
@@ -13,8 +13,8 @@ import {createSyntheticOwnershipRehearsal,OWNERSHIP_REHEARSAL_SQL as O} from '..
 import {createCatalogCertifiedQuery} from '../../local-operator/development-catalog-certified-query.mjs'
 import {createIsolatedPostgresActionVerifier} from '../../local-operator/software-factory-remote-postgres-action-fence.mjs'
 import {signOfflineHostActionProof} from '../../local-operator/software-factory-remote-host-fence.mjs'
-import {createIsolatedPinnedService,createIsolatedPinnedClient,serviceLogin} from '../../local-operator/isolated-pinned-service-transport.mjs'
-import {createAuthenticatedAuthorityGateway,AUTHORITY_GATEWAY_SQL as G,GATEWAY_RECORD_RESERVE} from '../../local-operator/authenticated-authority-gateway.mjs'
+import {createIsolatedPinnedService,createIsolatedPinnedClient,serviceLogin,SERVICE_ROLE_PROBE} from '../../local-operator/isolated-pinned-service-transport.mjs'
+import {createAuthenticatedAuthorityGateway,AUTHORITY_GATEWAY_SQL as G,GATEWAY_RECORD_RESERVE,GATEWAY_REVOCATION_RESERVE} from '../../local-operator/authenticated-authority-gateway.mjs'
 import {signedActionFixture} from './action-test-fixture.mjs'
 import {admissionProfileSql} from './phase1gd1-profile.mjs'
 import {serviceTlsFixture,finishServiceTestFixture} from './service-transport-test-fixture.mjs'
@@ -31,12 +31,13 @@ const sql=(text,role='postgres',database=db)=>{assert.ok([db,clone].includes(dat
 const asLogin=(login,text,database=db)=>docker(['psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',login,'-d',database],"\\set VERBOSITY verbose\nSET statement_timeout='15s';"+text,false)
 const bind=(s,a)=>s.replace(/\$([1-4])/gu,(_,i)=>L(a[Number(i)-1]))
 const query=role=>async(s,a)=>({rows:[JSON.parse(sql('SELECT row_to_json(q) FROM ('+bind(s,a)+') q;',role))]})
-// Independent JS checkpoint (identical to the 2C laboratory) cross-checks the SQL one.
+// Independent JS recomputation of the SQL checkpoint (same pinned UTC/ISO/C
+// rendering), built by the test rather than read from the gateway function.
 function checkpoint(database=db){
  const tables=JSON.parse(sql("SELECT json_agg(tablename ORDER BY tablename) FROM pg_tables WHERE schemaname='ppo_authority';",'postgres',database))
  assert.ok(tables.length>10&&tables.every(name=>/^[a-z_]+$/u.test(name)))
- const parts=tables.map(name=>"SELECT "+L(name)+" AS name,coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]') AS rows FROM ppo_authority."+name+' t')
- return sha(sql("SELECT jsonb_agg(q ORDER BY name)::text FROM ("+parts.join(' UNION ALL ')+') q;','postgres',database))
+ const parts=tables.map(name=>"SELECT "+L(name)+" AS name,coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text COLLATE \"C\"),'[]') AS rows FROM ppo_authority."+name+' t')
+ return sha(sql("SET TimeZone='UTC';SET DateStyle='ISO, MDY';SET IntervalStyle='postgres';SET extra_float_digits=1;SELECT jsonb_agg(q ORDER BY name COLLATE \"C\")::text FROM ("+parts.join(' UNION ALL ')+') q;','postgres',database))
 }
 const dump=()=>docker(['pg_dump','-U','postgres','-d',db,'--schema=ppo_authority']).stdout
 function restore(snapshot,database=db){sql('DROP SCHEMA IF EXISTS ppo_authority CASCADE;','postgres',database);sql(snapshot,'postgres',database)}
@@ -93,7 +94,7 @@ async function fixture(t,{seal=true,actions=2,lifetime}={}){
  for(const [login,members] of Object.entries(ORDINARY))sql('CREATE ROLE '+login+' LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;'+members.map(m=>'GRANT '+m+' TO '+login+';').join(''))
  sql('CREATE ROLE '+GATEWAY_LOGIN+' LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;GRANT '+GATEWAY_ROLE+' TO '+GATEWAY_LOGIN+';')
  const identity={anchorId:randomUUID(),authorityId:observed.owner.target_id,ownerId:randomUUID()},preSeal=inventory()
- const x={f,run,tickets,identity,counts,sessions,preSeal,cleanup,setHook:fn=>{hook=fn}}
+ const x={f,run,tickets,identity,counts,sessions,preSeal,cleanup,setHook:fn=>{hook=fn},preSealDump:dump()}
  if(!seal)return x
  x.attestation=sql('SELECT ppo_authority.seal_authority_gateway('+[identity.anchorId,identity.authorityId,identity.ownerId].map(v=>L(v)+'::uuid').join(',')+');')
  assert.match(x.attestation,/^[a-f0-9]{64}$/u)
@@ -171,6 +172,13 @@ test('RIC-177 sealed profile: effective privilege inventory leaves only the gate
   assert.deepEqual(row.execute,[],role+' execute');assert.equal(row.schema[0],false,role+' schema usage')
  }
  assert.deepEqual(post[GATEWAY_LOGIN].memberOf,[GATEWAY_ROLE]);assert.equal(post.ppo_authority_owner.memberOf.length,0)
+ // Cluster-global closure: no LOGIN keeps any ordinary ppo_* membership.
+ for(const login of Object.keys(ORDINARY)){assert.deepEqual(x.preSeal[login].memberOf.length>0,true,login);assert.deepEqual(post[login].memberOf,[],login)}
+ // Cluster-wide, not only ppo_* roles: no non-superuser LOGIN can write any
+ // schema relation or execute any schema function, and none holds an ACL-bypassing predefined role.
+ assert.equal(sql(`SELECT count(*) FROM pg_roles r CROSS JOIN pg_class c WHERE r.rolcanlogin AND NOT r.rolsuper AND c.relnamespace='ppo_authority'::regnamespace AND c.relkind IN ('r','v','S','p','m','f') AND has_table_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');`),'0')
+ assert.equal(sql(`SELECT count(*) FROM pg_roles r CROSS JOIN pg_proc p WHERE r.rolcanlogin AND NOT r.rolsuper AND p.pronamespace='ppo_authority'::regnamespace AND has_function_privilege(r.oid,p.oid,'EXECUTE');`),'0')
+ assert.equal(sql(`SELECT count(*) FROM pg_roles r WHERE NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND (pg_has_role(r.oid,'pg_write_all_data','MEMBER') OR pg_has_role(r.oid,'pg_read_all_data','MEMBER'));`),'0')
  assert.equal(sql("SELECT count(*) FROM pg_auth_members WHERE roleid='ppo_authority_owner'::regrole;"),'0')
  const before=checkpoint(),ticket=x.tickets[0],op=randomUUID()
  // Every pre-seal executable function of every ordinary role, called as that actual LOGIN.
@@ -197,8 +205,16 @@ test('RIC-177 sealed profile: effective privilege inventory leaves only the gate
  attempts.push([GATEWAY_LOGIN,"SELECT ppo_authority.gateway_state();",'gateway login without SET ROLE'])
  for(const [login,text,label] of attempts)denied42501(asLogin(login,text),label)
  console.log('RIC177_DIRECT_DENIALS '+attempts.length)
- assert.ok(attempts.length>=150)
+ assert.equal(attempts.length,175)
  assert.equal(checkpoint(),before);assert.equal(count('action_tombstones'),0)
+ // Defence in depth: even if an administrator re-grants an ordinary
+ // membership, the schema/function ACL layer still denies the raw calls.
+ sql('GRANT ppo_action_consumer TO '+serviceLogin('ppo_action_consumer')+';GRANT ppo_action_admin TO '+serviceLogin('ppo_action_admin')+';')
+ try{
+  denied42501(asLogin(serviceLogin('ppo_action_consumer'),'SET ROLE ppo_action_consumer;'+rawConsume(ticket,op)),'re-granted consumer')
+  denied42501(asLogin(serviceLogin('ppo_action_admin'),'SET ROLE ppo_action_admin;'+rawConfigure(x.f,1,'revoked')),'re-granted admin')
+ }finally{sql('REVOKE ppo_action_consumer FROM '+serviceLogin('ppo_action_consumer')+';REVOKE ppo_action_admin FROM '+serviceLogin('ppo_action_admin')+';')}
+ assert.equal(checkpoint(),before)
  // Role escalation by membership change: guard denies the escalated LOGIN,
  // and the changed attestation makes the gateway itself deny.
  sql('GRANT '+GATEWAY_ROLE+' TO '+serviceLogin('ppo_action_consumer')+';')
@@ -210,11 +226,21 @@ test('RIC-177 sealed profile: effective privilege inventory leaves only the gate
  await gw.activate()
  const exp=await gw.expected()
  sql('GRANT ppo_action_admin TO '+GATEWAY_LOGIN+';')
+ const probeOnly=x.counts.statements.length
  try{const r=(await gw.consume(ticket,{expect:exp})).result;assert.equal(r.status,'denied');flagsFalse(r)}finally{sql('REVOKE ppo_action_admin FROM '+GATEWAY_LOGIN+';')}
+ assert.deepEqual(x.counts.statements.slice(probeOnly),[SERVICE_ROLE_PROBE]) // rejected by the transport probe, not later
  assert.equal(checkpoint(),before)
  // A gateway session opened with the wrong LOGIN/role is rejected by the transport probe before any statement.
- const wrong=await x.start({connect:x.open(db,serviceLogin('ppo_action_consumer'),'ppo_action_consumer'),witness:{inspect:async()=>assert.fail('witness reached'),reserve:async()=>assert.fail(),recordCommitted:async()=>assert.fail(),quarantine:async()=>{},activate:async()=>assert.fail()}})
+ // (Membership temporarily re-granted so the session opens and the probe itself must reject it.)
+ sql('GRANT ppo_action_consumer TO '+serviceLogin('ppo_action_consumer')+';');x.cleanup.push(()=>sql('REVOKE ppo_action_consumer FROM '+serviceLogin('ppo_action_consumer')+';'))
+ let witnessCalls=0
+ const unreachable=async()=>{witnessCalls++;throw Error('witness reached')}
+ const wrong=await x.start({connect:x.open(db,serviceLogin('ppo_action_consumer'),'ppo_action_consumer'),witness:{inspect:unreachable,reserve:unreachable,recordCommitted:unreachable,quarantine:unreachable,activate:unreachable}})
+ const seen=x.counts.statements.length,opened=x.counts.opened
  assert.equal((await wrong.call('/v1/gateway/state',{})).status,'denied')
+ // Rejected by the session probe itself: one connection, only the probe, no witness access.
+ assert.equal(witnessCalls,0);assert.equal(x.counts.opened,opened+1);assert.deepEqual(x.counts.statements.slice(seen),[SERVICE_ROLE_PROBE])
+ sql('REVOKE ppo_action_consumer FROM '+serviceLogin('ppo_action_consumer')+';')
  assert.equal(checkpoint(),before);await x.drain()
 })
 
@@ -237,10 +263,13 @@ test('RIC-177 valid pinned gateway operations succeed exactly once; replay, new-
  const revoked=await gw.revoke();assert.equal(revoked.result.status,'gateway-revoked');flagsFalse(revoked.result)
  assert.equal(sql("SELECT epoch||':'||(policy->>'status') FROM ppo_authority.action_hosts;"),'2:revoked')
  await gw.activate()
- assert.equal((await gw.revoke({expectedEpoch:2})).result.status,'denied') // one revocation subject per host
+ assert.equal((await gw.revoke({operationId:revoked.operationId,expectedEpoch:1})).result.status,'denied') // replayed revocation: operation and (host, epoch) subject used
+ const already=await gw.revoke({expectedEpoch:2});assert.equal(already.result.status,'gateway-denied') // host no longer active: exact denial receipt
+ await gw.activate()
  const afterRevocation=await gw.consume(x.tickets[1]);assert.equal(afterRevocation.result.status,'gateway-denied');assert.equal(afterRevocation.result.outcome,'denied')
- assert.equal(count('action_tombstones'),1);assert.equal(count('gateway_receipts'),3);assert.equal(x.counts.commits,3)
- assert.deepEqual(JSON.parse(sql("SELECT jsonb_agg(outcome ORDER BY incarnation) FROM ppo_authority.gateway_receipts;")),['consumed','revoked','denied'])
+ assert.equal(count('action_tombstones'),1);assert.equal(count('gateway_receipts'),4);assert.equal(x.counts.commits,4)
+ assert.equal(sql("SELECT epoch||':'||(policy->>'status') FROM ppo_authority.action_hosts;"),'2:revoked')
+ assert.deepEqual(JSON.parse(sql("SELECT jsonb_agg(outcome ORDER BY incarnation) FROM ppo_authority.gateway_receipts;")),['consumed','revoked','denied','denied'])
  assert.equal(sql('SELECT last_incarnation FROM ppo_authority.gateway_profile;'),String((await x.witness.inspect()).incarnation))
  // Clean restart: the witness reopens quarantined; old requests and IDs stay denied.
  await gw.activate();const old=await gw.expected()
@@ -254,7 +283,7 @@ test('RIC-177 valid pinned gateway operations succeed exactly once; replay, new-
  // The restarted gateway still mutates exactly once; the host it revoked
  // before restart stays revoked, so the committed outcome is a denial receipt.
  const fresh=await gw.consume(x.tickets[2]);assert.equal(fresh.result.status,'gateway-denied');assert.equal(fresh.result.outcome,'denied')
- assert.equal(count('action_tombstones'),1);assert.equal(count('gateway_receipts'),4);assert.equal(x.counts.commits,4);await x.drain()
+ assert.equal(count('action_tombstones'),1);assert.equal(count('gateway_receipts'),5);assert.equal(x.counts.commits,5);await x.drain()
 })
 
 test('RIC-177 stale restore, clone and different owner deny before reservation; ordinary LOGIN raw SQL after restore is 42501',{timeout:120000},async t=>{
@@ -334,8 +363,9 @@ test('RIC-177 concurrent requests, copied-identity owners, foreign owners and ra
  let entered=0,release;const together=new Promise(r=>release=r)
  x.setHook(async(s,execute)=>{if(s===G.consume){entered++;if(entered===2){await holder.send('BEGIN;SELECT 1 FROM ppo_authority.gate WHERE singleton FOR UPDATE;');release()}await together}return execute()})
  const race=Promise.all([gw.consume(x.tickets[2],{expect:a}),copyGw.consume(x.tickets[3],{expect:b})])
- for(let i=0;i<300&&Number(sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='"+APP+"' AND wait_event_type='Lock';"))<2;i++)await sleep(10)
- assert.equal(entered,2)
+ let lockWaiters=0
+ for(let i=0;i<300&&lockWaiters<2;i++){lockWaiters=Number(sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='"+APP+"' AND wait_event_type='Lock';"));if(lockWaiters<2)await sleep(10)}
+ assert.equal(entered,2);assert.equal(lockWaiters,2) // both actually wait at the shared gate before release
  // Concurrent ordinary raw writer during the race is still denied.
  denied42501(asLogin(serviceLogin('ppo_action_consumer'),'SET ROLE ppo_action_consumer;'+rawConsume(x.tickets[2],randomUUID())),'concurrent raw writer')
  await holder.send('ROLLBACK;')
@@ -357,11 +387,13 @@ test('RIC-177 concurrent requests, copied-identity owners, foreign owners and ra
 })
 
 test('RIC-177 post-reservation expiry never produces a first effect and recovery cannot upgrade it',{timeout:120000},async t=>{
- const x=await fixture(t,{lifetime:5000}),gw=await x.start();await gw.activate()
+ const x=await fixture(t,{lifetime:8000}),gw=await x.start();await gw.activate()
+ const deadline=Math.min(Date.parse(x.f.request.expiresAt),Date.parse(x.f.claim.leaseExpiresAt),Date.parse(x.f.proof.expiresAt))
+ // Setup must leave a real freshness window; the wait below must fit the 10 s operation budget.
+ const remaining=deadline-Date.now();assert.ok(remaining>=1500&&remaining<=8000,'remaining action lifetime '+remaining+' ms')
  // Positive control: the action is valid and fresh before reservation.
  const control=sql('BEGIN;'+rawConsume(x.tickets[0],randomUUID())+'ROLLBACK;')
  assert.equal(JSON.parse(control).consumed,true)
- const deadline=Math.min(Date.parse(x.f.request.expiresAt),Date.parse(x.f.claim.leaseExpiresAt),Date.parse(x.f.proof.expiresAt))
  let waited=false;x.setHook(async(s,execute)=>{if(s===G.consume){await sleep(Math.max(0,deadline-Date.now())+50);waited=true}return execute()})
  const late=await gw.consume(x.tickets[0]);assert.equal(waited,true)
  assert.equal(late.result.status,'gateway-denied');assert.equal(late.result.outcome,'denied');flagsFalse(late.result)
@@ -461,19 +493,60 @@ test('RIC-177 shutdown during an in-flight mutation disposes the actual session 
  await x.drain()
 })
 
-test('RIC-177 witness journal capacity is reserved for closure: deny before exhaustion, never prune or reset',{timeout:150000},async t=>{
- const x=await fixture(t),gw=await x.start();await gw.activate()
- const target=EXTERNAL_INCARNATION_LAB_LIMITS.records-GATEWAY_RECORD_RESERVE
- while((await x.witness.inspect()).sequence<target){await x.witness.quarantine();await gw.activate()}
- assert.equal((await x.witness.inspect()).sequence,target)
- const ok=await gw.consume(x.tickets[0]);assert.equal(ok.result.status,'gateway-consumed')
+test('RIC-177 restoring a pre-seal image cannot revive the raw bypass; a denied stale-epoch revocation never disables the kill switch',{timeout:120000},async t=>{
+ const x=await fixture(t,{actions:2}),gw=await x.start();await gw.activate()
+ // A stale expected epoch commits an exact denial receipt but burns only that (host, epoch) subject.
+ const stale=await gw.revoke({expectedEpoch:7});assert.equal(stale.result.status,'gateway-denied');assert.equal(stale.result.outcome,'denied');flagsFalse(stale.result)
+ assert.equal(sql("SELECT epoch||':'||(policy->>'status') FROM ppo_authority.action_hosts;"),'1:active');assert.equal(x.counts.commits,1)
  await gw.activate()
- const e=await x.witness.inspect(),before=checkpoint()
- assert.ok(EXTERNAL_INCARNATION_LAB_LIMITS.records-e.sequence<GATEWAY_RECORD_RESERVE)
+ const real=await gw.revoke({expectedEpoch:1});assert.equal(real.result.status,'gateway-revoked')
+ assert.equal(sql("SELECT epoch||':'||(policy->>'status') FROM ppo_authority.action_hosts;"),'2:revoked');assert.equal(count('gateway_receipts'),2);assert.equal(x.counts.commits,2)
+ await gw.activate()
+ // An administrator restores the bootstrap (pre-seal) image: its ACLs grant
+ // the ordinary roles again, but no LOGIN can assume them any more.
+ restore(x.preSealDump)
+ assert.equal(count('action_tombstones'),0);assert.equal(sql("SELECT policy->>'status' FROM ppo_authority.action_hosts;"),'active');assert.equal(count('gateway_profile'),0)
+ assert.ok(JSON.parse(sql("SELECT to_jsonb(has_function_privilege('ppo_action_consumer','ppo_authority.consume_action(uuid,uuid)','EXECUTE'));"))) // the image itself is unsealed
+ const before=checkpoint()
+ for(const [login,role,text] of [[serviceLogin('ppo_action_consumer'),'ppo_action_consumer',rawConsume(x.tickets[0],randomUUID())],[serviceLogin('ppo_action_admin'),'ppo_action_admin',rawConfigure(x.f,1,'active')],['ppo_login_mixed','ppo_action_consumer',rawConsume(x.tickets[1],randomUUID())]])
+  denied42501(asLogin(login,'SET ROLE '+role+';'+text),login+' after pre-seal restore')
+ assert.equal(checkpoint(),before)
+ // The unsealed image has no profile: the gateway denies without reserving.
+ const ops=(await x.witness.inspect()).operations.length
+ const r=await gw.call('/v1/gateway/consume',{operationId:randomUUID(),ticket:x.tickets[0],expected:await (async()=>{const e=await x.witness.inspect();return {incarnation:e.incarnation,instanceId:e.instanceId,checkpoint:e.checkpoint}})()})
+ assert.equal(r.status,'denied');assert.equal((await x.witness.inspect()).operations.length,ops);assert.equal(checkpoint(),before)
+ await assert.rejects(gw.activate(),/./u)
+ await x.drain()
+})
+
+test('RIC-177 witness journal capacity is reserved for revocation and closure: deny before exhaustion, never prune or reset',{timeout:150000},async t=>{
+ const x=await fixture(t),gw=await x.start();await gw.activate()
+ const limit=EXTERNAL_INCARNATION_LAB_LIMITS.records
+ while((await x.witness.inspect()).sequence<limit-8){await x.witness.quarantine();await gw.activate()}
+ assert.equal((await x.witness.inspect()).sequence,limit-8)
+ const ok=await gw.consume(x.tickets[0]);assert.equal(ok.result.status,'gateway-consumed') // reserve + committed
+ await gw.activate()
+ let e=await x.witness.inspect(),before=checkpoint()
+ assert.equal(e.status,'open');assert.equal(limit-e.sequence,GATEWAY_RECORD_RESERVE+GATEWAY_REVOCATION_RESERVE.records-2)
+ // Routine consumption is refused first, keeping room for one emergency revocation.
  const denied=await gw.consume(x.tickets[1]);assert.equal(denied.result.status,'unavailable');flagsFalse(denied.result)
  assert.equal((await x.witness.inspect()).sequence,e.sequence);assert.equal(checkpoint(),before);assert.equal(count('action_tombstones'),1)
- await gw.service.close();await x.witness.close() // reserved closure record remains available
- const reopened=await openExternalIncarnationAnchor(x.witnessConfig).catch(error=>error)
- assert.ok(reopened instanceof Error) // full journal: reopening cannot append, no reset/prune exists
- await x.drain()
+ const revoked=await gw.revoke();assert.equal(revoked.result.status,'gateway-revoked')
+ await gw.activate() // activation keeps 2 records: one pin-change quarantine and the clean close
+ e=await x.witness.inspect();assert.equal(limit-e.sequence,2)
+ assert.equal((await gw.consume(x.tickets[1])).result.status,'unavailable')
+ assert.equal((await gw.revoke({expectedEpoch:2})).result.status,'unavailable')
+ assert.equal((await x.witness.inspect()).sequence,e.sequence)
+ // A pin change quarantines the open witness once and never spends another
+ // record on an already-quarantined one; activation then keeps its reserve.
+ x.pins.rotate('lab-coordinator',1,tls.certs.coordinatorNew.fingerprint)
+ for(let i=0;i<100&&(await x.witness.inspect()).status!=='quarantined';i++)await sleep(10)
+ assert.equal((await x.witness.inspect()).sequence,limit-1)
+ x.pins.rotate('lab-coordinator',2,tls.certs.unknown.fingerprint)
+ await sleep(50);assert.equal((await x.witness.inspect()).sequence,limit-1)
+ await assert.rejects(gw.activate(),/./u)
+ await gw.service.close();await x.witness.close() // the reserved close record remains available
+ assert.equal((await readdir(join(x.witnessPath,'records'))).length,limit) // nothing pruned or reset
+ await assert.rejects(readdir(join(x.witnessPath,'service.lock')),/ENOENT/u) // clean close released the lock
+ assert.equal(x.counts.commits,2);await x.drain()
 })

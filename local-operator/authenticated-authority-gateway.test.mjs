@@ -41,6 +41,7 @@ test('construction requires explicit mode, pinned trust domain, attestation, tru
  const conn={gateway:async()=>assert.fail('no connection')}
  assert.throws(()=>createIsolatedPinnedService({mode:TM,service:'consumer',identity:tls.certs.consumer.identity,tls:tls.certs.consumer.tls,pins,connections:{actionConsumer:async()=>{},resourceConsumer:async()=>{}},gateway:g}))
  assert.throws(()=>createIsolatedPinnedService({mode:TM,service:'gateway',identity:tls.certs.gateway.identity,tls:tls.certs.gateway.tls,pins,connections:conn}))
+ for(const bad of [null,{...g,activate:undefined},{serviceIdentity:g.serviceIdentity,pins,handle:g.handle}])assert.throws(()=>createIsolatedPinnedService({mode:TM,service:'gateway',identity:tls.certs.gateway.identity,tls:tls.certs.gateway.tls,pins,connections:conn,gateway:bad}))
  assert.throws(()=>createIsolatedPinnedService({mode:TM,service:'gateway',identity:tls.certs.gateway.identity,tls:tls.certs.gateway.tls,pins:tls.registry(),connections:conn,gateway:g}))
  g.detach()
 })
@@ -103,4 +104,26 @@ test('a concurrent mutation is refused immediately; a pin change durably quarant
  pins3.rotate('lab-coordinator',1,tls.certs.coordinatorNew.fingerprint);await new Promise(r=>setImmediate(r))
  assert.ok(!w3.calls.includes('quarantine'))
  assert.equal((await g3.handle('/v1/gateway/state',{},ctx(async()=>assert.fail()))).status,'unavailable')
+})
+
+test('a pin change racing activation is serialized after it and never stales the expected record hash',async()=>{
+ const w=fakeWitness({status:'quarantined'}),pins=tls.registry(),g=make(w,pins);let release,entered;const held=new Promise(r=>release=r),reading=new Promise(r=>entered=r)
+ const hashes=[];w.activate=async({expectedRecordHash})=>{hashes.push(expectedRecordHash);w.calls.push('activate');if(expectedRecordHash!==w.state.recordHash)throw Error('stale hash would break the witness');w.state.status='open';return {...w.state}}
+ const quarantine=w.quarantine;w.quarantine=async()=>{await quarantine();w.state.recordHash=h('7')}
+ const activation=g.activate(async()=>{entered();await held;return dbState()})
+ await reading;pins.rotate('lab-coordinator',1,tls.certs.coordinatorNew.fingerprint);await new Promise(r=>setImmediate(r))
+ assert.ok(!w.calls.includes('quarantine')) // queued behind the activation, not interleaved
+ release();assert.equal((await activation).status,'activated');for(let i=0;i<20&&!w.calls.includes('quarantine');i++)await new Promise(r=>setImmediate(r))
+ assert.deepEqual(w.calls.filter(c=>['activate','quarantine'].includes(c)),['activate','quarantine']);assert.equal(w.state.status,'quarantined')
+ // Already quarantined: a further pin change spends no record.
+ const before=w.calls.length;pins.rotate('lab-coordinator',2,tls.certs.unknown.fingerprint);for(let i=0;i<5;i++)await new Promise(r=>setImmediate(r))
+ assert.ok(!w.calls.slice(before).includes('quarantine'));g.detach()
+})
+
+test('activation keeps its closure reserve and never reopens after detach',async()=>{
+ const low=fakeWitness({status:'quarantined',sequence:EXTERNAL_INCARNATION_LAB_LIMITS.records-2}),g1=make(low)
+ assert.equal((await g1.activate(async()=>assert.fail('no read'))).status,'denied');assert.ok(!low.calls.includes('activate'));g1.detach()
+ const w=fakeWitness({status:'quarantined'}),g2=make(w);let release;const held=new Promise(r=>release=r)
+ const activation=g2.activate(async()=>{await held;return dbState()});await new Promise(r=>setImmediate(r));g2.detach();release()
+ assert.equal((await activation).status,'denied');assert.ok(!w.calls.includes('activate'))
 })

@@ -5,7 +5,7 @@ import {parseUniqueJson} from './unique-json.mjs'
 import {remotePayloadDigest} from './software-factory-remote-contract.mjs'
 import {validIsolatedActionBindings,createIsolatedPostgresActionVerifier,createIsolatedPostgresActionFence,inspectIsolatedActionConsumption,POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
 import {createSyntheticResourceVerifier,createSyntheticResourceFence,inspectSyntheticResourceReceipt,RESOURCE_SQL as R} from './software-factory-postgres-resource-fence.mjs'
-import {authorityGatewayRoute,AUTHORITY_GATEWAY_SQL as G} from './authenticated-authority-gateway.mjs'
+import {authorityGatewayRoute,gatewayOperationSubject,AUTHORITY_GATEWAY_SQL as G} from './authenticated-authority-gateway.mjs'
 
 const MODE='isolated-pinned-service-transport-only',AM='isolated-postgres-action-fencing-only',RM='isolated-postgres-resource-fencing-only'
 const FLAGS=Object.freeze({grant:false,canExecute:false,releaseAuthorized:false})
@@ -81,7 +81,7 @@ function route(service,path,body,keys,ctx){
 // Each service owns only its listed fixed DB capabilities and a separate TLS
 // identity. Factories are server infrastructure, never request properties.
 export function createIsolatedPinnedService({mode,service,identity,tls,pins,connections,verifierKeys,gateway}={}){
- if((service==='gateway')!==(gateway!==undefined)||gateway&&(gateway.serviceIdentity!==identity||gateway.pins!==pins||typeof gateway.handle!=='function'))fail()
+ if(service==='gateway'?(!gateway||typeof gateway!=='object'||gateway.serviceIdentity!==identity||gateway.pins!==pins||['handle','activate','detach'].some(k=>typeof gateway[k]!=='function')):gateway!==undefined)fail()
  if(mode!==MODE||!exact(tls,['key','cert','ca'])||!Object.hasOwn(services,service)||!pins?.read||!pins?.lookup||!pins?.subscribe||!exact(connections,services[service])||services[service].some(k=>typeof connections[k]!=='function'))fail()
  const own=pins.read(identity);if(!own?.active||own.kind!==service+'-service'||own.fingerprint!==tlsKeyFingerprint(tls?.cert))fail()
  const sockets=new Set(),active=new Set(),usedSessions=new WeakSet();let started=false,closing=false,closingTask
@@ -126,18 +126,26 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
  const unsubscribe=pins.subscribe(()=>{for(const attempt of active){const p=pins.read(attempt.peer);if(!selfCurrent()||!p?.active||p.epoch!==attempt.epoch||p.fingerprint!==attempt.fingerprint)attempt.cancel()}})
  // Trusted local administration (no network route): one fresh probed gateway
  // session, exclusively owned and disposed, for explicit witness activation.
+ // Shutdown detaches the gateway first (no reopen after a late result) and
+ // waits for every activation's connection disposal like a request attempt.
+ const activations=new Set()
  async function activateGateway(){
   if(!gateway||closing)fail()
-  const c=await connections.gateway();if(!c||typeof c.query!=='function'||typeof c.dispose!=='function'||usedSessions.has(c))fail();usedSessions.add(c)
-  try{probeSession(await c.query(SERVICE_ROLE_PROBE,[]),roles.gateway);const allowed=[G.state];return await gateway.activate(async(s,a)=>{if(closing||!selfCurrent()||!allowed.includes(s))fail();return c.query(s,a)})}finally{await c.dispose()}
+  let c,finish;const finished=new Promise(r=>{finish=r});activations.add(finished)
+  try{
+   c=await connections.gateway();if(!c||typeof c.query!=='function'||typeof c.dispose!=='function'||usedSessions.has(c))fail();usedSessions.add(c)
+   if(closing)fail()
+   probeSession(await c.query(SERVICE_ROLE_PROBE,[]),roles.gateway);const allowed=[G.state]
+   return await gateway.activate(async(s,a)=>{if(closing||!selfCurrent()||!allowed.includes(s))fail();return c.query(s,a)})
+  }finally{let ok=true;try{await c?.dispose()}catch{ok=false}activations.delete(finished);finish(ok)}
  }
  return Object.freeze({...(gateway?{activateGateway}:{}),async listen(){if(started||closing)fail();started=true;await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});return Object.freeze({port:server.address().port,identity,service})},async close(){
   if(closingTask)return closingTask
-  closing=true;unsubscribe();gateway?.detach();const pending=[...active];for(const a of pending)a.cancel();for(const s of sockets)s.destroy()
+  closing=true;unsubscribe();gateway?.detach();const pending=[...active].map(a=>(a.cancel(),a.finished)).concat([...activations]);for(const s of sockets)s.destroy()
   closingTask=(async()=>{
    if(started)await new Promise(resolve=>server.close(resolve))
    let deadline
-   try{const result=await Promise.race([Promise.all(pending.map(a=>a.finished)),new Promise(resolve=>{deadline=setTimeout(()=>resolve(null),PINNED_SERVICE_LIMITS.operationMs)})]);if(!result||result.some(ok=>!ok))fail()}finally{clearTimeout(deadline)}
+   try{const result=await Promise.race([Promise.all(pending),new Promise(resolve=>{deadline=setTimeout(()=>resolve(null),PINNED_SERVICE_LIMITS.operationMs)})]);if(!result||result.some(ok=>!ok))fail()}finally{clearTimeout(deadline)}
   })()
   return closingTask
  }})
@@ -178,15 +186,30 @@ function validResourceContext(snapshot){
  return validNativeResourceState(r)
 }
 
-// Gateway acknowledgments carry evidence identity only, never a grant.
+// Gateway acknowledgments carry evidence identity only, never a grant. Exact
+// key sets; the operation must be the one this client requested and, for a
+// mutation, bound to the incarnation/instance this client expected.
+const GATEWAY_FLAGS=['grant','canExecute','releaseAuthorized','status']
+function boundGatewayOperation(path,body,o){
+ if(!exact(o,['operationId','kind','subjectHash','inputHash'])||o.operationId!==body.operationId||!hash(o.inputHash))fail()
+ if(path==='/v1/gateway/consume'&&(o.kind!=='consume-action'||o.subjectHash!==gatewayOperationSubject(o.kind,body.ticket,'')))fail()
+ if(path==='/v1/gateway/revoke-host'&&(o.kind!=='revoke-host'||o.subjectHash!==gatewayOperationSubject(o.kind,body.hostId,String(body.expectedEpoch))))fail()
+ if(path==='/v1/gateway/reconcile'&&(!['consume-action','revoke-host'].includes(o.kind)||!hash(o.subjectHash)))fail()
+}
 function boundGatewayResponse(path,body,r){
  const positive={'/v1/gateway/state':['gateway-state'],'/v1/gateway/consume':['gateway-consumed','gateway-denied'],'/v1/gateway/revoke-host':['gateway-revoked','gateway-denied'],'/v1/gateway/reconcile':['reconciled']}
- if(['denied','unknown','unavailable'].includes(r.status)){if(Object.hasOwn(r,'operation')&&r.operation?.operationId!==body.operationId)fail();return}
+ if(['denied','unknown','unavailable'].includes(r.status)){
+  if(!exact(r,Object.hasOwn(r,'operation')?[...GATEWAY_FLAGS,'operation']:GATEWAY_FLAGS))fail()
+  if(Object.hasOwn(r,'operation'))boundGatewayOperation(path,body,r.operation)
+  return
+ }
  if(!positive[path]?.includes(r.status))fail()
- if(r.status==='gateway-state'){const b=r.binding;if(!exact(r,['grant','canExecute','releaseAuthorized','status','binding','witness','pending','consistent'])||!exact(b,['anchorId','authorityId','ownerId','incarnation','instanceId','checkpoint'])||!['anchorId','authorityId','ownerId'].every(k=>uuid(b[k]))||!Number.isSafeInteger(b.incarnation)||!(b.instanceId===null||uuid(b.instanceId))||!hash(b.checkpoint)||!['open','quarantined'].includes(r.witness)||!(r.pending===null||uuid(r.pending))||typeof r.consistent!=='boolean')fail();return}
- const o=r.operation,outcomes={'gateway-consumed':['consumed'],'gateway-revoked':['revoked'],'gateway-denied':['denied'],reconciled:['consumed','revoked','denied']}
- if(!exact(o,['operationId','kind','subjectHash','inputHash'])||o.operationId!==body.operationId||!['consume-action','revoke-host'].includes(o.kind)||!hash(o.subjectHash)||!hash(o.inputHash)||!hash(r.receiptHash)||!outcomes[r.status].includes(r.outcome))fail()
- if(path!=='/v1/gateway/reconcile'&&(o.kind!==(path==='/v1/gateway/consume'?'consume-action':'revoke-host')||!Number.isSafeInteger(r.incarnation)||!uuid(r.instanceId)))fail()
+ if(r.status==='gateway-state'){const b=r.binding;if(!exact(r,[...GATEWAY_FLAGS,'binding','witness','pending','consistent'])||!exact(b,['anchorId','authorityId','ownerId','incarnation','instanceId','checkpoint'])||!['anchorId','authorityId','ownerId'].every(k=>uuid(b[k]))||!Number.isSafeInteger(b.incarnation)||!(b.instanceId===null||uuid(b.instanceId))||!hash(b.checkpoint)||!['open','quarantined'].includes(r.witness)||!(r.pending===null||uuid(r.pending))||typeof r.consistent!=='boolean')fail();return}
+ const outcomes={'gateway-consumed':['consumed'],'gateway-revoked':['revoked'],'gateway-denied':['denied'],reconciled:['consumed','revoked','denied']}
+ if(path==='/v1/gateway/reconcile'){if(!exact(r,[...GATEWAY_FLAGS,'operation','outcome','receiptHash']))fail()}
+ else if(!exact(r,[...GATEWAY_FLAGS,'operation','outcome','receiptHash','incarnation','instanceId'])||r.incarnation!==body.expected.incarnation||r.instanceId!==body.expected.instanceId)fail()
+ boundGatewayOperation(path,body,r.operation)
+ if(!hash(r.receiptHash)||!outcomes[r.status].includes(r.outcome))fail()
 }
 function boundResponse(path,body,r){
  if(path.startsWith('/v1/gateway/')){if(!r||Object.getPrototypeOf(r)!==Object.prototype||r.grant!==false||r.canExecute!==false||r.releaseAuthorized!==false||!statuses.has(r.status))fail();return boundGatewayResponse(path,body,r)}

@@ -40,13 +40,15 @@ CREATE TRIGGER monotonic_gateway_profile BEFORE UPDATE ON ppo_authority.gateway_
 CREATE TRIGGER immutable_gateway_profile BEFORE DELETE OR TRUNCATE ON ppo_authority.gateway_profile FOR EACH STATEMENT EXECUTE FUNCTION ppo_authority.refuse_history_mutation();
 
 -- Native pre/post-state checkpoint over EVERY actual schema table in one
--- statement snapshot. Byte-identical to the 2C laboratory checkpoint text.
-CREATE FUNCTION ppo_authority.gateway_checkpoint() RETURNS text LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS $b$
+-- statement snapshot. Rendering is pinned (UTC, ISO, C collation) so it does
+-- not depend on the calling session or the cluster's default collation.
+CREATE FUNCTION ppo_authority.gateway_checkpoint() RETURNS text LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+SET search_path=pg_catalog,pg_temp SET TimeZone='UTC' SET DateStyle='ISO, MDY' SET IntervalStyle='postgres' SET extra_float_digits=1 AS $b$
 DECLARE parts text; out text;
 BEGIN
- SELECT string_agg(format('SELECT %L AS name,coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),''[]'') AS rows FROM ppo_authority.%I t',tablename::text,tablename),' UNION ALL ' ORDER BY tablename)
+ SELECT string_agg(format('SELECT %L::text AS name,coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text COLLATE "C"),''[]'') AS rows FROM ppo_authority.%I t',tablename::text,tablename),' UNION ALL ' ORDER BY tablename)
  INTO STRICT parts FROM pg_tables WHERE schemaname='ppo_authority';
- EXECUTE 'SELECT jsonb_agg(q ORDER BY name)::text FROM ('||parts||') q' INTO STRICT out;
+ EXECUTE 'SELECT jsonb_agg(q ORDER BY name COLLATE "C")::text FROM ('||parts||') q' INTO STRICT out;
  RETURN encode(sha256(convert_to(out,'UTF8')),'hex');
 END $b$;
 
@@ -70,8 +72,18 @@ CREATE FUNCTION ppo_authority.gateway_attestation() RETURNS text LANGUAGE sql ST
  sch AS (SELECT (SELECT coalesce(jsonb_agg(jsonb_build_array(CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END,x.privilege_type,x.is_grantable) ORDER BY (CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END) COLLATE "C",x.privilege_type COLLATE "C"),'[]'::jsonb) FROM aclexplode(coalesce(n.nspacl,acldefault('n',n.nspowner))) x) AS j,n.nspowner::regrole::text AS owner FROM pg_namespace n,ns WHERE n.oid=ns.oid),
  rol AS (SELECT coalesce(jsonb_agg(jsonb_build_array(r.rolname::text,r.rolsuper,r.rolinherit,r.rolcreaterole,r.rolcreatedb,r.rolcanlogin,r.rolreplication,r.rolbypassrls) ORDER BY r.rolname::text COLLATE "C"),'[]'::jsonb) AS j FROM pg_roles r WHERE r.rolname LIKE 'ppo\_%'),
  mem AS (SELECT coalesce(jsonb_agg(jsonb_build_array(m.roleid::regrole::text,m.member::regrole::text,m.admin_option,m.inherit_option,m.set_option) ORDER BY m.roleid::regrole::text COLLATE "C",m.member::regrole::text COLLATE "C"),'[]'::jsonb) AS j
-  FROM pg_auth_members m WHERE m.roleid::regrole::text LIKE 'ppo\_%' OR m.member::regrole::text LIKE 'ppo\_%')
- SELECT encode(sha256(convert_to(jsonb_build_array('ric177-attestation-v1',(SELECT j FROM fns),(SELECT j FROM rels),(SELECT jsonb_build_array(owner,j) FROM sch),(SELECT j FROM rol),(SELECT j FROM mem))::text,'UTF8')),'hex')
+  FROM pg_auth_members m WHERE m.roleid::regrole::text LIKE 'ppo\_%' OR m.member::regrole::text LIKE 'ppo\_%' OR m.roleid::regrole::text IN ('pg_write_all_data','pg_read_all_data')),
+ -- Rules, row security, policies, per-role/database settings, default ACLs,
+ -- schema types and operators: any later change differs.
+ extra AS (SELECT jsonb_build_array(
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(c.relname::text,r.rulename::text,pg_get_ruledef(r.oid)) ORDER BY c.relname::text COLLATE "C",r.rulename::text COLLATE "C"),'[]'::jsonb) FROM pg_rewrite r JOIN pg_class c ON c.oid=r.ev_class,ns WHERE c.relnamespace=ns.oid AND c.relkind<>'v'),
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(c.relname::text,c.relrowsecurity,c.relforcerowsecurity) ORDER BY c.relname::text COLLATE "C"),'[]'::jsonb) FROM pg_class c,ns WHERE c.relnamespace=ns.oid AND c.relkind IN ('r','p')),
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(c.relname::text,p.polname::text,pg_get_expr(p.polqual,p.polrelid),pg_get_expr(p.polwithcheck,p.polrelid)) ORDER BY c.relname::text COLLATE "C",p.polname::text COLLATE "C"),'[]'::jsonb) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid,ns WHERE c.relnamespace=ns.oid),
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(coalesce(d.datname::text,''),coalesce(r.rolname::text,''),s.setconfig) ORDER BY coalesce(d.datname::text,'') COLLATE "C",coalesce(r.rolname::text,'') COLLATE "C"),'[]'::jsonb) FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid=s.setdatabase LEFT JOIN pg_roles r ON r.oid=s.setrole WHERE (s.setdatabase=0 OR d.datname=current_database()) AND (s.setrole=0 OR r.rolname LIKE 'ppo\_%')),
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(a.defaclrole::regrole::text,a.defaclobjtype,a.defaclacl::text) ORDER BY a.defaclrole::regrole::text COLLATE "C",a.defaclobjtype),'[]'::jsonb) FROM pg_default_acl a,ns WHERE a.defaclnamespace IN (0,ns.oid)),
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(t.typname::text,t.typtype,t.typowner::regrole::text,t.typacl::text) ORDER BY t.typname::text COLLATE "C"),'[]'::jsonb) FROM pg_type t,ns WHERE t.typnamespace=ns.oid),
+  (SELECT coalesce(jsonb_agg(o.oid::regoperator::text ORDER BY o.oid::regoperator::text COLLATE "C"),'[]'::jsonb) FROM pg_operator o,ns WHERE o.oprnamespace=ns.oid)) AS j)
+ SELECT encode(sha256(convert_to(jsonb_build_array('ric177-attestation-v2',(SELECT j FROM fns),(SELECT j FROM rels),(SELECT jsonb_build_array(owner,j) FROM sch),(SELECT j FROM rol),(SELECT j FROM mem),(SELECT j FROM extra))::text,'UTF8')),'hex')
 $b$;
 
 -- Fails with SQLSTATE 42501 unless invoked by the one sealed gateway LOGIN,
@@ -110,7 +122,9 @@ BEGIN
  IF b->>'anchorId' IS DISTINCT FROM prof.anchor_id::text OR b->>'authorityId' IS DISTINCT FROM prof.authority_id::text OR b->>'ownerId' IS DISTINCT FROM prof.owner_id::text
  THEN RAISE EXCEPTION 'gateway external trust domain denied'; END IF;
  IF (b->>'incarnation')::bigint<=prof.last_incarnation THEN RAISE EXCEPTION 'gateway incarnation is not newer'; END IF;
- IF ppo_authority.gateway_subject(p_kind,p_key) IS DISTINCT FROM b->>'subjectHash' THEN RAISE EXCEPTION 'gateway subject denied'; END IF;
+ -- Revocation subject is host AND expected epoch: a denied stale-epoch
+ -- attempt never burns the host's ability to be revoked at its real epoch.
+ IF ppo_authority.gateway_subject(p_kind,CASE WHEN p_detail='' THEN p_key ELSE p_key||':'||p_detail END) IS DISTINCT FROM b->>'subjectHash' THEN RAISE EXCEPTION 'gateway subject denied'; END IF;
  input:='ppo-ric177-gateway-input-v1|'||p_kind||'|'||p_operation::text||'|'||p_key||'|'||p_detail||'|'||(b->>'anchorId')||'|'||(b->>'authorityId')||'|'||(b->>'ownerId')||'|'||
   (b->>'incarnation')||'|'||(b->>'instanceId')||'|'||(b->>'checkpoint')||'|'||(b->>'peerIdentity')||'|'||(b->>'peerEpoch')||'|'||(b->>'peerFingerprint')||'|'||(b->>'serviceIdentity')||'|'||(b->>'serviceEpoch');
  IF encode(sha256(convert_to(input,'UTF8')),'hex') IS DISTINCT FROM b->>'inputHash' THEN RAISE EXCEPTION 'gateway input digest denied'; END IF;
@@ -178,6 +192,9 @@ BEGIN
  PERFORM 1 FROM ppo_authority.gate WHERE singleton FOR SHARE;
  IF NOT FOUND THEN RAISE EXCEPTION 'gate missing'; END IF;
  SELECT to_jsonb(g) INTO r FROM ppo_authority.gateway_receipts g WHERE operation_id=p_operation;
+ -- Only a receipt whose transaction is durably committed is evidence; one
+ -- visible from this session's own open transaction is not.
+ IF r IS NOT NULL AND pg_xact_status((r->>'transaction_id')::xid8) IS DISTINCT FROM 'committed' THEN r:=NULL; END IF;
  IF r->>'kind'='consume-action' THEN SELECT to_jsonb(t) INTO native FROM ppo_authority.action_tombstones t WHERE operation_id=p_operation;
  ELSIF r->>'kind'='revoke-host' THEN SELECT to_jsonb(x) INTO native FROM ppo_authority.action_hosts x WHERE host_id=r->'evidence'->>'hostId'; END IF;
  RETURN jsonb_build_object('receiptText',r::text,'receiptHash',CASE WHEN r IS NULL THEN NULL ELSE encode(sha256(convert_to(r::text,'UTF8')),'hex') END,'native',native,
@@ -212,6 +229,18 @@ BEGIN
  OR EXISTS(SELECT 1 FROM pg_auth_members WHERE member=gw OR roleid=owner)
  OR (SELECT rolcanlogin OR rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls FROM pg_roles WHERE oid=gw)
  THEN RAISE EXCEPTION 'gateway LOGIN must hold exactly one unprivileged gateway membership'; END IF;
+ -- Cluster-global closure: no LOGIN keeps a membership in any ordinary
+ -- ppo_* role, so even restoring a pre-seal schema image re-grants ACLs only
+ -- to roles nobody can assume. Gateway and owner roles are checked above.
+ FOR r IN SELECT m.roleid::regrole::text AS role,m.member::regrole::text AS member,m.grantor::regrole::text AS grantor FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid
+  WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw) LOOP
+  EXECUTE format('REVOKE %I FROM %I GRANTED BY %I',r.role,r.member,r.grantor);
+ END LOOP;
+ IF EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw))
+ THEN RAISE EXCEPTION 'ordinary role memberships remain'; END IF;
+ -- Predefined roles bypass schema/table ACLs; only superusers may hold them.
+ IF EXISTS(SELECT 1 FROM pg_roles pr WHERE NOT pr.rolsuper AND pr.rolname NOT LIKE 'pg\_%' AND pg_has_role(pr.oid,'pg_write_all_data','MEMBER'))
+ THEN RAISE EXCEPTION 'ACL-bypassing predefined role membership present'; END IF;
  FOR r IN SELECT p.oid::regprocedure::text AS obj,x.grantee FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) x WHERE p.pronamespace=ns AND x.grantee<>p.proowner LOOP
   EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %s',r.obj,CASE WHEN r.grantee=0 THEN 'PUBLIC' ELSE quote_ident(r.grantee::regrole::text) END);
  END LOOP;

@@ -25,6 +25,10 @@ export const AUTHORITY_GATEWAY_SQL=Object.freeze({
 // Reserve, committed evidence, one pin-change quarantine and a clean close.
 // Deny before reservation rather than strand closure/reconciliation evidence.
 export const GATEWAY_RECORD_RESERVE=4
+// Consumption additionally leaves one host revocation possible (activation,
+// reserve, committed evidence and one operation slot) so routine traffic
+// cannot exhaust the emergency revocation path.
+export const GATEWAY_REVOCATION_RESERVE=Object.freeze({records:3,operations:1})
 const G=AUTHORITY_GATEWAY_SQL,WRITE=['BEGIN','COMMIT','ROLLBACK']
 const KINDS={'/v1/gateway/consume':'consume-action','/v1/gateway/revoke-host':'revoke-host'}
 const ROUTES=Object.freeze({
@@ -45,6 +49,9 @@ export function authorityGatewayRoute(path,body){
  return spec
 }
 export const gatewaySubjectHash=(kind,key)=>sha('ppo-ric177-gateway-subject-v1|'+kind+'|'+key)
+// Revocation subject binds host AND expected epoch, so a denied stale-epoch
+// attempt cannot burn the host's ability to be revoked at its real epoch.
+export const gatewayOperationSubject=(kind,key,detail)=>gatewaySubjectHash(kind,detail===''?key:key+':'+detail)
 export function gatewayInputText({kind,operationId,key,detail,binding:b}){
  return ['ppo-ric177-gateway-input-v1',kind,operationId,key,detail,b.anchorId,b.authorityId,b.ownerId,String(b.incarnation),b.instanceId,b.checkpoint,
   b.peerIdentity,String(b.peerEpoch),b.peerFingerprint,b.serviceIdentity,String(b.serviceEpoch)].join('|')
@@ -57,15 +64,24 @@ export function createAuthenticatedAuthorityGateway({mode,witness,pinnedIdentity
     !witness||['inspect','reserve','recordCommitted','quarantine','activate'].some(k=>typeof witness[k]!=='function')||
     typeof pins?.read!=='function'||typeof pins?.subscribe!=='function'||typeof serviceIdentity!=='string'||!LAB.test(serviceIdentity)||pins.read(serviceIdentity)?.kind!=='gateway-service')fail()
  const identity=Object.freeze({...pinnedIdentity})
- let busy=false,detached=false
- // One witness-mutating path at a time. A concurrent request denies at once
- // rather than queueing a delayed mutation or tripping the witness latch.
- async function exclusive(fn){if(busy||detached)return result('unavailable');busy=true;try{return await fn()}finally{busy=false}}
+ let locked=false,detached=false
+ const waiters=[]
+ const release=()=>{const next=waiters.shift();if(next)next();else locked=false}
+ // One witness-touching path at a time. A request denies at once rather than
+ // queueing a delayed mutation; a queued pin-change quarantine runs before any
+ // later request can take the lock.
+ async function exclusive(fn){if(locked||detached)return result('unavailable');locked=true;try{return await fn()}finally{release()}}
  // Rotation is unsupported in this profile and pins are process-local, so any
- // coordinator/administrator/gateway pin change durably quarantines the
- // witness. Only a trusted explicit activation against the current checkpoint
- // reopens it; a restart likewise reopens quarantined.
- const unsubscribe=pins.subscribe(entry=>{if(['coordinator','administrator'].includes(entry?.kind)||entry?.identity===serviceIdentity)void witness.quarantine().catch(()=>{})})
+ // coordinator/administrator/gateway pin change durably quarantines an open
+ // witness. It is serialized with activation, so it cannot stale an
+ // activation's expected record hash, and it never spends a record on an
+ // already-quarantined witness (preserving the reserved close record).
+ // Only a trusted explicit activation against the current checkpoint reopens
+ // it; a restart likewise reopens quarantined.
+ const unsubscribe=pins.subscribe(entry=>{
+  if(!['coordinator','administrator'].includes(entry?.kind)&&entry?.identity!==serviceIdentity)return
+  void (locked?new Promise(r=>waiters.push(r)):(locked=true,Promise.resolve())).then(async()=>{try{if((await witness.inspect()).status==='open')await witness.quarantine()}catch{}finally{release()}})
+ })
  const sameIdentity=e=>isDeepStrictEqual(e?.identity,identity)
  function dbState(s){
   if(!exact(s,['profile','anchorId','authorityId','ownerId','lastIncarnation','sealedAttestation','attestation','checkpoint'])||s.profile!=='ric177-disposable-authority-gateway-v1'||
@@ -86,12 +102,12 @@ export function createAuthenticatedAuthorityGateway({mode,witness,pinnedIdentity
      b.checkpoint!==pending.beforeCheckpoint||b.subjectHash!==o.subjectHash||b.inputHash!==o.inputHash)return null
   const x=r.evidence,n=ev.native
   if(o.kind==='consume-action'){
-   if(!uuid(x?.ticket)||gatewaySubjectHash(o.kind,x.ticket)!==o.subjectHash||sha(gatewayInputText({kind:o.kind,operationId:o.operationId,key:x.ticket,detail:'',binding:b}))!==o.inputHash)return null
+   if(!uuid(x?.ticket)||gatewayOperationSubject(o.kind,x.ticket,'')!==o.subjectHash||sha(gatewayInputText({kind:o.kind,operationId:o.operationId,key:x.ticket,detail:'',binding:b}))!==o.inputHash)return null
    if(r.outcome==='consumed'&&(n?.operation_id!==o.operationId||n.ticket!==x.ticket||x.precommit?.fresh!==true))return null
    if(r.outcome==='denied'&&(n!==null||x.core?.consumed!==false))return null
    if(!['consumed','denied'].includes(r.outcome))return null
   }else{
-   if(typeof x?.hostId!=='string'||!epoch(x.expectedEpoch)||gatewaySubjectHash(o.kind,x.hostId)!==o.subjectHash||sha(gatewayInputText({kind:o.kind,operationId:o.operationId,key:x.hostId,detail:String(x.expectedEpoch),binding:b}))!==o.inputHash)return null
+   if(typeof x?.hostId!=='string'||!epoch(x.expectedEpoch)||gatewayOperationSubject(o.kind,x.hostId,String(x.expectedEpoch))!==o.subjectHash||sha(gatewayInputText({kind:o.kind,operationId:o.operationId,key:x.hostId,detail:String(x.expectedEpoch),binding:b}))!==o.inputHash)return null
    if(r.outcome==='revoked'&&(n?.host_id!==x.hostId||n.epoch!==x.expectedEpoch+1||n.policy?.status!=='revoked'||!isDeepStrictEqual(n,x.after)))return null
    if(r.outcome==='denied'&&x.before?.host_id!=null&&!isDeepStrictEqual(n,x.before))return null
    if(!['revoked','denied'].includes(r.outcome))return null
@@ -105,13 +121,16 @@ export function createAuthenticatedAuthorityGateway({mode,witness,pinnedIdentity
   try{
    const e=await witness.inspect()
    if(e.status!=='open'||e.pending!==null||!sameIdentity(e)||e.incarnation!==body.expected.incarnation||e.instanceId!==body.expected.instanceId||e.checkpoint!==body.expected.checkpoint)return result('denied')
-   const subjectHash=gatewaySubjectHash(kind,key)
+   const subjectHash=gatewayOperationSubject(kind,key,detail)
    if(e.operations.some(o=>o.operationId===body.operationId||o.subjectHash===subjectHash))return result('denied')
-   if(EXTERNAL_INCARNATION_LAB_LIMITS.records-e.sequence<GATEWAY_RECORD_RESERVE||e.operations.length>=EXTERNAL_INCARNATION_LAB_LIMITS.operations)return result('unavailable')
+   const keep=kind==='consume-action'?GATEWAY_REVOCATION_RESERVE:{records:0,operations:0}
+   if(EXTERNAL_INCARNATION_LAB_LIMITS.records-e.sequence<GATEWAY_RECORD_RESERVE+keep.records||e.operations.length>=EXTERNAL_INCARNATION_LAB_LIMITS.operations-keep.operations)return result('unavailable')
    const s=one(await ctx.query(G.state,[]),'state')
    // Native state diverged from the external anchor: stale restore, clone
    // or out-of-band write. Latch durable quarantine; never reserve.
-   if(!dbState(s)||s.checkpoint!==e.checkpoint){await witness.quarantine();return result('denied')}
+   // A DB incarnation floor at or above the witness incarnation means another
+   // owner already used this incarnation: deny cleanly before reservation.
+   if(!dbState(s)||s.checkpoint!==e.checkpoint||s.lastIncarnation>=e.incarnation){await witness.quarantine();return result('denied')}
    if(!ctx.live())return result('denied')
    const binding={...identity,incarnation:e.incarnation,instanceId:e.instanceId,checkpoint:e.checkpoint}
    const full={...binding,peerIdentity:ctx.peer.identity,peerEpoch:ctx.peer.epoch,peerFingerprint:ctx.peer.fingerprint,serviceIdentity:ctx.service.identity,serviceEpoch:ctx.service.epoch,subjectHash}
@@ -153,7 +172,10 @@ export function createAuthenticatedAuthorityGateway({mode,witness,pinnedIdentity
   }catch{return result('unknown')}
  }
  async function state(ctx){
-  const e=await witness.inspect(),s=one(await ctx.query(G.state,[]),'state'),consistent=dbState(s)&&s.checkpoint===e.checkpoint
+  const e=await witness.inspect(),s=one(await ctx.query(G.state,[]),'state')
+  // Report only a stable witness observation; an overlapping change is unavailable.
+  if((await witness.inspect()).recordHash!==e.recordHash)return result('unavailable')
+  const consistent=dbState(s)&&s.checkpoint===e.checkpoint
   return result('gateway-state',{binding:{...identity,incarnation:e.incarnation,instanceId:e.instanceId,checkpoint:e.checkpoint},witness:e.status,pending:e.pending?.operation.operationId??null,consistent})
  }
  return Object.freeze({
@@ -167,10 +189,14 @@ export function createAuthenticatedAuthorityGateway({mode,witness,pinnedIdentity
   // Trusted local administration only (no network route): reopen a
   // quarantined witness when the probed gateway session reads exactly the
   // witnessed checkpoint and sealed attestation. Never resolves pending work.
+  // Leaves records for a pin-change quarantine and the clean close.
   activate(query){
    return exclusive(async()=>{
-    const e=await witness.inspect(),s=one(await query(G.state,[]),'state')
-    if(e.status!=='quarantined'||e.pending!==null||!sameIdentity(e)||!dbState(s)||s.checkpoint!==e.checkpoint)return result('denied')
+    const e=await witness.inspect()
+    if(e.status!=='quarantined'||e.pending!==null||!sameIdentity(e)||EXTERNAL_INCARNATION_LAB_LIMITS.records-e.sequence<3)return result('denied')
+    const s=one(await query(G.state,[]),'state')
+    // Shutdown may have begun while the read was in flight: never reopen then.
+    if(detached||!dbState(s)||s.checkpoint!==e.checkpoint||(await witness.inspect()).recordHash!==e.recordHash)return result('denied')
     const a=await witness.activate({checkpoint:s.checkpoint,expectedRecordHash:e.recordHash})
     return result('activated',{binding:{...identity,incarnation:a.incarnation,instanceId:a.instanceId,checkpoint:a.checkpoint}})
    })

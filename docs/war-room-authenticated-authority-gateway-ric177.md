@@ -15,7 +15,7 @@ The assertion that they are denied fails. The verbatim output is in [the evidenc
 
 **Causal control at the candidate.** The integration suite's first case runs the same scenario through the candidate's fixture but leaves the profile *unsealed*. The bypass reproduces. Sealing is the single difference, so the seal is what closes it.
 
-**GREEN.** With the profile sealed, the stale-restore case runs the same actual LOGIN calls after an actual restore. Both are denied with SQLSTATE `42501` before any mutation, and the native checkpoint is unchanged. The same operation succeeds exactly once through the pinned gateway on current state.
+**GREEN.** With the profile sealed, the stale-restore case runs the same actual LOGIN calls after an actual restore. Both are denied with SQLSTATE `42501` before any mutation, and the native checkpoint is unchanged. The same operation succeeds exactly once through the pinned gateway on current state. With the seal, those LOGINs no longer hold the ordinary memberships, so the `SET ROLE` itself is denied; the sealed-inventory case separately proves that the function and schema ACLs deny the same calls even if a membership is re-granted, and a separate case restores a pre-seal image and shows the bypass stays closed.
 
 ## Selected profile and seal
 
@@ -25,10 +25,12 @@ Before the seal, trusted fixture bootstrap runs: ownership import, host epoch 1 
 
 - **Is not granted to anyone.** It requires a superuser in the CI database and the active target authority.
 - **Checks the gateway login.** The single `ppo_transport_gateway` LOGIN must be unprivileged, hold exactly one membership (`ppo_authority_gateway`), and the owner role must have no members.
+- **Closes ordinary memberships cluster-wide.** It revokes every membership in every ordinary `ppo_*` role (all but the owner and gateway roles) and reads the result back. Role memberships are cluster-global, so restoring a pre-seal or pre-install schema image re-grants ACLs only to roles no LOGIN can assume.
+- **Refuses ACL-bypassing predefined roles.** It refuses to seal if any non-superuser role holds `pg_write_all_data`.
 - **Revokes every non-owner privilege.** This covers every function, relation and the schema, read back from the actual ACLs, including PUBLIC defaults.
 - **Grants exactly four entrypoints to `ppo_authority_gateway`:** `gateway_state`, `gateway_consume_action`, `gateway_revoke_host` and `gateway_receipt`, plus schema `USAGE`.
 - **Rereads the effective ACLs** and refuses to seal on any residue.
-- **Records the profile.** The pinned external trust domain (anchor, authority, owner) and an OID-free schema/profile attestation are stored in `gateway_profile`. The attestation covers definitions, owners, ACLs, constraints, triggers, indexes, and every `ppo_*` role attribute and membership.
+- **Records the profile.** The pinned external trust domain (anchor, authority, owner) and an OID-free schema/profile attestation are stored in `gateway_profile`. The attestation covers definitions, owners, ACLs, constraints, non-internal triggers, indexes, rewrite rules, row-security flags and policies, per-role/database settings for `ppo_*` roles, default ACLs, schema types and operators, every `ppo_*` role attribute and membership, and the members of `pg_write_all_data` and `pg_read_all_data`. Roles outside `ppo_*` are not attested; the seal and the cluster-wide test checks cover their effective privileges instead.
 
 After the seal, registration, configuration, admission, import, ownership, resource and legacy writers are unreachable to every ordinary credential. This is a disposable profile choice, **not** a claim that those writers participate in the gateway. Whole every-writer coverage remains a separate gate.
 
@@ -39,8 +41,8 @@ Each supported operation runs in a fixed order:
 1. **Peer.** The transport authenticates the peer by pinned TLS 1.3 SPKI. The coordinator may consume and the administrator may revoke; other peers and services deny.
 2. **Connection.** It opens one fresh, exclusively owned `ppo_transport_gateway` connection and probes its exact login, current role and membership.
 3. **Gateway serialization.** The gateway admits one witness-mutating path at a time. A concurrent request receives `unavailable` immediately; it is not queued as a delayed mutation.
-4. **Witness preflight (no effect).** The gateway reads the external witness. It must be open, with no pending operation, the pinned identity, and the exact incarnation, instance and checkpoint the client expected; client values are expectations, never attestations. The operation and subject must not have been used before, and capacity must remain. It then reads native state in one statement under the shared gate `FOR SHARE`. If the sealed identity, the attestation or the checkpoint differs from the witness (stale restore, clone, foreign owner, out-of-band write), it durably quarantines the witness and denies **without reserving**.
-5. **Durable reservation.** The witness fsyncs a reservation. It binds the operation UUID and kind, a kind-separated subject digest, and an input digest over the anchor, authority, owner, incarnation, instance, native pre-state checkpoint, subject/detail, the peer identity/pin epoch/fingerprint and the gateway service identity/epoch.
+4. **Witness preflight (no effect).** The gateway reads the external witness. It must be open, with no pending operation, the pinned identity, and the exact incarnation, instance and checkpoint the client expected; client values are expectations, never attestations. The operation and subject must not have been used before, and capacity must remain. It then reads native state in one statement under the shared gate `FOR SHARE`. If the sealed identity, the attestation or the checkpoint differs from the witness, or the DB incarnation floor is not below the witness incarnation (stale restore, clone, foreign owner, copied owner, out-of-band write), it durably quarantines the witness and denies **without reserving**. The checkpoint renders with pinned UTC, ISO and `C` collation, so it does not depend on session settings or the cluster's default collation.
+5. **Durable reservation.** The witness fsyncs a reservation. It binds the operation UUID and kind, a kind-separated subject digest (the ticket, or the host plus its expected epoch), and an input digest over the anchor, authority, owner, incarnation, instance, native pre-state checkpoint, subject/detail, the peer identity/pin epoch/fingerprint and the gateway service identity/epoch.
 6. **Revalidation at the boundary.** The gateway rereads the exact pending reservation. The transport rechecks both pins before every statement. Inside the mutation transaction, `gateway_boundary`:
    - runs the session guard (`42501` unless this is the sealed login, after `SET ROLE` to its only membership, unprivileged);
    - takes the **same first `gate` row lock** that every canonical, import, ownership, action and resource writer takes;
@@ -52,14 +54,15 @@ Each supported operation runs in a fixed order:
 
    Only then does it call the private fixed core: `consume_action` plus its pre-commit freshness check, or `configure_action_host` with a policy that PostgreSQL derives itself as current active policy to `revoked`. A client never supplies a policy. Nothing is cached from the preflight.
 7. **Atomic receipt.** The receipt (outcome `consumed`, `revoked` or `denied`) and the incarnation floor commit atomically with the effect. A semantic denial, such as an expired action or a revoked host, commits a denial receipt with no effect. A binding, freshness or integrity failure raises, rolls back and leaves the operation latched.
-8. **Exact positive evidence.** After `COMMIT`, a fresh statement under `FOR SHARE` reads the receipt, its digest, the native tombstone/host row, the checkpoint and the attestation. They must all agree with the pending reservation before the witness records committed evidence. The witness then stays quarantined; another operation needs explicit trusted activation against the witnessed checkpoint. `activateGateway` is a local method, not a network route.
+8. **Exact positive evidence.** After `COMMIT`, a fresh statement under `FOR SHARE` reads the receipt only if `pg_xact_status` reports its transaction committed, then its its digest, the native tombstone/host row, the checkpoint and the attestation. They must all agree with the pending reservation before the witness records committed evidence. The witness then stays quarantined; another operation needs explicit trusted activation against the witnessed checkpoint. `activateGateway` is a local method, not a network route.
 
 **Cross-store gap.** PostgreSQL cannot read the external witness, and the witness cannot hold a database lock. The two stores are joined by the reserved native checkpoint, which PostgreSQL rechecks under the shared gate inside the mutating transaction. This is what each failure leads to:
 
 | Failure | Result |
 | --- | --- |
 | Restore or rollback before reservation | Denied by the preflight checkpoint comparison |
-| Restore during an operation | The boundary checkpoint differs; the transaction raises, nothing commits, and the reservation stays latched |
+| Restore after reservation, before the mutation boundary | The boundary checkpoint differs; that transaction raises and does not commit; the reservation stays latched |
+| Restore after the mutation commits, before the positive-evidence read | The receipt may be erased while the effect already happened; the operation stays `unknown` and latched, and the restore proves nothing about noncommit |
 | Database loss, or process death after reservation | No positive evidence; the reservation stays latched; a closed witness keeps its persistent lock |
 | Old owner or instance | Fails the witness binding and the DB incarnation floor |
 | Second witness with a foreign owner | Fails the sealed trust domain before reservation |
@@ -73,7 +76,8 @@ A static DB token or epoch alone cannot prove freshness after rollback. The DB i
 - **Reconciliation** (`/v1/gateway/reconcile`) issues only `gateway_receipt`. It never invokes consumption or revocation. It records evidence only when the receipt, the native row, the digests and the reserved pre-state agree exactly. Absence of evidence never proves noncommit.
 - **No automatic recovery.** There is no retry, new-ID replay, takeover, stale-lock removal, reset, pruning or post-expiry first effect.
 - **Expiry.** Consumption after expiry commits a `denied` receipt. Reconciliation cannot upgrade it, and the consumed subject cannot be retried under a new ID.
-- **Capacity.** The gateway denies with `unavailable` before reserving unless at least `GATEWAY_RECORD_RESERVE = 4` witness records remain: reserve, committed evidence, one pin-change quarantine and a clean close. The existing 128-record and 32-operation laboratory bounds are unchanged. A full journal cannot reopen; nothing prunes or resets it.
+- **Revocation is never disabled by a denial.** A revocation with a stale expected epoch commits a `denied` receipt for that (host, epoch) subject only; revoking at the real epoch still works.
+- **Capacity.** The gateway denies with `unavailable` before reserving unless at least `GATEWAY_RECORD_RESERVE = 4` witness records remain: reserve, committed evidence, one pin-change quarantine and a clean close. Consumption also leaves room for one emergency revocation (3 more records and 1 operation slot), so routine traffic cannot exhaust it. Each operation still needs an explicit trusted activation, so an administrator can starve a misbehaving coordinator by revoking its pin. Trusted activation likewise requires 3 free records (activation, pin-change quarantine, close). A pin-change quarantine is serialized with activation and is skipped for an already-quarantined witness, so it cannot stale an activation's expected record hash or spend the close record. The existing 128-record and 32-operation laboratory bounds are unchanged. A full journal cannot reopen; nothing prunes or resets it.
 
 ## Pins, restart and rotation
 
@@ -115,33 +119,34 @@ Every ordinary role had schema `USAGE`. No ordinary role held direct table privi
 
 **After the seal:**
 
-- **Every ordinary role, and every actual LOGIN** (one per role, plus a four-membership mixed login): zero `EXECUTE`, zero table read/write, no schema `USAGE`, no `CREATE` here or on `public`.
+- **Every ordinary `ppo_*` role, and every test LOGIN** (one per role, plus a four-membership mixed login): zero `EXECUTE`, zero table read/write, no schema `USAGE`, no `CREATE` here or on `public`. The LOGINs hold no ordinary membership at all.
+- **Cluster-wide:** no non-superuser LOGIN of any name can read or write any schema relation or execute any schema function, and no non-superuser, non-predefined role holds `pg_write_all_data` or `pg_read_all_data`.
 - **`ppo_authority_gateway`:** exactly the four entrypoints plus `USAGE`, with no table privileges and no memberships.
 - **`ppo_transport_gateway`** (NOINHERIT): exactly one membership, `ppo_authority_gateway`.
 - **`ppo_authority_owner`:** owns the objects and has no members. It is trusted database administration, not a runtime credential.
 
-The full per-role inventory before and after the seal is printed in the integration log (`RIC177_PRIVILEGE_INVENTORY_*`).
+The full `ppo_*` per-role inventory before and after the seal is printed in the integration log (`RIC177_PRIVILEGE_INVENTORY_*`).
 
-**Direct attempts.** The suite makes 175 actual LOGIN attempts. They cover every pre-seal entrypoint of every ordinary role, raw consume/configure, table and gate writes, gateway entrypoints, escalation to the gateway or owner role, a mixed-role transaction, and the gateway LOGIN calling private cores, helpers, legacy writers, tables, the seal, or anything without `SET ROLE`. All fail with `42501`, and the checkpoint is unchanged.
+**Direct attempts.** The suite makes exactly 175 actual LOGIN attempts (asserted). They cover every pre-seal entrypoint of every ordinary role, raw consume/configure, table and gate writes, gateway entrypoints, escalation to the gateway or owner role, a mixed-role transaction, and the gateway LOGIN calling private cores, helpers, legacy writers, tables, the seal, or anything without `SET ROLE`. All fail with `42501`, and the checkpoint is unchanged. When an administrator temporarily re-grants an ordinary membership, the schema and function ACL layer still denies raw consume and configure with `42501`.
 
-**Escalation by membership change.** Granting the gateway role to an ordinary login is denied by the session guard. The attestation change also makes the gateway refuse activation. Adding a membership to the gateway login is rejected by the transport probe.
+**Escalation by membership change.** Granting the gateway role to an ordinary login is denied by the session guard. The attestation change also makes the gateway refuse activation. Adding a membership to the gateway login is rejected by the transport probe; the test asserts the connection issued only the probe.
 
 ## Tested guarantees versus remaining assumptions
 
-All tests below use actual disposable PostgreSQL 16, actual NOINHERIT LOGIN sessions, actual `pg_dump`/restore/`CREATE DATABASE` clone, real loopback TLS 1.3 mutual authentication with disposable certificates, and the real on-disk witness. The integration suite has 13 cases.
+All tests below use actual disposable PostgreSQL 16, actual NOINHERIT LOGIN sessions, actual `pg_dump`/restore/`CREATE DATABASE` clone, real loopback TLS 1.3 mutual authentication with disposable certificates, and the real on-disk witness. The integration suite has 14 cases.
 
 | Area | Tested |
 | --- | --- |
 | Causal control and seal | Unsealed bypass reproduction; sealed inventory and 175 direct denials |
 | Exactly-once operation | Peer separation, replay, same/new operation ID and restart replay |
-| Restore and clone | Stale restore, clone, foreign owner |
-| Pins | Rotated and revoked pins, durable quarantine |
-| Concurrency | Concurrent requests; two copied-identity owners racing at the actual gate (exactly one effect, the loser latched `unknown`); a concurrent raw writer |
+| Restore and clone | Stale restore, pre-seal image restore, clone, foreign owner |
+| Pins and revocation | Rotated and revoked pins, durable quarantine; stale-epoch revocation denial followed by a successful real revocation |
+| Concurrency | Concurrent requests; two copied-identity owners both observed waiting at the actual gate (exactly one effect, the loser latched `unknown`); a concurrent raw writer |
 | Expiry and delay | Post-reservation expiry; delayed older-incarnation requests |
 | Ambiguity | Lost acknowledgment with read-only reconciliation; loss before `COMMIT`; contradictory evidence; restore that loses the positive outcome |
-| Shutdown and capacity | Shutdown that disposes the actual blocked backend without commit; journal capacity reserve |
+| Shutdown and capacity | Shutdown that disposes the actual blocked backend without commit; revocation and closure capacity reserve |
 
-Each case checks exact tombstone, receipt and host parity, `COMMIT` counts and opened-equals-disposed session counts.
+Cases assert the native tombstone, receipt or host state relevant to them. The cases that run gateway mutations also assert exact `COMMIT` counts where the count is the property under test, and drain to opened-equals-disposed session counts. The causal control uses no gateway sessions.
 
 **Assumed, not exercised:**
 
