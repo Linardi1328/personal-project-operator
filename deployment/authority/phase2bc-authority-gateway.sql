@@ -80,7 +80,7 @@ CREATE FUNCTION ppo_authority.gateway_attestation() RETURNS text LANGUAGE sql ST
   (SELECT coalesce(jsonb_agg(jsonb_build_array(c.relname::text,c.relrowsecurity,c.relforcerowsecurity) ORDER BY c.relname::text COLLATE "C"),'[]'::jsonb) FROM pg_class c,ns WHERE c.relnamespace=ns.oid AND c.relkind IN ('r','p')),
   (SELECT coalesce(jsonb_agg(jsonb_build_array(c.relname::text,p.polname::text,pg_get_expr(p.polqual,p.polrelid),pg_get_expr(p.polwithcheck,p.polrelid)) ORDER BY c.relname::text COLLATE "C",p.polname::text COLLATE "C"),'[]'::jsonb) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid,ns WHERE c.relnamespace=ns.oid),
   (SELECT coalesce(jsonb_agg(jsonb_build_array(coalesce(d.datname::text,''),coalesce(r.rolname::text,''),s.setconfig) ORDER BY coalesce(d.datname::text,'') COLLATE "C",coalesce(r.rolname::text,'') COLLATE "C"),'[]'::jsonb) FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid=s.setdatabase LEFT JOIN pg_roles r ON r.oid=s.setrole WHERE (s.setdatabase=0 OR d.datname=current_database()) AND (s.setrole=0 OR r.rolname LIKE 'ppo\_%')),
-  (SELECT coalesce(jsonb_agg(jsonb_build_array(a.defaclrole::regrole::text,a.defaclobjtype,a.defaclacl::text) ORDER BY a.defaclrole::regrole::text COLLATE "C",a.defaclobjtype),'[]'::jsonb) FROM pg_default_acl a,ns WHERE a.defaclnamespace IN (0,ns.oid)),
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(a.defaclrole::regrole::text,a.defaclnamespace<>0,a.defaclobjtype,a.defaclacl::text) ORDER BY a.defaclrole::regrole::text COLLATE "C",a.defaclnamespace<>0,a.defaclobjtype),'[]'::jsonb) FROM pg_default_acl a,ns WHERE a.defaclnamespace IN (0,ns.oid)),
   (SELECT coalesce(jsonb_agg(jsonb_build_array(t.typname::text,t.typtype,t.typowner::regrole::text,t.typacl::text) ORDER BY t.typname::text COLLATE "C"),'[]'::jsonb) FROM pg_type t,ns WHERE t.typnamespace=ns.oid),
   (SELECT coalesce(jsonb_agg(o.oid::regoperator::text ORDER BY o.oid::regoperator::text COLLATE "C"),'[]'::jsonb) FROM pg_operator o,ns WHERE o.oprnamespace=ns.oid)) AS j)
  SELECT encode(sha256(convert_to(jsonb_build_array('ric177-attestation-v2',(SELECT j FROM fns),(SELECT j FROM rels),(SELECT jsonb_build_array(owner,j) FROM sch),(SELECT j FROM rol),(SELECT j FROM mem),(SELECT j FROM extra))::text,'UTF8')),'hex')
@@ -232,8 +232,12 @@ BEGIN
  -- Cluster-global closure: no LOGIN keeps a membership in any ordinary
  -- ppo_* role, so even restoring a pre-seal schema image re-grants ACLs only
  -- to roles nobody can assume. Gateway and owner roles are checked above.
- FOR r IN SELECT m.roleid::regrole::text AS role,m.member::regrole::text AS member,m.grantor::regrole::text AS grantor FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid
-  WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw) LOOP
+ -- Plain role names (not regrole text, which is already quoted) for %I.
+ -- Grants made by a member that itself holds ADMIN OPTION are revoked first.
+ FOR r IN SELECT g.rolname::text AS role,mm.rolname::text AS member,gg.rolname::text AS grantor FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid
+  JOIN pg_roles mm ON mm.oid=m.member JOIN pg_roles gg ON gg.oid=m.grantor
+  WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw)
+  ORDER BY (m.grantor=ANY(SELECT a.member FROM pg_auth_members a WHERE a.roleid=m.roleid AND a.admin_option)) DESC LOOP
   EXECUTE format('REVOKE %I FROM %I GRANTED BY %I',r.role,r.member,r.grantor);
  END LOOP;
  IF EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw))

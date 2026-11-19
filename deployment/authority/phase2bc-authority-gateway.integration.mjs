@@ -203,9 +203,24 @@ test('RIC-177 sealed profile: effective privilege inventory leaves only the gate
  attempts.push([GATEWAY_LOGIN,'SET ROLE '+GATEWAY_ROLE+';INSERT INTO ppo_authority.gateway_receipts SELECT * FROM ppo_authority.gateway_receipts;','gateway table write'])
  attempts.push([GATEWAY_LOGIN,'SET ROLE ppo_action_consumer;','gateway escalation'])
  attempts.push([GATEWAY_LOGIN,"SELECT ppo_authority.gateway_state();",'gateway login without SET ROLE'])
+ // Layer 1 (membership): with the sealed cluster-global closure, every attempt is denied.
  for(const [login,text,label] of attempts)denied42501(asLogin(login,text),label)
- console.log('RIC177_DIRECT_DENIALS '+attempts.length)
+ // Layer 2 (schema/function/table ACLs): an administrator temporarily re-grants
+ // every ordinary membership so SET ROLE succeeds; the same attempts must still
+ // be denied by the ACLs alone, at the targeted function/table statement.
+ const regrant=Object.entries(ORDINARY).flatMap(([login,members])=>members.map(m=>[m,login]))
+ sql(regrant.map(([m,login])=>'GRANT '+m+' TO '+login+';').join(''))
+ let aclDenials=0
+ try{
+  for(const [login,text,label] of attempts){
+   const r=asLogin(login,text);denied42501(r,label+' (ACL layer)')
+   if(!/permission denied to set role/u.test(r.stderr))aclDenials++
+  }
+ }finally{sql(regrant.map(([m,login])=>'REVOKE '+m+' FROM '+login+';').join(''))}
+ console.log('RIC177_DIRECT_DENIALS '+attempts.length+' ACL_LAYER '+aclDenials)
  assert.equal(attempts.length,175)
+ // Only the escalation attempts (to the gateway/owner roles) still stop at SET ROLE.
+ assert.equal(aclDenials,attempts.filter(([,text])=>!/^SET ROLE (ppo_authority_gateway|ppo_authority_owner|ppo_action_consumer);$/u.test(text)).length)
  assert.equal(checkpoint(),before);assert.equal(count('action_tombstones'),0)
  // Defence in depth: even if an administrator re-grants an ordinary
  // membership, the schema/function ACL layer still denies the raw calls.
