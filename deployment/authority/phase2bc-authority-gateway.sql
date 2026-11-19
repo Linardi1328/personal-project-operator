@@ -226,6 +226,11 @@ BEGIN
  -- anything else is changed or any session is terminated.
  IF EXISTS(SELECT 1 FROM pg_roles pr WHERE NOT pr.rolsuper AND pg_has_role(pr.oid,'USAGE') AND has_database_privilege(pr.oid,current_database(),'CONNECT'))
  THEN RAISE EXCEPTION 'admission barrier not committed: run quiesce_authority_gateway_admission first'; END IF;
+ -- A barrier made earlier in THIS transaction is visible to the check above but
+ -- not to other sessions: require the datacl row to have been written by a
+ -- different, committed transaction (own or unknown writer reads as not committed).
+ IF (SELECT pg_xact_status((((pg_current_xact_id()::text::bigint>>32)<<32)+d.xmin::text::bigint)::text::xid8) FROM pg_database d WHERE d.datname=current_database()) IS DISTINCT FROM 'committed'
+ THEN RAISE EXCEPTION 'admission barrier not committed: run quiesce_authority_gateway_admission first'; END IF;
  IF p_anchor IS NULL OR p_authority IS NULL OR p_owner IS NULL THEN RAISE EXCEPTION 'external trust domain required'; END IF;
  IF p_authority IS DISTINCT FROM (SELECT target_id FROM ppo_authority.rehearsal_owner WHERE singleton AND phase='target') THEN RAISE EXCEPTION 'authority is not the active target'; END IF;
  SELECT oid INTO login FROM pg_roles WHERE rolname='ppo_transport_gateway' AND rolcanlogin AND NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls);

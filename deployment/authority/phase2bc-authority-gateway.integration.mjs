@@ -580,6 +580,10 @@ test('RIC-177 seal refuses ACL-bypassing roles, removes delegated membership cha
   // The seal requires a COMMITTED admission barrier first: nothing changes without it.
   const noBarrier=seal();assert.notEqual(noBarrier.status,0);assert.match(noBarrier.stderr,/admission barrier not committed/u)
   assert.equal(count('gateway_profile'),0)
+  // A barrier made in the SAME transaction is not committed for other sessions and must be refused.
+  const sameTx=docker(['psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U','postgres','-d',db],'BEGIN;SELECT ppo_authority.quiesce_authority_gateway_admission();SELECT ppo_authority.seal_authority_gateway('+[x.identity.anchorId,x.identity.authorityId,x.identity.ownerId].map(v=>L(v)+'::uuid').join(',')+');COMMIT;',false)
+  assert.notEqual(sameTx.status,0);assert.match(sameTx.stderr,/admission barrier not committed/u)
+  assert.equal(count('gateway_profile'),0);assert.equal(asLogin(serviceLogin('ppo_action_consumer'),'SELECT 1;').status,0) // rolled back: admission still open
   // Delegated ADMIN OPTION chain of depth 2 (postgres -> writer -> importer -> reader).
   sql('GRANT ppo_rehearsal_target TO ppo_login_authority_writer WITH ADMIN OPTION;')
   for(const [from,to,admin] of [['ppo_login_authority_writer','ppo_login_authority_importer',' WITH ADMIN OPTION'],['ppo_login_authority_importer','ppo_login_authority_reader','']]){
