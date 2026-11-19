@@ -179,7 +179,7 @@ test('RIC-177 sealed profile: effective privilege inventory leaves only the gate
  // schema relation or execute any schema function, and none holds an ACL-bypassing predefined role.
  assert.equal(sql(`SELECT count(*) FROM pg_roles r CROSS JOIN pg_class c WHERE r.rolcanlogin AND NOT r.rolsuper AND c.relnamespace='ppo_authority'::regnamespace AND c.relkind IN ('r','v','S','p','m','f') AND has_table_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');`),'0')
  assert.equal(sql(`SELECT count(*) FROM pg_roles r CROSS JOIN pg_proc p WHERE r.rolcanlogin AND NOT r.rolsuper AND p.pronamespace='ppo_authority'::regnamespace AND has_function_privilege(r.oid,p.oid,'EXECUTE');`),'0')
- assert.equal(sql(`SELECT count(*) FROM pg_roles r WHERE NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND (pg_has_role(r.oid,'pg_write_all_data','MEMBER') OR pg_has_role(r.oid,'pg_read_all_data','MEMBER'));`),'0')
+ assert.equal(sql(`SELECT count(*) FROM pg_roles r CROSS JOIN pg_roles d WHERE NOT r.rolsuper AND r.rolname NOT LIKE 'pg\\_%' AND d.rolname LIKE 'pg\\_%' AND d.oid<>r.oid AND pg_has_role(r.oid,d.oid,'MEMBER');`),'0')
  assert.equal(sql("SELECT count(*) FROM pg_auth_members WHERE roleid='ppo_authority_owner'::regrole;"),'0')
  const before=checkpoint(),ticket=x.tickets[0],op=randomUUID()
  // Every pre-seal executable function of every ordinary role, called as that actual LOGIN.
@@ -577,11 +577,16 @@ test('RIC-177 seal refuses ACL-bypassing roles, removes delegated membership cha
  const x=await fixture(t,{beforeSeal:async x=>{
   const seal=()=>docker(['psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U','postgres','-d',db],'SELECT ppo_authority.seal_authority_gateway('+[x.identity.anchorId,x.identity.authorityId,x.identity.ownerId].map(v=>L(v)+'::uuid').join(',')+');',false)
   // Negative controls: a non-superuser holding pg_read_all_data or pg_write_all_data blocks the seal; nothing changes.
-  for(const role of ['pg_read_all_data','pg_write_all_data']){
+  for(const role of ['pg_read_all_data','pg_write_all_data','pg_execute_server_program','pg_write_server_files','pg_read_server_files','pg_signal_backend','pg_monitor']){
    sql('GRANT '+role+' TO ppo_login_authority_reader;')
-   const r=seal();assert.notEqual(r.status,0);assert.match(r.stderr,/ACL-bypassing predefined role/u)
+   const r=seal();assert.notEqual(r.status,0,role);assert.match(r.stderr,/ACL-bypassing predefined role/u)
    sql('REVOKE '+role+' FROM ppo_login_authority_reader;')
    assert.equal(count('gateway_profile'),0);assert.equal(sql("SELECT count(*) FROM pg_auth_members WHERE member='ppo_login_authority_reader'::regrole;"),'1')
+  }
+  for(const attr of ['CREATEROLE','CREATEDB','REPLICATION','BYPASSRLS']){
+   sql('ALTER ROLE ppo_login_authority_reader '+attr+';')
+   const r=seal();assert.notEqual(r.status,0,attr);assert.match(r.stderr,/privileged non-superuser role attributes/u)
+   sql('ALTER ROLE ppo_login_authority_reader NO'+attr+';');assert.equal(count('gateway_profile'),0)
   }
   // Delegated ADMIN OPTION chain of depth 2 (postgres -> writer -> importer -> reader).
   sql('GRANT ppo_rehearsal_target TO ppo_login_authority_writer WITH ADMIN OPTION;')

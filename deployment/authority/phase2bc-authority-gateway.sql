@@ -72,7 +72,7 @@ CREATE FUNCTION ppo_authority.gateway_attestation() RETURNS text LANGUAGE sql ST
  sch AS (SELECT (SELECT coalesce(jsonb_agg(jsonb_build_array(CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END,x.privilege_type,x.is_grantable) ORDER BY (CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END) COLLATE "C",x.privilege_type COLLATE "C"),'[]'::jsonb) FROM aclexplode(coalesce(n.nspacl,acldefault('n',n.nspowner))) x) AS j,n.nspowner::regrole::text AS owner FROM pg_namespace n,ns WHERE n.oid=ns.oid),
  rol AS (SELECT coalesce(jsonb_agg(jsonb_build_array(r.rolname::text,r.rolsuper,r.rolinherit,r.rolcreaterole,r.rolcreatedb,r.rolcanlogin,r.rolreplication,r.rolbypassrls) ORDER BY r.rolname::text COLLATE "C"),'[]'::jsonb) AS j FROM pg_roles r WHERE r.rolname LIKE 'ppo\_%'),
  mem AS (SELECT coalesce(jsonb_agg(jsonb_build_array(m.roleid::regrole::text,m.member::regrole::text,m.admin_option,m.inherit_option,m.set_option) ORDER BY m.roleid::regrole::text COLLATE "C",m.member::regrole::text COLLATE "C"),'[]'::jsonb) AS j
-  FROM pg_auth_members m WHERE m.roleid::regrole::text LIKE 'ppo\_%' OR m.member::regrole::text LIKE 'ppo\_%' OR m.roleid::regrole::text IN ('pg_write_all_data','pg_read_all_data')),
+  FROM pg_auth_members m WHERE m.roleid::regrole::text LIKE 'ppo\_%' OR m.member::regrole::text LIKE 'ppo\_%' OR m.roleid::regrole::text LIKE 'pg\_%'),
  -- Rules, row security, policies, per-role/database settings, default ACLs,
  -- schema types and operators: any later change differs.
  extra AS (SELECT jsonb_build_array(
@@ -244,9 +244,14 @@ BEGIN
  END LOOP;
  IF EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid WHERE g.rolname LIKE 'ppo\_%' AND m.roleid NOT IN (owner,gw))
  THEN RAISE EXCEPTION 'ordinary role memberships remain'; END IF;
- -- Predefined roles bypass schema/table ACLs; only superusers may hold them.
- IF EXISTS(SELECT 1 FROM pg_roles pr WHERE NOT pr.rolsuper AND pr.rolname NOT LIKE 'pg\_%' AND (pg_has_role(pr.oid,'pg_write_all_data','MEMBER') OR pg_has_role(pr.oid,'pg_read_all_data','MEMBER')))
+ -- Predefined roles can bypass ACLs (pg_read/write_all_data), run server
+ -- programs or touch server files, or signal the gateway backend. Deny ANY
+ -- non-superuser membership in ANY predefined role, and any non-superuser
+ -- role able to create roles, databases, replicate or bypass RLS.
+ IF EXISTS(SELECT 1 FROM pg_roles pr CROSS JOIN pg_roles pd WHERE NOT pr.rolsuper AND pr.rolname NOT LIKE 'pg\_%' AND pd.rolname LIKE 'pg\_%' AND pd.oid<>pr.oid AND pg_has_role(pr.oid,pd.oid,'MEMBER'))
  THEN RAISE EXCEPTION 'ACL-bypassing predefined role membership present'; END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles pr WHERE NOT pr.rolsuper AND pr.rolname NOT LIKE 'pg\_%' AND (pr.rolcreaterole OR pr.rolcreatedb OR pr.rolreplication OR pr.rolbypassrls))
+ THEN RAISE EXCEPTION 'privileged non-superuser role attributes present'; END IF;
  FOR r IN SELECT p.oid::regprocedure::text AS obj,x.grantee FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) x WHERE p.pronamespace=ns AND x.grantee<>p.proowner LOOP
   EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %s',r.obj,CASE WHEN r.grantee=0 THEN 'PUBLIC' ELSE quote_ident(r.grantee::regrole::text) END);
  END LOOP;
