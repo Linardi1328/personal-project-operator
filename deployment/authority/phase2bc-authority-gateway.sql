@@ -221,6 +221,11 @@ DECLARE r record; i integer; ns oid:='ppo_authority'::regnamespace; owner oid:='
 BEGIN
  IF current_database()<>'ppo_authority_ci' OR NOT (SELECT rolsuper FROM pg_roles WHERE rolname=current_user) THEN RAISE EXCEPTION 'trusted disposable bootstrap administrator required'; END IF;
  IF EXISTS(SELECT 1 FROM ppo_authority.gateway_profile) THEN RAISE EXCEPTION 'authority gateway already sealed'; END IF;
+ -- The admission barrier must already be COMMITTED (a CONNECT revocation made
+ -- in this uncommitted transaction would not stop new sessions): checked before
+ -- anything else is changed or any session is terminated.
+ IF EXISTS(SELECT 1 FROM pg_roles pr WHERE NOT pr.rolsuper AND pg_has_role(pr.oid,'USAGE') AND has_database_privilege(pr.oid,current_database(),'CONNECT'))
+ THEN RAISE EXCEPTION 'admission barrier not committed: run quiesce_authority_gateway_admission first'; END IF;
  IF p_anchor IS NULL OR p_authority IS NULL OR p_owner IS NULL THEN RAISE EXCEPTION 'external trust domain required'; END IF;
  IF p_authority IS DISTINCT FROM (SELECT target_id FROM ppo_authority.rehearsal_owner WHERE singleton AND phase='target') THEN RAISE EXCEPTION 'authority is not the active target'; END IF;
  SELECT oid INTO login FROM pg_roles WHERE rolname='ppo_transport_gateway' AND rolcanlogin AND NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls);
@@ -280,8 +285,24 @@ BEGIN
  THEN RAISE EXCEPTION 'non-superuser sessions survived the seal'; END IF;
  a:=ppo_authority.gateway_attestation();
  INSERT INTO ppo_authority.gateway_profile VALUES(true,'ric177-disposable-authority-gateway-v1',p_anchor,p_authority,p_owner,'ppo_transport_gateway',a,0,NULL);
+ -- Admission reopens only at this transaction's commit, after every ordinary
+ -- membership is gone: no session can have selected an ordinary role.
+ EXECUTE format('GRANT CONNECT ON DATABASE %I TO PUBLIC',current_database());
  RETURN a;
 END $b$;
+-- Trusted bootstrap administrator only, its own committed transaction: stop
+-- admitting non-superuser sessions so none can connect and SET ROLE an ordinary
+-- role while the seal runs. The seal re-grants PUBLIC CONNECT at its commit.
+CREATE FUNCTION ppo_authority.quiesce_authority_gateway_admission() RETURNS void LANGUAGE plpgsql VOLATILE SET search_path=pg_catalog,pg_temp AS $b$
+DECLARE g record;
+BEGIN
+ IF current_database()<>'ppo_authority_ci' OR NOT (SELECT rolsuper FROM pg_roles WHERE rolname=current_user) THEN RAISE EXCEPTION 'trusted disposable bootstrap administrator required'; END IF;
+ EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC',current_database());
+ FOR g IN SELECT r.rolname::text AS role FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) x JOIN pg_roles r ON r.oid=x.grantee WHERE d.datname=current_database() AND NOT r.rolsuper AND x.privilege_type='CONNECT' LOOP
+  EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM %I',current_database(),g.role);
+ END LOOP;
+END $b$;
+REVOKE ALL ON FUNCTION ppo_authority.quiesce_authority_gateway_admission() FROM PUBLIC;
 REVOKE ALL ON FUNCTION ppo_authority.seal_authority_gateway(uuid,uuid,uuid),ppo_authority.gateway_checkpoint(),ppo_authority.gateway_attestation(),ppo_authority.gateway_session_guard(),
  ppo_authority.gateway_subject(text,text),ppo_authority.gateway_binding(ppo_authority.gateway_profile,text,text,uuid,text,text),ppo_authority.gateway_boundary(text,text,uuid,text,text),
  ppo_authority.gateway_record(jsonb,text,uuid,text,jsonb),ppo_authority.gateway_profile_guard(),ppo_authority.gateway_consume_action(uuid,uuid,text),

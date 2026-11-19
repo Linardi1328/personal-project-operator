@@ -97,6 +97,7 @@ async function fixture(t,{seal=true,actions=2,lifetime,beforeSeal}={}){
  const x={f,run,tickets,identity,counts,sessions,preSeal,cleanup,setHook:fn=>{hook=fn},preSealDump:dump()}
  if(!seal)return x
  if(beforeSeal)await beforeSeal(x)
+ sql('SELECT ppo_authority.quiesce_authority_gateway_admission();') // committed admission barrier, then the seal
  x.attestation=sql('SELECT ppo_authority.seal_authority_gateway('+[identity.anchorId,identity.authorityId,identity.ownerId].map(v=>L(v)+'::uuid').join(',')+');')
  assert.match(x.attestation,/^[a-f0-9]{64}$/u)
  const initial=checkpoint();assert.equal(sql('SELECT ppo_authority.gateway_checkpoint();'),initial)
@@ -576,18 +577,9 @@ test('RIC-177 seal refuses ACL-bypassing roles, removes delegated membership cha
  let retained
  const x=await fixture(t,{beforeSeal:async x=>{
   const seal=()=>docker(['psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U','postgres','-d',db],'SELECT ppo_authority.seal_authority_gateway('+[x.identity.anchorId,x.identity.authorityId,x.identity.ownerId].map(v=>L(v)+'::uuid').join(',')+');',false)
-  // Negative controls: a non-superuser holding pg_read_all_data or pg_write_all_data blocks the seal; nothing changes.
-  for(const role of ['pg_read_all_data','pg_write_all_data','pg_execute_server_program','pg_write_server_files','pg_read_server_files','pg_signal_backend','pg_monitor']){
-   sql('GRANT '+role+' TO ppo_login_authority_reader;')
-   const r=seal();assert.notEqual(r.status,0,role);assert.match(r.stderr,/ACL-bypassing predefined role/u)
-   sql('REVOKE '+role+' FROM ppo_login_authority_reader;')
-   assert.equal(count('gateway_profile'),0);assert.equal(sql("SELECT count(*) FROM pg_auth_members WHERE member='ppo_login_authority_reader'::regrole;"),'1')
-  }
-  for(const attr of ['CREATEROLE','CREATEDB','REPLICATION','BYPASSRLS']){
-   sql('ALTER ROLE ppo_login_authority_reader '+attr+';')
-   const r=seal();assert.notEqual(r.status,0,attr);assert.match(r.stderr,/privileged non-superuser role attributes/u)
-   sql('ALTER ROLE ppo_login_authority_reader NO'+attr+';');assert.equal(count('gateway_profile'),0)
-  }
+  // The seal requires a COMMITTED admission barrier first: nothing changes without it.
+  const noBarrier=seal();assert.notEqual(noBarrier.status,0);assert.match(noBarrier.stderr,/admission barrier not committed/u)
+  assert.equal(count('gateway_profile'),0)
   // Delegated ADMIN OPTION chain of depth 2 (postgres -> writer -> importer -> reader).
   sql('GRANT ppo_rehearsal_target TO ppo_login_authority_writer WITH ADMIN OPTION;')
   for(const [from,to,admin] of [['ppo_login_authority_writer','ppo_login_authority_importer',' WITH ADMIN OPTION'],['ppo_login_authority_importer','ppo_login_authority_reader','']]){
@@ -599,6 +591,22 @@ test('RIC-177 seal refuses ACL-bypassing roles, removes delegated membership cha
   x.cleanup.push(()=>retained.close())
   await retained.send("SET application_name='ppo-ric177-retained';SET ROLE ppo_action_admin;")
   assert.equal(await retained.send('SELECT current_user;'),'ppo_action_admin')
+  // Barrier: a new ordinary LOGIN can no longer connect, so none can select a role during the seal.
+  sql('SELECT ppo_authority.quiesce_authority_gateway_admission();')
+  const blocked=asLogin(serviceLogin('ppo_action_consumer'),'SELECT 1;');assert.notEqual(blocked.status,0);assert.match(blocked.stderr,/permission denied for database|not permitted to log in|CONNECT/iu)
+  const members=sql("SELECT count(*) FROM pg_auth_members WHERE member='ppo_login_authority_reader'::regrole;") // nothing is revoked by a refused seal
+  // Negative controls behind the barrier: a non-superuser holding pg_read_all_data or pg_write_all_data blocks the seal; nothing changes.
+  for(const role of ['pg_read_all_data','pg_write_all_data','pg_execute_server_program','pg_write_server_files','pg_read_server_files','pg_signal_backend','pg_monitor']){
+   sql('GRANT '+role+' TO ppo_login_authority_reader;')
+   const r=seal();assert.notEqual(r.status,0,role);assert.match(r.stderr,/ACL-bypassing predefined role/u)
+   sql('REVOKE '+role+' FROM ppo_login_authority_reader;')
+   assert.equal(count('gateway_profile'),0);assert.equal(sql("SELECT count(*) FROM pg_auth_members WHERE member='ppo_login_authority_reader'::regrole;"),members)
+  }
+  for(const attr of ['CREATEROLE','CREATEDB','REPLICATION','BYPASSRLS']){
+   sql('ALTER ROLE ppo_login_authority_reader '+attr+';')
+   const r=seal();assert.notEqual(r.status,0,attr);assert.match(r.stderr,/privileged non-superuser role attributes/u)
+   sql('ALTER ROLE ppo_login_authority_reader NO'+attr+';');assert.equal(count('gateway_profile'),0)
+  }
  }})
  assert.equal(sql("SELECT count(*) FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid WHERE g.rolname LIKE 'ppo\\_%' AND g.rolname NOT IN ('ppo_authority_owner','ppo_authority_gateway');"),'0')
  assert.equal(sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='ppo-ric177-retained';"),'0')
