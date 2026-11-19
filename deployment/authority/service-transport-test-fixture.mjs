@@ -11,7 +11,7 @@ export async function serviceTlsFixture(){
  try{
   run(['req','-sha256','-x509','-newkey','rsa:2048','-nodes','-keyout','ca.key','-out','ca.pem','-days','1','-subj','/CN=PPO disposable test CA','-addext','basicConstraints=critical,CA:TRUE'])
   const ca=await readFile(join(root,'ca.pem')),certs={}
-  const names={verifier:'verifier-service',consumer:'consumer-service',administrator:'administrator-service',coordinator:'coordinator',admin:'administrator',unknown:'coordinator',coordinatorNew:'coordinator',consumerNew:'consumer-service'}
+  const names={verifier:'verifier-service',consumer:'consumer-service',administrator:'administrator-service',gateway:'gateway-service',coordinator:'coordinator',admin:'administrator',unknown:'coordinator',coordinatorNew:'coordinator',consumerNew:'consumer-service'}
   for(const [name,kind]of Object.entries(names)){
    run(['req','-new','-newkey','rsa:2048','-nodes','-keyout',name+'.key','-out',name+'.csr','-subj','/CN=lab-'+name.toLowerCase()])
    await writeFile(join(root,name+'.ext'),'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage='+ (kind.endsWith('-service')?'serverAuth':'clientAuth')+'\nsubjectAltName=DNS:localhost,IP:127.0.0.1\n')
@@ -19,7 +19,7 @@ export async function serviceTlsFixture(){
    const tls={key:await readFile(join(root,name+'.key')),cert:await readFile(join(root,name+'.pem')),ca}
    certs[name]={tls,identity:'lab-'+name.toLowerCase(),kind,fingerprint:tlsKeyFingerprint(tls.cert)}
   }
-  const registry=()=>createIsolatedPinRegistry({mode,entries:['verifier','consumer','administrator','coordinator','admin'].map(name=>({...Object.fromEntries(['identity','kind','fingerprint'].map(k=>[k,certs[name][k]])),epoch:1}))})
+  const registry=()=>createIsolatedPinRegistry({mode,entries:['verifier','consumer','administrator','gateway','coordinator','admin'].map(name=>({...Object.fromEntries(['identity','kind','fingerprint'].map(k=>[k,certs[name][k]])),epoch:1}))})
   return {certs,registry,close:()=>rm(root,{recursive:true})}
  }catch(e){await rm(root,{recursive:true});throw e}
 }

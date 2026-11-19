@@ -47,6 +47,8 @@ Retained limits: 128 immutable records, 16 KiB per record and 32 reserved operat
 
 ## Required integration before complete 2C
 
+RIC-177 adds one bounded integration slice: a sealed disposable profile in which the two fixed diagnostic operations are reachable only through the pinned gateway, bound to this witness at the actual PostgreSQL mutation boundary. See [the RIC-177 record](war-room-authenticated-authority-gateway-ric177.md). The raw-SQL control above remains unchanged for the unsealed laboratory profile, and the remaining requirements below still apply.
+
 The separately developed Batch 2B service component uses fixed authenticated verifier/consumer/admin endpoints. A future reviewed integration must bind the external incarnation, instance, owner and exact witness operation into every accepted action/resource request and authenticate them independently. This branch does not import that unmerged component or claim combined verification. The local injected fixed SQL adapter and owner UUID test are not mTLS identity/key-custody proof.
 
 Every canonical, import, admission, source/target, ownership, host/key/epoch, request/claim, global-stop, action and resource mutation gateway must participate at its actual mutation boundary, including uncertain connection disposal, process restart and restore/clone startup. A cached unsigned witness preflight cannot protect a later raw SQL write. Dedicated service permissions must prevent clients from bypassing the gateway or selecting another owner. A protected native resource must independently enforce the owner/incarnation fence; witness process exclusivity alone does not fence a filesystem or Git service after connection loss.

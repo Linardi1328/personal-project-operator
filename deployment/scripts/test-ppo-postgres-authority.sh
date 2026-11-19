@@ -22,4 +22,7 @@ for attempt in $(seq 1 60); do
 done
 test "$ready" = true
 node --test deployment/authority/phase2c-external-incarnation.integration.mjs
+# Self-cleaning RIC-177 sealed gateway profile; runs before the legacy suite
+# that intentionally retains its last fixture until container teardown.
+node --test --test-concurrency=1 deployment/authority/phase2bc-authority-gateway.integration.mjs
 node --test deployment/authority/phase1gb2-canonical-postgres.integration.mjs
