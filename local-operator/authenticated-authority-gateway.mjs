@@ -201,6 +201,11 @@ export function createAuthenticatedAuthorityGateway({mode,witness,pinnedIdentity
     const again=await witness.inspect()
     if(detached||!dbState(s)||s.checkpoint!==e.checkpoint||again.recordHash!==e.recordHash)return result('denied')
     const a=await witness.activate({checkpoint:s.checkpoint,expectedRecordHash:e.recordHash})
+    // The reopen is itself an awaited transition: shutdown can begin while it is
+    // in flight, and the check above cannot cover that. Never leave an open
+    // witness behind a detached gateway; re-quarantine it. A failure here is
+    // thrown (not swallowed), so the caller and close() observe it.
+    if(detached){await witness.quarantine();return result('denied')}
     return result('activated',{binding:{...identity,incarnation:a.incarnation,instanceId:a.instanceId,checkpoint:a.checkpoint}})
    })
   },

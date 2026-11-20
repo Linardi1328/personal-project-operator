@@ -621,3 +621,21 @@ test('RIC-177 seal refuses ACL-bypassing roles, removes delegated membership cha
  denied42501(asLogin(serviceLogin('ppo_action_admin'),'SET ROLE ppo_action_admin;'+rawConfigure(x.f,1,'revoked')),'new admin session after pre-seal restore')
  assert.equal(checkpoint(),before);assert.equal(sql("SELECT epoch||':'||(policy->>'status') FROM ppo_authority.action_hosts;"),'1:active')
 })
+
+test('RIC-177 shutdown while the real witness activation is in flight leaves it quarantined, never open for reuse',{timeout:90000},async t=>{
+ const x=await fixture(t),w=x.witness;let entered,release;const inFlight=new Promise(r=>entered=r),held=new Promise(r=>release=r)
+ // Trusted wrapper over the real on-disk witness that holds only the activation transition.
+ const wrapper={inspect:()=>w.inspect(),reserve:a=>w.reserve(a),recordCommitted:a=>w.recordCommitted(a),quarantine:()=>w.quarantine(),activate:async a=>{entered();await held;return w.activate(a)}}
+ const gw=await x.start({witness:wrapper}),before=await w.inspect();assert.equal(before.status,'quarantined')
+ const activation=gw.service.activateGateway();await inFlight
+ const closing=gw.service.close() // detaches the gateway while witness.activate is awaiting
+ release()
+ const r=await activation;await closing
+ assert.equal(r.status,'denied');flagsFalse(r)
+ const after=await w.inspect()
+ assert.equal(after.status,'quarantined');assert.equal(after.pending,null);assert.equal(after.incarnation,before.incarnation+1) // durable: reopened once, then re-quarantined
+ assert.equal(after.sequence,before.sequence+2);assert.equal(after.checkpoint,before.checkpoint)
+ assert.equal(x.counts.commits,0);assert.equal(count('gateway_receipts'),0);assert.equal(count('action_tombstones'),0)
+ await w.close();await x.drain() // clean close still possible: nothing latched, lock released
+ await assert.rejects(readdir(join(x.witnessPath,'service.lock')),/ENOENT/u)
+})

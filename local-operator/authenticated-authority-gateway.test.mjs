@@ -134,3 +134,39 @@ test('shutdown during the final witness reread never reopens the witness',async(
  const activation=g.activate(async()=>dbState());await inFlight;g.detach();release()
  assert.equal((await activation).status,'denied');assert.ok(!w.calls.includes('activate'))
 })
+
+// Detach can land after the synchronous check but while witness.activate is still
+// in flight: the awaited transition must be re-quarantined, never left open.
+function gatedActivation(w){
+ let entered,release;const inFlight=new Promise(r=>entered=r),held=new Promise(r=>release=r)
+ w.activate=async({expectedRecordHash})=>{w.calls.push('activate');entered();await held;if(expectedRecordHash!==w.state.recordHash)throw Error('stale');w.state.status='open';return {...w.state}}
+ return {inFlight,release}
+}
+test('shutdown while the witness activation is in flight re-quarantines the witness and reports denied',async()=>{
+ const w=fakeWitness({status:'quarantined'}),g=make(w),gate=gatedActivation(w)
+ const activation=g.activate(async()=>dbState());await gate.inFlight;g.detach();gate.release()
+ const r=await activation
+ assert.equal(r.status,'denied');assert.equal(w.state.status,'quarantined');assert.equal(w.state.pending,null)
+ assert.deepEqual(w.calls.filter(c=>['activate','quarantine'].includes(c)),['activate','quarantine'])
+ assert.equal(r.grant,false);assert.equal(r.canExecute,false);assert.equal(r.releaseAuthorized,false)
+})
+test('an uncontested activation is unchanged and leaves the witness open',async()=>{
+ const w=fakeWitness({status:'quarantined'}),g=make(w),gate=gatedActivation(w);gate.release()
+ assert.equal((await g.activate(async()=>dbState())).status,'activated');assert.equal(w.state.status,'open');assert.ok(!w.calls.includes('quarantine'));g.detach()
+})
+test('a failed re-quarantine after detach is observable, never swallowed',async()=>{
+ const w=fakeWitness({status:'quarantined'}),g=make(w),gate=gatedActivation(w)
+ w.quarantine=async()=>{w.calls.push('quarantine');throw Error('journal write failed')}
+ const activation=g.activate(async()=>dbState());await gate.inFlight;g.detach();gate.release()
+ await assert.rejects(activation,/journal write failed/u);assert.equal(w.state.status,'open') // truthfully reported open: the error is the signal
+})
+test('service close() reports an activation that fails while closing',async()=>{
+ const pins=tls.registry(),role='ppo_authority_gateway',login='ppo_transport_gateway'
+ let release,entered;const held=new Promise(r=>release=r),inFlight=new Promise(r=>entered=r)
+ const stub={serviceIdentity:tls.certs.gateway.identity,pins,handle:async()=>({}),detach(){},activate:async()=>{entered();await held;throw Error('cleanup failed')}}
+ const conn={async query(){return {rows:[{role,login,privileged:false,login_privileged:false,memberships:[role]}]}},async dispose(){}}
+ const service=createIsolatedPinnedService({mode:TM,service:'gateway',identity:tls.certs.gateway.identity,tls:tls.certs.gateway.tls,pins,connections:{gateway:async()=>conn},gateway:stub})
+ const activation=service.activateGateway();await inFlight
+ const closing=service.close();release()
+ await assert.rejects(activation,/cleanup failed/u);await assert.rejects(closing,/./u)
+})

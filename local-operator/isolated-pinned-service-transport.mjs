@@ -131,13 +131,16 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
  const activations=new Set()
  async function activateGateway(){
   if(!gateway||closing)fail()
-  let c,finish;const finished=new Promise(r=>{finish=r});activations.add(finished)
+  let c,finish,failed=false;const finished=new Promise(r=>{finish=r});activations.add(finished)
   try{
    c=await connections.gateway();if(!c||typeof c.query!=='function'||typeof c.dispose!=='function'||usedSessions.has(c))fail();usedSessions.add(c)
    if(closing)fail()
    probeSession(await c.query(SERVICE_ROLE_PROBE,[]),roles.gateway);const allowed=[G.state]
    return await gateway.activate(async(s,a)=>{if(closing||!selfCurrent()||!allowed.includes(s))fail();return c.query(s,a)})
-  }finally{let ok=true;try{await c?.dispose()}catch{ok=false}if(ok)activations.delete(finished);finish(ok)} // a failed disposal stays visible to close()
+  }catch(error){failed=true;throw error}
+  // A failed disposal, or an activation that fails while closing (for example a
+  // failed re-quarantine), stays visible to close().
+  finally{let ok=true;try{await c?.dispose()}catch{ok=false}ok=ok&&!(failed&&closing);if(ok)activations.delete(finished);finish(ok)}
  }
  return Object.freeze({...(gateway?{activateGateway}:{}),async listen(){if(started||closing)fail();started=true;await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});return Object.freeze({port:server.address().port,identity,service})},async close(){
   if(closingTask)return closingTask
