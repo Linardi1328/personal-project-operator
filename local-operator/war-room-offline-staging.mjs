@@ -2,8 +2,8 @@ import { remotePayloadDigest, verifyRemoteEnvelope } from "./software-factory-re
 import { createOfflineDurableClaimLedger } from "./software-factory-remote-durable-ledger.mjs"
 import { preflightOfflineAssignment } from "./war-room-assignment-preflight.mjs"
 
-// RIC-150: deliberately unconnected to CLI, Telegram, Mac/VPS, workers or the
-// canonical PPO run-state transition API. This writes only synthetic test data.
+// Offline staging writes only synthetic ledger data. Its receipt is
+// observational and cannot be submitted to a canonical writer.
 export const WAR_ROOM_OFFLINE_STAGING_ID = "war-room-offline-staging-proof-v1"
 
 export class OfflineAssignmentStagingError extends Error {
@@ -173,6 +173,15 @@ export async function stageOfflineAssignment(signed, config) {
 
   await assertLatestCanonicalRun(trusted.preflight, payload)
   trusted.unchanged()
+  let timestamp
+  try {
+    const now = trusted.preflight.now()
+    timestamp = now instanceof Date ? now.getTime() : Date.parse(now)
+  } catch { fail("STAGING_CLOCK_INVALID") }
+  if (!Number.isFinite(timestamp)) fail("STAGING_CLOCK_INVALID")
+  if (timestamp < Date.parse(payload.issuedAt) - 60000 || timestamp >= Date.parse(payload.expiresAt)) {
+    fail("STAGING_REQUEST_EXPIRED")
+  }
   return Object.freeze({
     outcome: "staged-offline",
     requestId: before.requestId,

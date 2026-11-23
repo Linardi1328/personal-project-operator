@@ -2,14 +2,19 @@ import assert from "node:assert/strict"
 import { fork } from "node:child_process"
 import { createHash, createPublicKey, generateKeyPairSync } from "node:crypto"
 import { on, once } from "node:events"
+import fsPromises from "node:fs/promises"
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import {
-  createDevelopmentRun, readDevelopmentRun, recordDevelopmentRunProgress, transitionDevelopmentRun
+  createDevelopmentRun, createOfflineReservationContinuation, readDevelopmentRun,
+  recordDevelopmentRunProgress, transitionDevelopmentRun
 } from "./development-run-state.mjs"
+import { executeDevelopmentContinue, executeSoftwareFactoryImplementation } from "./development-continue-orchestrator.mjs"
+import { executeSoftwareFactoryAutonomousRun } from "./software-factory-autonomous-run.mjs"
 import { resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import { remotePayloadDigest, signRemoteEnvelope } from "./software-factory-remote-contract.mjs"
 import { createOfflineDurableClaimLedger } from "./software-factory-remote-durable-ledger.mjs"
@@ -40,6 +45,26 @@ const RUN_INPUT = { projectId: PROJECT, task: ISSUE.description, actor: ACTOR, b
 const ledgerPath = root => join(root, "reservations")
 const runOptions = root => ({ writeDataDir: join(root, "canonical"), now: () => new Date(NOW) })
 
+function observations(verifyOwnerApproval) {
+  return {
+    readIssue: () => ISSUE,
+    resolveIssueProject: () => PROJECT,
+    readRepo: () => ({
+      projectId: PROJECT, branch: BRANCH, baseSha: BASE, headSha: BASE,
+      reviewedCanonicalPath: true, isolatedWorktree: true
+    }),
+    readCatalogAdmission: () => ({ valid: true }), listActiveProjects: () => [PROJECT],
+    verifyOwnerApproval
+  }
+}
+
+function continuation(root, runId, expectedVersion, coordinatorPublicKey, verifyOwnerApproval, now = runOptions(root).now) {
+  return createOfflineReservationContinuation({
+    root, runId, expectedVersion, coordinatorPublicKey, approvedProjects: [PROJECT], now,
+    ...observations(verifyOwnerApproval)
+  })
+}
+
 function send(channel, payload) {
   return new Promise((resolve, reject) => channel.send(payload, error => error ? reject(error) : resolve()))
 }
@@ -64,7 +89,7 @@ async function childMain() {
     assert.equal(await receive(), "proceed")
   }
   try {
-    const { mode, root, signed, publicKey, approvalHashes } = await receive()
+    const { mode, root, signed, publicKey, approvalHashes, target } = await receive()
     // Only a private child of the system temp directory is a valid test store.
     assert.match(basename(root), /^ppo-ric192-[A-Za-z0-9]{6}$/u)
     assert.equal(dirname(root), await realpath(tmpdir()))
@@ -82,27 +107,65 @@ async function childMain() {
     const ledgerConfig = { ...common, mode: "offline-durable-proof-only", storeDir: ledgerPath(root), workerRegistry: {} }
     const ledger = createOfflineDurableClaimLedger(ledgerConfig)
     const inspect = () => ledger.inspect(runId, expectedVersion)
+    const transition = () => transitionDevelopmentRun(runId, {
+      expectedVersion, status: "implementation_ready", actor: ACTOR,
+      reason: "Synthetic internal continuation boundary observation."
+    }, options)
     let atPreflight = false
     const stage = () => stageOfflineAssignment(signed, {
       mode: "offline-staging-proof-only", ledger: ledgerConfig,
       preflight: {
-        ...common, mode: "offline-preflight-only", readIssue: () => ISSUE,
-        resolveIssueProject: () => PROJECT,
-        readRepo: () => ({
-          projectId: PROJECT, branch: BRANCH, baseSha: BASE, headSha: BASE,
-          reviewedCanonicalPath: true, isolatedWorktree: true
-        }),
-        readCatalogAdmission: () => ({ valid: true }), listActiveProjects: () => [PROJECT],
-        async verifyOwnerApproval(binding) {
+        ...common, mode: "offline-preflight-only",
+        ...observations(async binding => {
           if (!approvalHashes.includes(binding.requestHash)) return false
           if (mode === "race" && !atPreflight) {
             atPreflight = true
             await barrier("preflight")
           }
           return true
-        }
+        })
       }
     })
+
+    if (mode.startsWith("protected-")) {
+      let approvalReads = 0
+      const { bind } = continuation(root, target.runId, target.version, common.coordinatorPublicKey, async binding => {
+        if (!approvalHashes.includes(binding.requestHash)) return false
+        approvalReads += 1
+        if (mode === "protected-race" && approvalReads === 1) await barrier("preflight")
+        if (mode === "protected-before-bind" && approvalReads === 2) {
+          await barrier("reserved", { reservation: await inspect() })
+        }
+        return true
+      })
+
+      if (mode === "protected-before-ack") {
+        // Pause after the real canonical directory fsync and before bind can
+        // return its acknowledgment. Only this test-owned child is patched.
+        const open = fsPromises.open
+        fsPromises.open = async (path, ...args) => {
+          const file = await open(path, ...args)
+          if (approvalReads === 2 && path === join(options.writeDataDir, "development-runs", "records")) {
+            const sync = file.sync.bind(file)
+            file.sync = async () => {
+              await sync()
+              await barrier("mutation-committed")
+            }
+          }
+          return file
+        }
+        syncBuiltinESMExports()
+      }
+
+      let result
+      try { result = await bind(signed) } catch (error) {
+        if (typeof error?.code !== "string" || error.code === "ERR_ASSERTION") throw error
+        await send(process, { event: "denied", code: error.code })
+        return
+      }
+      await send(process, { event: "bound", result })
+      return
+    }
 
     switch (mode) {
       case "reserve": {
@@ -140,16 +203,15 @@ async function childMain() {
       case "continue": {
         // Call the real, trusted internal writer. No continuation runner,
         // lease, execution handler, or fake reservation-denial hook is used.
-        const transition = () => transitionDevelopmentRun(runId, {
-          expectedVersion, status: "implementation_ready", actor: ACTOR,
-          reason: "Synthetic internal continuation boundary observation."
-        }, options)
         const run = await transition()
         const staleCode = await refusal(transition)
         const replayCode = await refusal(stage)
         await send(process, { event: "continued", run, reservation: await inspect(), staleCode, replayCode })
         break
       }
+      case "scoped-raw":
+        await send(process, { event: "denied", code: await refusal(transition) })
+        break
       default:
         assert.fail("Unknown fixture operation")
     }
@@ -159,7 +221,7 @@ async function childMain() {
   }
 }
 
-async function fixture(t) {
+async function fixture(t, { scoped = false } = {}) {
   const temp = await realpath(tmpdir())
   const root = await mkdtemp(join(temp, ROOT_PREFIX))
   const children = []
@@ -177,11 +239,17 @@ async function fixture(t) {
   await mkdir(ledgerPath(root), { mode: 0o700 })
   const options = runOptions(root)
   let initial = await createDevelopmentRun(RUN_INPUT, options)
-  for (const status of ["planning_in_progress", "planned", "implementation_in_progress"]) {
+  for (const status of ["planning_in_progress", "planned"]) {
     initial = await transitionDevelopmentRun(initial.runId, { expectedVersion: initial.version, status, actor: ACTOR }, options)
   }
 
   const { privateKey, publicKey } = generateKeyPairSync("ed25519")
+  const approved = new Set()
+  const endpoint = continuation(root, initial.runId, initial.version + 1, publicKey,
+    binding => approved.has(binding.requestHash))
+  initial = scoped ? await endpoint.prepare() : await transitionDevelopmentRun(initial.runId, {
+    expectedVersion: initial.version, status: "implementation_in_progress", actor: ACTOR
+  }, options)
   const payload = {
     kind: "dispatch-request", schemaVersion: 1, requestId: "1".repeat(32),
     runId: initial.runId, expectedVersion: initial.version, projectId: PROJECT, branch: BRANCH,
@@ -201,6 +269,7 @@ async function fixture(t) {
   const freshHash = remotePayloadDigest(fresh.payload)
   assert.notEqual(requestHash, freshHash)
   const approvalHashes = [requestHash, freshHash]
+  for (const hash of approvalHashes) approved.add(hash)
 
   async function start(mode, { signed = original, approved = true } = {}) {
     const child = fork(fileURLToPath(import.meta.url), [CHILD], {
@@ -210,7 +279,8 @@ async function fixture(t) {
     closed.catch(() => {})
     children.push({ child, closed })
     const messages = on(child, "message", { close: ["close"], signal: AbortSignal.timeout(TIMEOUT) })
-    await send(child, { mode, root, signed, publicKey: publicKey.export({ type: "spki", format: "pem" }),
+    await send(child, { mode, root, signed, target: { runId: initial.runId, version: initial.version },
+      publicKey: publicKey.export({ type: "spki", format: "pem" }),
       approvalHashes: approved ? approvalHashes : [] })
     return {
       pid: child.pid,
@@ -219,7 +289,7 @@ async function fixture(t) {
         const message = await messages.next()
         assert.equal(message.done, false, "Child closed before " + event)
         const [value] = message.value
-        assert.equal(value.event, event)
+        if (event) assert.equal(value.event, event)
         return value
       },
       async exited(signal = null) {
@@ -231,7 +301,8 @@ async function fixture(t) {
   }
 
   return {
-    root, initial, requestHash, fresh, start,
+    root, initial, requestHash, fresh, start, original, publicKey, options, bind: endpoint.bind,
+    sign: changes => signRemoteEnvelope({ ...payload, ...changes }, "ppo-control-plane", privateKey),
     read: () => readDevelopmentRun(initial.runId, options)
   }
 }
@@ -266,6 +337,15 @@ async function snapshot(root) {
     const path = join(entry.parentPath, entry.name)
     return [relative(root, path), entry.isDirectory() ? "directory" : await readFile(path, "hex")]
   })))
+}
+
+function assertBound(run, f) {
+  assert.equal(run.version, f.initial.version + 1)
+  assert.equal(run.status, f.initial.status)
+  assert.equal(run.history.at(-1).previousHistoryHash, f.initial.historyHash)
+  assert.deepEqual(run.history.at(-1).evidence[0].metadata, {
+    requestHash: f.requestHash, reservedVersion: f.initial.version, issueRevisionHash: linearIssueRevisionHash(ISSUE)
+  })
 }
 
 function registerTests() {
@@ -372,6 +452,214 @@ function registerTests() {
     assert.deepEqual(await snapshot(ledgerPath(f.root)), onDisk)
     t.diagnostic("trusted internal transition accepted version " + result.run.version +
       " with reservation still at version " + f.initial.version + "; no reservation-bound denial")
+  })
+
+  test("RIC-193 binds the exact reservation in a canonical CAS and returns offline evidence", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    assert.equal(f.initial.version, 3)
+    assert.deepEqual(await f.bind(f.original), {
+      outcome: "bound-offline", version: 4, grant: false,
+      requestId: f.original.payload.requestId, requestHash: f.requestHash, runId: f.initial.runId,
+      expectedVersion: 3, sourceRevisionHash: linearIssueRevisionHash(ISSUE), ...RESERVATION_FLAGS
+    })
+    const bound = await f.read()
+    assertBound(bound, f)
+    const observer = await f.start("inspect")
+    const { reservation, claimCode } = await observer.next("observed")
+    await observer.exited()
+    assert.equal(reservation.requestHash, f.requestHash)
+    // A stale reservation cannot yield a current worker fence after binding.
+    assert.equal(claimCode, "LEDGER_RUN_STALE")
+    await assert.rejects(f.bind(f.original), { code: "PREFLIGHT_RUN_STALE" })
+    await assert.rejects(transitionDevelopmentRun(bound.runId, {
+      expectedVersion: bound.version, status: "implementation_ready", actor: ACTOR
+    }, f.options), { code: "OFFLINE_ASSIGNMENT_REQUIRED" })
+  })
+
+  test("RIC-193 denies unbound continuation before and after a reservation-only process crash", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const writer = await f.start("protected-before-bind")
+    const { reservation } = await writer.next("reserved")
+    assert.equal(reservation.requestHash, f.requestHash)
+    const onDisk = await snapshot(ledgerPath(f.root))
+    const { runId, version: expectedVersion } = f.initial
+    await assert.rejects(transitionDevelopmentRun(runId, {
+      expectedVersion, status: "implementation_ready", actor: ACTOR
+    }, f.options), { code: "OFFLINE_ASSIGNMENT_REQUIRED" })
+    assert.deepEqual(await f.read(), f.initial)
+    writer.crash()
+    await writer.exited("SIGKILL")
+
+    const observer = await f.start("inspect")
+    const observed = await observer.next("observed")
+    await observer.exited()
+    assert.deepEqual(observed.reservation, reservation)
+    assert.equal(observed.claimCode, "LEDGER_CLAIM_MISSING")
+    const restarted = await f.start("protected-bind")
+    assert.deepEqual(await restarted.next("denied"), { event: "denied", code: "LEDGER_RUN_RESERVED" })
+    await restarted.exited()
+    await assert.rejects(f.bind(f.fresh), { code: "LEDGER_RUN_RESERVED" })
+
+    const otherWriter = await f.start("scoped-raw")
+    assert.deepEqual(await otherWriter.next("denied"), { event: "denied", code: "OFFLINE_ASSIGNMENT_REQUIRED" })
+    await otherWriter.exited()
+    await assert.rejects(recordDevelopmentRunProgress(runId, {
+      expectedVersion, status: f.initial.status, actor: "war-room-offline-assignment-bind",
+      evidence: [{
+        kind: "planning", source: "war-room-offline-assignment-bind", sha: BASE,
+        metadata: { requestHash: f.requestHash, reservedVersion: expectedVersion }
+      }]
+    }, { ...f.options, offlineAssignmentMutation: true, grant: true, reservation }), { code: "OFFLINE_ASSIGNMENT_REQUIRED" })
+    assert.equal((await executeDevelopmentContinue(runId, f.options)).reason, "offline_assignment_only")
+    assert.equal((await executeSoftwareFactoryImplementation(runId, { ...f.options, expectedVersion })).reason,
+      "offline_assignment_only")
+    assert.equal((await executeSoftwareFactoryAutonomousRun(runId, f.options)).reason, "offline_assignment_only")
+    assert.deepEqual(await f.read(), f.initial)
+    assert.deepEqual(await snapshot(ledgerPath(f.root)), onDisk)
+    t.diagnostic("the scoped canonical writer denied version 3 → 4 while the version 3 reservation remained unbound")
+  })
+
+  test("RIC-193 two independent binders yield one durable reservation and canonical binding", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const writers = await Promise.all([
+      f.start("protected-race"), f.start("protected-race", { signed: f.fresh })
+    ])
+    await Promise.all(writers.map(writer => writer.next("preflight")))
+    await Promise.all(writers.map(writer => writer.advance()))
+    const results = await Promise.all(writers.map(writer => writer.next()))
+    await Promise.all(writers.map(writer => writer.exited()))
+    const winner = results.find(result => result.event === "bound")
+    const loser = results.find(result => result.event === "denied")
+    assert.ok(winner && loser)
+    // The loser may first observe the already committed canonical version.
+    assert.ok(["LEDGER_RUN_RESERVED", "LEDGER_RUN_STALE"].includes(loser.code))
+    assertBound(await f.read(), { ...f, requestHash: winner.result.requestHash })
+  })
+
+  test("RIC-193 crash after canonical mutation and before acknowledgment never republishes the binding", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const writer = await f.start("protected-before-ack")
+    await writer.next("mutation-committed")
+    const committed = await f.read()
+    assertBound(committed, f)
+    writer.crash()
+    await writer.exited("SIGKILL")
+    const restarted = await f.start("protected-bind")
+    assert.deepEqual(await restarted.next("denied"), { event: "denied", code: "PREFLIGHT_RUN_STALE" })
+    await restarted.exited()
+    assert.deepEqual(await f.read(), committed)
+  })
+
+  test("RIC-193 refuses an unsigned receipt, altered signed fields, and a different coordinator key", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const altered = structuredClone(f.original)
+    altered.payload.scope.allowedPaths = ["different/"]
+    for (const input of [altered, { grant: true, runId: f.initial.runId, requestHash: f.requestHash }]) {
+      await assert.rejects(f.bind(input), { code: "STAGING_SIGNED_REQUEST_INVALID" })
+    }
+    const other = generateKeyPairSync("ed25519")
+    const otherAssignment = signRemoteEnvelope(f.original.payload, "ppo-control-plane", other.privateKey)
+    const { bind } = continuation(f.root, f.initial.runId, f.initial.version, other.publicKey, () => true)
+    await assert.rejects(bind(otherAssignment), { code: "PREFLIGHT_RUN_STALE" })
+    assert.deepEqual(await readdir(ledgerPath(f.root)), [])
+    assert.deepEqual(await f.read(), f.initial)
+  })
+
+  test("RIC-193 requires exact signed run identity, refs, scope and independent approval", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    for (const [changes, code] of [
+      [{ runId: "Z".repeat(43) }, "PREFLIGHT_RUN_STALE"],
+      [{ expectedVersion: 4 }, "PREFLIGHT_RUN_STALE"],
+      [{ projectId: "unrelated-project" }, "PREFLIGHT_PROJECT_DENIED"],
+      [{ branch: "ppo/rivora/different" }, "PREFLIGHT_RUN_STALE"],
+      [{ baseSha: "b".repeat(40) }, "PREFLIGHT_RUN_STALE"],
+      [{ headSha: "b".repeat(40) }, "PREFLIGHT_RUN_STALE"],
+      [{ scope: { ...f.original.payload.scope, permits: ["workspace.read", "workspace.write"] } }, "PREFLIGHT_APPROVAL_REQUIRED"],
+      [{ approval: { ...f.original.payload.approval, ownerId: "another-owner" } }, "PREFLIGHT_APPROVAL_REQUIRED"]
+    ]) {
+      await assert.rejects(f.bind(f.sign(changes)), { code })
+    }
+    assert.deepEqual(await readdir(ledgerPath(f.root)), [])
+    assert.deepEqual(await f.read(), f.initial)
+  })
+
+  test("RIC-193 refuses a nonce already spent on a different scoped run", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    await f.bind(f.original)
+    let next = await createDevelopmentRun(RUN_INPUT, f.options)
+    for (const status of ["planning_in_progress", "planned"]) {
+      next = await transitionDevelopmentRun(next.runId, { expectedVersion: next.version, status, actor: ACTOR }, f.options)
+    }
+    const replay = f.sign({
+      runId: next.runId, requestId: f.fresh.payload.requestId, idempotencyKey: f.fresh.payload.idempotencyKey,
+      approval: f.fresh.payload.approval
+    })
+    const endpoint = continuation(f.root, next.runId, next.version + 1, f.publicKey,
+      binding => binding.requestHash === remotePayloadDigest(replay.payload))
+    const prepared = await endpoint.prepare()
+    await assert.rejects(endpoint.bind(replay), { code: "LEDGER_REPLAY" })
+    assert.deepEqual(await readDevelopmentRun(prepared.runId, f.options), prepared)
+  })
+
+  for (const [damage, code] of [
+    ["missing-completion", "LEDGER_INCOMPLETE"],
+    ["pending-completion", "LEDGER_INCOMPLETE"],
+    ["corrupt-request", "LEDGER_RECORD_INVALID"],
+    ["contradictory-index", "LEDGER_RECORD_INVALID"],
+    ["expired", "STAGING_REQUEST_EXPIRED"]
+  ]) {
+    test("RIC-193 refuses reservation state " + damage + " before canonical publication", TEST_OPTIONS, async t => {
+      const f = await fixture(t, { scoped: true })
+      const key = createHash("sha256").update(f.initial.runId + ":" + f.initial.version).digest("hex")
+      const slot = join(ledgerPath(f.root), "run-" + key)
+      let approvalReads = 0
+      let now = NOW
+      const { bind } = continuation(f.root, f.initial.runId, f.initial.version, f.publicKey, async binding => {
+        assert.equal(binding.requestHash, f.requestHash)
+        if (++approvalReads !== 2) return true
+        if (damage === "missing-completion") await rm(join(slot, "complete.json"))
+        if (damage === "pending-completion") await writeFile(join(slot, "complete.json.pending"), "", { mode: 0o600 })
+        if (damage === "corrupt-request") await writeFile(join(slot, "request.json"), "{{", { mode: 0o600 })
+        if (damage === "contradictory-index") {
+          const indexes = join(ledgerPath(f.root), "indexes")
+          const nonceIndex = (await readdir(indexes)).find(name => name.startsWith("nonce-"))
+          const path = join(indexes, nonceIndex)
+          const record = JSON.parse(await readFile(path))
+          await writeFile(path, JSON.stringify({ ...record, expectedVersion: f.initial.version + 1 }), { mode: 0o600 })
+        }
+        if (damage === "expired") now = f.original.payload.expiresAt
+        return true
+      }, () => now)
+      await assert.rejects(bind(f.original), { code })
+      assert.equal(approvalReads, 2)
+      assert.deepEqual(await f.read(), f.initial)
+      await assert.rejects(f.bind(f.original), { code: "LEDGER_RUN_RESERVED" })
+    })
+  }
+
+  test("RIC-193 respects stale canonical versions and refuses conflicting record history", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    await assert.rejects(recordDevelopmentRunProgress(f.initial.runId, {
+      expectedVersion: f.initial.version - 1, actor: ACTOR
+    }, f.options), { code: "STALE_RUN_VERSION" })
+    const recordPath = join(f.options.writeDataDir, "development-runs", "records", f.initial.runId + ".json")
+    await writeFile(recordPath, JSON.stringify({ ...f.initial, historyHash: "f".repeat(64) }), { mode: 0o600 })
+    await assert.rejects(f.bind(f.original), { code: "PREFLIGHT_TRUSTED_READ_UNAVAILABLE" })
+    assert.deepEqual(await readdir(ledgerPath(f.root)), [])
+  })
+
+  test("RIC-193 assignment path refuses an ordinary run and ordinary writers preserve lifecycle behavior", TEST_OPTIONS, async t => {
+    const f = await fixture(t)
+    await assert.rejects(f.bind(f.original), { code: "PREFLIGHT_RUN_STALE" })
+    assert.deepEqual(await readdir(ledgerPath(f.root)), [])
+    const progress = await recordDevelopmentRunProgress(f.initial.runId, {
+      expectedVersion: f.initial.version, status: f.initial.status, actor: ACTOR
+    }, f.options)
+    const next = await transitionDevelopmentRun(progress.runId, {
+      expectedVersion: progress.version, status: "implementation_ready", actor: ACTOR
+    }, f.options)
+    assert.equal(next.version, f.initial.version + 2)
+    assert.equal(next.status, "implementation_ready")
   })
 }
 

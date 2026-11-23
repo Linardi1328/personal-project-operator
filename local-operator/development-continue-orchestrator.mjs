@@ -4,6 +4,7 @@ import {
   DevelopmentRunStateError,
   PERSONAL_PROJECT_OPERATOR_SELF_DEVELOPMENT_PROJECT,
   REVIEW_ORPHAN_RECOVERY_CONFIRMATION,
+  isOfflineAssignmentRun,
   readDevelopmentRun,
   readPersonalProjectOperatorSelfDevelopmentRun
 } from "./development-run-state.mjs"
@@ -786,6 +787,10 @@ export function createSoftwareFactoryImplementationCoordinator(dependencies = {}
   return async function executeSoftwareFactoryImplementation(runId, options = {}) {
     const run = await readRunImpl(runId, options)
 
+    if (isOfflineAssignmentRun(run)) {
+      return { ok: false, outcome: "owner_action_required", reason: "offline_assignment_only", run }
+    }
+
     if (run.status !== "implementation_in_progress" || run.version !== options.expectedVersion) {
       throw continueError(
         "CONTINUE_IMPLEMENTATION_RUN_STALE",
@@ -1263,6 +1268,10 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
     return projectRefusedResult(initial, scope)
   }
 
+  if (isOfflineAssignmentRun(initial)) {
+    return ownerActionResult(initial, null, "offline_assignment_only", scope)
+  }
+
   const boundary = boundaryForStatus(initial.status, scope)
 
   if (!boundary) {
@@ -1277,6 +1286,10 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
 
   if (current.version !== initial.version || current.status !== initial.status) {
     return staleStateResult(current, boundary.action, scope)
+  }
+
+  if (isOfflineAssignmentRun(current)) {
+    return ownerActionResult(current, boundary.action, "offline_assignment_only", scope)
   }
 
   const runtime = await resolveRuntimeOptions(current, boundary, options, scope)
