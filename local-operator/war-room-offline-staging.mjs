@@ -2,8 +2,8 @@ import { remotePayloadDigest, verifyRemoteEnvelope } from "./software-factory-re
 import { createOfflineDurableClaimLedger } from "./software-factory-remote-durable-ledger.mjs"
 import { preflightOfflineAssignment } from "./war-room-assignment-preflight.mjs"
 
-// RIC-150: deliberately unconnected to CLI, Telegram, Mac/VPS, workers or the
-// canonical PPO run-state transition API. This writes only synthetic test data.
+// Offline staging writes only synthetic ledger data. Its receipt is
+// observational and cannot be submitted to a canonical writer.
 export const WAR_ROOM_OFFLINE_STAGING_ID = "war-room-offline-staging-proof-v1"
 
 export class OfflineAssignmentStagingError extends Error {
@@ -126,7 +126,7 @@ async function assertLatestCanonicalRun(preflight, payload) {
  * durable inspection -> final run read. Any failure after reservation keeps
  * the append-only tombstone; NEVER retry, delete, claim or authorize execution.
  */
-export async function stageOfflineAssignment(signed, config) {
+export async function prepareOfflineAssignmentBinding(signed, config) {
   const trusted = validateConfig(config)
   let payload
   try {
@@ -172,8 +172,21 @@ export async function stageOfflineAssignment(signed, config) {
   if (inspected.reserved !== true) fail("STAGING_RESERVATION_MISMATCH")
 
   await assertLatestCanonicalRun(trusted.preflight, payload)
-  trusted.unchanged()
-  return Object.freeze({
+  function assertFresh() {
+    trusted.unchanged()
+    let timestamp
+    try {
+      const now = trusted.preflight.now()
+      timestamp = now instanceof Date ? now.getTime() : Date.parse(now)
+    } catch { fail("STAGING_CLOCK_INVALID") }
+    trusted.unchanged()
+    if (!Number.isFinite(timestamp)) fail("STAGING_CLOCK_INVALID")
+    if (timestamp < Date.parse(payload.issuedAt) - 60000 || timestamp >= Date.parse(payload.expiresAt)) {
+      fail("STAGING_REQUEST_EXPIRED")
+    }
+  }
+  assertFresh()
+  const receipt = Object.freeze({
     outcome: "staged-offline",
     requestId: before.requestId,
     requestHash,
@@ -183,4 +196,11 @@ export async function stageOfflineAssignment(signed, config) {
     canExecute: false,
     releaseAuthorized: false
   })
+  return Object.freeze({ receipt, assertFresh })
+}
+
+/** Observation-only interface for the standalone staging proof. */
+export async function stageOfflineAssignment(signed, config) {
+  const { receipt } = await prepareOfflineAssignmentBinding(signed, config)
+  return receipt
 }

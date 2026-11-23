@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto"
+import { createHash, KeyObject, randomBytes } from "node:crypto"
 import { classifyReviewedImplementationEvidence } from "./software-factory-implementation-evidence.mjs"
 import { constants as fsConstants } from "node:fs"
 import {
@@ -10,10 +10,16 @@ import {
   opendir,
   readdir,
   readFile,
+  realpath,
   rename,
   unlink
 } from "node:fs/promises"
 import { dirname, isAbsolute, join, resolve } from "node:path"
+import { tmpdir } from "node:os"
+import { resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
+import { OfflineClaimLedgerError } from "./software-factory-remote-durable-ledger.mjs"
+import { isValidOfflineAssignmentProjectAllowlist, OfflineAssignmentPreflightError } from "./war-room-assignment-preflight.mjs"
+import { OfflineAssignmentStagingError, prepareOfflineAssignmentBinding } from "./war-room-offline-staging.mjs"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
   PPO_WRITE_DATA_DIR_ENV
@@ -53,6 +59,21 @@ export const REVIEW_ORPHAN_RECOVERY_CONFIRMATION = "recover-phase6f-review-orpha
 
 const reviewRuntimeFailureRecoveryToken = Symbol("phase-6f-review-runtime-failure-recovery")
 const reviewOrphanRecoveryToken = Symbol("phase-6f-review-orphan-recovery")
+const OFFLINE_ASSIGNMENT_SCOPE_ACTOR = "war-room-offline-assignment-scope"
+const OFFLINE_ASSIGNMENT_BIND_ACTOR = "war-room-offline-assignment-bind"
+const offlineAssignmentMutation = Symbol("war-room-offline-assignment-mutation")
+
+function offlineAssignmentScope(run) {
+  if (!Array.isArray(run?.history)) return undefined
+  return run.history.find(event =>
+    event?.actor === OFFLINE_ASSIGNMENT_SCOPE_ACTOR &&
+    event.fromStatus === "planned" && event.toStatus === "implementation_in_progress"
+  )
+}
+
+export function isOfflineAssignmentRun(run) {
+  return Boolean(offlineAssignmentScope(run))
+}
 
 export const DEVELOPMENT_RUN_STATUSES = Object.freeze([
   "created",
@@ -918,7 +939,7 @@ async function atomicDurableWriteCanonical(path, data) {
   }
 }
 
-async function writeExclusiveDurableVersionMarker(path, data) {
+async function writeExclusiveDurableVersionMarker(path, data, beforePublish) {
   const directory = dirname(path)
   const tempPath = join(
     directory,
@@ -934,6 +955,9 @@ async function writeExclusiveDurableVersionMarker(path, data) {
     await file.close()
     file = null
     await chmod(tempPath, 0o600)
+    // The offline clock check and submission of the exclusive link share
+    // one turn. All asynchronous marker preparation has already finished.
+    beforePublish?.()
     await link(tempPath, path)
     linked = true
     await chmod(path, 0o600)
@@ -2553,10 +2577,10 @@ async function readLatestVersionMarker(paths, runId, options = {}) {
   return latest
 }
 
-async function writeVersionMarker(paths, record) {
+async function writeVersionMarker(paths, record, beforePublish) {
   await ensureStore(paths)
   const markerPath = join(paths.versionDir, versionFileName(record.version))
-  await writeExclusiveDurableVersionMarker(markerPath, serializeRecord(record))
+  await writeExclusiveDurableVersionMarker(markerPath, serializeRecord(record), beforePublish)
 }
 
 async function writeCanonicalRecord(paths, record) {
@@ -2564,8 +2588,8 @@ async function writeCanonicalRecord(paths, record) {
   await atomicDurableWriteCanonical(paths.recordPath, serializeRecord(record))
 }
 
-async function commitRecord(paths, record) {
-  await writeVersionMarker(paths, record)
+async function commitRecord(paths, record, beforePublish) {
+  await writeVersionMarker(paths, record, beforePublish)
 
   try {
     await writeCanonicalRecord(paths, record)
@@ -2694,21 +2718,60 @@ async function persistAuthorityRun(authority, next, current = null) {
   return cloneJson(next)
 }
 
-// Lifecycle event timestamps are logical nondecreasing history timestamps,
-// not evidence of wall-clock freshness. The action fence must use a separate
-// trusted authority clock. Preserve legacy filesystem timestamp behavior.
-function mutationEventTime(options, authority, current) {
+// Protected writers use logical nondecreasing history timestamps. Their
+// authority checks use the actual clock. Ordinary writes preserve their
+// existing clock behavior.
+function mutationEventTime(options, monotonic, current) {
   const now = nowDate(options)
-  return authority ? new Date(Math.max(now.getTime(), Date.parse(current.timestamps.updatedAt))) : now
+  return monotonic ? new Date(Math.max(now.getTime(), Date.parse(current.timestamps.updatedAt))) : now
 }
 
-async function readMutationRun(runId, options, authority) {
-  return authority ? await readAuthorityRun(authority, runId) : await readDevelopmentRunInternal(runId, options)
+async function readMutationRun(runId, options, authority, mutation) {
+  return authority ? await readAuthorityRun(authority, runId) :
+    await readDevelopmentRunInternal(runId, options, mutation?.token === offlineAssignmentMutation)
 }
 
-async function persistMutationRun(runId, next, current, options, authority) {
+function offlineAssignmentBindingProgress(run, requestHash, issueRevisionHash) {
+  return {
+    expectedVersion: run.version,
+    status: run.status,
+    actor: OFFLINE_ASSIGNMENT_BIND_ACTOR,
+    evidence: [{
+      kind: "planning", sha: run.headSha, source: OFFLINE_ASSIGNMENT_BIND_ACTOR,
+      summary: "Bound a synthetic offline assignment reservation.",
+      metadata: { requestHash, issueRevisionHash, reservedVersion: run.version }
+    }]
+  }
+}
+
+function assertOfflineAssignmentPreparation(prepared) {
+  const role = resolveSoftwareFactoryTaskRole(prepared)
+  if (role !== "implementation.backend" && role !== "implementation.frontend") {
+    throw runStateError("OFFLINE_ASSIGNMENT_ROLE_DENIED", "The planned run requires a supported offline assignment role.")
+  }
+  const now = new Date(prepared.timestamps.updatedAt)
+  const placeholderHash = "0".repeat(64)
+  const progress = offlineAssignmentBindingProgress(prepared, placeholderHash, placeholderHash)
+  const evidence = normalizeEvidenceList(progress.evidence, { now: () => now })
+  // The hashes and version in the binding have fixed sizes. Check the next
+  // event against the existing history, evidence, and serialized record limits.
+  serializeRecord(applyProgressUpdate(prepared, { actor: progress.actor, reason: null, evidence, now }))
+}
+
+async function persistMutationRun(runId, next, current, options, authority, mutation) {
+  // The scope is recorded in the same immutable version marker that enters
+  // implementation. A writer still holding the preceding version can only
+  // compete for that marker. Every later writer sees the scope in history.
+  const event = next.history.at(-1)
+  const scopedWrite = isOfflineAssignmentRun(next) || event.actor === OFFLINE_ASSIGNMENT_BIND_ACTOR
+  if (scopedWrite !== (mutation?.token === offlineAssignmentMutation)) {
+    throw runStateError("OFFLINE_ASSIGNMENT_REQUIRED", "Canonical mutation requires the offline assignment boundary.")
+  }
+  if (event.actor === OFFLINE_ASSIGNMENT_SCOPE_ACTOR && mutation?.token === offlineAssignmentMutation) {
+    assertOfflineAssignmentPreparation(next)
+  }
   if (authority) return await persistAuthorityRun(authority, next, current)
-  await commitRecord(storePaths(runId, options), next)
+  await commitRecord(storePaths(runId, options), next, mutation?.beforePublish)
   return cloneJson(next)
 }
 
@@ -2801,7 +2864,7 @@ async function createPersonalProjectOperatorSelfDevelopmentRunInternal(input, op
   )
 }
 
-async function readDevelopmentRunInternal(runId, options = {}) {
+async function readDevelopmentRunInternal(runId, options = {}, requireExactMarker = false) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const paths = storePaths(normalizedRunId, options)
 
@@ -2841,6 +2904,15 @@ async function readDevelopmentRunInternal(runId, options = {}) {
     )
   }
 
+  if (requireExactMarker) {
+    const lastEvent = latest.history.at(-1)
+    if ((canonical?.version === latest.version && stableStringify(canonical) !== stableStringify(latest)) ||
+        latest.branch !== lastEvent.branch || latest.headSha !== lastEvent.headSha ||
+        latest.history.some(event => event.project !== latest.project.id || event.repo !== latest.project.fullName)) {
+      throw runStateError("RUN_HISTORY_INVALID", "Offline assignment requires consistent canonical version history.")
+    }
+  }
+
   if (!canonical || latest.version > canonical.version) {
     await writeCanonicalRecord(paths, latest)
     return cloneJson(latest)
@@ -2849,7 +2921,7 @@ async function readDevelopmentRunInternal(runId, options = {}) {
   return cloneJson(canonical)
 }
 
-async function transitionDevelopmentRunInternal(runId, transition, options = {}, authority = null) {
+async function transitionDevelopmentRunInternal(runId, transition, options = {}, authority = null, mutation) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const expectedVersion = normalizeExpectedVersion(transition?.expectedVersion)
   const toStatus = normalizeDevelopmentRunStatus(transition?.status)
@@ -2861,13 +2933,13 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {},
     code: "INVALID_REASON",
     safeMessage: "Development run transition reason is invalid; no run-state write was attempted."
   })
-  const authorityCurrent = authority ? await readMutationRun(normalizedRunId, options, authority) : null
-  const now = mutationEventTime(options, authority, authorityCurrent)
+  const orderedCurrent = authority || mutation ? await readMutationRun(normalizedRunId, options, authority, mutation) : null
+  const now = mutationEventTime(options, orderedCurrent !== null, orderedCurrent)
   const evidence = normalizeEvidenceList(transition?.evidence || [], {
     ...options,
     now: () => now
   })
-  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority)
+  const current = orderedCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
 
   if (current.version !== expectedVersion) {
     throw runStateError(
@@ -2886,10 +2958,10 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {},
     now,
     recoveryToken: options.reviewRuntimeRecoveryToken
   })
-  return await persistMutationRun(normalizedRunId, next, current, options, authority)
+  return await persistMutationRun(normalizedRunId, next, current, options, authority, mutation)
 }
 
-async function recordDevelopmentRunProgressInternal(runId, progress, options = {}, authority = null) {
+async function recordDevelopmentRunProgressInternal(runId, progress, options = {}, authority = null, mutation) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const expectedVersion = normalizeExpectedVersion(progress?.expectedVersion)
   const expectedStatus = Object.hasOwn(progress || {}, "status")
@@ -2903,14 +2975,14 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
     code: "INVALID_REASON",
     safeMessage: "Development run progress reason is invalid; no run-state write was attempted."
   })
-  const authorityCurrent = authority ? await readMutationRun(normalizedRunId, options, authority) : null
-  const now = mutationEventTime(options, authority, authorityCurrent)
+  const orderedCurrent = authority || mutation ? await readMutationRun(normalizedRunId, options, authority, mutation) : null
+  const now = mutationEventTime(options, orderedCurrent !== null, orderedCurrent)
   const evidence = normalizeEvidenceList(progress?.evidence || [], {
     ...options,
     now: () => now
   })
   const incrementAttempt = progress?.incrementAttempt === true
-  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority)
+  const current = orderedCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
 
   if (current.version !== expectedVersion || (expectedStatus !== null && current.status !== expectedStatus)) {
     throw runStateError(
@@ -2928,7 +3000,7 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
     now,
     incrementAttempt
   })
-  return await persistMutationRun(normalizedRunId, next, current, options, authority)
+  return await persistMutationRun(normalizedRunId, next, current, options, authority, mutation)
 }
 
 function latestIndependentReviewDecisionForRuntimeRecovery(record) {
@@ -3181,6 +3253,114 @@ export function createIsolatedCanonicalRunState({mode, authority, now, randomByt
     progress: (runId, progress) => safe(() => recordDevelopmentRunProgressInternal(runId, progress, options, storage)),
     recoverReviewRuntimeFailure: (runId, recovery) => safe(() => recoverDevelopmentRunReviewRuntimeFailureStateInternal(runId, recovery, options, storage)),
     recoverReviewOrphan: (runId, recovery) => safe(() => recoverDevelopmentRunReviewOrphanStateInternal(runId, recovery, options, storage))
+  })
+}
+
+/**
+ * Trusted server composition for one disposable run and reserved version.
+ * Prepare the planned run before accepting assignments. Expose only bind to
+ * the assignment caller. Neither operation accepts caller-selected stores,
+ * workers, state mutations or reservation receipts.
+ */
+export function createOfflineReservationContinuation({
+  root, runId, expectedVersion, coordinatorPublicKey, approvedProjects, now,
+  readIssue, resolveIssueProject, readRepo, readCatalogAdmission, listActiveProjects, verifyOwnerApproval
+} = {}) {
+  const id = normalizeDevelopmentRunId(runId)
+  if (typeof root !== "string" || !isAbsolute(root) ||
+      !Number.isSafeInteger(expectedVersion) || expectedVersion < 3 ||
+      expectedVersion >= MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES - 1 ||
+      !(coordinatorPublicKey instanceof KeyObject) || coordinatorPublicKey.type !== "public" ||
+      coordinatorPublicKey.asymmetricKeyType !== "ed25519" || !isValidOfflineAssignmentProjectAllowlist(approvedProjects) ||
+      [now, readIssue, resolveIssueProject, readRepo, readCatalogAdmission, listActiveProjects, verifyOwnerApproval]
+        .some(callback => typeof callback !== "function")) {
+    throw runStateError("OFFLINE_ASSIGNMENT_CONFIG_INVALID", "Trusted offline assignment configuration is required.")
+  }
+
+  const keyHash = createHash("sha256").update(coordinatorPublicKey.export({ type: "spki", format: "der" })).digest("hex")
+  const options = Object.freeze({ writeDataDir: join(root, "canonical"), now })
+  const paths = storePaths(id, options)
+  const storeDir = join(root, "reservations")
+  const projects = Object.freeze([...approvedProjects])
+
+  async function assertDisposableStores() {
+    try {
+      const pathsToCheck = [root, paths.root, paths.runRoot, paths.recordsDir, paths.versionsRoot, paths.versionDir, storeDir]
+      const privateDirectory = async path => {
+        const info = await lstat(path)
+        return info.isDirectory() && info.uid === process.getuid() &&
+          (info.mode & 0o077) === 0 && await realpath(path) === path
+      }
+      if (dirname(root) === await realpath(tmpdir()) &&
+          (await Promise.all(pathsToCheck.map(privateDirectory))).every(Boolean)) return
+    } catch {
+      // Only a fixed error is returned to the assignment caller.
+    }
+    throw runStateError("OFFLINE_ASSIGNMENT_STORE_UNAVAILABLE", "Private disposable assignment stores are required.")
+  }
+
+  return Object.freeze({
+    async prepare() {
+      await assertDisposableStores()
+      try {
+        const run = await readDevelopmentRunInternal(id, options, true)
+        if (run.version !== expectedVersion - 1 || run.status !== "planned" || !run.branch || !run.headSha) {
+          throw runStateError("STALE_RUN_VERSION", "Offline assignment requires the expected planned run.")
+        }
+        if (!projects.includes(run.project.id)) {
+          throw runStateError("OFFLINE_ASSIGNMENT_PROJECT_DENIED", "Offline assignment project is outside the configured scope.")
+        }
+        return await transitionDevelopmentRunInternal(id, {
+          expectedVersion: run.version,
+          status: "implementation_in_progress",
+          actor: OFFLINE_ASSIGNMENT_SCOPE_ACTOR,
+          evidence: [{
+            kind: "planning", sha: run.headSha, source: OFFLINE_ASSIGNMENT_SCOPE_ACTOR,
+            summary: "Prepared a disposable run for offline assignment.",
+            metadata: { coordinatorKeyHash: keyHash }
+          }]
+        }, options, null, { token: offlineAssignmentMutation })
+      } catch (error) {
+        throw safeRunStateFailure(error)
+      }
+    },
+
+    async bind(signed) {
+      await assertDisposableStores()
+      let scopedRun
+      async function readRun(requestedId) {
+        if (requestedId !== id) return null
+        const run = await readDevelopmentRunInternal(id, options, true)
+        const scope = offlineAssignmentScope(run)
+        if (run.version !== expectedVersion || scope?.version !== expectedVersion ||
+            scope.evidence[0]?.metadata?.coordinatorKeyHash !== keyHash) return null
+        scopedRun = run
+        return run
+      }
+      const common = { coordinatorPublicKey, approvedProjects: projects, now, readRun,
+        resolveRole: resolveSoftwareFactoryTaskRole }
+
+      try {
+        // The exclusive append-only ledger slot selects the only invocation
+        // that can reach the canonical CAS. The scope excludes ordinary writes
+        // while that invocation is in flight. A restart cannot adopt its slot.
+        const { receipt, assertFresh } = await prepareOfflineAssignmentBinding(signed, {
+          mode: "offline-staging-proof-only",
+          preflight: { ...common, mode: "offline-preflight-only",
+            readIssue, resolveIssueProject, readRepo, readCatalogAdmission, listActiveProjects, verifyOwnerApproval },
+          ledger: { ...common, mode: "offline-durable-proof-only", storeDir, workerRegistry: {} }
+        })
+        const progress = offlineAssignmentBindingProgress(scopedRun, receipt.requestHash, receipt.sourceRevisionHash)
+        const bound = await recordDevelopmentRunProgressInternal(id, progress, options, null, {
+          token: offlineAssignmentMutation, beforePublish: assertFresh
+        })
+        return Object.freeze({ ...receipt, outcome: "bound-offline", version: bound.version, grant: false })
+      } catch (error) {
+        if (error instanceof OfflineAssignmentStagingError || error instanceof OfflineAssignmentPreflightError ||
+            error instanceof OfflineClaimLedgerError) throw error
+        throw safeRunStateFailure(error)
+      }
+    }
   })
 }
 

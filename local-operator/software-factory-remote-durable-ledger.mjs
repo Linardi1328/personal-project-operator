@@ -27,6 +27,18 @@ export class OfflineClaimLedgerError extends Error {
 function reject(code) { throw new OfflineClaimLedgerError(code) }
 /** Compute a path-safe key from bounded canonical identifiers. */
 function digest(value) { return createHash("sha256").update(value).digest("hex") }
+function replayIndexFiles(payload) {
+  return [
+    ["request", payload.requestId], ["nonce", payload.nonce],
+    ["approval", payload.approval.approvalId], ["idempotency", payload.idempotencyKey]
+  ].map(([kind, value]) => `${kind}-${digest(value)}.json`)
+}
+
+function matchesReservation(record, payload, requestHash) {
+  return Object.keys(record).length === 4 && record.v === FENCE_VERSION && record.requestHash === requestHash &&
+    record.runId === payload.runId && record.expectedVersion === payload.expectedVersion
+}
+
 /** Map an exact canonical run version to its permanently reserved storage slot. */
 function directoryName(runId, expectedVersion) {
   if (!RUN_ID.test(runId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion > 10000000) reject("LEDGER_ID_INVALID")
@@ -221,8 +233,7 @@ export function createOfflineDurableClaimLedger(config) {
     let original
     try { original = verifyRemoteEnvelope(signed, "ppo-control-plane", config.coordinatorPublicKey) } catch { reject("LEDGER_RECORD_INVALID") }
     const hash = remotePayloadDigest(original)
-    if (completed?.v !== FENCE_VERSION || completed.requestHash !== hash ||
-        completed.runId !== original.runId || completed.expectedVersion !== original.expectedVersion ||
+    if (original.kind !== "dispatch-request" || !matchesReservation(completed, original, hash) ||
         original.runId !== p.runId || original.expectedVersion !== p.expectedVersion) reject("LEDGER_RECORD_INVALID")
     return { dir, signed, payload: original, requestHash: hash }
   }
@@ -246,11 +257,16 @@ export function createOfflineDurableClaimLedger(config) {
       // All remaining writes are append-only; an interrupted reservation never auto-recovers.
       const requestHash = remotePayloadDigest(p)
       await writeOnce(dir, "request.json", requestWire, "LEDGER_RUN_RESERVED")
-      for (const [kind, value] of [
-        ["request", p.requestId], ["nonce", p.nonce],
-        ["approval", p.approval.approvalId], ["idempotency", p.idempotencyKey]
-      ]) {
-        await writeOnce(indexes, `${kind}-${digest(value)}.json`,
+      for (const file of replayIndexFiles(p)) {
+        // A replay key can be shared by requests for different run slots.
+        // Retain exclusive ownership permanently so a losing writer cannot
+        // create a new pending marker on an already published index.
+        try { await mkdir(join(indexes, file + ".reserved"), { mode: 0o700 }) } catch (error) {
+          if (error?.code === "EEXIST") reject("LEDGER_REPLAY")
+          reject("LEDGER_STORAGE_UNAVAILABLE")
+        }
+        await syncDirectory(indexes)
+        await writeOnce(indexes, file,
           { v: FENCE_VERSION, runId: p.runId, expectedVersion: p.expectedVersion, requestHash }, "LEDGER_REPLAY")
       }
       await writeOnce(dir, "complete.json", { v: FENCE_VERSION, runId: p.runId,
@@ -310,6 +326,10 @@ export function createOfflineDurableClaimLedger(config) {
     async inspect(runId, expectedVersion) {
       await storage()
       const reservation = await entry({ runId, expectedVersion })
+      for (const file of replayIndexFiles(reservation.payload)) {
+        const index = await readRecord(indexes, file)
+        if (!matchesReservation(index, reservation.payload, reservation.requestHash)) reject("LEDGER_RECORD_INVALID")
+      }
       return Object.freeze({ reserved: true, requestHash: reservation.requestHash,
         runId, expectedVersion, releaseAuthorized: false })
     }
