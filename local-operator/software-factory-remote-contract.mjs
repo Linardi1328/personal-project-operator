@@ -69,6 +69,14 @@ export function remotePayloadDigest(payload) {
   return createHash("sha256").update(canonical(snapshot)).digest("hex")
 }
 
+/** Supply the wire contract's exact digest inputs to the disposable SQL binder. */
+export function serializeRemoteAssignment(payload) {
+  const snapshot = snapshotPlainData(payload)
+  validateRemotePayload(snapshot)
+  if (snapshot.kind !== "dispatch-request") fail("REMOTE_REQUEST_INVALID")
+  return Object.freeze({ request: canonical(snapshot), scope: canonical(snapshot.scope) })
+}
+
 /** Validate strict v1 shapes and bounded metadata; never treats payload strings as authority. */
 export function validateRemotePayload(p) {
   assertPlainData(p)
