@@ -163,6 +163,14 @@ BEGIN
        'issueRevisionHash', request->'taskSource'->>'revisionHash', 'reservedVersion', expected)
   THEN RETURN false; END IF;
 
+  -- Purpose-separated attestation from the existing trusted verifier role.
+  -- An ordinary D1 catalog certificate says nothing about signer or approval.
+  IF NOT EXISTS (
+    SELECT 1 FROM ppo_authority.admission_certificates WHERE token =
+      encode(sha256(convert_to(concat_ws(':', 'ppo-offline-assignment-auth-v1',
+        p_authority::text, p_signer, p_key_hash, request_hash, scope_hash,
+        p_expected_hash, encode(sha256(convert_to(p_serialized, 'UTF8')), 'hex')), 'UTF8')), 'hex')
+  ) THEN RETURN false; END IF;
   checked_at := clock_timestamp();
   IF checked_at < issued OR checked_at >= expires THEN RETURN false; END IF;
   BEGIN

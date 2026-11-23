@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
-import { execFileSync, fork, spawn } from "node:child_process"
+import childProcess, { execFileSync, fork, spawn } from "node:child_process"
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto"
 import { once } from "node:events"
 import { readFile } from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
+import { PassThrough } from "node:stream"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import { createIsolatedCanonicalRunState } from "../../local-operator/development-run-state.mjs"
@@ -12,15 +14,12 @@ import { remotePayloadDigest, signRemoteEnvelope } from "../../local-operator/so
 import { linearIssueRevisionHash } from "../../local-operator/war-room-assignment-preflight.mjs"
 import { admissionProfileSql } from "./phase1gd1-profile.mjs"
 import { createPostgresTestSession } from "./postgres-test-session.mjs"
-import { OFFLINE_ASSIGNMENT_SQL, createPostgresOfflineAssignmentBinder, createPostgresOfflineAssignmentObserver } from "./postgres-offline-assignment.mjs"
+import { createPostgresOfflineAssignmentBinder, createPostgresOfflineAssignmentObserver, createPostgresOfflineAssignmentPreparer } from "./postgres-offline-assignment.mjs"
+import { assertDisposableAssignmentContainer, OFFLINE_ASSIGNMENT_SQL } from "./postgres-offline-assignment-transport.mjs"
 
 const container = process.env.PPO_ASSIGNMENT_TEST_CONTAINER_ID
 if (process.env.CI !== "true" || !/^[a-f0-9]{64}$/u.test(container ?? "")) throw Error("Dedicated assignment test container required.")
-const [details] = JSON.parse(execFileSync("docker", ["inspect", container], { encoding: "utf8" }))
-if (details.Id !== container || !/^\/ppo-authority-ci-[0-9]+-[0-9]+-assignment$/u.test(details.Name) ||
-    details.Config.Image !== "postgres:16" || details.HostConfig.NetworkMode !== "none" ||
-    details.HostConfig.PublishAllPorts || Object.keys(details.HostConfig.PortBindings ?? {}).length ||
-    details.Mounts.some(mount => mount.Type === "bind")) throw Error("Assignment test container failed isolation checks.")
+assertDisposableAssignmentContainer(container)
 
 const WRITER = "ppo_authority_writer"
 const READER = "ppo_authority_reader"
@@ -79,7 +78,7 @@ async function crashWriter() {
   const writer = session(BINDER, CRASH_SESSION)
   try {
     const pid = await writer.ready()
-    const reply = JSON.parse(await writer.send("BEGIN; SET LOCAL idle_in_transaction_session_timeout='5s';" +
+    const reply = JSON.parse(await writer.send("BEGIN; SET LOCAL idle_in_transaction_session_timeout='20s';" +
       statementFor(OFFLINE_ASSIGNMENT_SQL.bind, args)))
     process.send({ pid, accepted: reply.accepted })
     // The parent kills this owned transport before sending a commit message.
@@ -90,6 +89,58 @@ async function crashWriter() {
 const result = output => ({ rows: [JSON.parse(output)] })
 const query = role => async (statement, args) => result(await sql(statementFor(statement, args), role))
 const profile = name => readFile(new URL("./" + name + ".sql", import.meta.url), "utf8")
+
+// Drop only the fixed binder session, either before its statement is sent
+// or after psql has printed its post-commit completion marker. The default
+// lab binder still owns its session and the test does not replace its writer.
+async function withTransportLoss(afterCommit, operation) {
+  const originalSpawn = childProcess.spawn
+  let witnessed = false
+  let submissions = 0
+  childProcess.spawn = (...args) => {
+    const child = originalSpawn(...args)
+    const upstream = child.stdout
+    const forwarded = new PassThrough()
+    child.stdout = forwarded
+    const write = child.stdin.write.bind(child.stdin)
+    let marker
+    let dropped = ""
+    child.stdin.write = (data, ...rest) => {
+      if (typeof data === "string" && data.includes("ppo_authority.bind_offline_assignment(")) {
+        submissions++
+        marker = /\\echo (PPO_CI_[0-9a-f]+_END)/u.exec(data)?.[1]
+        assert.ok(marker)
+        if (!afterCommit) {
+          witnessed = true
+          child.kill("SIGKILL")
+          return false
+        }
+      }
+      return write(data, ...rest)
+    }
+    upstream.setEncoding("utf8")
+    upstream.on("data", chunk => {
+      if (!marker) {
+        forwarded.write(chunk)
+      } else if (afterCommit) {
+        dropped += chunk
+        if (dropped.includes(marker)) {
+          witnessed = true
+          child.kill("SIGKILL")
+        }
+      }
+    })
+    upstream.on("end", () => forwarded.end())
+    return child
+  }
+  syncBuiltinESMExports()
+  try { await operation() } finally {
+    childProcess.spawn = originalSpawn
+    syncBuiltinESMExports()
+  }
+  assert.equal(witnessed, true)
+  assert.equal(submissions, 1)
+}
 
 function assignment(run, changes = {}) {
   const time = Date.now()
@@ -108,10 +159,21 @@ function assignment(run, changes = {}) {
 
 async function waitForBlock(waiter, leader) {
   const deadline = Date.now() + 10000
+  // PostgreSQL reports the wait on the leader's transaction ID. The waiter's
+  // tuple lock identifies the actual relation instead of the nonce index.
   while (Date.now() < deadline) {
-    const blocked = await sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity w JOIN pg_stat_activity l " +
-      "ON l.pid=ANY(pg_blocking_pids(w.pid)) WHERE w.application_name=" + literal(waiter.name) +
-      " AND l.application_name=" + literal(leader.name) + ");")
+    const blocked = await sql(`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity w JOIN pg_stat_activity l ON l.pid=ANY(pg_blocking_pids(w.pid))
+        JOIN pg_locks waiting ON waiting.pid=w.pid AND waiting.locktype='transactionid' AND NOT waiting.granted
+        JOIN pg_locks held ON held.pid=l.pid AND held.locktype='transactionid' AND held.granted
+          AND held.transactionid=waiting.transactionid
+        WHERE w.application_name=${literal(waiter.name)} AND l.application_name=${literal(leader.name)}
+          AND EXISTS (SELECT 1 FROM pg_locks WHERE pid=w.pid AND locktype='tuple' AND relation='ppo_authority.gate'::regclass)
+          AND EXISTS (SELECT 1 FROM pg_locks WHERE pid=l.pid AND granted AND mode='RowExclusiveLock'
+            AND relation='ppo_authority.gate'::regclass)
+      );
+    `)
     if (blocked === "t") return
   }
   assert.fail("Expected server-observed gate contention")
@@ -128,8 +190,8 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
   const readerQuery = query(READER)
   const verifierQuery = query(VERIFIER)
   const approved = new Set()
-  const config = { mode, authorityId, coordinatorPublicKey: publicKey, readerQuery, verifierQuery,
-    commitQuery: query(BINDER), approvedProjects: ["rivora", "kynexa"], now,
+  const config = { mode, authorityId, containerId: container, coordinatorPublicKey: publicKey, readerQuery, verifierQuery,
+    approvedProjects: ["rivora", "kynexa"], now,
     readIssue: () => ISSUE, resolveIssueProject: () => "rivora",
     readRepo: projectId => ({ projectId, branch: BRANCH, baseSha: BASE, headSha: HEAD,
       reviewedCanonicalPath: true, isolatedWorktree: true }),
@@ -148,10 +210,21 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     return run
   }
   const approve = signed => { approved.add(remotePayloadDigest(signed.payload)); return signed }
-  const bind = (signed, overrides = {}) => createPostgresOfflineAssignmentBinder({
+  const withRequest = (signed, overrides) => ({
     ...config, resolveIssueProject: () => signed.payload.projectId, ...overrides
-  })(signed)
+  })
+  const prepare = (signed, overrides = {}) => createPostgresOfflineAssignmentPreparer(withRequest(signed, overrides))(signed)
   const observe = signed => createPostgresOfflineAssignmentObserver({ mode, authorityId, coordinatorPublicKey: publicKey, readerQuery: query(READER) })(signed)
+  function bind(signed, overrides = {}) {
+    return createPostgresOfflineAssignmentBinder(withRequest(signed, overrides))(signed)
+  }
+  // Native fault/locking tests need an explicit transaction. Only the harness
+  // has that session. The executable lab entrypoint always uses bind above.
+  async function submitWithTestSession(signed, commitQuery, overrides) {
+    const { args } = await prepare(signed, overrides)
+    const reply = await commitQuery(OFFLINE_ASSIGNMENT_SQL.bind, args)
+    return reply.rows[0].accepted
+  }
   const count = () => sql("SELECT count(*) FROM ppo_authority.offline_assignment_reservations;")
   async function assertUnchanged(run, signed, total) {
     assert.deepEqual(await read(run.runId), run)
@@ -162,11 +235,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
   await t.test("RED ordinary D1 candidate publishes without a reservation; GREEN same writer is denied and atomic binder commits", async subtest => {
     const run = await seed()
     const signed = approve(assignment(run))
-    let args
-    await assert.rejects(bind(signed, { commitQuery: async (_statement, values) => {
-      args = values
-      return { rows: [{ accepted: false }] }
-    } }), { code: "OFFLINE_ASSIGNMENT_DENIED" })
+    const { args } = await prepare(signed)
     const raw = statementFor(COMMIT_RUN, [run.runId, 3, args[5], args[6]])
     assert.equal(JSON.parse(await sql("BEGIN;" + raw + "ROLLBACK;", WRITER)).accepted, true)
     assert.deepEqual(await read(run.runId), run)
@@ -179,7 +248,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     await assert.rejects(query(BINDER)(ADMISSION_SQL.certify, ["a".repeat(64)]), /42501/u)
     await assert.rejects(sql("SELECT count(*) FROM ppo_authority.offline_assignment_reservations;", BINDER), /42501/u)
     assert.equal(await count(), "0")
-    const receipt = await bind(signed)
+    const receipt = await bind(signed, { commitQuery: () => assert.fail("Caller-selected writer ran") })
     assert.deepEqual(receipt, { outcome: "bound-offline", runId: run.runId, expectedVersion: 3,
       version: 4, requestHash: remotePayloadDigest(signed.payload), historyHash: (await read(run.runId)).historyHash, ...FLAGS })
     assert.deepEqual(await observe(signed), receipt)
@@ -201,7 +270,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
       [approve(assignment(run, { expectedVersion: 2 })), "PREFLIGHT_RUN_STALE"]
     ]
     for (const [request, code] of denied) {
-      await assert.rejects(bind(request, { commitQuery: () => assert.fail("Unexpected bind submission") }), { code })
+      await assert.rejects(bind(request), { code })
     }
     await assertUnchanged(run, signed, "1")
     await cancel(run)
@@ -210,24 +279,35 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
   await t.test("source identity and exact D1 certificate are checked by the write transaction", async () => {
     const run = await seed()
     const first = approve(assignment(run))
-    // A transport that claims to certify without writing the actual token
-    // cannot substitute for D1 at the PostgreSQL publication boundary.
-    await assert.rejects(bind(first, { verifierQuery: async () => ({ rows: [{ certified: true }] }) }),
-      { code: "OFFLINE_ASSIGNMENT_DENIED" })
+    const fakeCertification = () => ({ rows: [{ certified: true }] })
+    const submit = (statement, args) => query(BINDER)(statement, args)
+    assert.equal(await submitWithTestSession(first, submit, { verifierQuery: fakeCertification }), false)
     await assertUnchanged(run, first, "1")
+    // A real D1 catalog certificate alone is insufficient. Only signed and
+    // owner-approved input gets the separate purpose-specific attestation.
+    let certifications = 0
+    assert.equal(await submitWithTestSession(first, submit, { verifierQuery: (statement, args) =>
+      ++certifications === 1 ? verifierQuery(statement, args) : fakeCertification() }), false)
+    assert.equal(certifications, 2)
+    const attestationOnly = approve(assignment(run))
+    certifications = 0
+    assert.equal(await submitWithTestSession(attestationOnly, submit, { verifierQuery: (statement, args) =>
+      ++certifications === 1 ? fakeCertification() : verifierQuery(statement, args) }), false)
+    assert.equal(certifications, 2)
+    await assertUnchanged(run, attestationOnly, "1")
     await assert.rejects(bind(first, { authorityId: "00000000-0000-0000-0000-000000000000" }),
       { code: "OFFLINE_ASSIGNMENT_DENIED" })
     for (const [index, value] of [[1, "another-signer"], [2, "0".repeat(64)], [4, '{"mode":"implementation"}']]) {
-      await assert.rejects(bind(first, { commitQuery: (statement, args) =>
-        query(BINDER)(statement, args.with(index, value)) }), { code: "OFFLINE_ASSIGNMENT_DENIED" })
+      assert.equal(await submitWithTestSession(first, (statement, args) =>
+        query(BINDER)(statement, args.with(index, value))), false)
     }
     const second = approve(assignment(run))
-    await assert.rejects(bind(second, { commitQuery: async (statement, args) => {
+    assert.equal(await submitWithTestSession(second, async (statement, args) => {
       // An unrelated mutation after certification invalidates the old catalog token.
       const unrelated = await seed("kynexa")
       await cancel(unrelated)
       return query(BINDER)(statement, args)
-    } }), { code: "OFFLINE_ASSIGNMENT_DENIED" })
+    }), false)
     await assertUnchanged(run, second, "1")
     await cancel(run)
   })
@@ -259,24 +339,25 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
       let resume
       const tentative = new Promise(resolve => { staged = resolve })
       const release = new Promise(resolve => { resume = resolve })
-      const firstResult = bind(first, { commitQuery: async (statement, args) => {
+      const firstResult = submitWithTestSession(first, async (statement, args) => {
         const reply = result(await leader.send("BEGIN;" + statementFor(statement, args)))
         staged()
         await release
         await leader.send("COMMIT;")
         return reply
-      } })
+      })
       await Promise.race([tentative, firstResult])
       assert.equal((await observe(first)).outcome, "unobserved")
-      const secondResult = bind(second, { commitQuery: async (statement, args) =>
-        result(await waiter.send(statementFor(statement, args))) })
+      const secondResult = submitWithTestSession(second, async (statement, args) =>
+        result(await waiter.send(statementFor(statement, args))))
       const completion = Promise.allSettled([firstResult, secondResult])
       try { await waitForBlock(waiter, leader) } finally { resume() }
       const [won, lost] = await completion
-      assert.equal(won.status, "fulfilled")
-      assert.equal(lost.status, "rejected")
-      assert.equal(lost.reason.code, "OFFLINE_ASSIGNMENT_DENIED")
-      assert.deepEqual(await observe(first), won.value)
+      assert.deepEqual(won, { status: "fulfilled", value: true })
+      assert.deepEqual(lost, { status: "fulfilled", value: false })
+      const binding = await observe(first)
+      assert.equal(binding.outcome, "bound-offline")
+      assert.equal(binding.historyHash, (await read(first.payload.runId)).historyHash)
       assert.equal((await observe(second)).outcome, "unobserved")
     } finally {
       await leader.close()
@@ -320,12 +401,8 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
       CREATE TRIGGER assignment_test_fault BEFORE INSERT ON ppo_authority.run_versions
         FOR EACH ROW EXECUTE FUNCTION ppo_authority.assignment_test_fault();
     `)
-    let nativeError
     try {
-      await assert.rejects(bind(signed, { commitQuery: async (statement, args) => {
-        try { return await query(BINDER)(statement, args) } catch (error) { nativeError = error; throw error }
-      } }), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN" })
-      assert.match(nativeError.message, /P1942/u)
+      await assert.rejects(submitWithTestSession(signed, query(BINDER)), /P1942/u)
       await assertUnchanged(run, signed, "3")
     } finally {
       await sql("DROP TRIGGER assignment_test_fault ON ppo_authority.run_versions; DROP FUNCTION ppo_authority.assignment_test_fault();")
@@ -335,24 +412,27 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
 
   await t.test("authorization that expires between native statement and COMMIT rolls back the complete transaction", async () => {
     const run = await seed()
+    await sql(`
+      CREATE FUNCTION ppo_authority.assignment_test_delay() RETURNS trigger LANGUAGE plpgsql AS $body$
+      DECLARE deadline timestamptz;
+      BEGIN
+        SELECT expires_at INTO STRICT deadline FROM ppo_authority.offline_assignment_reservations
+          WHERE run_id=NEW.run_id AND expected_version=NEW.version-1;
+        PERFORM pg_sleep(greatest(0,extract(epoch FROM (deadline-clock_timestamp())))::double precision+0.05);
+        RETURN NEW;
+      END $body$;
+      CREATE TRIGGER assignment_test_delay BEFORE INSERT ON ppo_authority.run_versions
+        FOR EACH ROW EXECUTE FUNCTION ppo_authority.assignment_test_delay();
+    `)
     const expiresAt = new Date(Date.now() + 8000).toISOString()
     const signed = approve(assignment(run, { expiresAt }))
-    const writer = session(BINDER, "assignment-expiring-writer")
-    let nativeError
     try {
-      await writer.ready()
-      await assert.rejects(bind(signed, { commitQuery: async (statement, args) => {
-        const reply = result(await writer.send("BEGIN;" + statementFor(statement, args)))
-        assert.equal(reply.rows[0].accepted, true)
-        assert.equal((await observe(signed)).outcome, "unobserved")
-        await writer.send("SELECT pg_sleep(greatest(0,extract(epoch FROM (" + literal(expiresAt) +
-          "::timestamptz-clock_timestamp())))::double precision+0.05);")
-        try { await writer.send("COMMIT;") } catch (error) { nativeError = error; throw error }
-        return reply
-      } }), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN" })
-      assert.match(nativeError.message, /P1941/u)
+      await assert.rejects(bind(signed), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN" })
+      assert.ok(Date.now() >= Date.parse(expiresAt))
       await assertUnchanged(run, signed, "3")
-    } finally { await writer.close() }
+    } finally {
+      await sql("DROP TRIGGER assignment_test_delay ON ppo_authority.run_versions; DROP FUNCTION ppo_authority.assignment_test_delay();")
+    }
     await cancel(run)
   })
 
@@ -364,7 +444,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     try {
       const pid = await writer.ready()
       assert.ok(Number.isSafeInteger(pid) && pid > 0)
-      await assert.rejects(bind(signed, { commitQuery: async (statement, args) => {
+      await assert.rejects(submitWithTestSession(signed, async (statement, args) => {
         const reply = result(await writer.send("BEGIN;" + statementFor(statement, args)))
         assert.equal(reply.rows[0].accepted, true)
         assert.equal((await observe(signed)).outcome, "unobserved")
@@ -372,7 +452,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
         terminated = true
         await writer.send("COMMIT;")
         return reply
-      } }), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN" })
+      }), /session closed|terminating connection/u)
       assert.equal(terminated, true)
       await assertUnchanged(run, signed, "3")
     } finally { await writer.close() }
@@ -388,7 +468,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     const closed = once(child, "close")
     let verifiedDeath = false
     try {
-      await assert.rejects(bind(signed, { commitQuery: async (statement, args) => {
+      await assert.rejects(submitWithTestSession(signed, async (statement, args) => {
         assert.equal(statement, OFFLINE_ASSIGNMENT_SQL.bind)
         const message = Promise.race([
           once(child, "message", { signal: AbortSignal.timeout(10000) }),
@@ -399,6 +479,9 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
         assert.ok(Number.isSafeInteger(pid) && pid > 0)
         assert.equal(accepted, true)
         assert.equal((await observe(signed)).outcome, "unobserved")
+        assert.equal(await sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=" + pid +
+          " AND application_name='" + CRASH_SESSION + "' AND state='idle in transaction'" +
+          " AND clock_timestamp()-state_change < interval '5 seconds');"), "t")
         assert.equal(child.kill("SIGKILL"), true)
         assert.deepEqual(await closed, [null, "SIGKILL"])
         const deadline = Date.now() + 10000
@@ -407,7 +490,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
         }
         verifiedDeath = true
         throw Error("Writer died before acknowledging commit")
-      } }), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN" })
+      }), /Writer died before acknowledging commit/u)
       assert.equal(verifiedDeath, true)
       await assertUnchanged(run, signed, "3")
     } finally {
@@ -420,31 +503,17 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
   await t.test("backend unavailable and lost acknowledgment stay unknown; independent reader reconciles after server restart", async () => {
     const unavailableRun = await seed()
     const first = approve(assignment(unavailableRun))
-    const unavailable = session(BINDER)
-    await unavailable.ready()
-    await unavailable.close()
-    let submissions = 0
-    await assert.rejects(bind(first, { commitQuery: async (statement, args) => {
-      submissions++
-      return result(await unavailable.send(statementFor(statement, args)))
-    } }), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN" })
-    assert.equal(submissions, 1)
+    await withTransportLoss(false, () => assert.rejects(bind(first), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN" }))
     await assertUnchanged(unavailableRun, first, "3")
     await cancel(unavailableRun)
 
     // A separate run supplies the lost-acknowledgment scenario.
     const run = await seed()
     const second = approve(assignment(run))
-    await assert.rejects(bind(second, { commitQuery: async (statement, args) => {
-      submissions++
-      const reply = await query(BINDER)(statement, args)
-      assert.equal(reply.rows[0].accepted, true)
-      throw Error("synthetic transport lost committed acknowledgment")
-    } }), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN", observation: {
+    await withTransportLoss(true, () => assert.rejects(bind(second), { code: "OFFLINE_ASSIGNMENT_COMMIT_UNKNOWN", observation: {
       runId: run.runId, expectedVersion: 3, requestHash: remotePayloadDigest(second.payload)
-    } })
-    assert.equal(submissions, 2)
-    execFileSync("docker", ["restart", container], { stdio: "ignore" })
+    } }))
+    execFileSync("docker", ["restart", container], { stdio: "ignore", timeout: 15000, killSignal: "SIGKILL" })
     const deadline = Date.now() + 10000
     while (true) {
       try { await sql("SELECT 1;"); break } catch (error) {
@@ -475,7 +544,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     }
     async function denyCatalog(code) {
       assert.equal((await query(READER)(READ_CATALOG, [])).rows[0].snapshot.code, code)
-      await assert.rejects(bind(signed, { commitQuery: () => assert.fail("Unexpected bind submission") }), { code: "PREFLIGHT_CATALOG_BLOCKED" })
+      await assert.rejects(bind(signed), { code: "PREFLIGHT_CATALOG_BLOCKED" })
       await assertUnchanged(run, signed, "4")
     }
     await editVersions("UPDATE " + table + " SET record=jsonb_set(record,'{history,0,actor}','false'::jsonb)" + filter)
