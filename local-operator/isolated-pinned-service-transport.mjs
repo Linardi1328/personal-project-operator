@@ -5,15 +5,16 @@ import {parseUniqueJson} from './unique-json.mjs'
 import {remotePayloadDigest} from './software-factory-remote-contract.mjs'
 import {validIsolatedActionBindings,createIsolatedPostgresActionVerifier,createIsolatedPostgresActionFence,inspectIsolatedActionConsumption,POSTGRES_ACTION_SQL as A} from './software-factory-remote-postgres-action-fence.mjs'
 import {createSyntheticResourceVerifier,createSyntheticResourceFence,inspectSyntheticResourceReceipt,RESOURCE_SQL as R} from './software-factory-postgres-resource-fence.mjs'
+import {authorityGatewayRoute,gatewayOperationSubject,AUTHORITY_GATEWAY_SQL as G} from './authenticated-authority-gateway.mjs'
 
 const MODE='isolated-pinned-service-transport-only',AM='isolated-postgres-action-fencing-only',RM='isolated-postgres-resource-fencing-only'
 const FLAGS=Object.freeze({grant:false,canExecute:false,releaseAuthorized:false})
-const statuses=new Set(['registered','context','updated','consumed-diagnostic','expired-or-stale','denied','unknown','unavailable','consumed','committed-synthetic-effect'])
+const statuses=new Set(['registered','context','updated','consumed-diagnostic','expired-or-stale','denied','unknown','unavailable','consumed','committed-synthetic-effect','gateway-state','gateway-consumed','gateway-revoked','gateway-denied','reconciled'])
 const jsonText=bytes=>new TextDecoder('utf-8',{fatal:true}).decode(bytes)
 const HASH=/^[a-f0-9]{64}$/u,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u
 const uuid=v=>typeof v==='string'&&UUID.test(v),hash=v=>typeof v==='string'&&HASH.test(v)
-const kinds=new Set(['coordinator','administrator','verifier-service','consumer-service','administrator-service'])
-const roles={actionVerifier:'ppo_action_verifier',resourceVerifier:'ppo_resource_verifier',actionConsumer:'ppo_action_consumer',resourceConsumer:'ppo_resource_consumer',admin:'ppo_action_admin'}
+const kinds=new Set(['coordinator','administrator','verifier-service','consumer-service','administrator-service','gateway-service'])
+const roles={actionVerifier:'ppo_action_verifier',resourceVerifier:'ppo_resource_verifier',actionConsumer:'ppo_action_consumer',resourceConsumer:'ppo_resource_consumer',admin:'ppo_action_admin',gateway:'ppo_authority_gateway'}
 // Two legal 4096-byte values can each expand sixfold when JSON escapes are
 // serialized in a receipt. 64 KiB also covers the bounded 32 KiB action
 // context plus one escaped current resource and fixed metadata.
@@ -25,6 +26,7 @@ const denied=status=>({...FLAGS,status})
 function fail(){throw Error('Isolated pinned service denied or unavailable.')}
 function exact(o,keys){return o&&Object.getPrototypeOf(o)===Object.prototype&&Object.keys(o).sort().join('|')===[...keys].sort().join('|')}
 function boundedJson(o,max){const s=JSON.stringify(o);if(typeof s!=='string'||Buffer.byteLength(s)>max)fail();return s}
+function probeSession(probe,role){const p=probe?.rows?.[0];if(!Array.isArray(probe?.rows)||probe.rows.length!==1||p?.role!==role||p.login!==serviceLogin(role)||p.privileged!==false||p.login_privileged!==false||JSON.stringify(p.memberships)!==JSON.stringify([role]))fail()}
 export function tlsKeyFingerprint(cert){try{return createHash('sha256').update(new X509Certificate(cert).publicKey.export({type:'spki',format:'der'})).digest('hex')}catch{fail()}}
 
 // Trusted administrative capability only. No route accepts a replacement pin,
@@ -37,8 +39,14 @@ export function createIsolatedPinRegistry({mode,entries}={}){
  function change(id,expected,fingerprint){const e=read(id);if(!e||e.epoch!==expected||e.epoch>=1e9||retired.size>=128||fingerprint!==null&&(!hash(fingerprint)||retired.has(fingerprint)||[...map.values()].some(x=>x.fingerprint===fingerprint)))fail();retired.add(e.fingerprint);const next=Object.freeze({...e,epoch:e.epoch+1,active:fingerprint!==null,fingerprint:fingerprint??e.fingerprint});map.set(id,next);for(const fn of listeners)fn(next);return next}
  return Object.freeze({read,lookup,rotate:(id,expected,fp)=>change(id,expected,fp),revoke:(id,expected)=>change(id,expected,null),subscribe(fn){if(typeof fn!=='function')fail();listeners.add(fn);return()=>listeners.delete(fn)}})
 }
-const services={verifier:['actionVerifier','resourceVerifier'],consumer:['actionConsumer','resourceConsumer'],administrator:['admin']}
-function route(service,path,body,keys){
+const services={verifier:['actionVerifier','resourceVerifier'],consumer:['actionConsumer','resourceConsumer'],administrator:['admin'],gateway:['gateway']}
+// The gateway service is the only RIC-177 mutation path in its sealed
+// disposable profile. Its witness/pins are trusted server infrastructure.
+function route(service,path,body,keys,ctx){
+ if(service==='gateway'){
+  const spec=authorityGatewayRoute(path,body)
+  return {connection:'gateway',peers:spec.peers,statements:spec.statements,run:q=>ctx.gateway.handle(path,body,{query:q,peer:ctx.peer,service:ctx.service,live:ctx.live})}
+ }
  const operation=(resource=false)=>{if(!exact(body,resource?['ticket','operationId','descriptorHash']:['ticket','operationId'])||!uuid(body.ticket)||!uuid(body.operationId)||resource&&!hash(body.descriptorHash))fail()}
  if(service==='verifier'&&path==='/v1/action/register'){
   if(!exact(body,['signedRequest','signedClaim','signedProof','ticket'])||!uuid(body.ticket))fail()
@@ -72,7 +80,8 @@ function route(service,path,body,keys){
 
 // Each service owns only its listed fixed DB capabilities and a separate TLS
 // identity. Factories are server infrastructure, never request properties.
-export function createIsolatedPinnedService({mode,service,identity,tls,pins,connections,verifierKeys}={}){
+export function createIsolatedPinnedService({mode,service,identity,tls,pins,connections,verifierKeys,gateway}={}){
+ if(service==='gateway'?(!gateway||typeof gateway!=='object'||gateway.serviceIdentity!==identity||gateway.pins!==pins||['handle','activate','detach'].some(k=>typeof gateway[k]!=='function')):gateway!==undefined)fail()
  if(mode!==MODE||!exact(tls,['key','cert','ca'])||!Object.hasOwn(services,service)||!pins?.read||!pins?.lookup||!pins?.subscribe||!exact(connections,services[service])||services[service].some(k=>typeof connections[k]!=='function'))fail()
  const own=pins.read(identity);if(!own?.active||own.kind!==service+'-service'||own.fingerprint!==tlsKeyFingerprint(tls?.cert))fail()
  const sockets=new Set(),active=new Set(),usedSessions=new WeakSet();let started=false,closing=false,closingTask
@@ -81,7 +90,8 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
   const peer=req.socket.authorized&&pins.lookup(tlsKeyFingerprint(req.socket.getPeerCertificate().raw))
   const validPeer=()=>{const p=peer&&pins.read(peer.identity);return selfCurrent()&&p?.active&&p.epoch===peer.epoch&&p.fingerprint===peer.fingerprint}
   const send=(status,result)=>{if(res.destroyed||res.writableEnded)return;const text=boundedJson(result,PINNED_SERVICE_LIMITS.responseBytes);res.writeHead(status,{'content-type':'application/json','content-length':Buffer.byteLength(text),'connection':'close'});res.end(text)}
-  if(closing||!peer||peer.kind!==(service==='administrator'?'administrator':'coordinator')||!validPeer()){send(403,denied('denied'));req.resume();return}
+  const peerKinds=service==='gateway'?['coordinator','administrator']:[service==='administrator'?'administrator':'coordinator']
+  if(closing||!peer||!peerKinds.includes(peer.kind)||!validPeer()){send(403,denied('denied'));req.resume();return}
   if(active.size>=PINNED_SERVICE_LIMITS.concurrent){send(503,denied('unavailable'));req.resume();return}
   let connection,opening,disposal,disposalFailed=false,cancelled=false,dispatched=false,rejectAbort,finishAttempt
   const finished=new Promise(resolve=>{finishAttempt=resolve})
@@ -96,13 +106,13 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
    const chunks=[];let bytes=0
    const bodyTimer=setTimeout(()=>{attempt.cancel();req.destroy()},PINNED_SERVICE_LIMITS.bodyMs)
    try{for await(const chunk of req){bytes+=chunk.length;if(bytes>PINNED_SERVICE_LIMITS.requestBytes)fail();chunks.push(chunk)}}finally{clearTimeout(bodyTimer)}
-   const body=parseUniqueJson(jsonText(Buffer.concat(chunks)),{maxBytes:PINNED_SERVICE_LIMITS.requestBytes,maxDepth:32}),r=route(service,req.url,body,verifierKeys)
-   if(cancelled||!validPeer())fail()
+   const body=parseUniqueJson(jsonText(Buffer.concat(chunks)),{maxBytes:PINNED_SERVICE_LIMITS.requestBytes,maxDepth:32})
+   const r=route(service,req.url,body,verifierKeys,{gateway,peer:{identity:peer.identity,epoch:peer.epoch,fingerprint:peer.fingerprint},service:{identity,epoch:own.epoch,fingerprint:own.fingerprint},live:()=>!cancelled&&validPeer()})
+   if(cancelled||!validPeer()||r.peers&&!r.peers.includes(peer.kind))fail()
    opening=Promise.resolve().then(connections[r.connection]).then(async c=>{connection=c;if(!c||typeof c.query!=='function'||typeof c.dispose!=='function'||usedSessions.has(c))fail();usedSessions.add(c);if(cancelled){await dispose();fail()}return c})
    await Promise.race([opening,abort])
    if(!validPeer())fail()
-   const probe=await Promise.race([connection.query(SERVICE_ROLE_PROBE,[]),abort]),p=probe?.rows?.[0],role=roles[r.connection]
-   if(!Array.isArray(probe?.rows)||probe.rows.length!==1||p?.role!==role||p.login!==serviceLogin(role)||p.privileged!==false||p.login_privileged!==false||JSON.stringify(p.memberships)!==JSON.stringify([role]))fail()
+   probeSession(await Promise.race([connection.query(SERVICE_ROLE_PROBE,[]),abort]),roles[r.connection])
    const query=async(s,a)=>{if(cancelled||!validPeer()||!r.statements.includes(s))fail();dispatched=true;return Promise.race([connection.query(s,a),abort])}
    const result=await Promise.race([r.run(query),abort])
    if(cancelled||!validPeer()||result?.grant!==false||result.canExecute!==false||result.releaseAuthorized!==false)fail()
@@ -114,13 +124,31 @@ export function createIsolatedPinnedService({mode,service,identity,tls,pins,conn
  server.on('connection',s=>{if(sockets.size>=PINNED_SERVICE_LIMITS.sockets){s.destroy();return}sockets.add(s);s.once('close',()=>sockets.delete(s))})
  server.on('tlsClientError',()=>{})
  const unsubscribe=pins.subscribe(()=>{for(const attempt of active){const p=pins.read(attempt.peer);if(!selfCurrent()||!p?.active||p.epoch!==attempt.epoch||p.fingerprint!==attempt.fingerprint)attempt.cancel()}})
- return Object.freeze({async listen(){if(started||closing)fail();started=true;await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});return Object.freeze({port:server.address().port,identity,service})},async close(){
+ // Trusted local administration (no network route): one fresh probed gateway
+ // session, exclusively owned and disposed, for explicit witness activation.
+ // Shutdown detaches the gateway first (no reopen after a late result) and
+ // waits for every activation's connection disposal like a request attempt.
+ const activations=new Set()
+ async function activateGateway(){
+  if(!gateway||closing)fail()
+  let c,finish,failed=false;const finished=new Promise(r=>{finish=r});activations.add(finished)
+  try{
+   c=await connections.gateway();if(!c||typeof c.query!=='function'||typeof c.dispose!=='function'||usedSessions.has(c))fail();usedSessions.add(c)
+   if(closing)fail()
+   probeSession(await c.query(SERVICE_ROLE_PROBE,[]),roles.gateway);const allowed=[G.state]
+   return await gateway.activate(async(s,a)=>{if(closing||!selfCurrent()||!allowed.includes(s))fail();return c.query(s,a)})
+  }catch(error){failed=true;throw error}
+  // A failed disposal, or an activation that fails while closing (for example a
+  // failed re-quarantine), stays visible to close().
+  finally{let ok=true;try{await c?.dispose()}catch{ok=false}ok=ok&&!(failed&&closing);if(ok)activations.delete(finished);finish(ok)}
+ }
+ return Object.freeze({...(gateway?{activateGateway}:{}),async listen(){if(started||closing)fail();started=true;await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});return Object.freeze({port:server.address().port,identity,service})},async close(){
   if(closingTask)return closingTask
-  closing=true;unsubscribe();const pending=[...active];for(const a of pending)a.cancel();for(const s of sockets)s.destroy()
+  closing=true;unsubscribe();gateway?.detach();const pending=[...active].map(a=>(a.cancel(),a.finished)).concat([...activations]);for(const s of sockets)s.destroy()
   closingTask=(async()=>{
    if(started)await new Promise(resolve=>server.close(resolve))
    let deadline
-   try{const result=await Promise.race([Promise.all(pending.map(a=>a.finished)),new Promise(resolve=>{deadline=setTimeout(()=>resolve(null),PINNED_SERVICE_LIMITS.operationMs)})]);if(!result||result.some(ok=>!ok))fail()}finally{clearTimeout(deadline)}
+   try{const result=await Promise.race([Promise.all(pending),new Promise(resolve=>{deadline=setTimeout(()=>resolve(null),PINNED_SERVICE_LIMITS.operationMs)})]);if(!result||result.some(ok=>!ok))fail()}finally{clearTimeout(deadline)}
   })()
   return closingTask
  }})
@@ -161,7 +189,33 @@ function validResourceContext(snapshot){
  return validNativeResourceState(r)
 }
 
+// Gateway acknowledgments carry evidence identity only, never a grant. Exact
+// key sets; the operation must be the one this client requested and, for a
+// mutation, bound to the incarnation/instance this client expected.
+const GATEWAY_FLAGS=['grant','canExecute','releaseAuthorized','status']
+function boundGatewayOperation(path,body,o){
+ if(!exact(o,['operationId','kind','subjectHash','inputHash'])||o.operationId!==body.operationId||!hash(o.inputHash))fail()
+ if(path==='/v1/gateway/consume'&&(o.kind!=='consume-action'||o.subjectHash!==gatewayOperationSubject(o.kind,body.ticket,'')))fail()
+ if(path==='/v1/gateway/revoke-host'&&(o.kind!=='revoke-host'||o.subjectHash!==gatewayOperationSubject(o.kind,body.hostId,String(body.expectedEpoch))))fail()
+ if(path==='/v1/gateway/reconcile'&&(!['consume-action','revoke-host'].includes(o.kind)||!hash(o.subjectHash)))fail()
+}
+function boundGatewayResponse(path,body,r){
+ const positive={'/v1/gateway/state':['gateway-state'],'/v1/gateway/consume':['gateway-consumed','gateway-denied'],'/v1/gateway/revoke-host':['gateway-revoked','gateway-denied'],'/v1/gateway/reconcile':['reconciled']}
+ if(['denied','unknown','unavailable'].includes(r.status)){
+  if(!exact(r,Object.hasOwn(r,'operation')?[...GATEWAY_FLAGS,'operation']:GATEWAY_FLAGS))fail()
+  if(Object.hasOwn(r,'operation'))boundGatewayOperation(path,body,r.operation)
+  return
+ }
+ if(!positive[path]?.includes(r.status))fail()
+ if(r.status==='gateway-state'){const b=r.binding;if(!exact(r,[...GATEWAY_FLAGS,'binding','witness','pending','consistent'])||!exact(b,['anchorId','authorityId','ownerId','incarnation','instanceId','checkpoint'])||!['anchorId','authorityId','ownerId'].every(k=>uuid(b[k]))||!Number.isSafeInteger(b.incarnation)||!(b.instanceId===null||uuid(b.instanceId))||!hash(b.checkpoint)||!['open','quarantined'].includes(r.witness)||!(r.pending===null||uuid(r.pending))||typeof r.consistent!=='boolean')fail();return}
+ const outcomes={'gateway-consumed':['consumed'],'gateway-revoked':['revoked'],'gateway-denied':['denied'],reconciled:['consumed','revoked','denied']}
+ if(path==='/v1/gateway/reconcile'){if(!exact(r,[...GATEWAY_FLAGS,'operation','outcome','receiptHash']))fail()}
+ else if(!exact(r,[...GATEWAY_FLAGS,'operation','outcome','receiptHash','incarnation','instanceId'])||r.incarnation!==body.expected.incarnation||r.instanceId!==body.expected.instanceId)fail()
+ boundGatewayOperation(path,body,r.operation)
+ if(!hash(r.receiptHash)||!outcomes[r.status].includes(r.outcome))fail()
+}
 function boundResponse(path,body,r){
+ if(path.startsWith('/v1/gateway/')){if(!r||Object.getPrototypeOf(r)!==Object.prototype||r.grant!==false||r.canExecute!==false||r.releaseAuthorized!==false||!statuses.has(r.status))fail();return boundGatewayResponse(path,body,r)}
  const positive={"/v1/action/register":['registered'],"/v1/resource/register":['registered'],"/v1/resource/context":['context'],"/v1/action/consume":['consumed-diagnostic','expired-or-stale'],"/v1/action/inspect":['consumed'],"/v1/resource/apply":['consumed-diagnostic','expired-or-stale'],"/v1/resource/inspect":['committed-synthetic-effect'],"/v1/host/configure":['updated'],"/v1/context/revoke":['updated']}
  if(!r||Object.getPrototypeOf(r)!==Object.prototype||r.grant!==false||r.canExecute!==false||r.releaseAuthorized!==false||!statuses.has(r.status))fail()
  if(['denied','unknown','unavailable'].includes(r.status))return
