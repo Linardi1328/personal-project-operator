@@ -4,13 +4,15 @@ import { createPostgresTestSession } from "./postgres-test-session.mjs"
 
 export const OFFLINE_ASSIGNMENT_SQL = Object.freeze({
   bind: "SELECT ppo_authority.bind_offline_assignment($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text) AS accepted",
-  observe: "SELECT ppo_authority.read_offline_assignment($1::uuid,$2::text,$3::text,$4::integer,$5::text) AS receipt"
+  observe: "SELECT ppo_authority.read_offline_assignment($1::uuid,$2::text,$3::text,$4::integer,$5::text) AS receipt",
+  replay: "SELECT ppo_authority.offline_assignment_replay_conflict($1::uuid,$2::text,$3::text) AS conflict"
 })
 const READ = new Set([
   "SELECT ppo_authority.read_run($1::text) AS record",
   "SELECT ppo_authority.read_catalog_snapshot() AS snapshot",
   ADMISSION_SQL.prepare,
-  OFFLINE_ASSIGNMENT_SQL.observe
+  OFFLINE_ASSIGNMENT_SQL.observe,
+  OFFLINE_ASSIGNMENT_SQL.replay
 ])
 
 export function assertDisposableAssignmentContainer(containerId) {

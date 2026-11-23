@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url"
 import { createIsolatedCanonicalRunState } from "../../local-operator/development-run-state.mjs"
 import { ADMISSION_SQL, createCatalogCertifiedQuery } from "../../local-operator/development-catalog-certified-query.mjs"
 import { createPostgresCanonicalAuthority } from "../../local-operator/development-postgres-canonical-authority.mjs"
+import { rehearseSyntheticMigrationPreflight } from "../../local-operator/development-migration-preflight.mjs"
 import { remotePayloadDigest, signRemoteEnvelope } from "../../local-operator/software-factory-remote-contract.mjs"
 import { linearIssueRevisionHash } from "../../local-operator/war-room-assignment-preflight.mjs"
 import { admissionProfileSql } from "./phase1gd1-profile.mjs"
@@ -235,7 +236,8 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
   await t.test("RED ordinary D1 candidate publishes without a reservation; GREEN same writer is denied and atomic binder commits", async subtest => {
     const run = await seed()
     const signed = approve(assignment(run))
-    const { args } = await prepare(signed)
+    const { args } = await prepare(signed, { readerQuery: (statement, values) =>
+      statement === OFFLINE_ASSIGNMENT_SQL.replay ? { rows: [{ conflict: false }] } : readerQuery(statement, values) })
     const raw = statementFor(COMMIT_RUN, [run.runId, 3, args[5], args[6]])
     assert.equal(JSON.parse(await sql("BEGIN;" + raw + "ROLLBACK;", WRITER)).accepted, true)
     assert.deepEqual(await read(run.runId), run)
@@ -295,9 +297,9 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
       ++certifications === 1 ? fakeCertification() : verifierQuery(statement, args) }), false)
     assert.equal(certifications, 2)
     await assertUnchanged(run, attestationOnly, "1")
-    await assert.rejects(bind(first, { authorityId: "00000000-0000-0000-0000-000000000000" }),
-      { code: "OFFLINE_ASSIGNMENT_DENIED" })
-    for (const [index, value] of [[1, "another-signer"], [2, "0".repeat(64)], [4, '{"mode":"implementation"}']]) {
+    const anotherAuthority = "00000000-0000-0000-0000-000000000000"
+    await assert.rejects(bind(first, { authorityId: anotherAuthority }), { code: "OFFLINE_ASSIGNMENT_UNAVAILABLE" })
+    for (const [index, value] of [[0, anotherAuthority], [1, "another-signer"], [2, "0".repeat(64)], [4, '{"mode":"implementation"}']]) {
       assert.equal(await submitWithTestSession(first, (statement, args) =>
         query(BINDER)(statement, args.with(index, value))), false)
     }
@@ -315,12 +317,14 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
   await t.test("standalone profile refuses gateway or ownership installation and runtime routing", async () => {
     const run = await seed()
     const signed = approve(assignment(run))
+    const { args } = await prepare(signed)
     try {
       for (const table of ["ppo_authority.gateway_profile", "ppo_authority.rehearsal_owner"]) {
         await sql("BEGIN; SET LOCAL ROLE ppo_authority_owner; CREATE TABLE " + table + " (fixture boolean); COMMIT;")
         try {
           await assert.rejects(sql(await profile("postgres-offline-assignment")), /standalone disposable D1 authority required/u)
-          await assert.rejects(bind(signed), { code: "OFFLINE_ASSIGNMENT_DENIED" })
+          await assert.rejects(bind(signed), { code: "OFFLINE_ASSIGNMENT_UNAVAILABLE" })
+          assert.equal((await query(BINDER)(OFFLINE_ASSIGNMENT_SQL.bind, args)).rows[0].accepted, false)
           await assert.rejects(observe(signed), { code: "OFFLINE_ASSIGNMENT_OBSERVATION_UNAVAILABLE" })
           assert.deepEqual(await read(run.runId), run)
           assert.equal(await count(), "1")
@@ -378,11 +382,14 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     const second = await seed("kynexa")
     const original = approve(assignment(first))
     await contend(original, approve(assignment(second, { nonce: original.payload.nonce })))
+    const certificateCount = () => sql("SELECT cert_count FROM ppo_authority.admission_identity;")
+    const before = await certificateCount()
     for (const key of ["requestId", "nonce", "idempotencyKey", "approval"]) {
       const duplicate = approve(assignment(second, { [key]: original.payload[key] }))
-      await assert.rejects(bind(duplicate), { code: "OFFLINE_ASSIGNMENT_DENIED" })
+      await assert.rejects(bind(duplicate), { code: "OFFLINE_ASSIGNMENT_REPLAY" })
       await assertUnchanged(second, duplicate, "3")
     }
+    assert.equal(await certificateCount(), before)
     await cancel(first)
     await cancel(second)
   })
@@ -396,9 +403,9 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
         IF NOT EXISTS (SELECT 1 FROM ppo_authority.offline_assignment_reservations
           WHERE run_id=NEW.run_id AND expected_version=NEW.version-1)
         THEN RAISE EXCEPTION 'expected prior reservation insert' USING ERRCODE='P1943'; END IF;
-        RAISE EXCEPTION 'injected canonical insert failure' USING ERRCODE='P1942';
+        RAISE EXCEPTION 'injected failure after both inserts' USING ERRCODE='P1942';
       END $body$;
-      CREATE TRIGGER assignment_test_fault BEFORE INSERT ON ppo_authority.run_versions
+      CREATE TRIGGER assignment_test_fault AFTER INSERT ON ppo_authority.run_versions
         FOR EACH ROW EXECUTE FUNCTION ppo_authority.assignment_test_fault();
     `)
     try {
@@ -410,7 +417,27 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     await cancel(run)
   })
 
-  await t.test("authorization that expires between native statement and COMMIT rolls back the complete transaction", async () => {
+  await t.test("a successful native bind statement is rejected at COMMIT after expiry", async () => {
+    const run = await seed()
+    const expiresAt = new Date(Date.now() + 8000).toISOString()
+    const signed = approve(assignment(run, { expiresAt }))
+    const { args } = await prepare(signed)
+    const writer = session(BINDER, "assignment-expiring-writer")
+    try {
+      await writer.ready()
+      const reply = result(await writer.send("BEGIN;" + statementFor(OFFLINE_ASSIGNMENT_SQL.bind, args)))
+      assert.equal(reply.rows[0].accepted, true)
+      assert.ok(Date.now() < Date.parse(expiresAt))
+      assert.equal((await observe(signed)).outcome, "unobserved")
+      await writer.send("SELECT pg_sleep(greatest(0,extract(epoch FROM (" + literal(expiresAt) +
+        "::timestamptz-clock_timestamp())))::double precision+0.05);")
+      await assert.rejects(writer.send("COMMIT;"), /P1941/u)
+      await assertUnchanged(run, signed, "3")
+    } finally { await writer.close() }
+    await cancel(run)
+  })
+
+  await t.test("the fixed autocommit transport withholds acknowledgment when authorization expires", async () => {
     const run = await seed()
     await sql(`
       CREATE FUNCTION ppo_authority.assignment_test_delay() RETURNS trigger LANGUAGE plpgsql AS $body$
@@ -558,7 +585,15 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     const duplicate = literal("W".repeat(43))
     await sql("INSERT INTO " + table + " SELECT " + duplicate + ",version,history_hash,jsonb_set(record,'{runId}',to_jsonb(" +
       duplicate + ")) FROM " + table + " WHERE run_id=" + literal(run.runId) + ";")
-    try { await denyCatalog("ok") } finally {
+    try {
+      const { entries } = (await query(READER)(READ_CATALOG, [])).rows[0].snapshot
+      const inspection = rehearseSyntheticMigrationPreflight({ mode: "synthetic-migration-preflight-only",
+        entries: entries.map(entry => ({ relativePath: entry.path, bytes: Buffer.from(entry.serialized, "utf8") })) })
+      assert.equal(inspection.diagnostics.duplicateActiveProject, true)
+      assert.equal(inspection.diagnostics.invalid, 0)
+      assert.equal(inspection.diagnostics.unknown, 0)
+      await denyCatalog("ok")
+    } finally {
       await editVersions("DELETE FROM " + table + " WHERE run_id=" + duplicate + ";")
     }
     await sql("INSERT INTO " + table + " SELECT id,0,source->>'historyHash',jsonb_set(source,'{runId}',to_jsonb(id)) " +

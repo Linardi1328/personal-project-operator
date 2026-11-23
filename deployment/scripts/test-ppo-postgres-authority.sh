@@ -8,35 +8,53 @@ set -euo pipefail
 [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || exit 1
 export PPO_AUTHORITY_TEST_CONTAINER="ppo-authority-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 container_id=
-trap 'if [[ -n "$container_id" ]]; then docker rm -fv "$container_id" >/dev/null 2>&1 || true; fi' EXIT
+
+# An absolute limit around Docker readiness and teardown commands. Node is
+# already required by this runner on both macOS and Linux.
+bounded_docker() {
+  node -e '
+    const {spawnSync} = require("node:child_process")
+    const [seconds, ...args] = process.argv.slice(1)
+    const result = spawnSync("docker", args, {
+      timeout: Number(seconds) * 1000, killSignal: "SIGKILL", stdio: "inherit"
+    })
+    process.exit(result.status === 0 ? 0 : 1)
+  ' "$@"
+}
+
+trap 'if [[ "$container_id" =~ ^[a-f0-9]{64}$ ]]; then bounded_docker 20 rm -fv "$container_id" >/dev/null 2>&1 || true; fi' EXIT
 
 start_container() {
-  local name="$1" details version ready=false
-  container_id="$(docker run -d --network none --name "$name" \
+  local name="$1" details version deadline remaining
+  container_id="$(docker create --network none --name "$name" \
     -e POSTGRES_DB=ppo_authority_ci \
     -e POSTGRES_PASSWORD=disposable-ci-only-not-a-secret \
     postgres:16)"
   # Verify the actual container before any database command or cluster-wide test.
-  details="$(docker inspect --format '{{.Id}} {{.Name}} {{.Config.Image}} {{.HostConfig.NetworkMode}} {{.HostConfig.PublishAllPorts}} {{len .HostConfig.PortBindings}}{{range .Mounts}}{{if eq .Type "bind"}} bind{{end}}{{end}}' "$container_id")"
+  details="$(bounded_docker 10 inspect --format '{{.Id}} {{.Name}} {{.Config.Image}} {{.HostConfig.NetworkMode}} {{.HostConfig.PublishAllPorts}} {{len .HostConfig.PortBindings}}{{range .Mounts}}{{if eq .Type "bind"}} bind{{end}}{{end}}' "$container_id")"
   [[ "$container_id" =~ ^[a-f0-9]{64}$ &&
      "$details" == "$container_id /$name postgres:16 none false 0" ]] || exit 1
-  for attempt in $(seq 1 60); do
-    if docker exec "$container_id" pg_isready -h 127.0.0.1 -U postgres -d ppo_authority_ci >/dev/null 2>&1 &&
-       docker exec "$container_id" psql -X -qAt -U postgres -d ppo_authority_ci -c "SELECT 1" >/dev/null 2>&1; then
-      ready=true
-      break
+  bounded_docker 30 start "$container_id" >/dev/null
+  deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    if bounded_docker "$remaining" exec "$container_id" pg_isready -h 127.0.0.1 -U postgres -d ppo_authority_ci >/dev/null 2>&1; then
+      remaining=$((deadline - SECONDS))
+      if (( remaining > 0 )) &&
+         version="$(bounded_docker "$remaining" exec "$container_id" psql -X -qAt -U postgres -d ppo_authority_ci -c 'SHOW server_version_num' 2>/dev/null)"; then
+        [[ "$version" =~ ^16[0-9]{4}$ ]] || return 1
+        return 0
+      fi
     fi
     sleep 1
   done
-  test "$ready" = true
-  version="$(docker exec "$container_id" psql -X -qAt -U postgres -d ppo_authority_ci -c 'SHOW server_version_num')"
-  [[ "$version" =~ ^16[0-9]{4}$ ]] || exit 1
+  return 1
 }
 
 # Keep the standalone assignment profile and RIC-177 on separate clusters.
 start_container "${PPO_AUTHORITY_TEST_CONTAINER}-assignment"
 PPO_ASSIGNMENT_TEST_CONTAINER_ID="$container_id" node --test deployment/authority/postgres-offline-assignment.integration.mjs
-docker rm -fv "$container_id" >/dev/null
+bounded_docker 20 rm -fv "$container_id" >/dev/null
 container_id=
 if [[ "${1:-}" == --assignment-only ]]; then exit 0; fi
 

@@ -51,6 +51,25 @@ RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $bo
      AND EXISTS(SELECT 1 FROM ppo_authority.offline_assignment_policy WHERE singleton AND coordinator_key_hash = p_key_hash)
 $body$;
 
+-- A read-only optimization. The binder still enforces replay uniqueness in
+-- its transaction because another transaction can reserve after this read.
+CREATE FUNCTION ppo_authority.offline_assignment_replay_conflict(p_authority uuid, p_key_hash text, p_request text)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER STRICT SET search_path = pg_catalog, pg_temp AS $body$
+DECLARE request jsonb;
+BEGIN
+  IF NOT ppo_authority.offline_assignment_authority_matches(p_authority, p_key_hash)
+     OR octet_length(p_request) > 8192
+  THEN RAISE EXCEPTION 'offline assignment admission observation unavailable'; END IF;
+  request := p_request::jsonb;
+  RETURN EXISTS (
+    SELECT 1 FROM ppo_authority.offline_assignment_reservations r
+    WHERE (r.run_id = request->>'runId' AND r.expected_version::text = request->>'expectedVersion')
+       OR r.request_id = request->>'requestId' OR r.nonce = request->>'nonce'
+       OR r.idempotency_key = request->>'idempotencyKey' OR r.approval_id = request->'approval'->>'approvalId'
+  );
+END
+$body$;
+
 -- The D1 verifier can certify the binding candidate like any other proposed
 -- canonical record. Publication of this reserved event requires its exact
 -- reservation in the same transaction. Ordinary events retain existing D1.
@@ -215,11 +234,14 @@ END
 $body$;
 
 REVOKE ALL ON FUNCTION ppo_authority.offline_assignment_authority_matches(uuid,text),
+  ppo_authority.offline_assignment_replay_conflict(uuid,text,text),
   ppo_authority.require_offline_assignment_reservation(), ppo_authority.offline_assignment_commit_freshness(),
   ppo_authority.bind_offline_assignment(uuid,text,text,text,text,text,text),
   ppo_authority.read_offline_assignment(uuid,text,text,integer,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ppo_authority.bind_offline_assignment(uuid,text,text,text,text,text,text)
   TO ppo_offline_assignment_binder;
 GRANT EXECUTE ON FUNCTION ppo_authority.read_offline_assignment(uuid,text,text,integer,text)
+  TO ppo_authority_reader;
+GRANT EXECUTE ON FUNCTION ppo_authority.offline_assignment_replay_conflict(uuid,text,text)
   TO ppo_authority_reader;
 COMMIT;
