@@ -98,14 +98,17 @@ export function createPostgresOfflineAssignmentPreparer(config) {
       readCatalogAdmission: async () => ({ valid: (catalog = await catalogReader.list()).ok }),
       listActiveProjects: () => catalog.active.map(entry => entry.project)
     })
-    let conflict
+    let conflict, expired
     try {
-      conflict = column(await readerQuery(OFFLINE_ASSIGNMENT_SQL.replay, [authorityId, keyHash, request]), "conflict")
+      const admission = await readerQuery(OFFLINE_ASSIGNMENT_SQL.replay, [authorityId, keyHash, request])
+      conflict = column(admission, "conflict")
+      expired = column(admission, "expired")
     } catch {
       throw failure("OFFLINE_ASSIGNMENT_UNAVAILABLE")
     }
     if (conflict === true) throw failure("OFFLINE_ASSIGNMENT_REPLAY")
-    if (conflict !== false) throw failure("OFFLINE_ASSIGNMENT_UNAVAILABLE")
+    if (conflict !== false || typeof expired !== "boolean") throw failure("OFFLINE_ASSIGNMENT_UNAVAILABLE")
+    if (expired) throw failure("OFFLINE_ASSIGNMENT_EXPIRED")
 
     const observation = Object.freeze({ runId, expectedVersion, requestHash })
     let args

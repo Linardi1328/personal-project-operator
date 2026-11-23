@@ -5,7 +5,8 @@ import { createPostgresTestSession } from "./postgres-test-session.mjs"
 export const OFFLINE_ASSIGNMENT_SQL = Object.freeze({
   bind: "SELECT ppo_authority.bind_offline_assignment($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text) AS accepted",
   observe: "SELECT ppo_authority.read_offline_assignment($1::uuid,$2::text,$3::text,$4::integer,$5::text) AS receipt",
-  replay: "SELECT ppo_authority.offline_assignment_replay_conflict($1::uuid,$2::text,$3::text) AS conflict"
+  replay: "SELECT ppo_authority.offline_assignment_replay_conflict($1::uuid,$2::text,$3::text) AS conflict, " +
+    "clock_timestamp() >= ($3::jsonb->>'expiresAt')::timestamptz AS expired"
 })
 const READ = new Set([
   "SELECT ppo_authority.read_run($1::text) AS record",

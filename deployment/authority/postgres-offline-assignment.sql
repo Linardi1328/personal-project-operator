@@ -64,6 +64,7 @@ BEGIN
   RETURN EXISTS (
     SELECT 1 FROM ppo_authority.offline_assignment_reservations r
     WHERE (r.run_id = request->>'runId' AND r.expected_version::text = request->>'expectedVersion')
+       OR r.request_hash = encode(sha256(convert_to(p_request, 'UTF8')), 'hex')
        OR r.request_id = request->>'requestId' OR r.nonce = request->>'nonce'
        OR r.idempotency_key = request->>'idempotencyKey' OR r.approval_id = request->'approval'->>'approvalId'
   );

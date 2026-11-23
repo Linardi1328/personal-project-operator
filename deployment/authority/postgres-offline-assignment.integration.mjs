@@ -53,7 +53,7 @@ function session(role = "postgres", name = "assignment-test") {
     "-U", "postgres", "-d", "ppo_authority_ci"], { stdio: ["pipe", "pipe", "pipe"] })
   const client = createPostgresTestSession(child, { timeoutMs: 60000, maxStdoutBytes: 70 * 1024 * 1024 })
   return {
-    ...client, name,
+    ...client,
     ready: async () => Number(await client.send("\\set VERBOSITY verbose\n" +
       "SET application_name=" + "'" + name + "'; SET statement_timeout='20s'; " +
       "SET idle_in_transaction_session_timeout='20s'; SET ROLE " + role + "; SELECT pg_backend_pid();"))
@@ -158,26 +158,38 @@ function assignment(run, changes = {}) {
   }, "ppo-control-plane", privateKey)
 }
 
-async function waitForBlock(waiter, leader) {
+async function waitForBlock(waiterPid, leaderPid) {
   const deadline = Date.now() + 10000
-  // PostgreSQL reports the wait on the leader's transaction ID. The waiter's
-  // tuple lock identifies the actual relation instead of the nonce index.
-  while (Date.now() < deadline) {
-    const blocked = await sql(`
-      SELECT EXISTS (
-        SELECT 1 FROM pg_stat_activity w JOIN pg_stat_activity l ON l.pid=ANY(pg_blocking_pids(w.pid))
-        JOIN pg_locks waiting ON waiting.pid=w.pid AND waiting.locktype='transactionid' AND NOT waiting.granted
-        JOIN pg_locks held ON held.pid=l.pid AND held.locktype='transactionid' AND held.granted
-          AND held.transactionid=waiting.transactionid
-        WHERE w.application_name=${literal(waiter.name)} AND l.application_name=${literal(leader.name)}
-          AND EXISTS (SELECT 1 FROM pg_locks WHERE pid=w.pid AND locktype='tuple' AND relation='ppo_authority.gate'::regclass)
-          AND EXISTS (SELECT 1 FROM pg_locks WHERE pid=l.pid AND granted AND mode='RowExclusiveLock'
-            AND relation='ppo_authority.gate'::regclass)
-      );
-    `)
-    if (blocked === "t") return
-  }
-  assert.fail("Expected server-observed gate contention")
+  const observer = session()
+  try {
+    await observer.ready()
+    // pg_locks exposes the transaction wait and the waiter's heavyweight
+    // tuple lock. pgrowlocks decodes the singleton's row-lock holders,
+    // including the MultiXact formed by the leader's lock and revision update.
+    while (Date.now() < deadline) {
+      const blocked = await observer.send(`
+        WITH locks AS MATERIALIZED (SELECT * FROM pg_locks WHERE pid IN (${waiterPid}, ${leaderPid}))
+        SELECT EXISTS (
+          SELECT 1 FROM ppo_authority.gate g
+          JOIN locks tuple_lock ON tuple_lock.pid=${waiterPid} AND tuple_lock.locktype='tuple'
+            AND tuple_lock.relation='ppo_authority.gate'::regclass
+            AND tuple_lock.granted AND tuple_lock.mode='AccessExclusiveLock'
+            AND format('(%s,%s)', tuple_lock.page, tuple_lock.tuple)=g.ctid::text
+          JOIN pgrowlocks('ppo_authority.gate') row_lock ON row_lock.locked_row=g.ctid
+          WHERE g.singleton AND waiting.transactionid=ANY(row_lock.xids)
+        )
+        FROM locks waiting JOIN locks held USING (transactionid)
+        WHERE waiting.pid=${waiterPid} AND waiting.locktype='transactionid'
+          AND NOT waiting.granted AND waiting.mode='ShareLock'
+          AND held.pid=${leaderPid} AND held.locktype='transactionid' AND held.granted AND held.mode='ExclusiveLock'
+          AND ${leaderPid}=ANY(pg_blocking_pids(${waiterPid}));
+      `)
+      if (blocked === "") continue
+      assert.equal(blocked, "t", "Waiter is blocked by the leader outside the D1 gate singleton")
+      return
+    }
+    assert.fail("Expected server-observed gate contention")
+  } finally { await observer.close() }
 }
 
 if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
@@ -187,6 +199,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     await sql(await profile(name))
   }
   await sql(await admissionProfileSql())
+  await sql("CREATE EXTENSION pgrowlocks;")
   const authorityId = await sql("SELECT id FROM ppo_authority.admission_identity;")
   const readerQuery = query(READER)
   const verifierQuery = query(VERIFIER)
@@ -227,6 +240,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     return reply.rows[0].accepted
   }
   const count = () => sql("SELECT count(*) FROM ppo_authority.offline_assignment_reservations;")
+  const certificateCount = () => sql("SELECT cert_count FROM ppo_authority.admission_identity;")
   async function assertUnchanged(run, signed, total) {
     assert.deepEqual(await read(run.runId), run)
     assert.equal((await observe(signed)).outcome, "unobserved")
@@ -237,7 +251,7 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     const run = await seed()
     const signed = approve(assignment(run))
     const { args } = await prepare(signed, { readerQuery: (statement, values) =>
-      statement === OFFLINE_ASSIGNMENT_SQL.replay ? { rows: [{ conflict: false }] } : readerQuery(statement, values) })
+      statement === OFFLINE_ASSIGNMENT_SQL.replay ? { rows: [{ conflict: false, expired: false }] } : readerQuery(statement, values) })
     const raw = statementFor(COMMIT_RUN, [run.runId, 3, args[5], args[6]])
     assert.equal(JSON.parse(await sql("BEGIN;" + raw + "ROLLBACK;", WRITER)).accepted, true)
     assert.deepEqual(await read(run.runId), run)
@@ -256,7 +270,9 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     assert.deepEqual(await observe(signed), receipt)
     assert.equal(await count(), "1")
     subtest.diagnostic("the same D1-certified v3 → v4 candidate succeeded before the profile and failed with 42501 after installation")
+    const before = await certificateCount()
     await assert.rejects(bind(signed), { code: "PREFLIGHT_RUN_STALE" })
+    assert.equal(await certificateCount(), before)
     await cancel(run)
   })
 
@@ -337,8 +353,8 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
     const leader = session(BINDER, "assignment-race-leader")
     const waiter = session(BINDER, "assignment-race-waiter")
     try {
-      await leader.ready()
-      await waiter.ready()
+      const leaderPid = await leader.ready()
+      const waiterPid = await waiter.ready()
       let staged
       let resume
       const tentative = new Promise(resolve => { staged = resolve })
@@ -355,8 +371,12 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
       const secondResult = submitWithTestSession(second, async (statement, args) =>
         result(await waiter.send(statementFor(statement, args))))
       const completion = Promise.allSettled([firstResult, secondResult])
-      try { await waitForBlock(waiter, leader) } finally { resume() }
-      const [won, lost] = await completion
+      let outcomes
+      try { await waitForBlock(waiterPid, leaderPid) } finally {
+        resume()
+        outcomes = await completion
+      }
+      const [won, lost] = outcomes
       assert.deepEqual(won, { status: "fulfilled", value: true })
       assert.deepEqual(lost, { status: "fulfilled", value: false })
       const binding = await observe(first)
@@ -371,27 +391,48 @@ if (process.argv[2] === CRASH_CHILD && typeof process.send === "function") {
 
   await t.test("two writers for one run version yield exactly one committed binding", async () => {
     const run = await seed()
-    await contend(approve(assignment(run)), approve(assignment(run)))
-    assert.equal(await count(), "2")
-    assert.equal((await read(run.runId)).version, 4)
-    await cancel(run)
+    try {
+      await contend(approve(assignment(run)), approve(assignment(run)))
+      assert.equal(await count(), "2")
+      assert.equal((await read(run.runId)).version, 4)
+    } finally { await cancel(run) }
   })
 
   await t.test("cross-run replay contention and independently repeated IDs, nonces and approvals are denied", async () => {
     const first = await seed()
     const second = await seed("kynexa")
-    const original = approve(assignment(first))
-    await contend(original, approve(assignment(second, { nonce: original.payload.nonce })))
-    const certificateCount = () => sql("SELECT cert_count FROM ppo_authority.admission_identity;")
-    const before = await certificateCount()
-    for (const key of ["requestId", "nonce", "idempotencyKey", "approval"]) {
-      const duplicate = approve(assignment(second, { [key]: original.payload[key] }))
-      await assert.rejects(bind(duplicate), { code: "OFFLINE_ASSIGNMENT_REPLAY" })
-      await assertUnchanged(second, duplicate, "3")
+    try {
+      const original = approve(assignment(first))
+      await contend(original, approve(assignment(second, { nonce: original.payload.nonce })))
+      const before = await certificateCount()
+      for (const key of ["requestId", "nonce", "idempotencyKey", "approval"]) {
+        const duplicate = approve(assignment(second, { [key]: original.payload[key] }))
+        await assert.rejects(bind(duplicate), { code: "OFFLINE_ASSIGNMENT_REPLAY" })
+        await assertUnchanged(second, duplicate, "3")
+      }
+      assert.equal(await certificateCount(), before)
+    } finally {
+      await cancel(first)
+      await cancel(second)
     }
+  })
+
+  await t.test("a request already expired on the database clock leaves the certificate budget unchanged", async () => {
+    const run = await seed()
+    const expiresAt = Number(await sql("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint;")) - 1000
+    const issuedAt = expiresAt - 10000
+    const signed = approve(assignment(run, {
+      issuedAt: new Date(issuedAt).toISOString(),
+      expiresAt: new Date(expiresAt).toISOString(),
+      approval: { ownerId: "fixture-owner", approvalId: randomHex(16), approvedAt: new Date(issuedAt).toISOString() }
+    }))
+    const before = await certificateCount()
+    // The trusted preflight clock still admits the request. PostgreSQL has
+    // already passed its deadline, making a native bind impossible.
+    await assert.rejects(bind(signed, { now: () => new Date(issuedAt) }), { code: "OFFLINE_ASSIGNMENT_EXPIRED" })
+    await assertUnchanged(run, signed, "3")
     assert.equal(await certificateCount(), before)
-    await cancel(first)
-    await cancel(second)
+    await cancel(run)
   })
 
   await t.test("a native error after reservation insertion rolls back both writes and replay keys", async () => {
