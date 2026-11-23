@@ -129,6 +129,7 @@ async function childMain() {
 
     if (mode.startsWith("protected-")) {
       let approvalReads = 0
+      let now = NOW
       const { bind } = continuation(root, target.runId, target.version, common.coordinatorPublicKey, async binding => {
         if (!approvalHashes.includes(binding.requestHash)) return false
         approvalReads += 1
@@ -137,19 +138,36 @@ async function childMain() {
           await barrier("reserved", { reservation: await inspect() })
         }
         return true
-      })
+      }, () => now)
 
-      if (mode === "protected-before-ack") {
-        // Pause after the real canonical directory fsync and before bind can
-        // return its acknowledgment. Only this test-owned child is patched.
+      if (["protected-before-ack", "protected-expiry-before-publish", "protected-replay-index-crash"].includes(mode)) {
         const open = fsPromises.open
+        const nonceHash = createHash("sha256").update(signed.payload.nonce).digest("hex")
+        const noncePending = join(ledgerPath(root), "indexes", "nonce-" + nonceHash + ".json.pending")
         fsPromises.open = async (path, ...args) => {
+          if (mode === "protected-replay-index-crash" && path === noncePending) {
+            await barrier("before-index-pending")
+            const file = await open(path, ...args)
+            await file.sync()
+            await barrier("index-pending")
+            return file
+          }
           const file = await open(path, ...args)
-          if (approvalReads === 2 && path === join(options.writeDataDir, "development-runs", "records")) {
+          if (mode === "protected-before-ack" && approvalReads === 2 &&
+              path === join(options.writeDataDir, "development-runs", "records")) {
+            // Pause after real canonical publication, before acknowledgment.
             const sync = file.sync.bind(file)
             file.sync = async () => {
               await sync()
               await barrier("mutation-committed")
+            }
+          }
+          if (mode === "protected-expiry-before-publish" && approvalReads === 2 &&
+              basename(path).startsWith(".ppo-development-run-version.")) {
+            const sync = file.sync.bind(file)
+            file.sync = async () => {
+              await sync()
+              now = signed.payload.expiresAt
             }
           }
           return file
@@ -271,7 +289,7 @@ async function fixture(t, { scoped = false } = {}) {
   const approvalHashes = [requestHash, freshHash]
   for (const hash of approvalHashes) approved.add(hash)
 
-  async function start(mode, { signed = original, approved = true } = {}) {
+  async function start(mode, { signed = original, approved = true, target = initial, hashes = approvalHashes } = {}) {
     const child = fork(fileURLToPath(import.meta.url), [CHILD], {
       env: { TMPDIR: temp }, execArgv: [], stdio: ["ignore", "ignore", "inherit", "ipc"]
     })
@@ -279,9 +297,9 @@ async function fixture(t, { scoped = false } = {}) {
     closed.catch(() => {})
     children.push({ child, closed })
     const messages = on(child, "message", { close: ["close"], signal: AbortSignal.timeout(TIMEOUT) })
-    await send(child, { mode, root, signed, target: { runId: initial.runId, version: initial.version },
+    await send(child, { mode, root, signed, target: { runId: target.runId, version: target.version },
       publicKey: publicKey.export({ type: "spki", format: "pem" }),
-      approvalHashes: approved ? approvalHashes : [] })
+      approvalHashes: approved ? hashes : [] })
     return {
       pid: child.pid,
       advance: () => send(child, "proceed"),
@@ -346,6 +364,21 @@ function assertBound(run, f) {
   assert.deepEqual(run.history.at(-1).evidence[0].metadata, {
     requestHash: f.requestHash, reservedVersion: f.initial.version, issueRevisionHash: linearIssueRevisionHash(ISSUE)
   })
+}
+
+async function assignmentWithSameNonce(f) {
+  let run = await createDevelopmentRun(RUN_INPUT, f.options)
+  for (const status of ["planning_in_progress", "planned"]) {
+    run = await transitionDevelopmentRun(run.runId, { expectedVersion: run.version, status, actor: ACTOR }, f.options)
+  }
+  const signed = f.sign({
+    runId: run.runId, requestId: f.fresh.payload.requestId, idempotencyKey: f.fresh.payload.idempotencyKey,
+    approval: f.fresh.payload.approval
+  })
+  const requestHash = remotePayloadDigest(signed.payload)
+  const endpoint = continuation(f.root, run.runId, run.version + 1, f.publicKey,
+    binding => binding.requestHash === requestHash)
+  return { prepared: await endpoint.prepare(), signed, requestHash, bind: endpoint.bind }
 }
 
 function registerTests() {
@@ -586,19 +619,36 @@ function registerTests() {
   test("RIC-193 refuses a nonce already spent on a different scoped run", TEST_OPTIONS, async t => {
     const f = await fixture(t, { scoped: true })
     await f.bind(f.original)
-    let next = await createDevelopmentRun(RUN_INPUT, f.options)
-    for (const status of ["planning_in_progress", "planned"]) {
-      next = await transitionDevelopmentRun(next.runId, { expectedVersion: next.version, status, actor: ACTOR }, f.options)
-    }
-    const replay = f.sign({
-      runId: next.runId, requestId: f.fresh.payload.requestId, idempotencyKey: f.fresh.payload.idempotencyKey,
-      approval: f.fresh.payload.approval
-    })
-    const endpoint = continuation(f.root, next.runId, next.version + 1, f.publicKey,
-      binding => binding.requestHash === remotePayloadDigest(replay.payload))
-    const prepared = await endpoint.prepare()
-    await assert.rejects(endpoint.bind(replay), { code: "LEDGER_REPLAY" })
+    const { prepared, signed, bind } = await assignmentWithSameNonce(f)
+    await assert.rejects(bind(signed), { code: "LEDGER_REPLAY" })
     assert.deepEqual(await readDevelopmentRun(prepared.runId, f.options), prepared)
+  })
+
+  test("RIC-193 a shared replay index admits only one publishing writer across process crash", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const { prepared, signed, requestHash, bind } = await assignmentWithSameNonce(f)
+    const first = await f.start("protected-replay-index-crash", { target: prepared, signed, hashes: [requestHash] })
+    await first.next("before-index-pending")
+    const competitor = await f.start("protected-bind")
+    assert.deepEqual(await competitor.next("denied"), { event: "denied", code: "LEDGER_REPLAY" })
+    await competitor.exited()
+    await first.advance()
+    await first.next("index-pending")
+    first.crash()
+    await first.exited("SIGKILL")
+    await assert.rejects(bind(signed), { code: "LEDGER_RUN_RESERVED" })
+    await assert.rejects(f.bind(f.original), { code: "LEDGER_RUN_RESERVED" })
+    assert.deepEqual(await f.read(), f.initial)
+    assert.deepEqual(await readDevelopmentRun(prepared.runId, f.options), prepared)
+  })
+
+  test("RIC-193 checks expiry after syncing the temporary canonical marker", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const writer = await f.start("protected-expiry-before-publish")
+    assert.deepEqual(await writer.next("denied"), { event: "denied", code: "STAGING_REQUEST_EXPIRED" })
+    await writer.exited()
+    assert.deepEqual(await f.read(), f.initial)
+    await assert.rejects(f.bind(f.original), { code: "LEDGER_RUN_RESERVED" })
   })
 
   for (const [damage, code] of [
@@ -645,6 +695,23 @@ function registerTests() {
     const recordPath = join(f.options.writeDataDir, "development-runs", "records", f.initial.runId + ".json")
     await writeFile(recordPath, JSON.stringify({ ...f.initial, historyHash: "f".repeat(64) }), { mode: 0o600 })
     await assert.rejects(f.bind(f.original), { code: "PREFLIGHT_TRUSTED_READ_UNAVAILABLE" })
+    assert.deepEqual(await readdir(ledgerPath(f.root)), [])
+  })
+
+  test("RIC-193 requires the canonical refs to agree with the same-version immutable marker", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const headSha = "b".repeat(40)
+    const recordPath = join(f.options.writeDataDir, "development-runs", "records", f.initial.runId + ".json")
+    await writeFile(recordPath, JSON.stringify({ ...f.initial, headSha }), { mode: 0o600 })
+    const signed = f.sign({ headSha })
+    const config = observations(binding => binding.requestHash === remotePayloadDigest(signed.payload))
+    const readRepo = () => ({ ...config.readRepo(), headSha })
+    const { bind } = createOfflineReservationContinuation({
+      root: f.root, runId: f.initial.runId, expectedVersion: f.initial.version,
+      coordinatorPublicKey: f.publicKey, approvedProjects: [PROJECT], now: f.options.now,
+      ...config, readRepo
+    })
+    await assert.rejects(bind(signed), { code: "PREFLIGHT_TRUSTED_READ_UNAVAILABLE" })
     assert.deepEqual(await readdir(ledgerPath(f.root)), [])
   })
 

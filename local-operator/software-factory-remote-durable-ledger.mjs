@@ -258,6 +258,14 @@ export function createOfflineDurableClaimLedger(config) {
       const requestHash = remotePayloadDigest(p)
       await writeOnce(dir, "request.json", requestWire, "LEDGER_RUN_RESERVED")
       for (const file of replayIndexFiles(p)) {
+        // A replay key can be shared by requests for different run slots.
+        // Retain exclusive ownership permanently so a losing writer cannot
+        // create a new pending marker on an already published index.
+        try { await mkdir(join(indexes, file + ".reserved"), { mode: 0o700 }) } catch (error) {
+          if (error?.code === "EEXIST") reject("LEDGER_REPLAY")
+          reject("LEDGER_STORAGE_UNAVAILABLE")
+        }
+        await syncDirectory(indexes)
         await writeOnce(indexes, file,
           { v: FENCE_VERSION, runId: p.runId, expectedVersion: p.expectedVersion, requestHash }, "LEDGER_REPLAY")
       }

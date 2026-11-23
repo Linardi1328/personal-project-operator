@@ -19,7 +19,7 @@ import { tmpdir } from "node:os"
 import { resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import { OfflineClaimLedgerError } from "./software-factory-remote-durable-ledger.mjs"
 import { OfflineAssignmentPreflightError } from "./war-room-assignment-preflight.mjs"
-import { OfflineAssignmentStagingError, stageOfflineAssignment } from "./war-room-offline-staging.mjs"
+import { OfflineAssignmentStagingError, prepareOfflineAssignmentBinding } from "./war-room-offline-staging.mjs"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
   PPO_WRITE_DATA_DIR_ENV
@@ -939,7 +939,7 @@ async function atomicDurableWriteCanonical(path, data) {
   }
 }
 
-async function writeExclusiveDurableVersionMarker(path, data) {
+async function writeExclusiveDurableVersionMarker(path, data, beforePublish) {
   const directory = dirname(path)
   const tempPath = join(
     directory,
@@ -955,6 +955,9 @@ async function writeExclusiveDurableVersionMarker(path, data) {
     await file.close()
     file = null
     await chmod(tempPath, 0o600)
+    // The offline clock check and submission of the exclusive link share
+    // one turn. All asynchronous marker preparation has already finished.
+    beforePublish?.()
     await link(tempPath, path)
     linked = true
     await chmod(path, 0o600)
@@ -2574,10 +2577,10 @@ async function readLatestVersionMarker(paths, runId, options = {}) {
   return latest
 }
 
-async function writeVersionMarker(paths, record) {
+async function writeVersionMarker(paths, record, beforePublish) {
   await ensureStore(paths)
   const markerPath = join(paths.versionDir, versionFileName(record.version))
-  await writeExclusiveDurableVersionMarker(markerPath, serializeRecord(record))
+  await writeExclusiveDurableVersionMarker(markerPath, serializeRecord(record), beforePublish)
 }
 
 async function writeCanonicalRecord(paths, record) {
@@ -2585,8 +2588,8 @@ async function writeCanonicalRecord(paths, record) {
   await atomicDurableWriteCanonical(paths.recordPath, serializeRecord(record))
 }
 
-async function commitRecord(paths, record) {
-  await writeVersionMarker(paths, record)
+async function commitRecord(paths, record, beforePublish) {
+  await writeVersionMarker(paths, record, beforePublish)
 
   try {
     await writeCanonicalRecord(paths, record)
@@ -2723,8 +2726,9 @@ function mutationEventTime(options, authority, current) {
   return authority ? new Date(Math.max(now.getTime(), Date.parse(current.timestamps.updatedAt))) : now
 }
 
-async function readMutationRun(runId, options, authority) {
-  return authority ? await readAuthorityRun(authority, runId) : await readDevelopmentRunInternal(runId, options)
+async function readMutationRun(runId, options, authority, mutation) {
+  return authority ? await readAuthorityRun(authority, runId) :
+    await readDevelopmentRunInternal(runId, options, mutation?.token === offlineAssignmentMutation)
 }
 
 async function persistMutationRun(runId, next, current, options, authority, mutation) {
@@ -2733,11 +2737,11 @@ async function persistMutationRun(runId, next, current, options, authority, muta
   // compete for that marker. Every later writer sees the scope in history.
   const event = next.history.at(-1)
   const scopedWrite = isOfflineAssignmentRun(next) || event.actor === OFFLINE_ASSIGNMENT_BIND_ACTOR
-  if (scopedWrite !== (mutation === offlineAssignmentMutation)) {
+  if (scopedWrite !== (mutation?.token === offlineAssignmentMutation)) {
     throw runStateError("OFFLINE_ASSIGNMENT_REQUIRED", "Canonical mutation requires the offline assignment boundary.")
   }
   if (authority) return await persistAuthorityRun(authority, next, current)
-  await commitRecord(storePaths(runId, options), next)
+  await commitRecord(storePaths(runId, options), next, mutation?.beforePublish)
   return cloneJson(next)
 }
 
@@ -2830,7 +2834,7 @@ async function createPersonalProjectOperatorSelfDevelopmentRunInternal(input, op
   )
 }
 
-async function readDevelopmentRunInternal(runId, options = {}) {
+async function readDevelopmentRunInternal(runId, options = {}, requireExactMarker = false) {
   const normalizedRunId = normalizeDevelopmentRunId(runId)
   const paths = storePaths(normalizedRunId, options)
 
@@ -2870,6 +2874,15 @@ async function readDevelopmentRunInternal(runId, options = {}) {
     )
   }
 
+  if (requireExactMarker) {
+    const lastEvent = latest.history.at(-1)
+    if ((canonical?.version === latest.version && stableStringify(canonical) !== stableStringify(latest)) ||
+        latest.branch !== lastEvent.branch || latest.headSha !== lastEvent.headSha ||
+        latest.history.some(event => event.project !== latest.project.id || event.repo !== latest.project.fullName)) {
+      throw runStateError("RUN_HISTORY_INVALID", "Offline assignment requires consistent canonical version history.")
+    }
+  }
+
   if (!canonical || latest.version > canonical.version) {
     await writeCanonicalRecord(paths, latest)
     return cloneJson(latest)
@@ -2896,7 +2909,7 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {},
     ...options,
     now: () => now
   })
-  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority)
+  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
 
   if (current.version !== expectedVersion) {
     throw runStateError(
@@ -2939,7 +2952,7 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
     now: () => now
   })
   const incrementAttempt = progress?.incrementAttempt === true
-  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority)
+  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
 
   if (current.version !== expectedVersion || (expectedStatus !== null && current.status !== expectedStatus)) {
     throw runStateError(
@@ -3259,11 +3272,11 @@ export function createOfflineReservationContinuation({
   return Object.freeze({
     async prepare() {
       await assertDisposableStores()
-      const run = await readDevelopmentRun(id, options)
-      if (run.version !== expectedVersion - 1 || run.status !== "planned" || !run.headSha) {
-        throw runStateError("STALE_RUN_VERSION", "Offline assignment requires the expected planned run.")
-      }
       try {
+        const run = await readDevelopmentRunInternal(id, options, true)
+        if (run.version !== expectedVersion - 1 || run.status !== "planned" || !run.headSha) {
+          throw runStateError("STALE_RUN_VERSION", "Offline assignment requires the expected planned run.")
+        }
         return await transitionDevelopmentRunInternal(id, {
           expectedVersion: run.version,
           status: "implementation_in_progress",
@@ -3273,7 +3286,7 @@ export function createOfflineReservationContinuation({
             summary: "Prepared a disposable run for offline assignment.",
             metadata: { coordinatorKeyHash: keyHash }
           }]
-        }, options, null, offlineAssignmentMutation)
+        }, options, null, { token: offlineAssignmentMutation })
       } catch (error) {
         throw safeRunStateFailure(error)
       }
@@ -3284,7 +3297,7 @@ export function createOfflineReservationContinuation({
       let scopedRun
       async function readRun(requestedId) {
         if (requestedId !== id) return null
-        const run = await readDevelopmentRun(id, options)
+        const run = await readDevelopmentRunInternal(id, options, true)
         const scope = offlineAssignmentScope(run)
         if (run.version !== expectedVersion || scope?.version !== expectedVersion ||
             scope.evidence[0]?.metadata?.coordinatorKeyHash !== keyHash) return null
@@ -3298,7 +3311,7 @@ export function createOfflineReservationContinuation({
         // The exclusive append-only ledger slot selects the only invocation
         // that can reach the canonical CAS. The scope excludes ordinary writes
         // while that invocation is in flight. A restart cannot adopt its slot.
-        const receipt = await stageOfflineAssignment(signed, {
+        const { receipt, assertFresh } = await prepareOfflineAssignmentBinding(signed, {
           mode: "offline-staging-proof-only",
           preflight: { ...common, mode: "offline-preflight-only",
             readIssue, resolveIssueProject, readRepo, readCatalogAdmission, listActiveProjects, verifyOwnerApproval },
@@ -3314,7 +3327,7 @@ export function createOfflineReservationContinuation({
             metadata: { requestHash: receipt.requestHash, issueRevisionHash: receipt.sourceRevisionHash,
               reservedVersion: expectedVersion }
           }]
-        }, options, null, offlineAssignmentMutation)
+        }, options, null, { token: offlineAssignmentMutation, beforePublish: assertFresh })
         return Object.freeze({ ...receipt, outcome: "bound-offline", version: bound.version, grant: false })
       } catch (error) {
         if (error instanceof OfflineAssignmentStagingError || error instanceof OfflineAssignmentPreflightError ||

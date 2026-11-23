@@ -126,7 +126,7 @@ async function assertLatestCanonicalRun(preflight, payload) {
  * durable inspection -> final run read. Any failure after reservation keeps
  * the append-only tombstone; NEVER retry, delete, claim or authorize execution.
  */
-export async function stageOfflineAssignment(signed, config) {
+export async function prepareOfflineAssignmentBinding(signed, config) {
   const trusted = validateConfig(config)
   let payload
   try {
@@ -173,16 +173,19 @@ export async function stageOfflineAssignment(signed, config) {
 
   await assertLatestCanonicalRun(trusted.preflight, payload)
   trusted.unchanged()
-  let timestamp
-  try {
-    const now = trusted.preflight.now()
-    timestamp = now instanceof Date ? now.getTime() : Date.parse(now)
-  } catch { fail("STAGING_CLOCK_INVALID") }
-  if (!Number.isFinite(timestamp)) fail("STAGING_CLOCK_INVALID")
-  if (timestamp < Date.parse(payload.issuedAt) - 60000 || timestamp >= Date.parse(payload.expiresAt)) {
-    fail("STAGING_REQUEST_EXPIRED")
+  function assertFresh() {
+    let timestamp
+    try {
+      const now = trusted.preflight.now()
+      timestamp = now instanceof Date ? now.getTime() : Date.parse(now)
+    } catch { fail("STAGING_CLOCK_INVALID") }
+    if (!Number.isFinite(timestamp)) fail("STAGING_CLOCK_INVALID")
+    if (timestamp < Date.parse(payload.issuedAt) - 60000 || timestamp >= Date.parse(payload.expiresAt)) {
+      fail("STAGING_REQUEST_EXPIRED")
+    }
   }
-  return Object.freeze({
+  assertFresh()
+  const receipt = Object.freeze({
     outcome: "staged-offline",
     requestId: before.requestId,
     requestHash,
@@ -192,4 +195,11 @@ export async function stageOfflineAssignment(signed, config) {
     canExecute: false,
     releaseAuthorized: false
   })
+  return Object.freeze({ receipt, assertFresh })
+}
+
+/** Observation-only interface for the standalone staging proof. */
+export async function stageOfflineAssignment(signed, config) {
+  const { receipt } = await prepareOfflineAssignmentBinding(signed, config)
+  return receipt
 }
