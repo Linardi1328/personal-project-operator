@@ -65,6 +65,14 @@ function continuation(root, runId, expectedVersion, coordinatorPublicKey, verify
   })
 }
 
+async function createPlannedRun(options, evidence = []) {
+  let run = await createDevelopmentRun(RUN_INPUT, options)
+  for (const status of ["planning_in_progress", "planned"]) {
+    run = await transitionDevelopmentRun(run.runId, { expectedVersion: run.version, status, actor: ACTOR, evidence }, options)
+  }
+  return run
+}
+
 function send(channel, payload) {
   return new Promise((resolve, reject) => channel.send(payload, error => error ? reject(error) : resolve()))
 }
@@ -256,10 +264,7 @@ async function fixture(t, { scoped = false } = {}) {
   })
   await mkdir(ledgerPath(root), { mode: 0o700 })
   const options = runOptions(root)
-  let initial = await createDevelopmentRun(RUN_INPUT, options)
-  for (const status of ["planning_in_progress", "planned"]) {
-    initial = await transitionDevelopmentRun(initial.runId, { expectedVersion: initial.version, status, actor: ACTOR }, options)
-  }
+  let initial = await createPlannedRun(options)
 
   const { privateKey, publicKey } = generateKeyPairSync("ed25519")
   const approved = new Set()
@@ -367,10 +372,7 @@ function assertBound(run, f) {
 }
 
 async function assignmentWithSameNonce(f) {
-  let run = await createDevelopmentRun(RUN_INPUT, f.options)
-  for (const status of ["planning_in_progress", "planned"]) {
-    run = await transitionDevelopmentRun(run.runId, { expectedVersion: run.version, status, actor: ACTOR }, f.options)
-  }
+  const run = await createPlannedRun(f.options)
   const signed = f.sign({
     runId: run.runId, requestId: f.fresh.payload.requestId, idempotencyKey: f.fresh.payload.idempotencyKey,
     approval: f.fresh.payload.approval
@@ -543,7 +545,9 @@ function registerTests() {
         metadata: { requestHash: f.requestHash, reservedVersion: expectedVersion }
       }]
     }, { ...f.options, offlineAssignmentMutation: true, grant: true, reservation }), { code: "OFFLINE_ASSIGNMENT_REQUIRED" })
-    assert.equal((await executeDevelopmentContinue(runId, f.options)).reason, "offline_assignment_only")
+    const continued = await executeDevelopmentContinue(runId, f.options)
+    assert.equal(continued.reason, "offline_assignment_only")
+    assert.equal(continued.action, "none")
     assert.equal((await executeSoftwareFactoryImplementation(runId, { ...f.options, expectedVersion })).reason,
       "offline_assignment_only")
     assert.equal((await executeSoftwareFactoryAutonomousRun(runId, f.options)).reason, "offline_assignment_only")
@@ -649,6 +653,45 @@ function registerTests() {
     await writer.exited()
     assert.deepEqual(await f.read(), f.initial)
     await assert.rejects(f.bind(f.original), { code: "LEDGER_RUN_RESERVED" })
+  })
+
+  test("RIC-193 a valid assignment keeps canonical history readable when the clock moves backward", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true })
+    const { bind } = continuation(f.root, f.initial.runId, f.initial.version, f.publicKey,
+      binding => binding.requestHash === f.requestHash, () => "2026-11-11T05:01:30.000Z")
+    assert.equal((await bind(f.original)).outcome, "bound-offline")
+    const bound = await f.read()
+    assertBound(bound, f)
+    assert.equal(bound.timestamps.updatedAt, f.initial.timestamps.updatedAt)
+  })
+
+  test("RIC-193 rejects a bad allowlist before permanently scoping the planned run", TEST_OPTIONS, async t => {
+    const f = await fixture(t)
+    const planned = await createPlannedRun(f.options)
+    const config = {
+      root: f.root, runId: planned.runId, expectedVersion: planned.version + 1,
+      coordinatorPublicKey: f.publicKey, now: f.options.now, ...observations(() => false)
+    }
+    for (const approvedProjects of [[], [PROJECT, PROJECT], ["INVALID"]]) {
+      assert.throws(() => createOfflineReservationContinuation({ ...config, approvedProjects }),
+        { code: "OFFLINE_ASSIGNMENT_CONFIG_INVALID" })
+    }
+    const wrongProject = createOfflineReservationContinuation({ ...config, approvedProjects: ["kynexa"] })
+    await assert.rejects(wrongProject.prepare(), { code: "OFFLINE_ASSIGNMENT_PROJECT_DENIED" })
+    assert.deepEqual(await readDevelopmentRun(planned.runId, f.options), planned)
+  })
+
+  test("RIC-193 refuses preparation when scope fits but the next binding would exceed record capacity", TEST_OPTIONS, async t => {
+    const f = await fixture(t)
+    const evidence = Array.from({ length: 8 }, () => ({
+      kind: "planning", sha: BASE, summary: "x".repeat(500),
+      metadata: { notes: Array(16).fill("x".repeat(200)), padding: "x".repeat(25) }
+    }))
+    const planned = await createPlannedRun(f.options, evidence)
+    const endpoint = continuation(f.root, planned.runId, planned.version + 1, f.publicKey, () => false)
+    await assert.rejects(endpoint.prepare(), { code: "RUN_RECORD_TOO_LARGE" })
+    assert.deepEqual(await readDevelopmentRun(planned.runId, f.options), planned)
+    assert.deepEqual(await readdir(ledgerPath(f.root)), [])
   })
 
   for (const [damage, code] of [

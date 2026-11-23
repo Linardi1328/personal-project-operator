@@ -23,6 +23,12 @@ export class OfflineAssignmentPreflightError extends Error {
 /** Fail with stable metadata-only codes, never leaking a provider error or issue text. */
 function fail(code) { throw new OfflineAssignmentPreflightError(code) }
 
+export function isValidOfflineAssignmentProjectAllowlist(projects) {
+  return Array.isArray(projects) && projects.length > 0 &&
+    [...projects].every(project => typeof project === "string" && PROJECT_ID.test(project)) &&
+    new Set(projects).size === projects.length
+}
+
 /**
  * Hash exact raw source fields in a defined order; presentation sanitation
  * must never silently change the revision bound into a signed dispatch request.
@@ -75,10 +81,7 @@ export async function preflightOfflineAssignment(signed, config) {
   ]
   if (!config || config.mode !== "offline-preflight-only" ||
       !config.coordinatorPublicKey ||
-      !Array.isArray(config.approvedProjects) ||
-      config.approvedProjects.length === 0 ||
-      config.approvedProjects.some(p => !PROJECT_ID.test(p)) ||
-      new Set(config.approvedProjects).size !== config.approvedProjects.length ||
+      !isValidOfflineAssignmentProjectAllowlist(config.approvedProjects) ||
       callbackNames.some(name => typeof config[name] !== "function")) {
     fail("PREFLIGHT_CONFIGURATION_INVALID")
   }

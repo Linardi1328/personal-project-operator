@@ -1269,7 +1269,7 @@ async function executeDevelopmentContinueInternal(runId, options = {}, scope = o
   }
 
   if (isOfflineAssignmentRun(initial)) {
-    return ownerActionResult(initial, null, "offline_assignment_only", scope)
+    return ownerActionResult(initial, "none", "offline_assignment_only", scope)
   }
 
   const boundary = boundaryForStatus(initial.status, scope)

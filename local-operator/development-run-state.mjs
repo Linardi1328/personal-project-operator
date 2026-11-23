@@ -18,7 +18,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
 import { OfflineClaimLedgerError } from "./software-factory-remote-durable-ledger.mjs"
-import { OfflineAssignmentPreflightError } from "./war-room-assignment-preflight.mjs"
+import { isValidOfflineAssignmentProjectAllowlist, OfflineAssignmentPreflightError } from "./war-room-assignment-preflight.mjs"
 import { OfflineAssignmentStagingError, prepareOfflineAssignmentBinding } from "./war-room-offline-staging.mjs"
 import {
   DEFAULT_PPO_WRITE_DATA_DIR,
@@ -2718,17 +2718,40 @@ async function persistAuthorityRun(authority, next, current = null) {
   return cloneJson(next)
 }
 
-// Lifecycle event timestamps are logical nondecreasing history timestamps,
-// not evidence of wall-clock freshness. The action fence must use a separate
-// trusted authority clock. Preserve legacy filesystem timestamp behavior.
-function mutationEventTime(options, authority, current) {
+// Protected writers use logical nondecreasing history timestamps. Their
+// authority checks use the actual clock. Ordinary writes preserve their
+// existing clock behavior.
+function mutationEventTime(options, monotonic, current) {
   const now = nowDate(options)
-  return authority ? new Date(Math.max(now.getTime(), Date.parse(current.timestamps.updatedAt))) : now
+  return monotonic ? new Date(Math.max(now.getTime(), Date.parse(current.timestamps.updatedAt))) : now
 }
 
 async function readMutationRun(runId, options, authority, mutation) {
   return authority ? await readAuthorityRun(authority, runId) :
     await readDevelopmentRunInternal(runId, options, mutation?.token === offlineAssignmentMutation)
+}
+
+function offlineAssignmentBindingProgress(run, requestHash, issueRevisionHash) {
+  return {
+    expectedVersion: run.version,
+    status: run.status,
+    actor: OFFLINE_ASSIGNMENT_BIND_ACTOR,
+    evidence: [{
+      kind: "planning", sha: run.headSha, source: OFFLINE_ASSIGNMENT_BIND_ACTOR,
+      summary: "Bound a synthetic offline assignment reservation.",
+      metadata: { requestHash, issueRevisionHash, reservedVersion: run.version }
+    }]
+  }
+}
+
+function assertOfflineAssignmentBindingFits(prepared) {
+  const now = new Date(prepared.timestamps.updatedAt)
+  const placeholderHash = "0".repeat(64)
+  const progress = offlineAssignmentBindingProgress(prepared, placeholderHash, placeholderHash)
+  const evidence = normalizeEvidenceList(progress.evidence, { now: () => now })
+  // The hashes and version in the binding have fixed sizes. Check the next
+  // event against the existing history, evidence, and serialized record limits.
+  serializeRecord(applyProgressUpdate(prepared, { actor: progress.actor, reason: null, evidence, now }))
 }
 
 async function persistMutationRun(runId, next, current, options, authority, mutation) {
@@ -2739,6 +2762,9 @@ async function persistMutationRun(runId, next, current, options, authority, muta
   const scopedWrite = isOfflineAssignmentRun(next) || event.actor === OFFLINE_ASSIGNMENT_BIND_ACTOR
   if (scopedWrite !== (mutation?.token === offlineAssignmentMutation)) {
     throw runStateError("OFFLINE_ASSIGNMENT_REQUIRED", "Canonical mutation requires the offline assignment boundary.")
+  }
+  if (event.actor === OFFLINE_ASSIGNMENT_SCOPE_ACTOR && mutation?.token === offlineAssignmentMutation) {
+    assertOfflineAssignmentBindingFits(next)
   }
   if (authority) return await persistAuthorityRun(authority, next, current)
   await commitRecord(storePaths(runId, options), next, mutation?.beforePublish)
@@ -2903,13 +2929,13 @@ async function transitionDevelopmentRunInternal(runId, transition, options = {},
     code: "INVALID_REASON",
     safeMessage: "Development run transition reason is invalid; no run-state write was attempted."
   })
-  const authorityCurrent = authority ? await readMutationRun(normalizedRunId, options, authority) : null
-  const now = mutationEventTime(options, authority, authorityCurrent)
+  const orderedCurrent = authority || mutation ? await readMutationRun(normalizedRunId, options, authority, mutation) : null
+  const now = mutationEventTime(options, orderedCurrent !== null, orderedCurrent)
   const evidence = normalizeEvidenceList(transition?.evidence || [], {
     ...options,
     now: () => now
   })
-  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
+  const current = orderedCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
 
   if (current.version !== expectedVersion) {
     throw runStateError(
@@ -2945,14 +2971,14 @@ async function recordDevelopmentRunProgressInternal(runId, progress, options = {
     code: "INVALID_REASON",
     safeMessage: "Development run progress reason is invalid; no run-state write was attempted."
   })
-  const authorityCurrent = authority ? await readMutationRun(normalizedRunId, options, authority) : null
-  const now = mutationEventTime(options, authority, authorityCurrent)
+  const orderedCurrent = authority || mutation ? await readMutationRun(normalizedRunId, options, authority, mutation) : null
+  const now = mutationEventTime(options, orderedCurrent !== null, orderedCurrent)
   const evidence = normalizeEvidenceList(progress?.evidence || [], {
     ...options,
     now: () => now
   })
   const incrementAttempt = progress?.incrementAttempt === true
-  const current = authorityCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
+  const current = orderedCurrent ?? await readMutationRun(normalizedRunId, options, authority, mutation)
 
   if (current.version !== expectedVersion || (expectedStatus !== null && current.status !== expectedStatus)) {
     throw runStateError(
@@ -3241,7 +3267,7 @@ export function createOfflineReservationContinuation({
       !Number.isSafeInteger(expectedVersion) || expectedVersion < 3 ||
       expectedVersion >= MAX_DEVELOPMENT_RUN_HISTORY_ENTRIES - 1 ||
       !(coordinatorPublicKey instanceof KeyObject) || coordinatorPublicKey.type !== "public" ||
-      coordinatorPublicKey.asymmetricKeyType !== "ed25519" || !Array.isArray(approvedProjects) ||
+      coordinatorPublicKey.asymmetricKeyType !== "ed25519" || !isValidOfflineAssignmentProjectAllowlist(approvedProjects) ||
       [now, readIssue, resolveIssueProject, readRepo, readCatalogAdmission, listActiveProjects, verifyOwnerApproval]
         .some(callback => typeof callback !== "function")) {
     throw runStateError("OFFLINE_ASSIGNMENT_CONFIG_INVALID", "Trusted offline assignment configuration is required.")
@@ -3274,8 +3300,11 @@ export function createOfflineReservationContinuation({
       await assertDisposableStores()
       try {
         const run = await readDevelopmentRunInternal(id, options, true)
-        if (run.version !== expectedVersion - 1 || run.status !== "planned" || !run.headSha) {
+        if (run.version !== expectedVersion - 1 || run.status !== "planned" || !run.branch || !run.headSha) {
           throw runStateError("STALE_RUN_VERSION", "Offline assignment requires the expected planned run.")
+        }
+        if (!projects.includes(run.project.id)) {
+          throw runStateError("OFFLINE_ASSIGNMENT_PROJECT_DENIED", "Offline assignment project is outside the configured scope.")
         }
         return await transitionDevelopmentRunInternal(id, {
           expectedVersion: run.version,
@@ -3317,17 +3346,10 @@ export function createOfflineReservationContinuation({
             readIssue, resolveIssueProject, readRepo, readCatalogAdmission, listActiveProjects, verifyOwnerApproval },
           ledger: { ...common, mode: "offline-durable-proof-only", storeDir, workerRegistry: {} }
         })
-        const bound = await recordDevelopmentRunProgressInternal(id, {
-          expectedVersion,
-          status: "implementation_in_progress",
-          actor: OFFLINE_ASSIGNMENT_BIND_ACTOR,
-          evidence: [{
-            kind: "planning", sha: scopedRun.headSha, source: OFFLINE_ASSIGNMENT_BIND_ACTOR,
-            summary: "Bound a synthetic offline assignment reservation.",
-            metadata: { requestHash: receipt.requestHash, issueRevisionHash: receipt.sourceRevisionHash,
-              reservedVersion: expectedVersion }
-          }]
-        }, options, null, { token: offlineAssignmentMutation, beforePublish: assertFresh })
+        const progress = offlineAssignmentBindingProgress(scopedRun, receipt.requestHash, receipt.sourceRevisionHash)
+        const bound = await recordDevelopmentRunProgressInternal(id, progress, options, null, {
+          token: offlineAssignmentMutation, beforePublish: assertFresh
+        })
         return Object.freeze({ ...receipt, outcome: "bound-offline", version: bound.version, grant: false })
       } catch (error) {
         if (error instanceof OfflineAssignmentStagingError || error instanceof OfflineAssignmentPreflightError ||

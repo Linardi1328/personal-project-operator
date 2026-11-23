@@ -172,13 +172,14 @@ export async function prepareOfflineAssignmentBinding(signed, config) {
   if (inspected.reserved !== true) fail("STAGING_RESERVATION_MISMATCH")
 
   await assertLatestCanonicalRun(trusted.preflight, payload)
-  trusted.unchanged()
   function assertFresh() {
+    trusted.unchanged()
     let timestamp
     try {
       const now = trusted.preflight.now()
       timestamp = now instanceof Date ? now.getTime() : Date.parse(now)
     } catch { fail("STAGING_CLOCK_INVALID") }
+    trusted.unchanged()
     if (!Number.isFinite(timestamp)) fail("STAGING_CLOCK_INVALID")
     if (timestamp < Date.parse(payload.issuedAt) - 60000 || timestamp >= Date.parse(payload.expiresAt)) {
       fail("STAGING_REQUEST_EXPIRED")

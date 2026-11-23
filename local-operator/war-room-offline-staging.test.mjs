@@ -246,6 +246,18 @@ test("replacing a trusted ledger reader or allowlist mid-preflight is rejected",
   }
 })
 
+test("replacing a trusted observation in the final clock call is rejected", async t => {
+  const fx = await fixture(t)
+  const clock = () => {
+    if (fx.f.runReads === 4) fx.config.preflight.readRepo = () => fx.f.repo
+    return fx.f.now
+  }
+  fx.config.preflight.now = clock
+  fx.config.ledger.now = clock
+  await assert.rejects(stageOfflineAssignment(fx.sign(), fx.config), fails("STAGING_CONFIGURATION_DRIFT"))
+  assert.equal((await fx.ledger().inspect(RUN, 7)).reserved, true)
+})
+
 test("run mutation inside the second approval check is caught by final canonical read", async t => {
   const fx = await fixture(t)
   let approvals = 0
