@@ -15,7 +15,7 @@ import {
 } from "./development-run-state.mjs"
 import { executeDevelopmentContinue, executeSoftwareFactoryImplementation } from "./development-continue-orchestrator.mjs"
 import { executeSoftwareFactoryAutonomousRun } from "./software-factory-autonomous-run.mjs"
-import { resolveSoftwareFactoryTaskRole } from "./software-factory-plan-contract.mjs"
+import { resolveSoftwareFactoryTaskRole, SOFTWARE_FACTORY_PLAN_CONTRACT_ID } from "./software-factory-plan-contract.mjs"
 import { remotePayloadDigest, signRemoteEnvelope } from "./software-factory-remote-contract.mjs"
 import { createOfflineDurableClaimLedger } from "./software-factory-remote-durable-ledger.mjs"
 import { linearIssueRevisionHash } from "./war-room-assignment-preflight.mjs"
@@ -65,8 +65,8 @@ function continuation(root, runId, expectedVersion, coordinatorPublicKey, verify
   })
 }
 
-async function createPlannedRun(options, evidence = []) {
-  let run = await createDevelopmentRun(RUN_INPUT, options)
+async function createPlannedRun(options, evidence = [], input = RUN_INPUT) {
+  let run = await createDevelopmentRun(input, options)
   for (const status of ["planning_in_progress", "planned"]) {
     run = await transitionDevelopmentRun(run.runId, { expectedVersion: run.version, status, actor: ACTOR, evidence }, options)
   }
@@ -247,7 +247,7 @@ async function childMain() {
   }
 }
 
-async function fixture(t, { scoped = false } = {}) {
+async function fixture(t, { scoped = false, frontend = false } = {}) {
   const temp = await realpath(tmpdir())
   const root = await mkdtemp(join(temp, ROOT_PREFIX))
   const children = []
@@ -264,7 +264,8 @@ async function fixture(t, { scoped = false } = {}) {
   })
   await mkdir(ledgerPath(root), { mode: 0o700 })
   const options = runOptions(root)
-  let initial = await createPlannedRun(options)
+  const input = frontend ? { ...RUN_INPUT, task: "Improve synthetic browser layout." } : RUN_INPUT
+  let initial = await createPlannedRun(options, [], input)
 
   const { privateKey, publicKey } = generateKeyPairSync("ed25519")
   const approved = new Set()
@@ -276,7 +277,9 @@ async function fixture(t, { scoped = false } = {}) {
   const payload = {
     kind: "dispatch-request", schemaVersion: 1, requestId: "1".repeat(32),
     runId: initial.runId, expectedVersion: initial.version, projectId: PROJECT, branch: BRANCH,
-    baseSha: BASE, headSha: BASE, capability: "implementation.backend", workerId: "codex",
+    baseSha: BASE, headSha: BASE,
+    capability: frontend ? "implementation.frontend" : "implementation.backend",
+    workerId: frontend ? "antigravity" : "codex",
     taskSource: { kind: "linear-issue", issueId: ISSUE.identifier, revisionHash: linearIssueRevisionHash(ISSUE) },
     scope: { mode: "implementation", allowedPaths: ["src/"], permits: ["workspace.read"] },
     approval: { ownerId: "owner", approvalId: "2".repeat(32), approvedAt: "2026-11-11T05:00:00.000Z" },
@@ -511,6 +514,15 @@ function registerTests() {
     }, f.options), { code: "OFFLINE_ASSIGNMENT_REQUIRED" })
   })
 
+  test("RIC-193 binds a supported frontend assignment and leaves authority false", TEST_OPTIONS, async t => {
+    const f = await fixture(t, { scoped: true, frontend: true })
+    const { outcome, grant, canExecute, releaseAuthorized } = await f.bind(f.original)
+    assert.deepEqual({ outcome, grant, canExecute, releaseAuthorized }, {
+      outcome: "bound-offline", grant: false, ...RESERVATION_FLAGS
+    })
+    assertBound(await f.read(), f)
+  })
+
   test("RIC-193 denies unbound continuation before and after a reservation-only process crash", TEST_OPTIONS, async t => {
     const f = await fixture(t, { scoped: true })
     const writer = await f.start("protected-before-bind")
@@ -679,6 +691,22 @@ function registerTests() {
     const wrongProject = createOfflineReservationContinuation({ ...config, approvedProjects: ["kynexa"] })
     await assert.rejects(wrongProject.prepare(), { code: "OFFLINE_ASSIGNMENT_PROJECT_DENIED" })
     assert.deepEqual(await readDevelopmentRun(planned.runId, f.options), planned)
+  })
+
+  test("RIC-193 refuses preparation for ambiguous or invalid planned roles", TEST_OPTIONS, async t => {
+    const f = await fixture(t)
+    const mixedInput = { ...RUN_INPUT, task: "Add a synthetic backend API and frontend UI." }
+    const invalidPlan = { kind: "planning", sha: BASE, source: SOFTWARE_FACTORY_PLAN_CONTRACT_ID }
+    const runs = [
+      await createPlannedRun(f.options, [], mixedInput),
+      await createPlannedRun(f.options, [invalidPlan])
+    ]
+    for (const planned of runs) {
+      const endpoint = continuation(f.root, planned.runId, planned.version + 1, f.publicKey, () => false)
+      await assert.rejects(endpoint.prepare(), { code: "OFFLINE_ASSIGNMENT_ROLE_DENIED" })
+      assert.deepEqual(await readDevelopmentRun(planned.runId, f.options), planned)
+    }
+    assert.deepEqual(await readdir(ledgerPath(f.root)), [])
   })
 
   test("RIC-193 refuses preparation when scope fits but the next binding would exceed record capacity", TEST_OPTIONS, async t => {

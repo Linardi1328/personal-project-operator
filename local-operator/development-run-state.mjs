@@ -2744,7 +2744,11 @@ function offlineAssignmentBindingProgress(run, requestHash, issueRevisionHash) {
   }
 }
 
-function assertOfflineAssignmentBindingFits(prepared) {
+function assertOfflineAssignmentPreparation(prepared) {
+  const role = resolveSoftwareFactoryTaskRole(prepared)
+  if (role !== "implementation.backend" && role !== "implementation.frontend") {
+    throw runStateError("OFFLINE_ASSIGNMENT_ROLE_DENIED", "The planned run requires a supported offline assignment role.")
+  }
   const now = new Date(prepared.timestamps.updatedAt)
   const placeholderHash = "0".repeat(64)
   const progress = offlineAssignmentBindingProgress(prepared, placeholderHash, placeholderHash)
@@ -2764,7 +2768,7 @@ async function persistMutationRun(runId, next, current, options, authority, muta
     throw runStateError("OFFLINE_ASSIGNMENT_REQUIRED", "Canonical mutation requires the offline assignment boundary.")
   }
   if (event.actor === OFFLINE_ASSIGNMENT_SCOPE_ACTOR && mutation?.token === offlineAssignmentMutation) {
-    assertOfflineAssignmentBindingFits(next)
+    assertOfflineAssignmentPreparation(next)
   }
   if (authority) return await persistAuthorityRun(authority, next, current)
   await commitRecord(storePaths(runId, options), next, mutation?.beforePublish)
